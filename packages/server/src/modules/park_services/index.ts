@@ -17,3 +17,7 @@ export * from './parkResourceTypes.js';
 export * from './parkServiceConfigurationFacade.js';
 export * from './parkServiceConfigurationRepository.js';
 export * from './parkServiceConfigurationTypes.js';
+export * from './parkStatisticsFacade.js';
+export * from './parkStatisticsRepository.js';
+export * from './parkStatisticsTypes.js';
+export * from './parkUsageStatisticsRepository.js';

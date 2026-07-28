@@ -1,13 +1,12 @@
-import { randomUUID } from 'node:crypto';
-import type { Database } from '../modules/data_platform/index.js';
-import type { OrganizationFeatures } from './db.js';
+import type { Database } from '../data_platform/index.js';
 import type {
+  CreateParkDataStatisticsTaskInput,
   ParkDataStatisticsAssignmentStatus,
   ParkDataStatisticsAssignmentView,
   ParkDataStatisticsTaskView,
 } from './parkStatisticsTypes.js';
 
-interface ParkStatisticsAccount {
+export interface ParkStatisticsAccount {
   id: string;
   organizationId: string;
   employeeId: string | null;
@@ -15,14 +14,25 @@ interface ParkStatisticsAccount {
   status: string;
 }
 
-interface ParkStatisticsOrganization {
+export interface ParkStatisticsOrganization {
   id: string;
   name: string;
+  slug: string;
+  status: 'active' | 'disabled';
+  parkAddress?: string | null;
+  parkRoomNumber?: string | null;
 }
 
-interface ParkStatisticsPark {
+export interface ParkStatisticsPark {
   id: string;
+  name: string;
   adminOrganizationId: string;
+  status: 'active' | 'disabled';
+}
+
+export interface ParkStatisticsService {
+  id: string;
+  name: string;
 }
 
 export interface ParkStatisticsRepositoryStore {
@@ -30,9 +40,13 @@ export interface ParkStatisticsRepositoryStore {
   getAccount(accountId: string, organizationId?: string): ParkStatisticsAccount | null;
   getPark(parkId: string): ParkStatisticsPark | null;
   getParkForOrganization(organizationId: string): ParkStatisticsPark | null;
-  getOrganizationFeatures(organizationId: string): OrganizationFeatures;
+  getOrganizationFeatures(organizationId: string): { park_service: boolean };
   listAccounts(organizationId?: string): ParkStatisticsAccount[];
   listParkTenantOrganizations(parkId: string): ParkStatisticsOrganization[];
+  listParkServices(parkId: string): ParkStatisticsService[];
+  createTaskId(): string;
+  createAssignmentId(): string;
+  nowISO(): string;
   audit(event: string, employeeId: string | null, detail: string, organizationId: string): void;
 }
 
@@ -167,16 +181,37 @@ function statisticsAssignmentRows(
   return rows.map(dataStatisticsAssignmentView);
 }
 
+function requireActiveStatisticsAccount(
+  store: ParkStatisticsRepositoryStore,
+  accountId: string,
+): ParkStatisticsAccount {
+  const account = store.getAccount(accountId);
+  const organization = account
+    ? (store
+        .db()
+        .prepare("SELECT id FROM organizations WHERE id = ? AND status = 'active'")
+        .get(account.organizationId) as { id: string } | undefined)
+    : undefined;
+  if (!account || account.status !== 'active' || !organization) {
+    throw new Error('Account or organization is inactive');
+  }
+  return account;
+}
+
 function assertParkAdmin(
   store: ParkStatisticsRepositoryStore,
   accountId: string,
 ): { account: ParkStatisticsAccount; park: ParkStatisticsPark } {
-  const account = store.getAccount(accountId);
-  if (!account?.isAdmin || account.status !== 'active') {
+  const account = requireActiveStatisticsAccount(store, accountId);
+  if (!account.isAdmin) {
     throw new Error('只有园区管理员可以管理数据统计');
   }
   const park = store.getParkForOrganization(account.organizationId);
-  if (!park || park.adminOrganizationId !== account.organizationId) {
+  if (
+    !park ||
+    park.status !== 'active' ||
+    park.adminOrganizationId !== account.organizationId
+  ) {
     throw new Error('当前企业不是园区管理方');
   }
   if (!store.getOrganizationFeatures(account.organizationId).park_service) {
@@ -194,9 +229,9 @@ function assertTaskMember(
   assignment: ParkDataStatisticsAssignmentView;
   account: ParkStatisticsAccount;
 } {
-  const account = store.getAccount(accountId);
-  if (!account || account.status !== 'active') throw new Error('账号不存在或已停用');
+  const account = requireActiveStatisticsAccount(store, accountId);
   const task = statisticsTaskRow(store, taskId);
+  if (task.status !== 'published') throw new Error('Statistics task is closed');
   const row = store.db()
     .prepare(
       `SELECT a.*, o.name AS organization_name,
@@ -205,26 +240,28 @@ function assertTaskMember(
        JOIN organizations o ON o.id = a.organization_id
        JOIN accounts ceo ON ceo.id = a.ceo_account_id
        LEFT JOIN accounts assignee ON assignee.id = a.assignee_account_id
-       WHERE a.task_id = ? AND (a.ceo_account_id = ? OR a.assignee_account_id = ?)
+       WHERE a.task_id = ?
+         AND a.organization_id = ?
+         AND o.status = 'active'
+         AND o.park_id = a.park_id
+         AND o.park_id = ?
+         AND (a.ceo_account_id = ? OR a.assignee_account_id = ?)
        LIMIT 1`,
     )
-    .get(taskId, account.id, account.id) as ParkDataStatisticsAssignmentRow | undefined;
+    .get(
+      taskId,
+      account.organizationId,
+      task.park_id,
+      account.id,
+      account.id,
+    ) as ParkDataStatisticsAssignmentRow | undefined;
   if (!row) throw new Error('该数据统计任务不属于当前企业');
   return { task, assignment: dataStatisticsAssignmentView(row), account };
 }
 
 export function createParkDataStatisticsTask(
   store: ParkStatisticsRepositoryStore,
-  input: {
-    createdByAccountId: string;
-    title: string;
-    description: string;
-    deadline: string;
-    fields?: string[];
-    templateName?: string | null;
-    templateData?: string | null;
-    organizationIds?: string[];
-  },
+  input: CreateParkDataStatisticsTaskInput,
 ): { task: ParkDataStatisticsTaskView; recipientCount: number } {
   const { account, park } = assertParkAdmin(store, input.createdByAccountId);
   const title = input.title.trim().slice(0, 120);
@@ -236,10 +273,23 @@ export function createParkDataStatisticsTask(
   const templateName = input.templateName?.trim().slice(0, 200) || null;
   const templateData = input.templateData?.trim() || null;
   if (templateData && templateData.length > 2_800_000) throw new Error('模板文件不能超过 2MB');
-  const tenantOrganizations = store.listParkTenantOrganizations(park.id);
-  const wanted = input.organizationIds?.length
-    ? tenantOrganizations.filter((org) => input.organizationIds!.includes(org.id))
+  const tenantOrganizations = store
+    .listParkTenantOrganizations(park.id)
+    .filter((organization) => organization.status === 'active');
+  const requestedOrganizationIds = [
+    ...new Set(input.organizationIds?.filter(Boolean) ?? []),
+  ];
+  const wanted = requestedOrganizationIds.length
+    ? tenantOrganizations.filter((org) =>
+        requestedOrganizationIds.includes(org.id),
+      )
     : tenantOrganizations;
+  if (
+    requestedOrganizationIds.length &&
+    wanted.length !== requestedOrganizationIds.length
+  ) {
+    throw new Error('One or more target organizations are outside the active park');
+  }
   if (wanted.length === 0) throw new Error('至少选择一家入住企业');
   const recipients = wanted.map((organization) => {
     const ceo = store.listAccounts(organization.id).find(
@@ -248,9 +298,10 @@ export function createParkDataStatisticsTask(
     if (!ceo) throw new Error(`企业“${organization.name}”没有可接收任务的企业管理员`);
     return { organization, ceo };
   });
-  const id = `park_statistics_${randomUUID()}`;
+  const id = store.createTaskId();
   const database = store.db();
-  database.exec('BEGIN IMMEDIATE');
+  const ownsTransaction = !database.inTransaction;
+  if (ownsTransaction) database.exec('BEGIN IMMEDIATE');
   try {
     database.prepare(
       `INSERT INTO park_data_statistics_tasks
@@ -265,7 +316,13 @@ export function createParkDataStatisticsTask(
        VALUES (?, ?, ?, ?, ?)`,
     );
     for (const recipient of recipients) {
-      insert.run(`park_statistics_assignment_${randomUUID()}`, id, park.id, recipient.organization.id, recipient.ceo.id);
+      insert.run(
+        store.createAssignmentId(),
+        id,
+        park.id,
+        recipient.organization.id,
+        recipient.ceo.id,
+      );
     }
     store.audit(
       'park_statistics_create',
@@ -273,9 +330,9 @@ export function createParkDataStatisticsTask(
       `${id} delivered to ${recipients.length} enterprise(s)`,
       account.organizationId,
     );
-    database.exec('COMMIT');
+    if (ownsTransaction) database.exec('COMMIT');
   } catch (error) {
-    database.exec('ROLLBACK');
+    if (ownsTransaction && database.inTransaction) database.exec('ROLLBACK');
     throw error;
   }
   const row = statisticsTaskRow(store, id);
@@ -289,18 +346,33 @@ export function listParkDataStatisticsTasks(
   store: ParkStatisticsRepositoryStore,
   accountId: string,
 ): ParkDataStatisticsTaskView[] {
-  const account = store.getAccount(accountId);
-  if (!account) throw new Error('Account not found');
+  const account = requireActiveStatisticsAccount(store, accountId);
   const park = store.getParkForOrganization(account.organizationId);
-  const rows = account.isAdmin && park?.adminOrganizationId === account.organizationId
+  const isParkAdmin = Boolean(
+    account.isAdmin &&
+      park?.status === 'active' &&
+      park.adminOrganizationId === account.organizationId,
+  );
+  if (
+    isParkAdmin &&
+    !store.getOrganizationFeatures(account.organizationId).park_service
+  ) {
+    throw new Error('Park service feature is disabled');
+  }
+  if (!park || park.status !== 'active') return [];
+  const rows = isParkAdmin
     ? store.db().prepare('SELECT * FROM park_data_statistics_tasks WHERE admin_organization_id = ? ORDER BY created_at DESC').all(account.organizationId)
     : store.db().prepare(
       `SELECT DISTINCT t.* FROM park_data_statistics_tasks t
        JOIN park_data_statistics_assignments a ON a.task_id = t.id
-       WHERE (a.ceo_account_id = ? OR a.assignee_account_id = ?) AND t.status = 'published'
+       JOIN organizations o ON o.id = a.organization_id
+       WHERE a.organization_id = ?
+         AND o.status = 'active'
+         AND o.park_id = t.park_id
+         AND (a.ceo_account_id = ? OR a.assignee_account_id = ?)
+         AND t.status = 'published'
        ORDER BY t.created_at DESC`,
-    ).all(account.id, account.id);
-  const isParkAdmin = account.isAdmin && park?.adminOrganizationId === account.organizationId;
+    ).all(account.organizationId, account.id, account.id);
   return (rows as ParkDataStatisticsTaskRow[]).map((row) => {
     const assignments = statisticsAssignmentRows(store, row.id);
     return dataStatisticsTaskView(
@@ -347,6 +419,9 @@ export function delegateParkDataStatistics(
 ): ParkDataStatisticsAssignmentView {
   const { assignment, account } = assertTaskMember(store, taskId, accountId);
   if (!account.isAdmin || account.id !== assignment.ceoAccountId) throw new Error('只有企业负责人可以分派数据统计任务');
+  if (!['pending', 'delegated', 'returned'].includes(assignment.status)) {
+    throw new Error('Statistics assignment cannot be delegated in its current state');
+  }
   const assignee = store.getAccount(assigneeAccountId, account.organizationId);
   if (!assignee || assignee.status !== 'active') throw new Error('被分派员工不存在或已停用');
   store.db()
@@ -365,14 +440,20 @@ export function submitParkDataStatisticsDraft(
   accountId: string,
   responseData: Record<string, string>,
 ): ParkDataStatisticsAssignmentView {
-  const { task, assignment, account } = assertTaskMember(store, taskId, accountId);
+  const { assignment, account } = assertTaskMember(store, taskId, accountId);
   if (assignment.assigneeAccountId && assignment.assigneeAccountId !== account.id && assignment.ceoAccountId !== account.id) {
     throw new Error('当前账号不是本任务填报人');
+  }
+  if (
+    !['pending', 'delegated', 'in_progress', 'returned'].includes(
+      assignment.status,
+    )
+  ) {
+    throw new Error('Statistics assignment cannot be submitted in its current state');
   }
   const clean = Object.fromEntries(Object.entries(responseData).filter(
     ([key, value]) => key.trim() && typeof value === 'string',
   ).map(([key, value]) => [key.trim().slice(0, 120), value.slice(0, 10_000)]));
-  const status = account.id === assignment.ceoAccountId && !assignment.assigneeAccountId ? 'pending_review' : 'pending_review';
   store.db()
     .prepare(
       `UPDATE park_data_statistics_assignments
@@ -380,8 +461,7 @@ export function submitParkDataStatisticsDraft(
            return_reason = NULL, updated_at = datetime('now')
        WHERE id = ?`,
     )
-    .run(JSON.stringify(clean), status, assignment.id);
-  void task;
+    .run(JSON.stringify(clean), 'pending_review', assignment.id);
   return statisticsAssignmentRows(store, taskId).find((item) => item.id === assignment.id)!;
 }
 
@@ -394,6 +474,9 @@ export function reviewParkDataStatistics(
 ): ParkDataStatisticsAssignmentView {
   const { assignment, account } = assertTaskMember(store, taskId, accountId);
   if (!account.isAdmin || account.id !== assignment.ceoAccountId) throw new Error('只有企业负责人可以审核填报结果');
+  if (assignment.status !== 'pending_review') {
+    throw new Error('Statistics assignment is not pending review');
+  }
   if (approved && !assignment.responseData) throw new Error('还没有可审核的填报内容');
   const status: ParkDataStatisticsAssignmentStatus = approved ? 'submitted' : 'returned';
   store.db()
@@ -413,6 +496,7 @@ export function remindParkDataStatistics(
 ): ParkDataStatisticsTaskView {
   const { account } = assertParkAdmin(store, adminAccountId);
   const task = statisticsTaskRow(store, taskId);
+  if (task.status !== 'published') throw new Error('Statistics task is closed');
   const park = store.getPark(task.park_id);
   if (!park || park.adminOrganizationId !== account.organizationId) throw new Error('无权操作该任务');
   store.db()
@@ -433,6 +517,7 @@ export function returnParkDataStatistics(
 ): ParkDataStatisticsAssignmentView {
   const { account } = assertParkAdmin(store, adminAccountId);
   const task = statisticsTaskRow(store, taskId);
+  if (task.status !== 'published') throw new Error('Statistics task is closed');
   if (task.admin_organization_id !== account.organizationId) throw new Error('无权操作该任务');
   const row = store.db()
     .prepare('SELECT id FROM park_data_statistics_assignments WHERE task_id = ? AND organization_id = ?')

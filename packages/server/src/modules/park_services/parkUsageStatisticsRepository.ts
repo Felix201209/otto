@@ -2,13 +2,12 @@
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
 
-import {
-  getAccount,
-  getDB,
-  getPark,
-  listParkServices,
-  listParkTenantOrganizations,
-} from './db.js';
+import type { ParkStatisticsRepositoryStore } from './parkStatisticsRepository.js';
+import type {
+  ParkServiceStatisticsView,
+  ParkServiceUsageCount,
+  ParkTenantServiceStatistics,
+} from './parkStatisticsTypes.js';
 
 const PARK_SERVICE_DEFINITIONS = [
   ['renovation', '装修管理'],
@@ -23,50 +22,6 @@ const PARK_SERVICE_DEFINITIONS = [
 const PARK_REQUEST_SERVICE_IDS = new Set<string>(
   PARK_SERVICE_DEFINITIONS.map(([serviceId]) => serviceId),
 );
-
-export interface ParkServiceUsageCount {
-  serviceId: string;
-  name: string;
-  count: number;
-  amountCny: number;
-  recurringMonthlyCny: number;
-  firstUsedAt: string | null;
-  lastUsedAt: string | null;
-}
-
-export interface ParkTenantServiceStatistics {
-  organizationId: string;
-  name: string;
-  slug: string;
-  status: 'active' | 'disabled';
-  address: string | null;
-  roomNumber: string | null;
-  totalUses: number;
-  totalAmountCny: number;
-  recurringMonthlyCny: number;
-  vehicleVisits: number;
-  meetingRoomBookings: number;
-  firstUsedAt: string | null;
-  lastUsedAt: string | null;
-  services: ParkServiceUsageCount[];
-}
-
-export interface ParkServiceStatisticsView {
-  parkId: string;
-  parkName: string;
-  generatedAt: string;
-  organizationCount: number;
-  activeOrganizationCount: number;
-  totalServiceUses: number;
-  totalAmountCny: number;
-  recurringMonthlyCny: number;
-  vehicleVisits: number;
-  meetingRoomBookings: number;
-  firstUsedAt: string | null;
-  lastUsedAt: string | null;
-  services: ParkServiceUsageCount[];
-  organizations: ParkTenantServiceStatistics[];
-}
 
 interface ParkServiceTicketRow {
   organization_id: string;
@@ -83,39 +38,57 @@ interface ParkUsageAggregate {
   lastUsedAt: string | null;
 }
 
+function normalizedStoredMoney(value: unknown): number {
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount > 0 && amount <= 1_000_000_000
+    ? Math.round(amount * 100) / 100
+    : 0;
+}
+
 function ticketStoredMoney(formData: string | null): {
   amountCny: number;
   recurringMonthlyCny: number;
 } {
   try {
     const parsed = formData ? JSON.parse(formData) as Record<string, unknown> : {};
-    const amountCny = Number(parsed.amountCny);
-    const recurringMonthlyCny = Number(parsed.recurringMonthlyCny);
     return {
-      amountCny: Number.isFinite(amountCny) && amountCny > 0 ? amountCny : 0,
-      recurringMonthlyCny: Number.isFinite(recurringMonthlyCny) && recurringMonthlyCny > 0
-        ? recurringMonthlyCny
-        : 0,
+      amountCny: normalizedStoredMoney(parsed.amountCny),
+      recurringMonthlyCny: normalizedStoredMoney(
+        parsed.recurringMonthlyCny,
+      ),
     };
   } catch {
     return { amountCny: 0, recurringMonthlyCny: 0 };
   }
 }
 
-export function getParkServiceStatistics(input: {
-  parkId: string;
-  actorAccountId: string;
-}): ParkServiceStatisticsView {
-  const park = getPark(input.parkId);
+export function getParkServiceStatisticsFromRepository(
+  store: ParkStatisticsRepositoryStore,
+  input: {
+    parkId: string;
+    actorAccountId: string;
+  },
+): ParkServiceStatisticsView {
+  const park = store.getPark(input.parkId);
   if (!park || park.status !== 'active') throw new Error('Park not found');
-  const actor = getAccount(input.actorAccountId, park.adminOrganizationId);
-  if (!actor?.isAdmin || actor.status !== 'active') {
+  const actor = store.getAccount(
+    input.actorAccountId,
+    park.adminOrganizationId,
+  );
+  const activeOrganization = store
+    .db()
+    .prepare("SELECT id FROM organizations WHERE id = ? AND status = 'active'")
+    .get(park.adminOrganizationId) as { id: string } | undefined;
+  if (!actor?.isAdmin || actor.status !== 'active' || !activeOrganization) {
     throw new Error('Only park administrators can view park statistics');
   }
+  if (!store.getOrganizationFeatures(park.adminOrganizationId).park_service) {
+    throw new Error('Park service feature is disabled');
+  }
 
-  const tenants = listParkTenantOrganizations(park.id);
+  const tenants = store.listParkTenantOrganizations(park.id);
   const configuredNames = new Map(
-    listParkServices(park.id).map((service) => [service.id, service.name]),
+    store.listParkServices(park.id).map((service) => [service.id, service.name]),
   );
   const serviceDefinitions = PARK_SERVICE_DEFINITIONS.map(([serviceId, defaultName]) => ({
     serviceId,
@@ -123,7 +96,7 @@ export function getParkServiceStatistics(input: {
   }));
   const tenantIds = new Set(tenants.map((tenant) => tenant.id));
   const usage = new Map<string, Map<string, ParkUsageAggregate>>();
-  const rows = getDB().prepare(
+  const rows = store.db().prepare(
     `SELECT organization_id, service_id, form_data, created_at
      FROM it_tickets
      WHERE park_id = ?
@@ -219,7 +192,7 @@ export function getParkServiceStatistics(input: {
   return {
     parkId: park.id,
     parkName: park.name,
-    generatedAt: new Date().toISOString(),
+    generatedAt: store.nowISO(),
     organizationCount: organizations.length,
     activeOrganizationCount: organizations.filter((organization) => organization.status === 'active').length,
     totalServiceUses: services.reduce((total, service) => total + service.count, 0),

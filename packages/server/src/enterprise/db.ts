@@ -20,7 +20,10 @@ import {
   createParkPublicationFacade,
   createParkResourceFacade,
   createParkServiceConfigurationFacade,
+  createParkStatisticsFacade,
   type ParkInviteView,
+  type ParkDataStatisticsAssignmentView,
+  type ParkDataStatisticsTaskView,
   type ParkServiceSpecialistView,
   type ParkServiceView,
   type ParkTenantProfileView,
@@ -63,17 +66,6 @@ import {
 import { buildCreditsTablesSql } from './creditsSchema.js';
 import { getAuditLogs, logAudit } from './auditRepository.js';
 import {
-  createParkDataStatisticsTask as createParkDataStatisticsTaskInRepository,
-  delegateParkDataStatistics as delegateParkDataStatisticsInRepository,
-  getParkDataStatisticsTemplate as getParkDataStatisticsTemplateFromRepository,
-  listParkDataStatisticsTasks as listParkDataStatisticsTasksFromRepository,
-  markParkDataStatisticsRead as markParkDataStatisticsReadInRepository,
-  remindParkDataStatistics as remindParkDataStatisticsInRepository,
-  returnParkDataStatistics as returnParkDataStatisticsInRepository,
-  reviewParkDataStatistics as reviewParkDataStatisticsInRepository,
-  submitParkDataStatisticsDraft as submitParkDataStatisticsDraftInRepository,
-} from './parkStatisticsRepository.js';
-import {
   createAccountDirectoryFacade,
   createAccountLifecycleFacade,
   createAccountRegistrationFacade,
@@ -105,10 +97,6 @@ import {
   type SmsChallengeVerifyResult as IdentitySmsChallengeVerifyResult,
   type SmsRegistrationVerifyResult as IdentitySmsRegistrationVerifyResult,
 } from '../modules/identity_organization/index.js';
-import type {
-  ParkDataStatisticsAssignmentView,
-  ParkDataStatisticsTaskView,
-} from './parkStatisticsTypes.js';
 export type {
   ModuleUpdateDescriptor,
   ModuleUpdateManifest,
@@ -138,23 +126,18 @@ export type {
   EnterpriseKnowledgeEntryView,
 } from '../modules/enterprise_knowledge/index.js';
 export type {
-  ParkInviteView,
-  ParkServiceSpecialistView,
-  ParkServiceView,
-  ParkTenantProfileView,
-  ParkView,
-} from '../modules/park_services/index.js';
-export type {
   ParkDataStatisticsAssignmentStatus,
   ParkDataStatisticsAssignmentView,
   ParkDataStatisticsTaskView,
-} from './parkStatisticsTypes.js';
-export { getParkServiceStatistics } from './parkUsageStatisticsRepository.js';
-export type {
+  ParkInviteView,
   ParkServiceStatisticsView,
+  ParkServiceSpecialistView,
+  ParkServiceView,
   ParkServiceUsageCount,
+  ParkTenantProfileView,
   ParkTenantServiceStatistics,
-} from './parkUsageStatisticsRepository.js';
+  ParkView,
+} from '../modules/park_services/index.js';
 export {
   createTicket,
   getTicketCreatorForAccount,
@@ -2893,7 +2876,11 @@ const parkStatisticsStore = {
   getParkForOrganization,
   getOrganizationFeatures,
   listAccounts,
+  listParkServices,
   listParkTenantOrganizations,
+  createTaskId: () => `park_statistics_${randomUUID()}`,
+  createAssignmentId: () => `park_statistics_assignment_${randomUUID()}`,
+  nowISO: () => new Date().toISOString(),
   audit: (
     event: string,
     employeeId: string | null,
@@ -2901,6 +2888,9 @@ const parkStatisticsStore = {
     organizationId: string,
   ) => logAudit(event, employeeId, detail, organizationId),
 };
+const parkStatistics = createParkStatisticsFacade(parkStatisticsStore);
+export const getParkServiceStatistics =
+  parkStatistics.getParkServiceStatistics;
 
 export function createParkDataStatisticsTask(input: {
   createdByAccountId: string;
@@ -2912,27 +2902,20 @@ export function createParkDataStatisticsTask(input: {
   templateData?: string | null;
   organizationIds?: string[];
 }): { task: ParkDataStatisticsTaskView; recipientCount: number } {
-  return createParkDataStatisticsTaskInRepository(parkStatisticsStore, input);
+  return parkStatistics.createParkDataStatisticsTask(input);
 }
 
 export function listParkDataStatisticsTasks(
   accountId: string,
 ): ParkDataStatisticsTaskView[] {
-  return listParkDataStatisticsTasksFromRepository(
-    parkStatisticsStore,
-    accountId,
-  );
+  return parkStatistics.listParkDataStatisticsTasks(accountId);
 }
 
 export function markParkDataStatisticsRead(
   taskId: string,
   accountId: string,
 ): ParkDataStatisticsAssignmentView {
-  return markParkDataStatisticsReadInRepository(
-    parkStatisticsStore,
-    taskId,
-    accountId,
-  );
+  return parkStatistics.markParkDataStatisticsRead(taskId, accountId);
 }
 
 export function getParkDataStatisticsTemplate(
@@ -2942,11 +2925,7 @@ export function getParkDataStatisticsTemplate(
   name: string;
   data: string;
 } {
-  return getParkDataStatisticsTemplateFromRepository(
-    parkStatisticsStore,
-    taskId,
-    accountId,
-  );
+  return parkStatistics.getParkDataStatisticsTemplate(taskId, accountId);
 }
 
 export function delegateParkDataStatistics(
@@ -2954,8 +2933,7 @@ export function delegateParkDataStatistics(
   accountId: string,
   assigneeAccountId: string,
 ): ParkDataStatisticsAssignmentView {
-  return delegateParkDataStatisticsInRepository(
-    parkStatisticsStore,
+  return parkStatistics.delegateParkDataStatistics(
     taskId,
     accountId,
     assigneeAccountId,
@@ -2967,8 +2945,7 @@ export function submitParkDataStatisticsDraft(
   accountId: string,
   responseData: Record<string, string>,
 ): ParkDataStatisticsAssignmentView {
-  return submitParkDataStatisticsDraftInRepository(
-    parkStatisticsStore,
+  return parkStatistics.submitParkDataStatisticsDraft(
     taskId,
     accountId,
     responseData,
@@ -2981,8 +2958,7 @@ export function reviewParkDataStatistics(
   approved: boolean,
   reason?: string,
 ): ParkDataStatisticsAssignmentView {
-  return reviewParkDataStatisticsInRepository(
-    parkStatisticsStore,
+  return parkStatistics.reviewParkDataStatistics(
     taskId,
     accountId,
     approved,
@@ -2994,11 +2970,7 @@ export function remindParkDataStatistics(
   taskId: string,
   adminAccountId: string,
 ): ParkDataStatisticsTaskView {
-  return remindParkDataStatisticsInRepository(
-    parkStatisticsStore,
-    taskId,
-    adminAccountId,
-  );
+  return parkStatistics.remindParkDataStatistics(taskId, adminAccountId);
 }
 
 export function returnParkDataStatistics(
@@ -3007,8 +2979,7 @@ export function returnParkDataStatistics(
   organizationId: string,
   reason: string,
 ): ParkDataStatisticsAssignmentView {
-  return returnParkDataStatisticsInRepository(
-    parkStatisticsStore,
+  return parkStatistics.returnParkDataStatistics(
     taskId,
     adminAccountId,
     organizationId,
