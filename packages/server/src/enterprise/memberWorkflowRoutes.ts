@@ -47,19 +47,20 @@ export async function handleMemberWorkflowRoute({
       sendJSON(res, 400, { error: 'invite_code and employee_name required' });
       return true;
     }
-    const result = db.validateInviteCode(invite_code);
+    const empId = `emp_${Date.now()}_${randomBytes(3).toString('hex')}`;
+    const result = db.validateInviteCode(invite_code, undefined, (invite) => {
+      db.createEmployee({
+        id: empId,
+        organizationId: invite.organizationId,
+        name: employee_name,
+        invite_code,
+        department: invite.department,
+      });
+    });
     if (!result.valid) {
       sendJSON(res, 403, { error: result.error });
       return true;
     }
-    const empId = `emp_${Date.now()}_${randomBytes(3).toString('hex')}`;
-    db.createEmployee({
-      id: empId,
-      organizationId: result.organizationId,
-      name: employee_name,
-      invite_code,
-      department: result.department,
-    });
     sendJSON(res, 200, {
       employee_id: empId,
       department: result.department,

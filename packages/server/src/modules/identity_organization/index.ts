@@ -5,6 +5,9 @@
 export * from './organizationInviteFacade.js';
 export * from './organizationInviteRepository.js';
 export type * from './organizationInviteTypes.js';
+export * from './departmentInviteFacade.js';
+export * from './departmentInviteRepository.js';
+export type * from './departmentInviteTypes.js';
 export * from './organizationDirectoryFacade.js';
 export * from './organizationDirectoryRepository.js';
 export * from './organizationFeatureFacade.js';

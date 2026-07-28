@@ -74,6 +74,7 @@ import {
   createAccountLifecycleFacade,
   createAccountRegistrationFacade,
   createAuthSessionFacade,
+  createDepartmentInviteFacade,
   createMemberDirectoryFacade,
   createSmsChallengeFacade,
   createOrganizationDirectoryFacade,
@@ -113,6 +114,7 @@ export type {
   PrivateDeploymentStatus,
 } from '../modules/commercial_control/index.js';
 export type {
+  DepartmentInviteValidationResult,
   OrganizationInviteInspection,
   OrganizationInviteIssueInput,
   OrganizationInviteResolution,
@@ -1576,6 +1578,15 @@ export const {
   listEnterpriseOrganizations,
 } = createOrganizationDirectoryFacade(organizationDirectoryStore);
 
+const departmentInvites = createDepartmentInviteFacade({
+  db: getDB,
+  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+  getOrganization,
+  logAudit,
+});
+
+export const { createInviteCode, validateInviteCode } = departmentInvites;
+
 export type OrganizationPositionRoleMapping =
   IdentityOrganizationPositionRoleMapping;
 export type OrganizationPositionView = IdentityOrganizationPositionView;
@@ -2895,11 +2906,6 @@ export const {
 // ============================================================
 // Invite codes
 // ============================================================
-export {
-  createInviteCode,
-  validateInviteCode,
-} from './inviteCodeRepository.js';
-
 // ============================================================
 // Export all (for backup)
 // ============================================================

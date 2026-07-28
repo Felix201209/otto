@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import * as identityOrganization from './modules/identity_organization/index.js';
+import * as legacyDepartmentInvite from './enterprise/inviteCodeRepository.js';
 import * as legacyFacade from './enterprise/organizationInviteFacade.js';
 import * as legacyRepository from './enterprise/organizationInviteRepository.js';
 import * as legacyPublicInvite from './enterprise/publicInvite.js';
@@ -68,6 +69,9 @@ describe('identity_organization invitation kernel', () => {
     expect(identityOrganization.createOrganizationInviteFacade).toBeTypeOf(
       'function',
     );
+    expect(identityOrganization.createDepartmentInviteFacade).toBeTypeOf(
+      'function',
+    );
     expect(identityOrganization.issueOrganizationInvite).toBeTypeOf('function');
     expect(identityOrganization.inspectOrganizationInvite).toBeTypeOf(
       'function',
@@ -80,6 +84,9 @@ describe('identity_organization invitation kernel', () => {
   it('keeps legacy enterprise paths as aliases of the module implementation', () => {
     expect(legacyFacade.createOrganizationInviteFacade).toBe(
       identityOrganization.createOrganizationInviteFacade,
+    );
+    expect(legacyDepartmentInvite.createDepartmentInviteFacade).toBe(
+      identityOrganization.createDepartmentInviteFacade,
     );
     expect(legacyRepository.issueOrganizationInvite).toBe(
       identityOrganization.issueOrganizationInvite,
@@ -132,6 +139,7 @@ describe('identity_organization invitation kernel', () => {
       'organizationInviteFacade.ts',
       'organizationInviteRepository.ts',
       'organizationInviteTypes.ts',
+      'inviteCodeRepository.ts',
       'publicInvite.ts',
       'organizationRoutes.ts',
       'employeeRepository.ts',
@@ -160,6 +168,7 @@ describe('identity_organization invitation kernel', () => {
       path.join(enterpriseDir, 'organizationInviteFacade.ts'),
       path.join(enterpriseDir, 'organizationInviteRepository.ts'),
       path.join(enterpriseDir, 'organizationInviteTypes.ts'),
+      path.join(enterpriseDir, 'inviteCodeRepository.ts'),
       path.join(enterpriseDir, 'publicInvite.ts'),
       path.join(enterpriseDir, 'organizationRoutes.ts'),
       path.join(enterpriseDir, 'employeeRepository.ts'),
@@ -168,7 +177,7 @@ describe('identity_organization invitation kernel', () => {
       .filter((file) => !legacyFiles.has(file))
       .filter((file) => !file.startsWith(`${moduleDir}${path.sep}`))
       .filter((file) =>
-        /from ['"][^'"]*(?:organizationInvite(?:Facade|Repository|Types)|publicInvite|organizationRoutes|employeeRepository)\.js['"]/.test(
+        /from ['"][^'"]*(?:organizationInvite(?:Facade|Repository|Types)|inviteCodeRepository|publicInvite|organizationRoutes|employeeRepository)\.js['"]/.test(
           fs.readFileSync(file, 'utf8'),
         ),
       )
@@ -185,7 +194,21 @@ describe('identity_organization invitation kernel', () => {
       '../modules/identity_organization/index.js',
     );
     expect(databaseFacade).not.toMatch(
-      /from ['"]\.\/employeeRepository\.js['"]/,
+      /from ['"]\.\/(?:employeeRepository|inviteCodeRepository)\.js['"]/,
+    );
+  });
+
+  it('keeps department invite creation and consumption behind the identity facade', () => {
+    const databaseFacade = fs.readFileSync(
+      path.join(enterpriseDir, 'db.ts'),
+      'utf8',
+    );
+    expect(databaseFacade).toContain('createDepartmentInviteFacade');
+    expect(databaseFacade).not.toMatch(
+      /export function (?:createInviteCode|validateInviteCode)\s*\(/,
+    );
+    expect(databaseFacade).not.toContain(
+      'UPDATE invite_codes SET used_count = used_count + 1',
     );
   });
 
