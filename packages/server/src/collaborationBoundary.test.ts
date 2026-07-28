@@ -29,6 +29,9 @@ describe('collaboration module boundary', () => {
   });
 
   it('publishes direct messages and A2A through the public entrypoint', () => {
+    expect(collaboration.COLLABORATION_SCHEMA_CONTRIBUTOR.id).toBe(
+      'collaboration',
+    );
     expect(collaboration.createDirectMessageFacade).toBeTypeOf('function');
     expect(collaboration.sendDirectMessageInRepository).toBeTypeOf('function');
     expect(collaboration.listPendingAtoaRequestsFromRepository).toBeTypeOf(
@@ -90,5 +93,9 @@ describe('collaboration module boundary', () => {
     expect(databaseFacade).toContain('createDirectMessageFacade');
     expect(databaseFacade).not.toContain("from './directMessageRepository.js'");
     expect(databaseFacade).not.toContain('INSERT INTO direct_messages');
+    expect(databaseFacade).toContain('COLLABORATION_SCHEMA_CONTRIBUTOR');
+    expect(databaseFacade).not.toMatch(
+      /CREATE TABLE IF NOT EXISTS (?:account_presence|direct_messages|direct_message_attachments)/,
+    );
   });
 });

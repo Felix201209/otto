@@ -7,12 +7,14 @@
  */
 
 import {
+  applyDatabaseSchemaContributors,
   createEnterpriseDatabaseLifecycle,
   createFileEncryptionKeyProvider,
   Database,
 } from '../modules/data_platform/index.js';
 import { createOrganizationFeatureAccessFacade } from '../modules/authorization/index.js';
 import {
+  COLLABORATION_SCHEMA_CONTRIBUTOR,
   createAccountPresenceFacade,
   createDirectMessageFacade,
   type AccountPresenceView as CollaborationAccountPresenceView,
@@ -684,48 +686,6 @@ function initSchema(d: Database): void {
       FOREIGN KEY (organization_id) REFERENCES organizations(id)
     );
 
-    CREATE TABLE IF NOT EXISTS account_presence (
-      organization_id TEXT NOT NULL,
-      account_id TEXT NOT NULL,
-      client_id TEXT NOT NULL DEFAULT '',
-      last_seen_at_ms INTEGER NOT NULL,
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      PRIMARY KEY (organization_id, account_id, client_id),
-      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
-      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS direct_messages (
-      id TEXT PRIMARY KEY,
-      organization_id TEXT NOT NULL,
-      sender_account_id TEXT NOT NULL,
-      recipient_account_id TEXT NOT NULL,
-      content TEXT NOT NULL CHECK(length(content) BETWEEN 1 AND 4000),
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      read_at TEXT,
-      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
-      FOREIGN KEY (sender_account_id) REFERENCES accounts(id) ON DELETE CASCADE,
-      FOREIGN KEY (recipient_account_id) REFERENCES accounts(id) ON DELETE CASCADE
-    );
-    CREATE INDEX IF NOT EXISTS idx_direct_messages_conversation
-      ON direct_messages(organization_id, sender_account_id, recipient_account_id, created_at);
-
-    CREATE TABLE IF NOT EXISTS direct_message_attachments (
-      id TEXT PRIMARY KEY,
-      message_id TEXT NOT NULL,
-      organization_id TEXT NOT NULL,
-      ordinal INTEGER NOT NULL,
-      file_name TEXT NOT NULL,
-      mime_type TEXT NOT NULL,
-      byte_size INTEGER NOT NULL CHECK(byte_size BETWEEN 1 AND 10485760),
-      content BLOB NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (message_id) REFERENCES direct_messages(id) ON DELETE CASCADE,
-      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
-    );
-    CREATE INDEX IF NOT EXISTS idx_direct_message_attachments_message
-      ON direct_message_attachments(message_id, ordinal);
-
     CREATE TABLE IF NOT EXISTS sms_login_challenges (
       id TEXT PRIMARY KEY,
       organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
@@ -1043,8 +1003,6 @@ function initSchema(d: Database): void {
       ON account_token_usage(organization_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_account_token_usage_account_created
       ON account_token_usage(account_id, created_at);
-    CREATE INDEX IF NOT EXISTS idx_account_presence_org_seen
-      ON account_presence(organization_id, last_seen_at_ms);
     CREATE INDEX IF NOT EXISTS idx_telemetry_events_status_created
       ON telemetry_events(status, created_at_ms);
     CREATE INDEX IF NOT EXISTS idx_telemetry_events_deployment_created
@@ -1052,6 +1010,8 @@ function initSchema(d: Database): void {
     CREATE INDEX IF NOT EXISTS idx_account_sync_snapshots_org_updated
       ON account_sync_snapshots(organization_id, updated_at_ms);
   `);
+
+  applyDatabaseSchemaContributors(d, [COLLABORATION_SCHEMA_CONTRIBUTOR]);
 
   const organizationColumns = d
     .prepare('PRAGMA table_info(organizations)')

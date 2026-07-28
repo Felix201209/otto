@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  applyDatabaseSchemaContributors,
   createEnterpriseDatabaseLifecycle,
   createFileEncryptionKeyProvider,
   Database,
@@ -35,6 +36,7 @@ describe('data_platform storage kernel', () => {
   it('publishes reusable storage and database lifecycle primitives', () => {
     expect(createFileEncryptionKeyProvider).toBeTypeOf('function');
     expect(createEnterpriseDatabaseLifecycle).toBeTypeOf('function');
+    expect(applyDatabaseSchemaContributors).toBeTypeOf('function');
   });
 
   it('keeps the legacy sqlite path as an alias of the module implementation', () => {

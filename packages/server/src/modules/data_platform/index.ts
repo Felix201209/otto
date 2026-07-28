@@ -5,3 +5,4 @@
 export * from './sqliteCompat.js';
 export * from './fileEncryptionKeyProvider.js';
 export * from './enterpriseDatabaseLifecycle.js';
+export * from './databaseSchemaContributor.js';
