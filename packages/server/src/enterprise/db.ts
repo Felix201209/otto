@@ -15,9 +15,11 @@ import {
 } from '../modules/collaboration/index.js';
 import { createEnterpriseKnowledgeFacade } from '../modules/enterprise_knowledge/index.js';
 import {
+  createParkLifecycleFacade,
   createParkMembershipFacade,
   type ParkInviteView,
   type ParkTenantProfileView,
+  type ParkView,
 } from '../modules/park_services/index.js';
 import path from 'path';
 import os from 'os';
@@ -144,6 +146,7 @@ export type {
 export type {
   ParkInviteView,
   ParkTenantProfileView,
+  ParkView,
 } from '../modules/park_services/index.js';
 export type {
   ParkDataStatisticsAssignmentStatus,
@@ -2759,29 +2762,6 @@ export const {
 // Park tenants, organization membership and service specialists
 // ============================================================
 
-export interface ParkView {
-  id: string;
-  name: string;
-  slug: string;
-  brandName: string;
-  adminOrganizationId: string;
-  status: 'active' | 'disabled';
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface ParkRow {
-  id: string;
-  name: string;
-  slug: string;
-  invite_secret: string;
-  admin_organization_id: string;
-  brand_name: string;
-  status: 'active' | 'disabled';
-  created_at: string;
-  updated_at: string;
-}
-
 const DEFAULT_PARK_SERVICES = [
   ['renovation', '装修管理'],
   ['parking', '停车办理'],
@@ -2797,6 +2777,23 @@ const DEFAULT_PARK_SERVICES = [
 export const PARK_SERVICE_IDS = new Set<string>(
   DEFAULT_PARK_SERVICES.map(([serviceId]) => serviceId),
 );
+
+const parkLifecycleStore = {
+  db: getDB,
+  getAccount,
+  getOrganization: getEnterpriseOrganization,
+  getActiveOrganizationAdmin: (organizationId: string) =>
+    listAccounts(organizationId).find(
+      (account) => account.isAdmin && account.status === 'active',
+    ) ?? null,
+  normalizeOptionalText,
+  normalizeSlug: normalizeOrganizationSlug,
+  createParkId: () => `park_${randomUUID()}`,
+  createDefaultSlug: () => `park-${randomBytes(5).toString('hex')}`,
+  createInviteSecret: () => randomBytes(32).toString('hex'),
+  defaultServices: DEFAULT_PARK_SERVICES.map(([id, name]) => ({ id, name })),
+};
+const parkLifecycle = createParkLifecycleFacade(parkLifecycleStore);
 
 const parkServiceStore = {
   db: getDB,
@@ -2820,36 +2817,14 @@ export function updateParkService(input: {
   return updateParkServiceInRepository(parkServiceStore, input);
 }
 
-function toParkView(row: ParkRow): ParkView {
-  return {
-    id: row.id,
-    name: row.name,
-    slug: row.slug,
-    brandName: row.brand_name,
-    adminOrganizationId: row.admin_organization_id,
-    status: row.status,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
 export function getPark(id: string): ParkView | null {
-  const row = getDB().prepare('SELECT * FROM parks WHERE id = ?').get(id) as
-    ParkRow | undefined;
-  return row ? toParkView(row) : null;
+  return parkLifecycle.getPark(id);
 }
 
 export function getParkForOrganization(
   organizationId: string,
 ): ParkView | null {
-  const row = getDB()
-    .prepare(
-      `SELECT p.* FROM organizations o
-     JOIN parks p ON p.id = o.park_id
-     WHERE o.id = ? AND p.status = 'active'`,
-    )
-    .get(organizationId) as ParkRow | undefined;
-  return row ? toParkView(row) : null;
+  return parkLifecycle.getParkForOrganization(organizationId);
 }
 
 export function listParkTenantOrganizations(
@@ -3035,20 +3010,7 @@ export function createParkAsPlatform(input: {
   slug?: string;
   brandName?: string;
 }): ParkView {
-  const organization = getEnterpriseOrganization(input.adminOrganizationId);
-  if (!organization) throw new Error('Organization not found');
-  const admin = listAccounts(input.adminOrganizationId).find(
-    (account) => account.isAdmin && account.status === 'active',
-  );
-  if (!admin)
-    throw new Error('Park admin organization requires an active admin account');
-  return createPark({
-    adminOrganizationId: input.adminOrganizationId,
-    actorAccountId: admin.id,
-    name: input.name || organization.name,
-    slug: input.slug,
-    brandName: input.brandName,
-  });
+  return parkLifecycle.createParkAsPlatform(input);
 }
 
 export function updateParkAsPlatform(input: {
@@ -3056,33 +3018,7 @@ export function updateParkAsPlatform(input: {
   name?: string;
   brandName?: string;
 }): ParkView {
-  const current = getDB()
-    .prepare(
-      `SELECT * FROM parks
-       WHERE admin_organization_id = ? AND status = 'active'`,
-    )
-    .get(input.adminOrganizationId) as ParkRow | undefined;
-  if (!current) throw new Error('Park admin organization not found');
-
-  const name =
-    input.name === undefined
-      ? current.name
-      : normalizeOptionalText(input.name, '产业园名称');
-  if (!name) throw new Error('产业园名称不能为空');
-  const brandName =
-    input.brandName === undefined
-      ? current.brand_name
-      : normalizeOptionalText(input.brandName, '园区服务名称');
-  if (!brandName) throw new Error('园区服务名称不能为空');
-
-  getDB()
-    .prepare(
-      `UPDATE parks
-       SET name = ?, brand_name = ?, updated_at = datetime('now')
-       WHERE id = ?`,
-    )
-    .run(name, brandName, current.id);
-  return getPark(current.id)!;
+  return parkLifecycle.updateParkAsPlatform(input);
 }
 
 export function createPark(input: {
@@ -3092,54 +3028,7 @@ export function createPark(input: {
   slug?: string;
   brandName?: string;
 }): ParkView {
-  const actor = getAccount(input.actorAccountId, input.adminOrganizationId);
-  if (!actor?.isAdmin || actor.status !== 'active')
-    throw new Error('只有企业管理员可注册产业园');
-  if (getParkForOrganization(input.adminOrganizationId))
-    throw new Error('企业已加入产业园');
-  const name = normalizeOptionalText(input.name, '产业园名称');
-  if (!name) throw new Error('产业园名称不能为空');
-  const brandName =
-    normalizeOptionalText(input.brandName, '园区服务名称') ?? `${name}服务`;
-  const slug = normalizeOrganizationSlug(
-    input.slug || `park-${randomBytes(5).toString('hex')}`,
-  );
-  const id = `park_${randomUUID()}`;
-  const database = getDB();
-  database.exec('BEGIN IMMEDIATE');
-  try {
-    database
-      .prepare(
-        `INSERT INTO parks
-        (id, name, slug, invite_secret, admin_organization_id, brand_name)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        id,
-        name,
-        slug,
-        randomBytes(32).toString('hex'),
-        input.adminOrganizationId,
-        brandName,
-      );
-    database
-      .prepare(
-        `UPDATE organizations SET park_id = ?, updated_at = datetime('now') WHERE id = ?`,
-      )
-      .run(id, input.adminOrganizationId);
-    const insertService = database.prepare(
-      `INSERT INTO park_services (park_id, id, name, enabled, config_json)
-       VALUES (?, ?, ?, 1, '{}')`,
-    );
-    for (const [serviceId, serviceName] of DEFAULT_PARK_SERVICES) {
-      insertService.run(id, serviceId, serviceName);
-    }
-    database.exec('COMMIT');
-  } catch (error) {
-    database.exec('ROLLBACK');
-    throw error;
-  }
-  return getPark(id)!;
+  return parkLifecycle.createPark(input);
 }
 
 export function issueParkInvite(input: {

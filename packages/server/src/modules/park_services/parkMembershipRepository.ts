@@ -8,6 +8,7 @@ import type {
   ParkInviteView,
   ParkTenantProfileView,
 } from './parkMembershipTypes.js';
+import type { ParkView } from './parkLifecycleTypes.js';
 
 interface ParkInviteAccount {
   id: string;
@@ -15,16 +16,7 @@ interface ParkInviteAccount {
   status: string;
 }
 
-export interface ParkMembershipPark {
-  id: string;
-  name: string;
-  slug: string;
-  brandName: string;
-  adminOrganizationId: string;
-  status: 'active' | 'disabled';
-  createdAt: string;
-  updatedAt: string;
-}
+export type ParkMembershipPark = ParkView;
 
 interface ParkInviteRow {
   id: string;
