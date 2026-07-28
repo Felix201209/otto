@@ -5,7 +5,21 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
-import { getAccount, getDB } from './db.js';
+import type { Database } from '../data_platform/index.js';
+
+export interface CollaborationActiveAccount {
+  id: string;
+  name: string;
+}
+
+export interface DirectMessageRepositoryStore {
+  db(): Database;
+  createId(): string;
+  getActiveAccountInOrganization(
+    accountId: string,
+    organizationId: string,
+  ): CollaborationActiveAccount | null;
+}
 
 export interface DirectMessageView {
   id: string;
@@ -21,7 +35,9 @@ export const DIRECT_MESSAGE_ATTACHMENT_MAX_COUNT = 6;
 export const DIRECT_MESSAGE_ATTACHMENT_MAX_FILE_BYTES = 10 * 1024 * 1024;
 export const DIRECT_MESSAGE_ATTACHMENT_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 
-const DIRECT_MESSAGE_ATTACHMENT_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
+const DIRECT_MESSAGE_ATTACHMENT_MIME_BY_EXTENSION: Readonly<
+  Record<string, string>
+> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
@@ -30,11 +46,13 @@ const DIRECT_MESSAGE_ATTACHMENT_MIME_BY_EXTENSION: Readonly<Record<string, strin
   '.bmp': 'image/bmp',
   '.pdf': 'application/pdf',
   '.doc': 'application/msword',
-  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.docx':
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   '.xls': 'application/vnd.ms-excel',
   '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   '.ppt': 'application/vnd.ms-powerpoint',
-  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.pptx':
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   '.txt': 'text/plain',
   '.log': 'text/plain',
   '.csv': 'text/csv',
@@ -98,15 +116,28 @@ interface NormalizedDirectMessageAttachment {
   content: Buffer;
 }
 
-function normalizeDirectMessageFileName(value: unknown): { fileName: string; mimeType: string } {
-  if (typeof value !== 'string') throw new Error('attachment file name is invalid');
+function normalizeResultLimit(
+  value: number | undefined,
+  fallback: number,
+  maximum: number,
+): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(maximum, Math.max(1, Math.floor(value!)));
+}
+
+function normalizeDirectMessageFileName(value: unknown): {
+  fileName: string;
+  mimeType: string;
+} {
+  if (typeof value !== 'string')
+    throw new Error('attachment file name is invalid');
   const baseName = path.posix.basename(value.replace(/\\/g, '/')).trim();
   const safeName = Array.from(baseName)
-    .map((character) => (
+    .map((character) =>
       character.charCodeAt(0) < 32 || '<>:"/\\|?*'.includes(character)
         ? '_'
-        : character
-    ))
+        : character,
+    )
     .join('')
     .replace(/\s+/g, ' ')
     .trim();
@@ -118,7 +149,8 @@ function normalizeDirectMessageFileName(value: unknown): { fileName: string; mim
   if (!mimeType) throw new Error('attachment file type is not supported');
   if (safeName.length <= 180) return { fileName: safeName, mimeType };
   return {
-    fileName: safeName.slice(0, Math.max(1, 180 - extension.length)) + extension,
+    fileName:
+      safeName.slice(0, Math.max(1, 180 - extension.length)) + extension,
     mimeType,
   };
 }
@@ -127,7 +159,8 @@ function normalizeDirectMessageAttachments(
   attachments: readonly DirectMessageAttachmentInput[] | undefined,
 ): NormalizedDirectMessageAttachment[] {
   if (attachments == null) return [];
-  if (!Array.isArray(attachments)) throw new Error('attachment metadata is invalid');
+  if (!Array.isArray(attachments))
+    throw new Error('attachment metadata is invalid');
   if (attachments.length > DIRECT_MESSAGE_ATTACHMENT_MAX_COUNT) {
     throw new Error('a message can contain at most 6 attachments');
   }
@@ -136,10 +169,18 @@ function normalizeDirectMessageAttachments(
     if (!attachment || typeof attachment !== 'object') {
       throw new Error('attachment metadata is invalid');
     }
-    const { fileName, mimeType } = normalizeDirectMessageFileName(attachment.fileName);
-    if (typeof attachment.data !== 'string') throw new Error('attachment data is invalid');
+    const { fileName, mimeType } = normalizeDirectMessageFileName(
+      attachment.fileName,
+    );
+    if (typeof attachment.data !== 'string')
+      throw new Error('attachment data is invalid');
     const data = attachment.data.trim();
-    if (!data || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data)) {
+    if (
+      !data ||
+      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+        data,
+      )
+    ) {
       throw new Error('attachment data is invalid');
     }
     const content = Buffer.from(data, 'base64');
@@ -147,24 +188,35 @@ function normalizeDirectMessageAttachments(
       throw new Error('attachment data is invalid');
     }
     if (
-      content.length > DIRECT_MESSAGE_ATTACHMENT_MAX_FILE_BYTES
-      || Number(attachment.size) !== content.length
+      content.length > DIRECT_MESSAGE_ATTACHMENT_MAX_FILE_BYTES ||
+      Number(attachment.size) !== content.length
     ) {
-      throw new Error('an attachment must be complete and no larger than 10 MB');
+      throw new Error(
+        'an attachment must be complete and no larger than 10 MB',
+      );
     }
     totalBytes += content.length;
     if (totalBytes > DIRECT_MESSAGE_ATTACHMENT_MAX_TOTAL_BYTES) {
       throw new Error('attachments in one message cannot exceed 20 MB');
     }
-    return { id: randomUUID(), fileName, mimeType, size: content.length, content };
+    return {
+      id: randomUUID(),
+      fileName,
+      mimeType,
+      size: content.length,
+      content,
+    };
   });
 }
 
-function listDirectMessageAttachmentViews(messageId: string): DirectMessageAttachmentView[] {
-  const rows = getDB()
+function listDirectMessageAttachmentViews(
+  database: Database,
+  messageId: string,
+): DirectMessageAttachmentView[] {
+  const rows = database
     .prepare(
-      'SELECT id, file_name, mime_type, byte_size '
-      + 'FROM direct_message_attachments WHERE message_id = ? ORDER BY ordinal, id',
+      'SELECT id, file_name, mime_type, byte_size ' +
+        'FROM direct_message_attachments WHERE message_id = ? ORDER BY ordinal, id',
     )
     .all(messageId) as DirectMessageAttachmentRow[];
   return rows.map((row) => ({
@@ -176,16 +228,19 @@ function listDirectMessageAttachmentViews(messageId: string): DirectMessageAttac
 }
 
 function listDirectMessageAttachmentMap(
+  database: Database,
   messageIds: readonly string[],
 ): Map<string, DirectMessageAttachmentView[]> {
   const result = new Map<string, DirectMessageAttachmentView[]>();
   if (messageIds.length === 0) return result;
   const placeholders = messageIds.map(() => '?').join(',');
-  const rows = getDB()
+  const rows = database
     .prepare(
-      'SELECT message_id, id, file_name, mime_type, byte_size '
-      + 'FROM direct_message_attachments WHERE message_id IN (' + placeholders + ') '
-      + 'ORDER BY message_id, ordinal, id',
+      'SELECT message_id, id, file_name, mime_type, byte_size ' +
+        'FROM direct_message_attachments WHERE message_id IN (' +
+        placeholders +
+        ') ' +
+        'ORDER BY message_id, ordinal, id',
     )
     .all(...messageIds) as DirectMessageAttachmentMessageRow[];
   for (const row of rows) {
@@ -202,8 +257,9 @@ function listDirectMessageAttachmentMap(
 }
 
 function toDirectMessageView(
+  database: Database,
   row: DirectMessageRow,
-  attachments = listDirectMessageAttachmentViews(row.id),
+  attachments = listDirectMessageAttachmentViews(database, row.id),
 ): DirectMessageView {
   return {
     id: row.id,
@@ -216,36 +272,56 @@ function toDirectMessageView(
   };
 }
 
-export function sendDirectMessage(input: {
+export interface SendDirectMessageInput {
   organizationId: string;
   senderAccountId: string;
   recipientAccountId: string;
   content: string;
   attachments?: DirectMessageAttachmentInput[];
-}): DirectMessageView {
+}
+
+export function sendDirectMessageInRepository(
+  store: DirectMessageRepositoryStore,
+  input: SendDirectMessageInput,
+): DirectMessageView {
+  const organizationId = input.organizationId.trim();
+  const senderAccountId = input.senderAccountId.trim();
+  const recipientAccountId = input.recipientAccountId.trim();
+  if (!organizationId || !senderAccountId || !recipientAccountId) {
+    throw new Error('message organization and participants are required');
+  }
   const attachments = normalizeDirectMessageAttachments(input.attachments);
   const trimmedContent = input.content.trim();
-  const content = trimmedContent || (
-    attachments.length > 0
+  const content =
+    trimmedContent ||
+    (attachments.length > 0
       ? `Shared ${attachments.length} file(s): ${attachments.map((item) => item.fileName).join(', ')}`
-      : ''
-  );
+      : '');
   if (!content || content.length > 4000)
     throw new Error('消息内容长度必须为 1 到 4000 个字符');
-  if (input.senderAccountId === input.recipientAccountId)
+  if (senderAccountId === recipientAccountId)
     throw new Error('不能给自己发送消息');
-  const recipient = getAccount(input.recipientAccountId, input.organizationId);
-  if (!recipient || recipient.status !== 'active')
-    throw new Error('接收成员不存在或已停用');
-  const id = randomUUID();
-  const database = getDB();
+  const sender = store.getActiveAccountInOrganization(
+    senderAccountId,
+    organizationId,
+  );
+  const recipient = store.getActiveAccountInOrganization(
+    recipientAccountId,
+    organizationId,
+  );
+  if (!sender) throw new Error('sender account is not active in organization');
+  if (!recipient) throw new Error('接收成员不存在或已停用');
+  const id = store.createId();
+  const database = store.db();
   database.exec('BEGIN IMMEDIATE');
   try {
-    database.prepare(
-      `INSERT INTO direct_messages
+    database
+      .prepare(
+        `INSERT INTO direct_messages
       (id, organization_id, sender_account_id, recipient_account_id, content)
       VALUES (?, ?, ?, ?, ?)`,
-    ).run(id, input.organizationId, input.senderAccountId, input.recipientAccountId, content);
+      )
+      .run(id, organizationId, senderAccountId, recipientAccountId, content);
     const insertAttachment = database.prepare(
       `INSERT INTO direct_message_attachments
       (id, message_id, organization_id, ordinal, file_name, mime_type, byte_size, content)
@@ -255,7 +331,7 @@ export function sendDirectMessage(input: {
       insertAttachment.run(
         attachment.id,
         id,
-        input.organizationId,
+        organizationId,
         index,
         attachment.fileName,
         attachment.mimeType,
@@ -265,30 +341,49 @@ export function sendDirectMessage(input: {
     });
     database.exec('COMMIT');
   } catch (error) {
-    try { database.exec('ROLLBACK'); } catch { /* preserve original error */ }
+    try {
+      database.exec('ROLLBACK');
+    } catch {
+      /* preserve original error */
+    }
     throw error;
   }
   const row = database
     .prepare('SELECT * FROM direct_messages WHERE id = ?')
     .get(id) as DirectMessageRow;
-  return toDirectMessageView(row);
+  return toDirectMessageView(database, row);
 }
 
-export function listDirectMessages(input: {
+export interface ListDirectMessagesInput {
   organizationId: string;
   accountId: string;
   peerAccountId: string;
   limit?: number;
-}): DirectMessageView[] {
-  const limit = Math.min(200, Math.max(1, Math.floor(input.limit ?? 100)));
-  getDB()
+}
+
+export function listDirectMessagesFromRepository(
+  store: DirectMessageRepositoryStore,
+  input: ListDirectMessagesInput,
+): DirectMessageView[] {
+  const organizationId = input.organizationId.trim();
+  const accountId = input.accountId.trim();
+  const peerAccountId = input.peerAccountId.trim();
+  if (
+    !store.getActiveAccountInOrganization(accountId, organizationId) ||
+    !store.getActiveAccountInOrganization(peerAccountId, organizationId)
+  ) {
+    throw new Error('message participant is not active in organization');
+  }
+  const limit = normalizeResultLimit(input.limit, 100, 200);
+  const database = store.db();
+  database
     .prepare(
       `UPDATE direct_messages SET read_at = COALESCE(read_at, datetime('now'))
      WHERE organization_id = ? AND sender_account_id = ? AND recipient_account_id = ?`,
     )
-    .run(input.organizationId, input.peerAccountId, input.accountId);
+    .run(organizationId, peerAccountId, accountId);
   const rows = (
-    getDB()
+    database
       .prepare(
         `SELECT * FROM direct_messages
      WHERE organization_id = ? AND (
@@ -297,37 +392,50 @@ export function listDirectMessages(input: {
      ) ORDER BY created_at DESC, id DESC LIMIT ?`,
       )
       .all(
-        input.organizationId,
-        input.accountId,
-        input.peerAccountId,
-        input.peerAccountId,
-        input.accountId,
+        organizationId,
+        accountId,
+        peerAccountId,
+        peerAccountId,
+        accountId,
         limit,
       ) as DirectMessageRow[]
   ).reverse();
-  const attachmentsByMessage = listDirectMessageAttachmentMap(rows.map((row) => row.id));
-  return rows.map((row) => toDirectMessageView(row, attachmentsByMessage.get(row.id) ?? []));
+  const attachmentsByMessage = listDirectMessageAttachmentMap(
+    database,
+    rows.map((row) => row.id),
+  );
+  return rows.map((row) =>
+    toDirectMessageView(database, row, attachmentsByMessage.get(row.id) ?? []),
+  );
 }
 
-export function getDirectMessageAttachment(input: {
+export interface GetDirectMessageAttachmentInput {
   organizationId: string;
   accountId: string;
   attachmentId: string;
-}): DirectMessageAttachmentDownload {
-  const row = getDB()
+}
+
+export function getDirectMessageAttachmentFromRepository(
+  store: DirectMessageRepositoryStore,
+  input: GetDirectMessageAttachmentInput,
+): DirectMessageAttachmentDownload {
+  const organizationId = input.organizationId.trim();
+  const accountId = input.accountId.trim();
+  const attachmentId = input.attachmentId.trim();
+  if (!store.getActiveAccountInOrganization(accountId, organizationId)) {
+    throw new Error('attachment account is not active in organization');
+  }
+  const row = store
+    .db()
     .prepare(
-      'SELECT a.id, a.file_name, a.mime_type, a.byte_size, a.content '
-      + 'FROM direct_message_attachments a '
-      + 'JOIN direct_messages m ON m.id = a.message_id AND m.organization_id = a.organization_id '
-      + 'WHERE a.id = ? AND a.organization_id = ? '
-      + 'AND (m.sender_account_id = ? OR m.recipient_account_id = ?)',
+      'SELECT a.id, a.file_name, a.mime_type, a.byte_size, a.content ' +
+        'FROM direct_message_attachments a ' +
+        'JOIN direct_messages m ON m.id = a.message_id AND m.organization_id = a.organization_id ' +
+        'WHERE a.id = ? AND a.organization_id = ? ' +
+        'AND (m.sender_account_id = ? OR m.recipient_account_id = ?)',
     )
-    .get(
-      input.attachmentId,
-      input.organizationId,
-      input.accountId,
-      input.accountId,
-    ) as DirectMessageAttachmentContentRow | undefined;
+    .get(attachmentId, organizationId, accountId, accountId) as
+    DirectMessageAttachmentContentRow | undefined;
   if (!row) throw new Error('附件不存在或无权访问');
   return {
     id: row.id,
@@ -352,19 +460,26 @@ export interface UnreadDirectMessageNotification {
  * 后台通知轮询专用：只读未读摘要，绝不修改 read_at。真正打开会话时仍由
  * listDirectMessages 统一标记已读，避免系统弹窗把消息“看没了”。
  */
-export function listUnreadDirectMessageNotifications(input: {
+export interface ListUnreadDirectMessageNotificationsInput {
   organizationId: string;
   accountId: string;
   limit?: number;
-}): UnreadDirectMessageNotification[] {
-  const account = getAccount(input.accountId, input.organizationId);
-  if (!account || account.status !== 'active')
-    throw new Error('账号不存在或已停用');
-  const requestedLimit = input.limit ?? 50;
-  const limit = Number.isFinite(requestedLimit)
-    ? Math.min(100, Math.max(1, Math.floor(requestedLimit)))
-    : 50;
-  const rows = getDB()
+}
+
+export function listUnreadDirectMessageNotificationsFromRepository(
+  store: DirectMessageRepositoryStore,
+  input: ListUnreadDirectMessageNotificationsInput,
+): UnreadDirectMessageNotification[] {
+  const organizationId = input.organizationId.trim();
+  const accountId = input.accountId.trim();
+  const account = store.getActiveAccountInOrganization(
+    accountId,
+    organizationId,
+  );
+  if (!account) throw new Error('账号不存在或已停用');
+  const limit = normalizeResultLimit(input.limit, 50, 100);
+  const rows = store
+    .db()
     .prepare(
       `SELECT m.id, m.sender_account_id, m.content, m.created_at, a.name AS sender_name
      FROM direct_messages m
@@ -375,7 +490,7 @@ export function listUnreadDirectMessageNotifications(input: {
        AND m.read_at IS NULL
      ORDER BY m.created_at DESC, m.id DESC LIMIT ?`,
     )
-    .all(input.organizationId, input.accountId, limit) as Array<{
+    .all(organizationId, accountId, limit) as Array<{
     id: string;
     sender_account_id: string;
     content: string;
@@ -394,15 +509,33 @@ export function listUnreadDirectMessageNotifications(input: {
   }));
 }
 
-export function listPendingAtoaRequests(input: {
+export interface ListPendingAtoaRequestsInput {
   organizationId: string;
   accountId: string;
   requestPrefix: string;
   responsePrefix: string;
   limit?: number;
-}): AtoaInboxMessageView[] {
-  const limit = Math.min(100, Math.max(1, Math.floor(input.limit ?? 50)));
-  const requests = getDB()
+}
+
+export function listPendingAtoaRequestsFromRepository(
+  store: DirectMessageRepositoryStore,
+  input: ListPendingAtoaRequestsInput,
+): AtoaInboxMessageView[] {
+  const organizationId = input.organizationId.trim();
+  const accountId = input.accountId.trim();
+  if (!store.getActiveAccountInOrganization(accountId, organizationId)) {
+    throw new Error('A2A account is not active in organization');
+  }
+  if (
+    !input.requestPrefix ||
+    !input.responsePrefix ||
+    input.requestPrefix === input.responsePrefix
+  ) {
+    throw new Error('A2A protocol prefixes are invalid');
+  }
+  const limit = normalizeResultLimit(input.limit, 50, 100);
+  const database = store.db();
+  const requests = database
     .prepare(
       `SELECT * FROM direct_messages
      WHERE organization_id = ?
@@ -412,12 +545,12 @@ export function listPendingAtoaRequests(input: {
      LIMIT ?`,
     )
     .all(
-      input.organizationId,
-      input.accountId,
+      organizationId,
+      accountId,
       `${input.requestPrefix}%`,
       limit,
     ) as DirectMessageRow[];
-  const responses = getDB()
+  const responses = database
     .prepare(
       `SELECT sender_account_id, recipient_account_id, content FROM direct_messages
      WHERE organization_id = ?
@@ -426,11 +559,7 @@ export function listPendingAtoaRequests(input: {
      ORDER BY created_at DESC, id DESC
      LIMIT 300`,
     )
-    .all(
-      input.organizationId,
-      input.accountId,
-      `${input.responsePrefix}%`,
-    ) as Array<{
+    .all(organizationId, accountId, `${input.responsePrefix}%`) as Array<{
     sender_account_id: string;
     recipient_account_id: string;
     content: string;
@@ -440,7 +569,7 @@ export function listPendingAtoaRequests(input: {
       (request) =>
         !responses.some(
           (response) =>
-            response.sender_account_id === input.accountId &&
+            response.sender_account_id === accountId &&
             response.recipient_account_id === request.sender_account_id &&
             parseAtoaResponseRequestId(
               response.content,
@@ -450,7 +579,7 @@ export function listPendingAtoaRequests(input: {
     )
     .reverse()
     .map((request) => ({
-      ...toDirectMessageView(request),
+      ...toDirectMessageView(database, request),
       peerAccountId: request.sender_account_id,
     }));
 }
@@ -514,20 +643,42 @@ function parseAtoaResponseRequestId(
  * 双方方向、消息主键和协议前缀，不能借 response requestId 标记普通消息或
  * 其他成员的请求；后台未读轮询本身仍保持完全只读。
  */
-export function markAtoaRequestReadFromResponse(input: {
+export interface MarkAtoaRequestReadFromResponseInput {
   organizationId: string;
   responderAccountId: string;
   peerAccountId: string;
   responseContent: string;
   requestPrefix: string;
   responsePrefix: string;
-}): string | null {
+}
+
+export function markAtoaRequestReadFromResponseInRepository(
+  store: DirectMessageRepositoryStore,
+  input: MarkAtoaRequestReadFromResponseInput,
+): string | null {
+  const organizationId = input.organizationId.trim();
+  const responderAccountId = input.responderAccountId.trim();
+  const peerAccountId = input.peerAccountId.trim();
+  if (
+    !store.getActiveAccountInOrganization(responderAccountId, organizationId) ||
+    !store.getActiveAccountInOrganization(peerAccountId, organizationId)
+  ) {
+    return null;
+  }
+  if (
+    !input.requestPrefix ||
+    !input.responsePrefix ||
+    input.requestPrefix === input.responsePrefix
+  ) {
+    return null;
+  }
   const requestId = parseAtoaResponseRequestId(
     input.responseContent,
     input.responsePrefix,
   );
   if (!requestId) return null;
-  const changed = getDB()
+  const changed = store
+    .db()
     .prepare(
       `UPDATE direct_messages SET read_at = COALESCE(read_at, datetime('now'))
      WHERE id = ? AND organization_id = ?
@@ -536,9 +687,9 @@ export function markAtoaRequestReadFromResponse(input: {
     )
     .run(
       requestId,
-      input.organizationId,
-      input.peerAccountId,
-      input.responderAccountId,
+      organizationId,
+      peerAccountId,
+      responderAccountId,
       `${input.requestPrefix}%`,
     );
   return Number(changed.changes) === 1 ? requestId : null;

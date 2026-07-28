@@ -4,3 +4,5 @@
 
 export * from './presenceFacade.js';
 export * from './presenceRepository.js';
+export * from './directMessageFacade.js';
+export * from './directMessageRepository.js';

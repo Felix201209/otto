@@ -11,6 +11,11 @@ import { PRODUCT_MODULES } from './productModules.js';
 const sourceRoot = path.resolve(import.meta.dirname);
 const moduleDir = path.join(sourceRoot, 'modules', 'collaboration');
 const databaseFacadePath = path.join(sourceRoot, 'enterprise', 'db.ts');
+const legacyMessageRepositoryPath = path.join(
+  sourceRoot,
+  'enterprise',
+  'directMessageRepository.ts',
+);
 
 describe('collaboration module boundary', () => {
   it('publishes presence through the collaboration public entrypoint', () => {
@@ -23,11 +28,29 @@ describe('collaboration module boundary', () => {
     );
   });
 
-  it('keeps presence ownership aligned with the product module registry', () => {
+  it('publishes direct messages and A2A through the public entrypoint', () => {
+    expect(collaboration.createDirectMessageFacade).toBeTypeOf('function');
+    expect(collaboration.sendDirectMessageInRepository).toBeTypeOf('function');
+    expect(collaboration.listPendingAtoaRequestsFromRepository).toBeTypeOf(
+      'function',
+    );
+    expect(
+      collaboration.markAtoaRequestReadFromResponseInRepository,
+    ).toBeTypeOf('function');
+  });
+
+  it('keeps collaboration ownership aligned with the product module registry', () => {
     const manifest = PRODUCT_MODULES.find(
       (module) => module.id === 'collaboration',
     );
     expect(manifest?.dataOwnership).toContain('presence');
+    expect(manifest?.dataOwnership).toEqual(
+      expect.arrayContaining([
+        'direct messages',
+        'message attachments',
+        'A2A requests',
+      ]),
+    );
     expect(manifest?.dependencies).toEqual(
       expect.arrayContaining([
         'identity_organization',
@@ -59,5 +82,13 @@ describe('collaboration module boundary', () => {
       'SELECT account_id, MAX(last_seen_at_ms) AS last_seen_at_ms',
     );
     expect(databaseFacade).not.toContain('INSERT INTO account_presence');
+  });
+
+  it('removes the legacy message repository and injects the collaboration facade', () => {
+    const databaseFacade = fs.readFileSync(databaseFacadePath, 'utf8');
+    expect(fs.existsSync(legacyMessageRepositoryPath)).toBe(false);
+    expect(databaseFacade).toContain('createDirectMessageFacade');
+    expect(databaseFacade).not.toContain("from './directMessageRepository.js'");
+    expect(databaseFacade).not.toContain('INSERT INTO direct_messages');
   });
 });

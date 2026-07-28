@@ -10,6 +10,7 @@ import { Database } from '../modules/data_platform/index.js';
 import { createOrganizationFeatureAccessFacade } from '../modules/authorization/index.js';
 import {
   createAccountPresenceFacade,
+  createDirectMessageFacade,
   type AccountPresenceView as CollaborationAccountPresenceView,
 } from '../modules/collaboration/index.js';
 import path from 'path';
@@ -134,6 +135,14 @@ export type {
   OrganizationInviteView,
 } from '../modules/identity_organization/index.js';
 export type {
+  AtoaInboxMessageView,
+  DirectMessageAttachmentDownload,
+  DirectMessageAttachmentInput,
+  DirectMessageAttachmentView,
+  DirectMessageView,
+  UnreadDirectMessageNotification,
+} from '../modules/collaboration/index.js';
+export type {
   ParkDataStatisticsAssignmentStatus,
   ParkDataStatisticsAssignmentView,
   ParkDataStatisticsTaskView,
@@ -152,22 +161,6 @@ export type {
   ParkServiceUsageCount,
   ParkTenantServiceStatistics,
 } from './parkUsageStatisticsRepository.js';
-export {
-  getDirectMessageAttachment,
-  listDirectMessages,
-  listPendingAtoaRequests,
-  listUnreadDirectMessageNotifications,
-  markAtoaRequestReadFromResponse,
-  sendDirectMessage,
-} from './directMessageRepository.js';
-export type {
-  AtoaInboxMessageView,
-  DirectMessageAttachmentDownload,
-  DirectMessageAttachmentInput,
-  DirectMessageAttachmentView,
-  DirectMessageView,
-  UnreadDirectMessageNotification,
-} from './directMessageRepository.js';
 export {
   createTicket,
   getTicketCreatorForAccount,
@@ -2659,6 +2652,29 @@ export const {
 } = createAccountRegistrationFacade<AccountView, OrganizationView>(
   accountRegistrationStore,
 );
+
+const directMessageStore = {
+  db: getDB,
+  createId: randomUUID,
+  getActiveAccountInOrganization: (
+    accountId: string,
+    organizationId: string,
+  ) => {
+    const account = getAccount(accountId, organizationId);
+    return account?.status === 'active'
+      ? { id: account.id, name: account.name }
+      : null;
+  },
+};
+
+export const {
+  getDirectMessageAttachment,
+  listDirectMessages,
+  listPendingAtoaRequests,
+  listUnreadDirectMessageNotifications,
+  markAtoaRequestReadFromResponse,
+  sendDirectMessage,
+} = createDirectMessageFacade(directMessageStore);
 
 export type AccountPresenceView = CollaborationAccountPresenceView;
 
