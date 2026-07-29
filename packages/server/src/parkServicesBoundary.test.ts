@@ -46,6 +46,9 @@ describe('park services module boundary', () => {
     expect(parkServices.submitParkSurveyInRepository).toBeTypeOf('function');
     expect(parkServices.createParkResourceFacade).toBeTypeOf('function');
     expect(parkServices.createParkResourceRepository).toBeTypeOf('function');
+    expect(parkServices.PARK_RESOURCE_SCHEMA_CONTRIBUTOR).toMatchObject({
+      id: 'park_services_resources',
+    });
     expect(parkServices.PARK_MEETING_TIME_SLOTS).toHaveLength(84);
     expect(parkServices.createParkStatisticsFacade).toBeTypeOf('function');
     expect(parkServices.PARK_STATISTICS_SCHEMA_CONTRIBUTOR).toMatchObject({
@@ -161,6 +164,32 @@ describe('park services module boundary', () => {
     );
     expect(databaseFacade).toMatch(
       /createParkPublicationSchemaContributor\(\{[\s\S]*?PARK_STATISTICS_SCHEMA_CONTRIBUTOR,[\s\S]*?createCreditsSchemaContributor\(\{/,
+    );
+  });
+
+  it('keeps park resource schema ownership in the park services module', () => {
+    const databaseFacade = fs.readFileSync(databaseFacadePath, 'utf8');
+    for (const table of [
+      'park_settings',
+      'park_meeting_rooms',
+      'park_meeting_slots',
+      'park_meeting_bookings',
+      'park_meeting_slot_overrides',
+    ]) {
+      expect(databaseFacade).not.toContain(
+        `CREATE TABLE IF NOT EXISTS ${table}`,
+      );
+    }
+    for (const index of [
+      'idx_park_meeting_slots_booked_ticket',
+      'idx_park_meeting_rooms_org_enabled',
+      'idx_park_meeting_slots_org_date',
+      'idx_park_meeting_bookings_org_date',
+    ]) {
+      expect(databaseFacade).not.toContain(index);
+    }
+    expect(databaseFacade).toMatch(
+      /PARK_STATISTICS_SCHEMA_CONTRIBUTOR,[\s\S]*?PARK_RESOURCE_SCHEMA_CONTRIBUTOR,[\s\S]*?createCreditsSchemaContributor\(\{/,
     );
   });
 

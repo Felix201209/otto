@@ -15,6 +15,7 @@ export * from './parkPublicationTypes.js';
 export * from './parkPublicationSchema.js';
 export * from './parkResourceFacade.js';
 export * from './parkResourceRepository.js';
+export * from './parkResourceSchema.js';
 export * from './parkResourceTypes.js';
 export * from './parkServiceConfigurationFacade.js';
 export * from './parkServiceConfigurationRepository.js';
