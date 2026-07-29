@@ -5,7 +5,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import * as db from './db.js';
-import type { RepairNotificationSender } from './repairNotifications.js';
+import type { RepairNotificationSender } from '../modules/integration_adapters/index.js';
 
 interface TicketRouteDeps {
   path: string;

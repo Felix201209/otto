@@ -33,7 +33,7 @@ import { handlePlatformOrganizationRoute } from './platformOrganizationRoutes.js
 import { handleSimpleParkCompatibilityRoute } from './simpleParkCompatibilityRoutes.js';
 import { handleTicketRoute } from './ticketRoutes.js';
 import { handleWorkspaceRoute } from './workspaceRoutes.js';
-import type { RepairNotificationSender } from './repairNotifications.js';
+import type { RepairNotificationSender } from '../modules/integration_adapters/index.js';
 
 export type AdminPrincipal =
   | { kind: 'system'; organizationId: string }

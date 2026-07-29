@@ -23,7 +23,7 @@ import {
   createEnterpriseKnowledgeFacade,
   createEnterpriseKnowledgeSchemaContributor,
 } from '../modules/enterprise_knowledge/index.js';
-import { createFeishuAutoReplyFacade } from '../modules/integration_adapters/index.js';
+import { createIntegrationAdaptersComposition } from '../modules/integration_adapters/index.js';
 import {
   createModelUsageFacade,
   MODEL_GATEWAY_SCHEMA_CONTRIBUTOR,
@@ -646,13 +646,12 @@ export const {
 
 export type AccountPresenceView = CollaborationAccountPresenceView;
 
-const feishuAutoReply = createFeishuAutoReplyFacade({
-  listAccountBindings: listFeishuAccountBindings,
-  isOrganizationFeatureEnabled: (organizationId: string) =>
-    isOrganizationFeatureEnabled(organizationId, 'feishu_auto_reply'),
+const integrationAdapters = createIntegrationAdaptersComposition({
+  listFeishuAccountBindings,
+  isOrganizationFeatureEnabled,
 });
 
-export const { isFeishuAutoReplyEnabledForOpenId } = feishuAutoReply;
+export const { isFeishuAutoReplyEnabledForOpenId } = integrationAdapters;
 
 export type SmsChallengeIssueResult = IdentitySmsChallengeIssueResult;
 export type SmsRegistrationVerifyResult = IdentitySmsRegistrationVerifyResult;

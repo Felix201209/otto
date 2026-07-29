@@ -38,7 +38,7 @@ import {
   createRepairFeishuSenderFromEnv,
   createRepairSmsSenderFromEnv,
   type RepairNotificationSender,
-} from './repairNotifications.js';
+} from '../modules/integration_adapters/index.js';
 import { FeatureFlagManager, ProjectSettingsManager } from 'otto-core';
 import {
   dispatchEnterpriseRoute,

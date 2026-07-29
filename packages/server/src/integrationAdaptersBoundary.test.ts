@@ -16,13 +16,22 @@ function source(file: string): string {
 }
 
 describe('integration_adapters module boundary', () => {
-  it('publishes the Feishu authorization policy from one public entrypoint', () => {
+  it('publishes composition, policy and notification adapters from one public entrypoint', () => {
+    expect(integrationAdapters.createIntegrationAdaptersComposition).toBeTypeOf(
+      'function',
+    );
     expect(integrationAdapters.createFeishuAutoReplyFacade).toBeTypeOf(
       'function',
     );
     expect(
       integrationAdapters.isFeishuAutoReplyEnabledForOpenIdInPolicy,
     ).toBeTypeOf('function');
+    expect(integrationAdapters.createRepairSmsSenderFromEnv).toBeTypeOf(
+      'function',
+    );
+    expect(integrationAdapters.createRepairFeishuSenderFromEnv).toBeTypeOf(
+      'function',
+    );
   });
 
   it('declares identity and authorization dependencies in the product registry', () => {
@@ -57,9 +66,10 @@ describe('integration_adapters module boundary', () => {
     );
   });
 
-  it('keeps account SQL behind identity and policy logic behind integration adapters', () => {
+  it('keeps account SQL behind identity and integration assembly behind one composition', () => {
     const databaseFacade = source('enterprise/db.ts');
-    expect(databaseFacade).toContain('createFeishuAutoReplyFacade');
+    expect(databaseFacade).toContain('createIntegrationAdaptersComposition');
+    expect(databaseFacade).not.toContain('createFeishuAutoReplyFacade');
     expect(databaseFacade).toContain('listFeishuAccountBindings');
     expect(databaseFacade).not.toContain(
       'SELECT DISTINCT organization_id FROM accounts',
@@ -67,5 +77,26 @@ describe('integration_adapters module boundary', () => {
     expect(databaseFacade).not.toMatch(
       /export function isFeishuAutoReplyEnabledForOpenId\s*\(/,
     );
+  });
+
+  it('keeps notification implementations out of the enterprise shell', () => {
+    const server = source('enterprise/server.ts');
+    const compatibilityExport = source('enterprise/repairNotifications.ts');
+    const notificationSenders = source(
+      'modules/integration_adapters/repairNotificationSenders.ts',
+    );
+    expect(server).toContain('../modules/integration_adapters/index.js');
+    expect(server).not.toContain('./repairNotifications.js');
+    expect(compatibilityExport).toContain(
+      "from '../modules/integration_adapters/index.js'",
+    );
+    expect(compatibilityExport).not.toContain('export *');
+    expect(compatibilityExport).toContain('createRepairSmsSenderFromEnv');
+    expect(compatibilityExport).toContain('createRepairFeishuSenderFromEnv');
+    expect(compatibilityExport).toContain('type RepairNotificationSender');
+    expect(notificationSenders).not.toMatch(
+      /^import .* from ['"]otto-core['"];$/m,
+    );
+    expect(notificationSenders).toContain("await import('otto-core')");
   });
 });
