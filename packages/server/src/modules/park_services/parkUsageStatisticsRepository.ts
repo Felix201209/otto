@@ -3,25 +3,15 @@
  */
 
 import type { ParkStatisticsRepositoryStore } from './parkStatisticsRepository.js';
+import {
+  PARK_REQUEST_SERVICE_DEFINITIONS,
+  PARK_REQUEST_SERVICE_IDS,
+} from './parkServiceCatalog.js';
 import type {
   ParkServiceStatisticsView,
   ParkServiceUsageCount,
   ParkTenantServiceStatistics,
 } from './parkStatisticsTypes.js';
-
-const PARK_SERVICE_DEFINITIONS = [
-  ['renovation', '装修管理'],
-  ['parking', '停车办理'],
-  ['network-phone', '网络与固话'],
-  ['meeting-room', '会议室预定'],
-  ['electric-card', '电卡服务'],
-  ['repair', '物业报修'],
-  ['vehicle-visit', '车辆与访客'],
-] as const;
-
-const PARK_REQUEST_SERVICE_IDS = new Set<string>(
-  PARK_SERVICE_DEFINITIONS.map(([serviceId]) => serviceId),
-);
 
 interface ParkServiceTicketRow {
   organization_id: string;
@@ -90,7 +80,7 @@ export function getParkServiceStatisticsFromRepository(
   const configuredNames = new Map(
     store.listParkServices(park.id).map((service) => [service.id, service.name]),
   );
-  const serviceDefinitions = PARK_SERVICE_DEFINITIONS.map(([serviceId, defaultName]) => ({
+  const serviceDefinitions = PARK_REQUEST_SERVICE_DEFINITIONS.map(([serviceId, defaultName]) => ({
     serviceId,
     name: configuredNames.get(serviceId) || defaultName,
   }));

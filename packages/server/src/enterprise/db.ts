@@ -156,6 +156,7 @@ export type {
   TicketHistoryEntry,
   TicketView,
 } from '../modules/park_services/index.js';
+export { PARK_SERVICE_IDS } from '../modules/park_services/index.js';
 
 const DATA_DIR =
   process.env.OTTO_ENTERPRISE_DIR ||
@@ -662,22 +663,6 @@ export type SmsChallengeVerifyResult =
 // Park tenants, organization membership and service specialists
 // ============================================================
 
-const DEFAULT_PARK_SERVICES = [
-  ['renovation', '装修管理'],
-  ['parking', '停车办理'],
-  ['network-phone', '网络与固话'],
-  ['meeting-room', '会议室预约'],
-  ['electric-card', '电卡服务'],
-  ['repair', '物业报修'],
-  ['vehicle-visit', '车辆与访客'],
-  ['announcement', '园区公告'],
-  ['satisfaction', '满意度调查'],
-] as const;
-
-export const PARK_SERVICE_IDS = new Set<string>(
-  DEFAULT_PARK_SERVICES.map(([serviceId]) => serviceId),
-);
-
 export const {
   createPark,
   createParkAsPlatform,
@@ -750,7 +735,6 @@ export const {
   inviteValidityMs: ORGANIZATION_INVITE_VALIDITY_MS,
   inviteAlphabet: ORGANIZATION_INVITE_ALPHABET,
   inviteCodeRawLength: INVITE_CODE_RAW_LENGTH,
-  defaultServices: DEFAULT_PARK_SERVICES.map(([id, name]) => ({ id, name })),
   audit: logAudit,
 });
 

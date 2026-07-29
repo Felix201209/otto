@@ -6,6 +6,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import * as db from './db.js';
 import type { RepairNotificationSender } from '../modules/integration_adapters/index.js';
+import { isParkRequestServiceId } from '../modules/park_services/index.js';
 
 interface TicketRouteDeps {
   path: string;
@@ -122,15 +123,11 @@ export async function handleTicketRoute({
       sendJSON(res, 400, { error: '工单标题或描述过长' });
       return true;
     }
-    const parkRequestIds = new Set([
-      'renovation', 'parking', 'network-phone', 'meeting-room',
-      'electric-card', 'repair', 'vehicle-visit',
-    ]);
-    if (!parkRequestIds.has(serviceId) && serviceId !== 'it') {
+    if (!isParkRequestServiceId(serviceId) && serviceId !== 'it') {
       sendJSON(res, 400, { error: '园区服务类型不正确' });
       return true;
     }
-    const isParkRequest = parkRequestIds.has(serviceId);
+    const isParkRequest = isParkRequestServiceId(serviceId);
     const ticketPark = isParkRequest
       ? db.getParkForOrganization(account.organizationId)
       : null;

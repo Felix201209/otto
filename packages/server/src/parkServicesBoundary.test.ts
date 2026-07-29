@@ -11,6 +11,7 @@ import { PRODUCT_MODULES } from './productModules.js';
 const sourceRoot = path.resolve(import.meta.dirname);
 const moduleDir = path.join(sourceRoot, 'modules', 'park_services');
 const databaseFacadePath = path.join(sourceRoot, 'enterprise', 'db.ts');
+const ticketRoutesPath = path.join(sourceRoot, 'enterprise', 'ticketRoutes.ts');
 
 describe('park services module boundary', () => {
   it('publishes lifecycle, membership, publications, resources, statistics, tickets, and service configuration through one entrypoint', () => {
@@ -80,6 +81,11 @@ describe('park services module boundary', () => {
     expect(parkServices.removeParkServiceSpecialistInRepository).toBeTypeOf(
       'function',
     );
+    expect(parkServices.PARK_SERVICE_CATALOG).toHaveLength(9);
+    expect(parkServices.PARK_REQUEST_SERVICE_DEFINITIONS).toHaveLength(7);
+    expect(parkServices.isParkServiceId('announcement')).toBe(true);
+    expect(parkServices.isParkRequestServiceId('repair')).toBe(true);
+    expect(parkServices.isParkRequestServiceId('announcement')).toBe(false);
   });
 
   it('matches the stable product registry ownership and dependencies', () => {
@@ -339,5 +345,11 @@ describe('park services module boundary', () => {
     expect(databaseFacade).not.toContain(
       'UPDATE it_tickets SET response_type',
     );
+    expect(databaseFacade).not.toContain('DEFAULT_PARK_SERVICES');
+    expect(databaseFacade).not.toContain('defaultServices:');
+
+    const ticketRoutes = fs.readFileSync(ticketRoutesPath, 'utf8');
+    expect(ticketRoutes).toContain('isParkRequestServiceId');
+    expect(ticketRoutes).not.toContain('const parkRequestIds = new Set');
   });
 });

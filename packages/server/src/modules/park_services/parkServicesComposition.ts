@@ -4,7 +4,6 @@
 
 import type { Database } from '../data_platform/index.js';
 import { createParkLifecycleFacade } from './parkLifecycleFacade.js';
-import type { ParkServiceSeed } from './parkLifecycleTypes.js';
 import { createParkMembershipFacade } from './parkMembershipFacade.js';
 import {
   listParkTenantOrganizationsFromRepository,
@@ -12,6 +11,10 @@ import {
 } from './parkMembershipRepository.js';
 import { createParkPublicationFacade } from './parkPublicationFacade.js';
 import { createParkResourceFacade } from './parkResourceFacade.js';
+import {
+  DEFAULT_PARK_SERVICES,
+  isParkRequestServiceId,
+} from './parkServiceCatalog.js';
 import { createParkServiceConfigurationFacade } from './parkServiceConfigurationFacade.js';
 import { createParkStatisticsFacade } from './parkStatisticsFacade.js';
 import type { ParkStatisticsOrganization } from './parkStatisticsRepository.js';
@@ -49,7 +52,6 @@ export interface ParkServicesCompositionOptions<
   inviteValidityMs: number;
   inviteAlphabet: string;
   inviteCodeRawLength: number;
-  defaultServices: readonly ParkServiceSeed[];
   audit(
     event: string,
     employeeId: string | null,
@@ -80,7 +82,7 @@ export function createParkServicesComposition<
     createParkId: () => `park_${options.createUuid()}`,
     createDefaultSlug: () => `park-${options.createRandomHex(5)}`,
     createInviteSecret: () => options.createRandomHex(32),
-    defaultServices: options.defaultServices,
+    defaultServices: DEFAULT_PARK_SERVICES,
   });
   const getPark = lifecycle.getPark;
   const getParkForOrganization = lifecycle.getParkForOrganization;
@@ -163,8 +165,7 @@ export function createParkServicesComposition<
         tags.every((tag) => account.tags.includes(tag)),
       ),
     normalizeTags: options.normalizeTags,
-    isParkServiceId: (serviceId) =>
-      options.defaultServices.some((service) => service.id === serviceId),
+    isParkServiceId: isParkRequestServiceId,
     createTicketId: () => `ticket_${options.createUuid()}`,
     createTicketEventId: () => `ticket_event_${options.createUuid()}`,
     createTicketNotificationId: () => `ticket_notice_${options.createUuid()}`,

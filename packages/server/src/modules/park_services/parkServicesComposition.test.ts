@@ -91,10 +91,6 @@ describe('park services composition', () => {
       inviteValidityMs: 60_000,
       inviteAlphabet: 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789',
       inviteCodeRawLength: 12,
-      defaultServices: [
-        { id: 'repair', name: 'Repair' },
-        { id: 'meeting-room', name: 'Meeting Room' },
-      ],
       audit: () => undefined,
       now: () => new Date('2026-07-29T00:00:00.000Z'),
     });
@@ -109,7 +105,23 @@ describe('park services composition', () => {
         name: 'Technology Park',
         adminOrganizationId: 'org-admin',
       });
-      expect(parkServices.listParkServices(park.id)).toHaveLength(2);
+      const serviceIds = parkServices
+        .listParkServices(park.id)
+        .map(({ id }) => id);
+      expect(serviceIds).toHaveLength(9);
+      expect(serviceIds).toEqual(
+        expect.arrayContaining([
+          'renovation',
+          'parking',
+          'network-phone',
+          'meeting-room',
+          'electric-card',
+          'repair',
+          'vehicle-visit',
+          'announcement',
+          'satisfaction',
+        ]),
+      );
       expect(parkServices.createTicket).toBeTypeOf('function');
       expect(parkServices.createParkPublication).toBeTypeOf('function');
       expect(parkServices.createParkDataStatisticsTask).toBeTypeOf('function');
