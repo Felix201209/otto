@@ -499,6 +499,8 @@ describe('受保护 vs 公开路由边界', () => {
       'license_enforcement_v1',
       'encrypted_telemetry_queue_v1',
       'diagnostic_bundle_v1',
+      'data_protection_v1',
+      'encrypted_attachment_storage_v1',
     ]));
     expect(body.uptime).toEqual(expect.any(Number));
   });
@@ -524,6 +526,18 @@ describe('受保护 vs 公开路由边界', () => {
     await expect(status.json()).resolves.toMatchObject({
       license: { status: 'missing', enforce: true },
       dataBoundary: { includesUserMessages: false, includesFiles: false, includesMeetingAudio: false },
+      dataProtection: { enabled: true, retentionDays: 30, minimumRetained: 3 },
+    });
+
+    const backup = await fetch(
+      `${base}/enterprise/deployment/data-protection/backup`,
+      { method: 'POST', headers },
+    );
+    expect(backup.status).toBe(200);
+    await expect(backup.json()).resolves.toMatchObject({
+      lastError: null,
+      backupCount: 1,
+      latestSchemaVersion: 14,
     });
 
     const telemetry = await fetch(`${base}/enterprise/deployment/telemetry`, {
@@ -540,7 +554,7 @@ describe('受保护 vs 公开路由边界', () => {
       redactedSamplesIncluded: false,
       deployment: { license: { status: 'missing' } },
     });
-  });
+  }, 15_000);
 
   it('signed private deployment license reopens business routes and limits server-side modules', async () => {
     process.env.OTTO_LICENSE_ENFORCE = 'true';
@@ -1153,6 +1167,10 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('data-delete-id');
     expect(html).toContain('deleteAccountFromRow');
     expect(html).toContain('href="/enterprise/admin/platform"');
+    expect(html).toContain('id="telemetryEnabled"');
+    expect(html).toContain('/enterprise/deployment/telemetry');
+    expect(html).toContain('id="backupNow"');
+    expect(html).toContain('/enterprise/deployment/data-protection/backup');
     expect(html).toContain('多企业管理');
     expect(html).not.toContain(ADMIN_TOKEN);
   });

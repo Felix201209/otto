@@ -170,7 +170,7 @@ describe('旧账号会话迁移', () => {
     const db = await freshDb();
     expect(db.getDatabaseReadiness()).toEqual({
       ready: true,
-      schemaVersion: 13,
+      schemaVersion: 14,
     });
     const sessionColumns = db
       .getDB()
@@ -209,7 +209,7 @@ describe('数据库 readiness', () => {
     const db = await freshDb();
     expect(db.getDatabaseReadiness()).toEqual({
       ready: true,
-      schemaVersion: 13,
+      schemaVersion: 14,
     });
   });
 
@@ -251,7 +251,7 @@ describe('数据库 readiness', () => {
 
     vi.resetModules();
     const reopened: DbModule = await import('./db.js');
-    expect(reopened.getDatabaseReadiness()).toEqual({ ready: true, schemaVersion: 13 });
+    expect(reopened.getDatabaseReadiness()).toEqual({ ready: true, schemaVersion: 14 });
     const tableSql = (reopened.getDB().prepare(
       "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ticket_events'",
     ).get() as { sql: string }).sql;
@@ -309,7 +309,7 @@ describe('数据库 readiness', () => {
     try {
       expect(reopened.getDatabaseReadiness()).toEqual({
         ready: true,
-        schemaVersion: 13,
+        schemaVersion: 14,
       });
       const migrated = reopened.getTicketForAccount(
         legacyTicket.id,
@@ -386,7 +386,7 @@ describe('数据库 readiness', () => {
     try {
       expect(reopened.getDatabaseReadiness()).toEqual({
         ready: true,
-        schemaVersion: 13,
+        schemaVersion: 14,
       });
       const organizationColumns = reopened
         .getDB()
@@ -533,12 +533,12 @@ describe('数据库 readiness', () => {
     future.exec(`
       CREATE TABLE future_only (id TEXT PRIMARY KEY);
       INSERT INTO future_only (id) VALUES ('preserve-me');
-      PRAGMA user_version = 14;
+      PRAGMA user_version = 15;
     `);
     future.close();
 
     const db = await freshDb();
-    expect(() => db.getDB()).toThrow(/schema version 14.*current version 13/i);
+    expect(() => db.getDB()).toThrow(/schema version 15.*current version 14/i);
 
     const reopened = new Database(path.join(tmpDir, 'data.db'));
     try {
@@ -548,7 +548,7 @@ describe('数据库 readiness', () => {
             user_version: number;
           }
         ).user_version,
-      ).toBe(14);
+      ).toBe(15);
       expect(
         (reopened.prepare('SELECT id FROM future_only').get() as { id: string })
           .id,
@@ -1468,6 +1468,20 @@ describe('企业成员直聊', () => {
       }),
     ]);
     const attachmentId = message.attachments[0]!.id;
+    const stored = db.getDB().prepare(
+      `SELECT content, storage_backend, storage_key
+       FROM direct_message_attachments WHERE id = ?`,
+    ).get(attachmentId) as {
+      content: Uint8Array;
+      storage_backend: string;
+      storage_key: string;
+    };
+    expect(stored.storage_backend).toBe('encrypted-filesystem');
+    expect(Buffer.from(stored.content)).toHaveLength(0);
+    const encryptedFile = fs.readFileSync(
+      path.join(tmpDir, 'attachments', ...stored.storage_key.split('/')),
+    );
+    expect(encryptedFile.includes(file)).toBe(false);
     expect(db.getDirectMessageAttachment({
       organizationId: db.DEFAULT_ORGANIZATION_ID,
       accountId: bob.id,

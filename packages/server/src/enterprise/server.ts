@@ -124,6 +124,7 @@ const ENTERPRISE_CAPABILITIES = [
   'multi_organization',
   'direct_messages',
   'direct_message_attachments_v1',
+  'encrypted_attachment_storage_v1',
   'atoa',
   'position_invites',
   'park_service_push',
@@ -142,6 +143,7 @@ const ENTERPRISE_CAPABILITIES = [
   'license_enforcement_v1',
   'encrypted_telemetry_queue_v1',
   'diagnostic_bundle_v1',
+  'data_protection_v1',
   'park_resources_v1',
   'park_meeting_slots_v1',
   'modular_update_push_v1',
@@ -601,6 +603,17 @@ export function startEnterpriseServer(
     onError: (error) =>
       console.error('[Otto Enterprise] private deployment runtime failed', error),
   });
-  server.once('close', stopPrivateDeploymentRuntime);
+  let stopDataProtectionRuntime: () => void;
+  try {
+    stopDataProtectionRuntime = db.startDataProtectionRuntime();
+  } catch (error) {
+    stopPrivateDeploymentRuntime();
+    server.close();
+    throw error;
+  }
+  server.once('close', () => {
+    stopPrivateDeploymentRuntime();
+    stopDataProtectionRuntime();
+  });
   return server;
 }

@@ -11,6 +11,10 @@ export interface DeploymentRoutePrincipal {
 
 export interface DeploymentRouteServices {
   getPrivateDeploymentStatus(): PrivateDeploymentStatus;
+  getDataProtectionStatus(): unknown;
+  runDataProtectionBackup(
+    reason?: 'scheduled' | 'manual' | 'startup',
+  ): Promise<unknown>;
   importDeploymentLicense(raw: unknown): DeploymentLicenseView;
   importDeploymentLicenseLease(raw: unknown): DeploymentLicenseView;
   updateTelemetrySettings(
@@ -67,7 +71,21 @@ export async function handleDeploymentRoute({
   sendJSON,
 }: DeploymentRouteDeps): Promise<boolean> {
   if (path === '/enterprise/deployment/status' && method === 'GET') {
-    sendJSON(res, 200, services.getPrivateDeploymentStatus());
+    sendJSON(res, 200, {
+      ...services.getPrivateDeploymentStatus(),
+      dataProtection: services.getDataProtectionStatus(),
+    });
+    return true;
+  }
+
+  if (path === '/enterprise/deployment/data-protection' && method === 'GET') {
+    sendJSON(res, 200, services.getDataProtectionStatus());
+    return true;
+  }
+
+  if (path === '/enterprise/deployment/data-protection/backup' && method === 'POST') {
+    const status = await services.runDataProtectionBackup('manual');
+    sendJSON(res, 200, status);
     return true;
   }
 

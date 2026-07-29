@@ -48,6 +48,8 @@ function createDatabase(): Database {
       mime_type TEXT NOT NULL,
       byte_size INTEGER NOT NULL CHECK(byte_size BETWEEN 1 AND 10485760),
       content BLOB NOT NULL,
+      storage_backend TEXT NOT NULL DEFAULT 'sqlite',
+      storage_key TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (message_id) REFERENCES direct_messages(id),
       FOREIGN KEY (organization_id) REFERENCES organizations(id)

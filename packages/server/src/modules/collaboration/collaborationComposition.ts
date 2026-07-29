@@ -2,7 +2,10 @@
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Database } from '../data_platform/index.js';
+import type {
+  Database,
+  EncryptedObjectStore,
+} from '../data_platform/index.js';
 import { createDirectMessageFacade } from './directMessageFacade.js';
 import { createAccountPresenceFacade } from './presenceFacade.js';
 
@@ -18,6 +21,7 @@ export interface CollaborationCompositionOptions<
   db(): Database;
   now(): number;
   createId(): string;
+  attachmentObjectStore?: EncryptedObjectStore;
   getAccount(accountId: string, organizationId: string): TAccount | null;
 }
 
@@ -32,6 +36,7 @@ export function createCollaborationComposition<
   const directMessages = createDirectMessageFacade({
     db: options.db,
     createId: options.createId,
+    attachmentObjectStore: options.attachmentObjectStore,
     getActiveAccountInOrganization(accountId, organizationId) {
       const account = getActiveAccount(accountId, organizationId);
       return account ? { id: account.id, name: account.name } : null;

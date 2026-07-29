@@ -8,7 +8,10 @@
 
 import {
   applyDatabaseSchemaContributors,
+  createDataProtectionService,
+  createEncryptedObjectStore,
   createDataPlatformComposition,
+  createFileEncryptionKeyProvider,
   Database,
 } from '../modules/data_platform/index.js';
 import { createAuthorizationComposition } from '../modules/authorization/index.js';
@@ -164,9 +167,17 @@ const DATA_DIR =
   path.join(os.homedir(), '.otto-enterprise');
 const DB_PATH = path.join(DATA_DIR, 'data.db');
 const ACCOUNT_SYNC_KEY_PATH = path.join(DATA_DIR, 'account-sync.key');
+const ATTACHMENT_STORAGE_DIR =
+  process.env.OTTO_ATTACHMENT_STORAGE_DIR || path.join(DATA_DIR, 'attachments');
+const ATTACHMENT_STORAGE_KEY_PATH = path.join(
+  DATA_DIR,
+  'attachment-storage.key',
+);
+const BACKUP_STORAGE_DIR =
+  process.env.OTTO_BACKUP_DIR || path.join(DATA_DIR, 'backups');
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
-export const ENTERPRISE_SCHEMA_VERSION = 13;
+export const ENTERPRISE_SCHEMA_VERSION = 14;
 export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
@@ -241,14 +252,55 @@ const dataPlatform = createDataPlatformComposition({
   },
 });
 const accountSyncKeyProvider = dataPlatform.encryptionKeyProvider;
+const attachmentStorageKeyProvider = createFileEncryptionKeyProvider({
+  keyPath: ATTACHMENT_STORAGE_KEY_PATH,
+  keyBytes: 32,
+  invalidKeyMessage: 'attachment storage encryption key is invalid',
+});
+const attachmentObjectStore = createEncryptedObjectStore({
+  root: ATTACHMENT_STORAGE_DIR,
+  keyProvider: attachmentStorageKeyProvider,
+});
+const dataProtection = createDataProtectionService({
+  dataDirectory: DATA_DIR,
+  databasePath: DB_PATH,
+  schemaVersion: ENTERPRISE_SCHEMA_VERSION,
+  accountSyncKeyPath: ACCOUNT_SYNC_KEY_PATH,
+  attachmentKeyPath: ATTACHMENT_STORAGE_KEY_PATH,
+  attachmentDirectory: ATTACHMENT_STORAGE_DIR,
+  attachmentObjectStore,
+  getDatabase: dataPlatform.getDatabase,
+  backupDirectory: BACKUP_STORAGE_DIR,
+  replicaDirectory: process.env.OTTO_BACKUP_REPLICA_DIR?.trim() || null,
+  encryptionKey: process.env.OTTO_BACKUP_ENCRYPTION_KEY,
+  encryptionKeyPath: process.env.OTTO_BACKUP_ENCRYPTION_KEY_FILE,
+  intervalHours: Number(process.env.OTTO_BACKUP_INTERVAL_HOURS || 24),
+  retentionDays: Number(process.env.OTTO_BACKUP_RETENTION_DAYS || 30),
+  minimumRetained: Number(process.env.OTTO_BACKUP_MINIMUM_RETAINED || 3),
+  minimumFreeBytes:
+    Number(process.env.OTTO_DISK_MIN_FREE_MB || 2048) * 1024 * 1024,
+  appVersion: () => process.env.OTTO_APP_VERSION?.trim() || 'development',
+  buildCommit: () => process.env.OTTO_BUILD_COMMIT?.trim() || 'unknown',
+});
 
 /** 释放当前企业数据库连接；服务关闭或隔离测试清理时调用。 */
-export const closeEnterpriseDatabase = dataPlatform.closeDatabase;
+export function closeEnterpriseDatabase(): void {
+  try {
+    dataPlatform.closeDatabase();
+  } finally {
+    attachmentStorageKeyProvider.clear();
+  }
+}
 
 export const getDB = dataPlatform.getDatabase;
 
 /** 执行真实读查询，供 HTTP readiness 判断数据库与 schema 是否可用。 */
 export const getDatabaseReadiness = dataPlatform.getReadiness;
+
+export const getDataProtectionStatus = dataProtection.getStatus;
+export const runDataProtectionBackup = dataProtection.runBackup;
+export const sweepOrphanAttachments = dataProtection.sweepOrphanAttachments;
+export const startDataProtectionRuntime = dataProtection.start;
 
 // ============================================================
 // Organizations and time-boxed registration invites
@@ -657,6 +709,7 @@ export const {
   db: getDB,
   now: Date.now,
   createId: randomUUID,
+  attachmentObjectStore,
   getAccount,
 });
 

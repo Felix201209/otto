@@ -93,6 +93,12 @@ describe('authorization module boundary', () => {
     expect(authorization.isMemberRoute('/enterprise/messages/member-1')).toBe(true);
     expect(authorization.isMemberRoute('/enterprise/account-sync')).toBe(true);
     expect(authorization.isLicenseMaintenanceRoute('/enterprise/account-sync')).toBe(true);
+    expect(authorization.isAdminRoute('/enterprise/deployment/data-protection')).toBe(true);
+    expect(
+      authorization.isLicenseMaintenanceRoute(
+        '/enterprise/deployment/data-protection/backup',
+      ),
+    ).toBe(true);
     expect(authorization.isLicenseMaintenanceRoute('/enterprise/auth/login')).toBe(true);
     expect(authorization.isLicenseMaintenanceRoute('/enterprise/messages/member-1')).toBe(false);
   });

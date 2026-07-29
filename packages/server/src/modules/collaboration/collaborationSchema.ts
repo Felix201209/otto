@@ -41,6 +41,8 @@ export const COLLABORATION_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor = {
         mime_type TEXT NOT NULL,
         byte_size INTEGER NOT NULL CHECK(byte_size BETWEEN 1 AND 10485760),
         content BLOB NOT NULL,
+        storage_backend TEXT NOT NULL DEFAULT 'sqlite',
+        storage_key TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         FOREIGN KEY (message_id) REFERENCES direct_messages(id) ON DELETE CASCADE,
         FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
@@ -57,6 +59,28 @@ export const COLLABORATION_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor = {
         );
       CREATE INDEX IF NOT EXISTS idx_direct_message_attachments_message
         ON direct_message_attachments(message_id, ordinal);
+    `);
+
+    const attachmentColumns = new Set(
+      (
+        database
+          .prepare('PRAGMA table_info(direct_message_attachments)')
+          .all() as Array<{ name: string }>
+      ).map((column) => column.name),
+    );
+    if (!attachmentColumns.has('storage_backend')) {
+      database.exec(
+        "ALTER TABLE direct_message_attachments ADD COLUMN storage_backend TEXT NOT NULL DEFAULT 'sqlite'",
+      );
+    }
+    if (!attachmentColumns.has('storage_key')) {
+      database.exec(
+        'ALTER TABLE direct_message_attachments ADD COLUMN storage_key TEXT',
+      );
+    }
+    database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_direct_message_attachments_storage
+        ON direct_message_attachments(storage_backend, storage_key);
     `);
   },
 };

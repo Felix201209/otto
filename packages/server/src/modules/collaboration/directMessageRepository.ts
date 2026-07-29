@@ -5,7 +5,10 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
-import type { Database } from '../data_platform/index.js';
+import type {
+  Database,
+  EncryptedObjectStore,
+} from '../data_platform/index.js';
 
 export interface CollaborationActiveAccount {
   id: string;
@@ -15,6 +18,7 @@ export interface CollaborationActiveAccount {
 export interface DirectMessageRepositoryStore {
   db(): Database;
   createId(): string;
+  attachmentObjectStore?: EncryptedObjectStore;
   getActiveAccountInOrganization(
     accountId: string,
     organizationId: string,
@@ -106,6 +110,8 @@ interface DirectMessageAttachmentMessageRow extends DirectMessageAttachmentRow {
 
 interface DirectMessageAttachmentContentRow extends DirectMessageAttachmentRow {
   content: Uint8Array;
+  storage_backend: string;
+  storage_key: string | null;
 }
 
 interface NormalizedDirectMessageAttachment {
@@ -313,6 +319,7 @@ export function sendDirectMessageInRepository(
   if (!recipient) throw new Error('接收成员不存在或已停用');
   const id = store.createId();
   const database = store.db();
+  const storedObjectKeys: string[] = [];
   database.exec('BEGIN IMMEDIATE');
   try {
     database
@@ -324,10 +331,17 @@ export function sendDirectMessageInRepository(
       .run(id, organizationId, senderAccountId, recipientAccountId, content);
     const insertAttachment = database.prepare(
       `INSERT INTO direct_message_attachments
-      (id, message_id, organization_id, ordinal, file_name, mime_type, byte_size, content)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, message_id, organization_id, ordinal, file_name, mime_type, byte_size,
+       content, storage_backend, storage_key)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     attachments.forEach((attachment, index) => {
+      const stored = store.attachmentObjectStore?.put({
+        namespace: organizationId,
+        objectId: attachment.id,
+        content: attachment.content,
+      });
+      if (stored) storedObjectKeys.push(stored.key);
       insertAttachment.run(
         attachment.id,
         id,
@@ -336,7 +350,9 @@ export function sendDirectMessageInRepository(
         attachment.fileName,
         attachment.mimeType,
         attachment.size,
-        attachment.content,
+        stored ? Buffer.alloc(0) : attachment.content,
+        stored?.backend ?? 'sqlite',
+        stored?.key ?? null,
       );
     });
     database.exec('COMMIT');
@@ -345,6 +361,13 @@ export function sendDirectMessageInRepository(
       database.exec('ROLLBACK');
     } catch {
       /* preserve original error */
+    }
+    for (const key of storedObjectKeys) {
+      try {
+        store.attachmentObjectStore?.delete(key);
+      } catch {
+        // A later orphan sweep removes an object that could not be cleaned up.
+      }
     }
     throw error;
   }
@@ -428,7 +451,8 @@ export function getDirectMessageAttachmentFromRepository(
   const row = store
     .db()
     .prepare(
-      'SELECT a.id, a.file_name, a.mime_type, a.byte_size, a.content ' +
+      'SELECT a.id, a.file_name, a.mime_type, a.byte_size, a.content, ' +
+        'a.storage_backend, a.storage_key ' +
         'FROM direct_message_attachments a ' +
         'JOIN direct_messages m ON m.id = a.message_id AND m.organization_id = a.organization_id ' +
         'WHERE a.id = ? AND a.organization_id = ? ' +
@@ -437,12 +461,26 @@ export function getDirectMessageAttachmentFromRepository(
     .get(attachmentId, organizationId, accountId, accountId) as
     DirectMessageAttachmentContentRow | undefined;
   if (!row) throw new Error('附件不存在或无权访问');
+  let content: Buffer;
+  if (row.storage_backend === 'encrypted-filesystem') {
+    if (!row.storage_key || !store.attachmentObjectStore) {
+      throw new Error('attachment object storage is unavailable');
+    }
+    content = store.attachmentObjectStore.read(row.storage_key);
+  } else if (row.storage_backend === 'sqlite') {
+    content = Buffer.from(row.content);
+  } else {
+    throw new Error('attachment storage backend is unsupported');
+  }
+  if (content.length !== Number(row.byte_size)) {
+    throw new Error('attachment content size mismatch');
+  }
   return {
     id: row.id,
     fileName: row.file_name,
     mimeType: row.mime_type,
     size: Number(row.byte_size),
-    data: Buffer.from(row.content).toString('base64'),
+    data: content.toString('base64'),
   };
 }
 
