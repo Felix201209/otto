@@ -15,6 +15,9 @@ const databaseFacadePath = path.join(sourceRoot, 'enterprise', 'db.ts');
 describe('park services module boundary', () => {
   it('publishes lifecycle, membership, publications, resources, statistics, tickets, and service configuration through one entrypoint', () => {
     expect(parkServices.createParkLifecycleFacade).toBeTypeOf('function');
+    expect(parkServices.PARK_CORE_SCHEMA_CONTRIBUTOR).toMatchObject({
+      id: 'park_services_core',
+    });
     expect(parkServices.createParkInRepository).toBeTypeOf('function');
     expect(parkServices.createParkAsPlatformInRepository).toBeTypeOf(
       'function',
@@ -89,6 +92,25 @@ describe('park services module boundary', () => {
         ),
       );
     expect(offenders).toEqual([]);
+  });
+
+  it('keeps park core schema ownership in the park services module', () => {
+    const databaseFacade = fs.readFileSync(databaseFacadePath, 'utf8');
+    for (const table of [
+      'parks',
+      'park_invites',
+      'park_services',
+      'park_tenant_profiles',
+      'park_service_specialists',
+    ]) {
+      expect(databaseFacade).not.toContain(
+        `CREATE TABLE IF NOT EXISTS ${table}`,
+      );
+    }
+    expect(databaseFacade).not.toContain('idx_park_invites_active');
+    expect(databaseFacade).toMatch(
+      /createEnterpriseInviteSchemaContributor\(\{[\s\S]*?PARK_CORE_SCHEMA_CONTRIBUTOR,[\s\S]*?createCreditsSchemaContributor\(\{/,
+    );
   });
 
   it('removes legacy repositories and keeps owned write SQL behind facades', () => {

@@ -5,6 +5,7 @@
 export * from './parkLifecycleFacade.js';
 export * from './parkLifecycleRepository.js';
 export * from './parkLifecycleTypes.js';
+export * from './parkCoreSchema.js';
 export * from './parkMembershipFacade.js';
 export * from './parkMembershipRepository.js';
 export * from './parkMembershipTypes.js';
