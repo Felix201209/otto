@@ -134,6 +134,9 @@ describe('collaboration direct message kernel', () => {
          (id, organization_id, sender_account_id, recipient_account_id, content)
        VALUES (?, ?, ?, ?, ?)`,
     ).run('legacy-message', 'org-a', 'alice', 'bob', 'legacy private message');
+    database.prepare(
+      'UPDATE direct_messages SET created_at = ? WHERE id = ?',
+    ).run('2026-07-28 03:51:00', 'legacy-message');
     const key = Buffer.alloc(32, 7);
     const messages = createDirectMessageFacade(createStore(
       database,
@@ -149,11 +152,13 @@ describe('collaboration direct message kernel', () => {
       ).get('legacy-message') as Record<string, string>;
       expect(stored.content).toBe('[encrypted:v1]');
       expect(stored.content_ciphertext).not.toContain('legacy private message');
-      expect(messages.listDirectMessages({
+      const restored = messages.listDirectMessages({
         organizationId: 'org-a',
         accountId: 'alice',
         peerAccountId: 'bob',
-      })[0]?.content).toBe('legacy private message');
+      })[0];
+      expect(restored?.content).toBe('legacy private message');
+      expect(restored?.createdAt).toBe('2026-07-28T03:51:00.000Z');
     } finally {
       database.close();
     }

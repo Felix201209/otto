@@ -366,8 +366,18 @@ function formatSyncedAt(date: Date): string {
   })}`;
 }
 
+export function parseDirectMessageTimestamp(value: string): Date {
+  const trimmed = value.trim();
+  const normalized = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(
+    trimmed,
+  )
+    ? `${trimmed.replace(' ', 'T')}Z`
+    : trimmed;
+  return new Date(normalized);
+}
+
 function formatDirectMessageTime(value: string): string {
-  const date = new Date(value);
+  const date = parseDirectMessageTimestamp(value);
   if (Number.isNaN(date.getTime())) return '';
   return date.toLocaleString('zh-CN', {
     month: '2-digit',
@@ -771,7 +781,10 @@ function DirectMessagePanel({
     const transcript = messages.slice(-40).map((message) => {
       const speaker = message.senderAccountId === member.id ? member.name : myName;
       const createdAt = message.createdAt
-        ? new Date(message.createdAt).toLocaleString('zh-CN', { hour12: false })
+        ? parseDirectMessageTimestamp(message.createdAt).toLocaleString(
+          'zh-CN',
+          { hour12: false },
+        )
         : '';
       const files = (message.attachments || []).map((item) => item.fileName);
       const fileSummary = files.length > 0 ? ' [附件：' + files.join('、') + ']' : '';

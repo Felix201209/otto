@@ -105,6 +105,18 @@ interface DirectMessageRow {
   read_at: string | null;
 }
 
+function sqliteUtcTimestamp(value: string | null): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  const normalized = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(
+    trimmed,
+  )
+    ? `${trimmed.replace(' ', 'T')}Z`
+    : trimmed;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? value : date.toISOString();
+}
+
 const ATOA_REQUEST_CONTENT_PREFIX = 'OTTO_ATOA_REQUEST ';
 const ATOA_RESPONSE_CONTENT_PREFIX = 'OTTO_ATOA_RESPONSE ';
 
@@ -317,8 +329,8 @@ function toDirectMessageView(
     senderAccountId: row.sender_account_id,
     recipientAccountId: row.recipient_account_id,
     content: directMessageContentFromRepository(store, row),
-    createdAt: row.created_at,
-    readAt: row.read_at,
+    createdAt: sqliteUtcTimestamp(row.created_at) ?? row.created_at,
+    readAt: sqliteUtcTimestamp(row.read_at),
     attachments,
   };
 }

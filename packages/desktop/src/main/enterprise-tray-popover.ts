@@ -31,8 +31,14 @@ interface SizeLike {
   height: number;
 }
 
-function timestamp(value: string): number {
-  const parsed = Date.parse(value);
+export function parseEnterpriseMessageTimestamp(value: string): number {
+  const trimmed = value.trim();
+  const normalized = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(
+    trimmed,
+  )
+    ? `${trimmed.replace(' ', 'T')}Z`
+    : trimmed;
+  const parsed = Date.parse(normalized);
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
@@ -68,7 +74,7 @@ function avatarText(name: string): string {
 }
 
 function formatMessageTime(createdAt: string, now: number): string {
-  const created = timestamp(createdAt);
+  const created = parseEnterpriseMessageTimestamp(createdAt);
   if (!created) return '';
   const elapsed = Math.max(0, now - created);
   if (elapsed < 60_000) return '刚刚';
@@ -98,14 +104,19 @@ export function summarizeEnterpriseTrayContacts(
       continue;
     }
     current.count += 1;
-    if (timestamp(item.createdAt) >= timestamp(current.createdAt)) {
+    if (
+      parseEnterpriseMessageTimestamp(item.createdAt) >=
+      parseEnterpriseMessageTimestamp(current.createdAt)
+    ) {
       current.name = item.senderName.trim() || current.name;
       current.preview = normalizePreview(item.preview);
       current.createdAt = item.createdAt;
     }
   }
   return [...byAccount.values()].sort(
-    (left, right) => timestamp(right.createdAt) - timestamp(left.createdAt),
+    (left, right) =>
+      parseEnterpriseMessageTimestamp(right.createdAt) -
+      parseEnterpriseMessageTimestamp(left.createdAt),
   );
 }
 

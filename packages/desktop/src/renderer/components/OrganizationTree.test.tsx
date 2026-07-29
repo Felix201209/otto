@@ -14,7 +14,10 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProductWorkspaceSnapshot } from 'otto-server';
 import type { EnterpriseAccount, EnterpriseDirectMessage } from '../../preload/index.js';
-import { OrganizationTree } from './OrganizationTree.js';
+import {
+  OrganizationTree,
+  parseDirectMessageTimestamp,
+} from './OrganizationTree.js';
 
 const askLocalPeerOttoMock = vi.hoisted(() => vi.fn(async () => '本机 Otto 给出的建议。'));
 
@@ -132,6 +135,14 @@ function ensureDepartmentOpen(name: string): HTMLElement {
 }
 
 describe('OrganizationTree', () => {
+  it('treats SQLite chat timestamps without a timezone as UTC', () => {
+    expect(
+      parseDirectMessageTimestamp('2026-07-28 03:51:00').toISOString(),
+    ).toBe('2026-07-28T03:51:00.000Z');
+    expect(
+      parseDirectMessageTimestamp('2026-07-28T11:51:00+08:00').toISOString(),
+    ).toBe('2026-07-28T03:51:00.000Z');
+  });
   it('默认展示公司和一级部门，仍可手动收起整棵组织树', () => {
     render(<OrganizationTree workspace={workspace} />);
     const toggle = screen.getByRole('button', { name: '企业组织' });
