@@ -69,6 +69,9 @@ describe('identity_organization invitation kernel', () => {
     expect(identityOrganization.createOrganizationInviteFacade).toBeTypeOf(
       'function',
     );
+    expect(
+      identityOrganization.createEnterpriseInviteSchemaContributor,
+    ).toBeTypeOf('function');
     expect(identityOrganization.createDepartmentInviteFacade).toBeTypeOf(
       'function',
     );
@@ -270,6 +273,30 @@ describe('identity_organization invitation kernel', () => {
     );
     expect(databaseFacade).not.toContain(
       'UPDATE invite_codes SET used_count = used_count + 1',
+    );
+  });
+
+  it('keeps enterprise invite schema ownership in the identity module', () => {
+    const databaseFacade = fs.readFileSync(
+      path.join(enterpriseDir, 'db.ts'),
+      'utf8',
+    );
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS organization_invites',
+    );
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS invite_codes',
+    );
+    expect(databaseFacade).not.toContain('idx_organization_invites_active');
+    expect(databaseFacade).not.toContain(
+      "ensureTextColumn('organization_invites'",
+    );
+    expect(databaseFacade).not.toContain(
+      "ensureIntegerColumn('organization_invites'",
+    );
+    expect(databaseFacade).not.toMatch(/^\s*['"]invite_codes['"],\s*$/m);
+    expect(databaseFacade).toMatch(
+      /createAccountAuthSchemaContributor\(\{[\s\S]*?createEnterpriseInviteSchemaContributor\(\{[\s\S]*?createCreditsSchemaContributor\(\{/,
     );
   });
 

@@ -92,6 +92,7 @@ import {
   createAssignmentIdentityFacade,
   createAuthSessionFacade,
   createDepartmentInviteFacade,
+  createEnterpriseInviteSchemaContributor,
   createMemberDirectoryFacade,
   createMemberSchemaContributor,
   createSmsChallengeFacade,
@@ -389,37 +390,6 @@ function initSchema(d: Database): void {
       FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
     );
 
-    CREATE TABLE IF NOT EXISTS organization_invites (
-      id TEXT PRIMARY KEY,
-      organization_id TEXT NOT NULL,
-      nonce TEXT NOT NULL,
-      issued_at_ms INTEGER NOT NULL,
-      expires_at_ms INTEGER NOT NULL,
-      revoked_at_ms INTEGER,
-      created_by_account_id TEXT,
-      default_department TEXT,
-      department_id TEXT,
-      position_id TEXT,
-      position_title TEXT,
-      default_role TEXT,
-      max_uses INTEGER,
-      used_count INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS invite_codes (
-      code TEXT PRIMARY KEY,
-      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
-      department TEXT NOT NULL,
-      max_uses INTEGER DEFAULT 1,
-      used_count INTEGER DEFAULT 0,
-      created_by TEXT,
-      created_at TEXT DEFAULT (datetime('now')),
-      expires_at TEXT,
-      FOREIGN KEY (organization_id) REFERENCES organizations(id)
-    );
-
     CREATE TABLE IF NOT EXISTS it_tickets (
       id TEXT PRIMARY KEY,
       organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
@@ -643,8 +613,6 @@ function initSchema(d: Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_park_invites_active
       ON park_invites(park_id, expires_at_ms, revoked_at_ms);
-    CREATE INDEX IF NOT EXISTS idx_organization_invites_active
-      ON organization_invites(organization_id, expires_at_ms, revoked_at_ms);
     CREATE INDEX IF NOT EXISTS idx_ticket_deliveries_account ON ticket_deliveries(account_id, delivered_at);
     CREATE INDEX IF NOT EXISTS idx_ticket_notifications_ticket
       ON ticket_notifications(ticket_id, created_at);
@@ -675,6 +643,9 @@ function initSchema(d: Database): void {
   applyDatabaseSchemaContributors(d, [
     IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,
     createAccountAuthSchemaContributor({
+      defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+    }),
+    createEnterpriseInviteSchemaContributor({
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
     }),
     createCreditsSchemaContributor({
@@ -721,7 +692,6 @@ function initSchema(d: Database): void {
     }
   };
   for (const table of [
-    'invite_codes',
     'it_tickets',
     'ticket_deliveries',
     'ticket_notifications',
@@ -788,32 +758,9 @@ function initSchema(d: Database): void {
       d.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
     }
   };
-  ensureTextColumn('organization_invites', 'default_department');
-  ensureTextColumn('organization_invites', 'department_id');
-  ensureTextColumn('organization_invites', 'position_id');
-  ensureTextColumn('organization_invites', 'position_title');
-  ensureTextColumn('organization_invites', 'default_role');
   ensureTextColumn('it_tickets', 'park_id');
   backfillEnterpriseAccountEmployees(d);
   backfillLegacyOrganizationStructure(d);
-  const ensureIntegerColumn = (
-    table: string,
-    column: string,
-    ddl: string,
-  ): void => {
-    const columns = d.prepare(`PRAGMA table_info(${table})`).all() as Array<{
-      name: string;
-    }>;
-    if (!columns.some((item) => item.name === column)) {
-      d.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
-    }
-  };
-  ensureIntegerColumn('organization_invites', 'max_uses', 'INTEGER');
-  ensureIntegerColumn(
-    'organization_invites',
-    'used_count',
-    'INTEGER NOT NULL DEFAULT 0',
-  );
   d.exec(`
     CREATE INDEX IF NOT EXISTS idx_ticket_notifications_recipient
       ON ticket_notifications(recipient_account_id, created_at);
