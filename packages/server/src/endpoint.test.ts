@@ -65,7 +65,9 @@ describe('endpoint write/read round-trip', () => {
     expect(
       JSON.parse(fs.readFileSync(ep.endpointFilePath(), 'utf8')).controlToken,
     ).toBe(controlToken);
-    expect(fs.statSync(ep.endpointFilePath()).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') {
+      expect(fs.statSync(ep.endpointFilePath()).mode & 0o777).toBe(0o600);
+    }
   });
 
   it('endpointFilePath 指向临时 HOME', async () => {

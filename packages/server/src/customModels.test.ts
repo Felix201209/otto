@@ -104,8 +104,10 @@ describe('loadCustomModels', () => {
     expect(secretPath).toBeTruthy();
     expect(fs.readFileSync(secretPath!, 'utf-8').trim()).toBe('legacy-plain-secret');
     expect(fs.readFileSync(configPath, 'utf-8')).not.toContain('legacy-plain-secret');
-    expect(fs.statSync(secretPath!).mode & 0o777).toBe(0o600);
-    expect(fs.statSync(configPath).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') {
+      expect(fs.statSync(secretPath!).mode & 0o777).toBe(0o600);
+      expect(fs.statSync(configPath).mode & 0o777).toBe(0o600);
+    }
     expect(loadPreferredModel()).toBe(
       'custom:openai:gpt-4o@https://api.openai.com/v1',
     );
@@ -118,7 +120,9 @@ describe('loadCustomModels', () => {
     fs.chmodSync(customModelsFilePath(), 0o666);
 
     expect(loadCustomModels()).toHaveLength(1);
-    expect(fs.statSync(customModelsFilePath()).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') {
+      expect(fs.statSync(customModelsFilePath()).mode & 0o777).toBe(0o600);
+    }
   });
 
   it('带注释的 JSON 被 stripJsonCommentsLoose 救活', () => {
