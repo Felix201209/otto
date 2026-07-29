@@ -28,7 +28,6 @@
 
 import {
   AuthType,
-  ApprovalMode,
   Config,
   MESSAGE_ROLES,
   SceneType,

@@ -172,6 +172,10 @@ describe('Service Specialists', () => {
     });
     const list = park.getSpecialists(p.id);
     expect(list).toHaveLength(2);
+    expect(list).toContainEqual(expect.objectContaining({
+      userId: s2.userId,
+      serviceTypes: ['安保'],
+    }));
 
     expect(park.removeSpecialist(p.id, 'user-1')).toBe(true);
     expect(park.getSpecialists(p.id)).toHaveLength(1);
@@ -303,6 +307,7 @@ describe('Service Request Routing', () => {
 
     const pending = park.getParkServiceRequests(p.id, 'pending');
     expect(pending).toHaveLength(1);
+    expect(pending[0]!.id).toBe(req2.id);
     expect(pending[0]!.enterpriseId).toBe('ent-2');
 
     const resolved = park.getParkServiceRequests(p.id, 'resolved');

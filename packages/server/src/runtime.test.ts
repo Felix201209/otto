@@ -256,7 +256,7 @@ describe('CoreSessionRuntime tool-free 安全边界', () => {
       modelName: model,
     }));
     async function* failingStream(): AsyncGenerator<unknown> {
-      throw new TypeError('fetch failed');
+      yield await Promise.reject(new TypeError('fetch failed'));
     }
     const config = {
       initialize: async () => undefined,
@@ -295,7 +295,7 @@ describe('CoreSessionRuntime tool-free 安全边界', () => {
 describe('CoreSessionRuntime 流式落库与收口对账', () => {
   it('模型请求在首个 token 前失败时返回可读错误，不残留空白 assistant', async () => {
     async function* stream(): AsyncGenerator<unknown> {
-      throw new TypeError('Failed to parse URL from /v1/chat/stream');
+      yield await Promise.reject(new TypeError('Failed to parse URL from /v1/chat/stream'));
     }
     const store = new InMemorySessionStore();
     const session = store.createSession({ title: '个人模型' });
@@ -332,7 +332,7 @@ describe('CoreSessionRuntime 流式落库与收口对账', () => {
 
   it('模型网络失败且没有备用模型时返回可操作提示，不暴露 fetch failed', async () => {
     async function* stream(): AsyncGenerator<unknown> {
-      throw new TypeError('fetch failed');
+      yield await Promise.reject(new TypeError('fetch failed'));
     }
     const store = new InMemorySessionStore();
     const session = store.createSession({ title: 'DeepSeek 连接失败' });
@@ -384,7 +384,7 @@ describe('CoreSessionRuntime 流式落库与收口对账', () => {
       return { success: true, modelName: model };
     });
     async function* brokenStream(): AsyncGenerator<unknown> {
-      throw new TypeError('fetch failed');
+      yield await Promise.reject(new TypeError('fetch failed'));
     }
     async function* fallbackStream(): AsyncGenerator<unknown> {
       yield chunk('FALLBACK_OK', 'STOP');

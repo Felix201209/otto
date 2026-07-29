@@ -7,12 +7,7 @@
 
 import type { ServerResponse } from 'node:http';
 
-function renderLocalAgentPage(origin: string): string {
-  const safeOrigin = origin.replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;',
-    '"': '&quot;', "'": '&#39;',
-  })[c]!);
-
+function renderLocalAgentPage(): string {
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -202,7 +197,6 @@ function renderLocalAgentPage(origin: string): string {
 }
 
 export function sendLocalAgentPage(res: ServerResponse): void {
-  const origin = 'https://59.110.154.44:7777';
   res.writeHead(200, {
     'Content-Type': 'text/html; charset=utf-8',
     'Cache-Control': 'no-store',
@@ -213,5 +207,5 @@ export function sendLocalAgentPage(res: ServerResponse): void {
     'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
     'Cross-Origin-Opener-Policy': 'same-origin',
   });
-  res.end(renderLocalAgentPage(origin));
+  res.end(renderLocalAgentPage());
 }
