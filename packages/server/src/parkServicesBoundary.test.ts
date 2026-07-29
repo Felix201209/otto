@@ -12,6 +12,7 @@ const sourceRoot = path.resolve(import.meta.dirname);
 const moduleDir = path.join(sourceRoot, 'modules', 'park_services');
 const databaseFacadePath = path.join(sourceRoot, 'enterprise', 'db.ts');
 const ticketRoutesPath = path.join(sourceRoot, 'enterprise', 'ticketRoutes.ts');
+const simpleParkAdapterPath = path.join(sourceRoot, 'enterprise', 'park.ts');
 
 describe('park services module boundary', () => {
   it('publishes lifecycle, membership, publications, resources, statistics, tickets, and service configuration through one entrypoint', () => {
@@ -86,6 +87,9 @@ describe('park services module boundary', () => {
     expect(parkServices.isParkServiceId('announcement')).toBe(true);
     expect(parkServices.isParkRequestServiceId('repair')).toBe(true);
     expect(parkServices.isParkRequestServiceId('announcement')).toBe(false);
+    expect(parkServices.createSimpleParkCompatibilityFacade).toBeTypeOf(
+      'function',
+    );
   });
 
   it('matches the stable product registry ownership and dependencies', () => {
@@ -115,6 +119,18 @@ describe('park services module boundary', () => {
         ),
       );
     expect(offenders).toEqual([]);
+  });
+
+  it('keeps the original simple park implementation behind a thin enterprise adapter', () => {
+    const adapter = fs.readFileSync(simpleParkAdapterPath, 'utf8');
+    expect(adapter).toContain('createSimpleParkCompatibilityFacade');
+    expect(adapter).not.toMatch(/\b(?:SELECT|INSERT|UPDATE|DELETE)\b/i);
+    expect(adapter).not.toContain('simple_park_');
+    expect(
+      fs.existsSync(
+        path.join(moduleDir, 'simpleParkCompatibilityFacade.ts'),
+      ),
+    ).toBe(true);
   });
 
   it('keeps park core schema ownership in the park services module', () => {
