@@ -67,6 +67,7 @@ import {
   createAuditLogSchemaContributor,
   createCreditsFacade,
   createCreditsSchemaContributor,
+  createDeploymentSettingsRepository,
   exportDeploymentDiagnostics as exportDeploymentDiagnosticsFromRepository,
   getDeploymentId as getDeploymentIdFromRepository,
   getDeploymentLicense as getDeploymentLicenseFromRepository,
@@ -389,27 +390,11 @@ const organizationFeatureConfiguration = createOrganizationFeatureFacade({
   ) => logAudit(event, employeeId, detail, organizationId),
 });
 
-function settingValue(key: string): string | null {
-  const row = getDB()
-    .prepare('SELECT value FROM deployment_settings WHERE key = ?')
-    .get(key) as { value: string } | undefined;
-  return typeof row?.value === 'string' ? row.value : null;
-}
-
-function setSettingValue(key: string, value: string): void {
-  getDB()
-    .prepare(
-      `INSERT INTO deployment_settings (key, value, updated_at)
-     VALUES (?, ?, datetime('now'))
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-    )
-    .run(key, value);
-}
+const deploymentSettings = createDeploymentSettingsRepository(getDB);
 
 const deploymentStore = {
   db: getDB,
-  readSetting: settingValue,
-  writeSetting: setSettingValue,
+  ...deploymentSettings,
   defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
   licenseEnforcementEnabled: () => process.env.OTTO_LICENSE_ENFORCE === 'true',
   licenseSigningSecret: () => process.env.OTTO_LICENSE_SIGNING_SECRET || '',
@@ -446,8 +431,7 @@ export function updateModuleUpdateDescriptor(input: {
 }
 
 const moduleUpdateStore = {
-  readSetting: settingValue,
-  writeSetting: setSettingValue,
+  ...deploymentSettings,
   deploymentId: getDeploymentId,
   audit: (input: {
     event: string;

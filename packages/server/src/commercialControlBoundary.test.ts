@@ -23,6 +23,9 @@ const commercialControlImport = '../modules/commercial_control/index.js';
 describe('commercial_control module boundary', () => {
   it('publishes deployment and module-update capabilities from one public entrypoint', () => {
     expect(commercialControl.getDeploymentId).toBeTypeOf('function');
+    expect(commercialControl.createDeploymentSettingsRepository).toBeTypeOf(
+      'function',
+    );
     expect(commercialControl.createAuditLogFacade).toBeTypeOf('function');
     expect(commercialControl.createAuditLogSchemaContributor).toBeTypeOf(
       'function',
@@ -97,6 +100,15 @@ describe('commercial_control module boundary', () => {
     );
     expect(databaseFacade).not.toContain(
       'CREATE TABLE IF NOT EXISTS deployment_settings',
+    );
+    expect(databaseFacade).not.toContain(
+      'SELECT value FROM deployment_settings WHERE key = ?',
+    );
+    expect(databaseFacade).not.toContain(
+      'INSERT INTO deployment_settings (key, value, updated_at)',
+    );
+    expect(databaseFacade).toContain(
+      'createDeploymentSettingsRepository(getDB)',
     );
     expect(databaseFacade).not.toContain(
       'CREATE TABLE IF NOT EXISTS deployment_license',
