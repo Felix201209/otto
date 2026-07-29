@@ -118,6 +118,9 @@ describe('identity_organization invitation kernel', () => {
     expect(identityOrganization.backfillLegacyOrganizationStructure).toBeTypeOf(
       'function',
     );
+    expect(identityOrganization.backfillEnterpriseAccountEmployees).toBeTypeOf(
+      'function',
+    );
     expect(identityOrganization.createAssignmentIdentityFacade).toBeTypeOf(
       'function',
     );
@@ -250,6 +253,15 @@ describe('identity_organization invitation kernel', () => {
       'IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR',
     );
     expect(databaseFacade).toContain('backfillLegacyOrganizationStructure(d)');
+    expect(databaseFacade).toMatch(
+      /backfillEnterpriseAccountEmployees\(d\);[\s\S]*?backfillLegacyOrganizationStructure\(d\);/,
+    );
+    expect(databaseFacade).not.toContain(
+      'function backfillEnterpriseAccountEmployees',
+    );
+    expect(databaseFacade).not.toContain(
+      'SAVEPOINT backfill_enterprise_account_employees',
+    );
     expect(databaseFacade).not.toContain(
       'function backfillOrganizationStructure',
     );

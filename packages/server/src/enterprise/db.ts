@@ -90,6 +90,7 @@ import {
   type PrivateDeploymentStatus,
 } from '../modules/commercial_control/index.js';
 import {
+  backfillEnterpriseAccountEmployees,
   backfillLegacyOrganizationStructure,
   createAccountDirectoryFacade,
   createAccountAuthSchemaContributor,
@@ -109,10 +110,8 @@ import {
   createOrganizationStructureFacade,
   IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,
   IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR,
-  normalizeAssignmentName,
   normalizeOrganizationSlug,
   replaceAccountTagsInRepository,
-  stableAssignmentId,
   toOrganizationDirectoryView,
   assertAccountPassword as assertIdentityAccountPassword,
   hashIdentitySecret,
@@ -304,164 +303,6 @@ export const getDB = databaseLifecycle.getDatabase;
 
 /** 执行真实读查询，供 HTTP readiness 判断数据库与 schema 是否可用。 */
 export const getDatabaseReadiness = databaseLifecycle.getReadiness;
-
-/**
- * v4 之前的邀请码注册可能只创建了账号，或只把岗位写进 accounts。这里每次启动
- * 幂等对账，既修复已跑过早期 v4 的库，也不要求管理员手工重做员工档案。
- */
-function backfillEnterpriseAccountEmployees(d: Database): void {
-  interface MigrationAccountRow {
-    id: string;
-    organization_id: string;
-    employee_id: string | null;
-    name: string;
-    role: string | null;
-    department: string | null;
-    department_id: string | null;
-    position_id: string | null;
-    position_title: string | null;
-    status: 'active' | 'disabled';
-    created_at: string;
-  }
-  interface MigrationEmployeeRow {
-    id: string;
-    organization_id: string;
-  }
-
-  const accounts = d
-    .prepare(
-      `SELECT id, organization_id, employee_id, name, role, department, department_id,
-            position_id, position_title, status, created_at
-     FROM accounts
-     WHERE account_type = 'enterprise' AND deleted_at IS NULL`,
-    )
-    .all() as MigrationAccountRow[];
-  const findEmployee = d.prepare(
-    'SELECT id, organization_id FROM employees WHERE id = ?',
-  );
-  const insertEmployee = d.prepare(
-    `INSERT INTO employees
-       (id, organization_id, name, role, department, department_id, position_id,
-        position_title, status, onboarded_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
-  const bindAccount = d.prepare(
-    'UPDATE accounts SET employee_id = ? WHERE id = ? AND organization_id = ?',
-  );
-  const syncAccountAssignments = d.prepare(
-    `UPDATE accounts SET department_id = ?, position_id = ?
-     WHERE id = ? AND organization_id = ?`,
-  );
-  const syncEmployee = d.prepare(
-    `UPDATE employees
-     SET name = ?,
-         role = COALESCE(?, role),
-         department = COALESCE(?, department),
-         department_id = COALESCE(?, department_id),
-         position_id = COALESCE(?, position_id),
-         position_title = COALESCE(?, position_title)
-     WHERE id = ? AND organization_id = ?`,
-  );
-  const syncAccount = d.prepare(
-    `UPDATE accounts
-     SET role = COALESCE(role, (SELECT role FROM employees WHERE id = ?)),
-         department = COALESCE(department, (SELECT department FROM employees WHERE id = ?)),
-         department_id = COALESCE(
-           department_id,
-           (SELECT department_id FROM employees WHERE id = ?)
-         ),
-         position_id = COALESCE(position_id, (SELECT position_id FROM employees WHERE id = ?)),
-         position_title = COALESCE(
-           position_title,
-           (SELECT position_title FROM employees WHERE id = ?)
-         )
-     WHERE id = ? AND organization_id = ?`,
-  );
-
-  d.exec('SAVEPOINT backfill_enterprise_account_employees');
-  try {
-    for (const account of accounts) {
-      const departmentId =
-        account.department_id ??
-        (account.department
-          ? stableAssignmentId(
-              'dept',
-              account.organization_id,
-              normalizeAssignmentName(account.department),
-            )
-          : null);
-      const positionId =
-        account.position_id ??
-        (account.position_title
-          ? stableAssignmentId(
-              'pos',
-              account.organization_id,
-              departmentId,
-              normalizeAssignmentName(account.position_title),
-            )
-          : null);
-      if (
-        departmentId !== account.department_id ||
-        positionId !== account.position_id
-      ) {
-        syncAccountAssignments.run(
-          departmentId,
-          positionId,
-          account.id,
-          account.organization_id,
-        );
-        account.department_id = departmentId;
-        account.position_id = positionId;
-      }
-      const linked = account.employee_id
-        ? (findEmployee.get(account.employee_id) as
-            MigrationEmployeeRow | undefined)
-        : undefined;
-      let employeeId =
-        linked?.organization_id === account.organization_id ? linked.id : null;
-      if (!employeeId) {
-        employeeId = `emp_${randomUUID()}`;
-        insertEmployee.run(
-          employeeId,
-          account.organization_id,
-          account.name,
-          account.role,
-          account.department,
-          account.department_id,
-          account.position_id,
-          account.position_title,
-          account.status === 'active' ? 'active' : 'offboarded',
-          account.created_at,
-        );
-        bindAccount.run(employeeId, account.id, account.organization_id);
-      }
-      syncEmployee.run(
-        account.name,
-        account.role,
-        account.department,
-        account.department_id,
-        account.position_id,
-        account.position_title,
-        employeeId,
-        account.organization_id,
-      );
-      syncAccount.run(
-        employeeId,
-        employeeId,
-        employeeId,
-        employeeId,
-        employeeId,
-        account.id,
-        account.organization_id,
-      );
-    }
-    d.exec('RELEASE SAVEPOINT backfill_enterprise_account_employees');
-  } catch (error) {
-    d.exec('ROLLBACK TO SAVEPOINT backfill_enterprise_account_employees');
-    d.exec('RELEASE SAVEPOINT backfill_enterprise_account_employees');
-    throw error;
-  }
-}
 
 // ============================================================
 // Organizations and time-boxed registration invites
