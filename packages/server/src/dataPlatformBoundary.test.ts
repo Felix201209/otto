@@ -7,6 +7,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   applyDatabaseSchemaContributors,
+  createEnterpriseBackupFacade,
   createEnterpriseDatabaseLifecycle,
   createFileEncryptionKeyProvider,
   Database,
@@ -37,6 +38,7 @@ describe('data_platform storage kernel', () => {
     expect(createFileEncryptionKeyProvider).toBeTypeOf('function');
     expect(createEnterpriseDatabaseLifecycle).toBeTypeOf('function');
     expect(applyDatabaseSchemaContributors).toBeTypeOf('function');
+    expect(createEnterpriseBackupFacade).toBeTypeOf('function');
   });
 
   it('keeps the legacy sqlite path as an alias of the module implementation', () => {
@@ -116,5 +118,27 @@ describe('data_platform storage kernel', () => {
     expect(databaseFacade).toContain('initializeSchema: initSchema');
     expect(databaseFacade).not.toMatch(/\blet db:\s*Database/);
     expect(databaseFacade).not.toContain('new Database(DB_PATH)');
+  });
+
+  it('aggregates backups without moving domain queries into data_platform', () => {
+    const backupSource = fs.readFileSync(
+      path.join(moduleDirectory, 'enterpriseBackupFacade.ts'),
+      'utf8',
+    );
+    const databaseFacade = fs.readFileSync(
+      path.join(sourceRoot, 'enterprise', 'db.ts'),
+      'utf8',
+    );
+
+    expect(backupSource).not.toMatch(/\bSELECT\b|\bINSERT\b|\bUPDATE\b|\bDELETE\b/i);
+    expect(backupSource).not.toMatch(
+      /\b(?:task_logs|invite_codes|it_tickets|ticket_deliveries)\b/i,
+    );
+    expect(databaseFacade).toContain('createEnterpriseBackupFacade');
+    expect(databaseFacade).toContain('export const { exportAll }');
+    expect(databaseFacade).not.toContain('export function exportAll');
+    expect(databaseFacade).not.toMatch(
+      /SELECT \* FROM (?:employees|task_logs|invite_codes|it_tickets|ticket_deliveries)/,
+    );
   });
 });

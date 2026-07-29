@@ -265,3 +265,18 @@ export function offboardEmployeeInRepository(
   }
   return changed;
 }
+
+/** Includes offboarded employees so backups preserve historical ownership. */
+export function listEmployeesForBackup(
+  store: Pick<MemberRepositoryStore, 'db'>,
+  organizationId: string,
+): EmployeeRecord[] {
+  return store
+    .db()
+    .prepare(
+      `SELECT * FROM employees
+       WHERE organization_id = ?
+       ORDER BY onboarded_at`,
+    )
+    .all(organizationId) as EmployeeRecord[];
+}

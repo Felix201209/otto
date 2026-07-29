@@ -1056,3 +1056,33 @@ export function recordTicketNotification<TAccount extends ParkTicketAccount>(
       input.detail ?? null,
     );
 }
+
+interface ParkTicketBackupStore {
+  db(): Database;
+}
+
+export function listParkTicketsForBackup(
+  store: ParkTicketBackupStore,
+  organizationId: string,
+): Array<Record<string, unknown>> {
+  return store.db()
+    .prepare(
+      `SELECT * FROM it_tickets
+       WHERE organization_id = ?
+       ORDER BY created_at DESC`,
+    )
+    .all(organizationId) as Array<Record<string, unknown>>;
+}
+
+export function listTicketDeliveriesForBackup(
+  store: ParkTicketBackupStore,
+  organizationId: string,
+): Array<Record<string, unknown>> {
+  return store.db()
+    .prepare(
+      `SELECT * FROM ticket_deliveries
+       WHERE organization_id = ?
+       ORDER BY delivered_at DESC`,
+    )
+    .all(organizationId) as Array<Record<string, unknown>>;
+}

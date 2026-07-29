@@ -8,6 +8,7 @@
 
 import {
   applyDatabaseSchemaContributors,
+  createEnterpriseBackupFacade,
   createEnterpriseDatabaseLifecycle,
   createFileEncryptionKeyProvider,
   Database,
@@ -33,6 +34,7 @@ import {
   createWorklogSchemaContributor,
   createWorklogFacade,
   ESTIMATE,
+  listWorklogsForBackup,
   normalizeCostCNY,
   normalizeTokens,
   PERSONAL_INTELLIGENCE_SCHEMA_CONTRIBUTOR,
@@ -48,6 +50,8 @@ import {
   createParkStatisticsFacade,
   createParkTicketFacade,
   createParkTicketSchemaContributor,
+  listParkTicketsForBackup,
+  listTicketDeliveriesForBackup,
   migrateLegacyParkTicketEvents,
   PARK_CORE_SCHEMA_CONTRIBUTOR,
   PARK_STATISTICS_SCHEMA_CONTRIBUTOR,
@@ -112,6 +116,8 @@ import {
   IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,
   IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR,
   listAccountTagsInRepository,
+  listDepartmentInvitesForBackup,
+  listEmployeesForBackup,
   listOrganizationAccountTagsInRepository,
   normalizeAccountTags,
   normalizeOrganizationSlug,
@@ -1461,43 +1467,27 @@ export const {
 // ============================================================
 // Export all (for backup)
 // ============================================================
-export function exportAll(organizationId = DEFAULT_ORGANIZATION_ID) {
-  return {
-    // Full backup must include offboarded employees too, otherwise every
-    // offboarding silently erases historical employee records from the
-    // export — contradicting the "export ALL data" guarantee.
-    employees: getDB()
-      .prepare(
-        'SELECT * FROM employees WHERE organization_id = ? ORDER BY onboarded_at',
-      )
-      .all(organizationId),
-    taskLogs: getDB()
-      .prepare(
-        `SELECT * FROM task_logs WHERE organization_id = ?
-       ORDER BY created_at DESC LIMIT 1000`,
-      )
-      .all(organizationId),
-    knowledge: getKnowledge(undefined, undefined, organizationId),
-    inviteCodes: getDB()
-      .prepare('SELECT * FROM invite_codes WHERE organization_id = ?')
-      .all(organizationId),
-    auditLogs: getAuditLogs(200, organizationId),
-    // 账号导出不包含 password_hash / session token 摘要；备份可迁移组织信息，
-    // 但不能把登录凭证扩散到普通数据导出文件。
-    accounts: listAccounts(organizationId),
-    accountTags: listOrganizationAccountTagsInRepository(
-      accountTagStore,
-      organizationId,
-    ),
-    tickets: getDB()
-      .prepare(
-        `SELECT * FROM it_tickets WHERE organization_id = ? ORDER BY created_at DESC`,
-      )
-      .all(organizationId),
-    ticketDeliveries: getDB()
-      .prepare(
-        `SELECT * FROM ticket_deliveries WHERE organization_id = ? ORDER BY delivered_at DESC`,
-      )
-      .all(organizationId),
-  };
-}
+const backupDatabaseStore = { db: getDB };
+
+const enterpriseBackup = createEnterpriseBackupFacade({
+  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+  listEmployees: (organizationId) =>
+    listEmployeesForBackup(backupDatabaseStore, organizationId),
+  listTaskLogs: (organizationId) =>
+    listWorklogsForBackup(backupDatabaseStore, organizationId),
+  listKnowledge: (organizationId) =>
+    getKnowledge(undefined, undefined, organizationId),
+  listInviteCodes: (organizationId) =>
+    listDepartmentInvitesForBackup(backupDatabaseStore, organizationId),
+  listAuditLogs: (organizationId) => getAuditLogs(200, organizationId),
+  // Account repositories deliberately omit password hashes and session tokens.
+  listAccounts,
+  listAccountTags: (organizationId) =>
+    listOrganizationAccountTagsInRepository(accountTagStore, organizationId),
+  listTickets: (organizationId) =>
+    listParkTicketsForBackup(backupDatabaseStore, organizationId),
+  listTicketDeliveries: (organizationId) =>
+    listTicketDeliveriesForBackup(backupDatabaseStore, organizationId),
+});
+
+export const { exportAll } = enterpriseBackup;

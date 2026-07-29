@@ -2739,3 +2739,78 @@ describe('企业工作日志持久化边界', () => {
     }
   });
 });
+
+describe('企业备份聚合', () => {
+  it('保留离职员工、限制任务历史并严格隔离企业数据', async () => {
+    const db = await freshDb();
+    const otherOrganization = db.createOrganization({
+      name: '备份隔离企业',
+      slug: 'backup-isolation',
+    });
+    db.createEmployee({ id: 'backup-former', name: '历史员工' });
+    db.createEmployee({
+      id: 'backup-other',
+      name: '其他企业员工',
+      organizationId: otherOrganization.id,
+    });
+    expect(db.offboardEmployee('backup-former')).toBe(true);
+
+    const database = db.getDB();
+    const insertTask = database.prepare(
+      `INSERT INTO task_logs
+           (organization_id, employee_id, task_type, created_at)
+         VALUES (?, ?, ?, ?)`,
+    );
+    database.exec('BEGIN IMMEDIATE');
+    try {
+      for (let index = 0; index < 1_001; index += 1) {
+        insertTask.run(
+          db.DEFAULT_ORGANIZATION_ID,
+          'backup-former',
+          `task-${index}`,
+          String(index).padStart(4, '0'),
+        );
+      }
+      insertTask.run(
+        otherOrganization.id,
+        'backup-other',
+        'other-tenant-task',
+        '9999',
+      );
+      database.exec('COMMIT');
+    } catch (error) {
+      database.exec('ROLLBACK');
+      throw error;
+    }
+
+    const snapshot = db.exportAll();
+    expect(Object.keys(snapshot)).toEqual([
+      'employees',
+      'taskLogs',
+      'knowledge',
+      'inviteCodes',
+      'auditLogs',
+      'accounts',
+      'accountTags',
+      'tickets',
+      'ticketDeliveries',
+    ]);
+    expect(snapshot.employees).toEqual([
+      expect.objectContaining({ id: 'backup-former', status: 'offboarded' }),
+    ]);
+    expect(snapshot.taskLogs).toHaveLength(1_000);
+    expect(snapshot.taskLogs[0]).toMatchObject({ task_type: 'task-1000' });
+    expect(snapshot.taskLogs.at(-1)).toMatchObject({ task_type: 'task-1' });
+    expect(snapshot.taskLogs).not.toContainEqual(
+      expect.objectContaining({ task_type: 'other-tenant-task' }),
+    );
+
+    const otherSnapshot = db.exportAll(otherOrganization.id);
+    expect(otherSnapshot.employees).toEqual([
+      expect.objectContaining({ id: 'backup-other' }),
+    ]);
+    expect(otherSnapshot.taskLogs).toEqual([
+      expect.objectContaining({ task_type: 'other-tenant-task' }),
+    ]);
+  });
+});
