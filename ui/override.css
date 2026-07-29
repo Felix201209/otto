@@ -42,6 +42,7 @@
 
   --ui-overlay-mask: rgba(30, 45, 70, 0.32);
   --ui-shadow-pop: 0 20px 60px rgba(25, 55, 95, 0.22);
+  --ui-radius: 8px;
 }
 
 /* ── 基础暗色适配（跟随系统；预览层原本硬编码浅色，这里补变量映射）── */
@@ -80,51 +81,64 @@
 
 /* ════════════════════════ 左侧栏 ════════════════════════ */
 
+#root {
+  --otto-radius: var(--ui-radius);
+  --otto-radius-sm: var(--ui-radius);
+  --otto-radius-lg: var(--ui-radius);
+  --otto-radius-pill: var(--ui-radius);
+}
 #root .otto-app { background: var(--ui-bg); color: var(--ui-text); }
 #root .otto-sidebar { background: var(--ui-surface); border-right-color: var(--ui-border); }
 
-/* 主导航：11px → 13px，行高加宽，办公可读性 */
+/* 主导航：统一为五个一级入口；字号、字重和工作区形成明确层级。 */
 #root .otto-sidebar__nav { gap: 4px; padding: 6px 12px 14px; border-bottom: 1px solid var(--ui-border); }
 #root .otto-sidebar__navitem {
   min-height: 38px;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
+  letter-spacing: 0;
   color: var(--ui-text-sec);
-  border-radius: 10px;
+  border-radius: 8px;
 }
 #root .otto-sidebar__navitem:hover { background: var(--ui-accent-softer); color: var(--ui-accent); }
-#root .otto-sidebar__navitem.is-active {
-  background: var(--ui-accent-soft);
-  color: var(--ui-accent);
-  box-shadow: inset 3px 0 0 var(--ui-accent-strong);
+#root .otto-sidebar__navitem:focus-visible {
+  outline: 2px solid var(--ui-hover-border);
+  outline-offset: 1px;
+  box-shadow: none;
 }
+#root .otto-sidebar__navitem.is-active {
+  background: var(--ui-accent);
+  color: #fff;
+  font-weight: 650;
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--ui-accent) 28%, transparent);
+}
+#root .otto-sidebar__navitem.is-active:hover { background: var(--ui-accent); color: #fff; }
 #root .otto-sidebar__navitem b { font-size: 10.5px; background: var(--ui-accent-soft); color: var(--ui-accent); }
+#root .otto-sidebar__navitem[data-uiux-nav="workbench"] { order: 1; }
+#root .otto-sidebar__navitem[data-uiux-nav="organization"] { order: 2; }
+#root .otto-sidebar__navitem[data-uiux-nav="messages"] { order: 3; }
+#root .otto-sidebar__navitem[data-uiux-nav="work"] { order: 4; }
+#root .otto-sidebar__navitem[data-uiux-nav="settings"] { order: 5; }
 
-/* 「我的消息 / 企业树」打开的是弹窗而非整页：加 ↗ 角标提示行为差异 */
-#root .otto-sidebar__nav button:nth-of-type(2) > span::after,
-#root .otto-sidebar__nav button:nth-of-type(3) > span::after {
+/* 「我的消息」仍是轻量弹层，用角标与整页入口区分。 */
+#root .otto-sidebar__navitem[data-uiux-nav="messages"] > span::after {
   content: '↗';
   margin-left: 4px;
   font-size: 10px;
   color: var(--ui-text-ter);
   opacity: 0.85;
 }
-/* 「设置」实际打开的是模型配置：右侧小字澄清，与左下「设置与诊断」区分 */
-#root .otto-sidebar__nav button:nth-of-type(5)::after {
-  content: '模型与密钥';
+#root .otto-sidebar__navitem.is-active[data-uiux-nav="messages"] > span::after { color: rgba(255, 255, 255, 0.76); }
+
+/* 组织架构是一级高频入口，右侧直接给出一级部门规模。 */
+#root .otto-sidebar__navitem[data-uiux-nav="organization"]::after {
+  content: '3 个部门';
   margin-left: auto;
   font-size: 10px;
   font-weight: 500;
   color: var(--ui-text-ter);
 }
-/* 「企业树」给组织存在感但不内联整棵树：右侧小字（演示数据） */
-#root .otto-sidebar__nav button:nth-of-type(3)::after {
-  content: '6 位成员';
-  margin-left: auto;
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--ui-text-ter);
-}
+#root .otto-sidebar__navitem.is-active[data-uiux-nav="organization"]::after { color: rgba(255, 255, 255, 0.78); }
 
 /* 新建对话上移到品牌下方（导航之上）：侧栏 flex 子项显式排序，不动 DOM */
 #root .otto-sidebar__traffic { order: 0; }
@@ -135,18 +149,146 @@
 #root .otto-sidebar__workspace { order: 4; }
 #root .otto-sidebar__footer { order: 5; }
 
-/* 「企业组织」内联区与导航「企业树」重复，隐藏；「对话任务」折叠头整个去掉——
-   导航下方横线（nav border-bottom）之后直接是历史对话列表 */
+/* 工作区（对话任务）：与主导航分区；组织树只保留一级入口，避免重复。 */
+#root .otto-sidebar__workspace { border-top: 1px solid var(--ui-border); padding-top: 8px; }
 #root .otto-sidebar__workspace .otto-orgtree { display: none; }
-#root .otto-conversations { margin: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; overflow: visible; }
-#root .otto-conversations__toggle { display: none; }
-#root .otto-conversations .otto-sessions { border-top: 0; padding: 6px 8px 8px; }
-#root .otto-group__label { padding: 4px 12px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; color: var(--ui-text-ter); }
-#root .otto-session { border-radius: 10px; }
-#root .otto-session--active { background: var(--ui-accent-soft); box-shadow: inset 3px 0 0 var(--ui-accent-strong); }
 
-/* 底部账户区：与上面工作区分隔，弱化背景；系统入口做成安静的纯文字行 */
+/* WorkBuddy 式「会话」：无摘要、无来源标签、单行相对时间。 */
+#root .otto-conversations { margin: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; overflow: visible; }
+#root .otto-conversations__toggle {
+  min-height: 32px;
+  padding: 4px 18px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--ui-text-ter);
+}
+#root .otto-conversations__toggle:hover { background: transparent; color: var(--ui-text-sec); }
+#root .otto-conversations__title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+#root .otto-conversations__title strong {
+  color: var(--ui-text-sec);
+  font-size: 11.5px;
+  font-weight: 650;
+}
+#root .otto-conversations__title small {
+  color: var(--ui-text-ter);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+#root .otto-conversations .otto-sessions {
+  border-top: 0;
+  padding: 1px 8px 7px;
+  display: grid;
+  gap: 1px;
+}
+#root .otto-group__label { display: none; }
+#root .otto-session {
+  min-height: 34px;
+  margin: 0;
+  padding: 0 8px 0 12px;
+  border-radius: var(--ui-radius);
+  background: transparent;
+}
+#root .otto-session:hover { background: color-mix(in srgb, var(--ui-accent-soft) 48%, transparent); }
+#root .otto-session__top {
+  min-width: 0;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+#root .otto-session__title {
+  min-width: 0;
+  flex: 1 1 auto;
+  color: var(--ui-text-sec);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+#root .otto-session__time {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--ui-text-ter);
+  font-size: 10.5px;
+  font-weight: 400;
+}
+#root .otto-session__preview,
+#root .otto-session__meta { display: none; }
+#root .otto-session--active {
+  background: color-mix(in srgb, var(--ui-accent-soft) 78%, var(--ui-surface));
+  box-shadow: none;
+}
+#root .otto-session--active::before {
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 0;
+  background: var(--ui-accent);
+}
+#root .otto-session--active .otto-session__title {
+  color: var(--ui-text-strong);
+  font-weight: 600;
+}
+#root .otto-session__more {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  margin: 0;
+  transform: translateY(-50%);
+  background: var(--ui-surface);
+}
+#root .otto-session:has(.otto-session__more):hover .otto-session__time,
+#root .otto-session:has(.otto-session__more):focus-within .otto-session__time { opacity: 0; }
+#root .otto-session__status {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+}
+#root .otto-session__status--loading {
+  border: 1.5px solid color-mix(in srgb, var(--ui-accent) 28%, transparent);
+  border-top-color: var(--ui-accent);
+  border-radius: 50%;
+  animation: otto-uiux-session-spin 0.85s linear infinite;
+}
+#root .otto-session__status--error {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--ui-danger);
+  border-radius: 50%;
+  color: var(--ui-danger);
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 1;
+}
+@keyframes otto-uiux-session-spin {
+  to { transform: rotate(360deg); }
+}
+#root .otto-conversations__viewall {
+  width: calc(100% - 16px);
+  min-height: 32px;
+  margin: 2px 8px 8px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-top: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--ui-text-ter);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+#root .otto-conversations__viewall:hover { color: var(--ui-accent); background: var(--ui-accent-softer); }
+#root .otto-conversations__viewall .otto-viewall__chev { margin-left: auto; }
+
+/* 底部只保留辅助/账号信息；设置与全部对话已迁入上方对应层级。 */
 #root .otto-sidebar__footer { border-top: 1px solid var(--ui-border); background: color-mix(in srgb, var(--ui-bg) 55%, var(--ui-surface)); }
+#root .otto-sidebar__footer > .otto-viewall { display: none; }
 #root .otto-viewall { font-size: 12px; color: var(--ui-text-ter); padding: 7px 10px; }
 #root .otto-viewall:hover { color: var(--ui-text-sec); background: var(--ui-accent-softer); }
 
@@ -186,6 +328,29 @@
 
 #root .otto-right-panel__head { font-size: 12.5px; color: var(--ui-text-sec); }
 #root .otto-right-panel__grouphead { font-size: 12.5px; color: var(--ui-text-sec); }
+#root .otto-uiux-park-entry {
+  display: grid;
+  gap: 4px;
+}
+#root .otto-uiux-park-entry__chevron {
+  margin-left: auto;
+  font-size: 15px;
+  line-height: 1;
+  transition: transform 0.16s ease;
+}
+#root .otto-uiux-park-entry.is-collapsed .otto-uiux-park-entry__chevron {
+  transform: rotate(-90deg);
+}
+#root .otto-uiux-park-entry.is-collapsed .otto-uiux-park-entry__list {
+  display: none;
+}
+#root .otto-uiux-park-entry__card {
+  width: 100%;
+}
+#root .otto-uiux-park-entry__card .otto-expert-card__icon svg {
+  width: 17px;
+  height: 17px;
+}
 
 /* 卡片：小字 9.5~11px → 11.5~12.5px；弱文字统一提到 --ui-text-ter（AA） */
 #root .otto-profile-card,
@@ -230,10 +395,33 @@
 #root .otto-right-panel__pet-heading strong { color: var(--ui-text-strong); }
 #root .otto-right-panel__pet-heading span { color: var(--ui-text-ter); }
 
-/* ════════════════════════ 预览弹窗（我的消息 / 企业树） ════════════════════════ */
+/* ════════════════════════ 预览弹窗（我的消息；旧组织弹窗样式仅作兼容） ════════════════════════ */
 
 #root .otto-preview-overlay { background: var(--ui-overlay-mask); }
-#root .otto-preview-panel { background: var(--ui-main-bg); border-color: var(--ui-border-strong); box-shadow: var(--ui-shadow-pop); }
+#root .otto-preview-panel {
+  width: min(940px, calc(100vw - 48px));
+  height: min(650px, calc(100vh - 48px));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 310px;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--ui-main-bg);
+  border-color: var(--ui-border-strong);
+  box-shadow: var(--ui-shadow-pop);
+}
+#root .otto-preview-panel > header,
+#root .otto-preview-panel > .otto-preview-filters {
+  grid-column: 1 / -1;
+}
+#root .otto-preview-message-list {
+  min-height: 0;
+  overflow: auto;
+}
+#root .otto-preview-message-detail {
+  min-height: 0;
+  margin: 16px 16px 16px 0;
+  overflow: auto;
+}
 #root .otto-preview-panel > header { background: var(--ui-surface); border-bottom-color: var(--ui-border); }
 #root .otto-preview-panel header h2 { color: var(--ui-text-strong); }
 #root .otto-preview-panel header p { color: var(--ui-text-ter); font-size: 12.5px; }
@@ -273,7 +461,7 @@
 #root .otto-preview-message-detail button:hover,
 #root .otto-preview-person-detail button:hover { border-color: var(--ui-hover-border); background: var(--ui-accent-softer); }
 
-/* 企业树弹窗：字号上调 */
+/* 旧组织弹窗兼容样式（一级入口已改用下方主视图） */
 #root .otto-preview-tree-root { background: var(--ui-accent-soft); border-color: var(--ui-border-strong); }
 #root .otto-preview-tree-mark { background: var(--ui-accent); }
 #root .otto-preview-tree-root strong { color: var(--ui-text-strong); }
@@ -290,6 +478,999 @@
 #root .otto-preview-person-detail { background: var(--ui-card); border-color: var(--ui-border); }
 
 /* ════════════════════════ enhance.js 注入组件 ════════════════════════ */
+
+/* —— 一级「组织架构」主视图：覆盖主内容区，左侧导航保持可用 —— */
+.otto-enhance-orgpage {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--ui-main-bg);
+  color: var(--ui-text);
+  font-family: var(--otto-font, -apple-system, 'PingFang SC', sans-serif);
+}
+.otto-org-page__header {
+  flex: 0 0 auto;
+  min-height: 78px;
+  padding: 15px 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  border-bottom: 1px solid var(--ui-border);
+  background: var(--ui-surface);
+}
+.otto-org-page__heading { min-width: 0; }
+.otto-org-page__heading > span {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--ui-accent);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+.otto-org-page__heading h1 {
+  margin: 0;
+  color: var(--ui-text-strong);
+  font-size: 20px;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+.otto-org-page__heading p {
+  margin: 4px 0 0;
+  color: var(--ui-text-ter);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.otto-org-page__viewmode {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: 8px;
+  background: var(--ui-bg);
+}
+.otto-org-page__viewmode button {
+  min-width: 76px;
+  height: 30px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ui-text-sec);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.otto-org-page__viewmode button:hover { color: var(--ui-accent); background: var(--ui-accent-softer); }
+.otto-org-page__viewmode button[aria-pressed="true"] {
+  background: var(--ui-accent);
+  color: #fff;
+  font-weight: 650;
+}
+.otto-org-page__viewmode button:focus-visible,
+.otto-org-page__department-toggle:focus-visible {
+  outline: 2px solid var(--ui-hover-border);
+  outline-offset: 2px;
+}
+.otto-org-page__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 28px 48px;
+}
+.otto-org-page__sectionhead {
+  width: min(1080px, 100%);
+  min-width: 720px;
+  margin: 0 auto 18px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+.otto-org-page__sectionhead > div {
+  display: grid;
+  gap: 3px;
+}
+.otto-org-page__sectionhead strong {
+  color: var(--ui-text-strong);
+  font-size: 14px;
+}
+.otto-org-page__sectionhead span {
+  color: var(--ui-text-ter);
+  font-size: 11.5px;
+}
+.otto-org-page__legend {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.otto-org-page__legend i,
+.otto-org-page__presence i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ui-online);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-online) 13%, transparent);
+}
+.otto-org-page__canvas {
+  width: min(1080px, 100%);
+  min-width: 720px;
+  min-height: 480px;
+  margin: 0 auto;
+  padding: 12px 20px 44px;
+}
+.otto-org-page__root {
+  position: relative;
+  width: min(330px, 42%);
+  min-width: 250px;
+  min-height: 68px;
+  margin: 0 auto;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--ui-hover-border);
+  border-radius: 8px;
+  background: var(--ui-surface);
+  box-shadow: 0 5px 18px color-mix(in srgb, var(--ui-accent) 10%, transparent);
+}
+.otto-org-page__root::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  height: 32px;
+  border-left: 1px solid var(--ui-hover-border);
+}
+.otto-org-page__root > span {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--ui-accent);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 750;
+}
+.otto-org-page__root > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.otto-org-page__root strong {
+  overflow: hidden;
+  color: var(--ui-text-strong);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.otto-org-page__root small {
+  color: var(--ui-text-ter);
+  font-size: 11px;
+}
+.otto-org-page__departments {
+  position: relative;
+  margin-top: 32px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: 18px;
+}
+.otto-org-page__departments::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: calc(100% / 6);
+  right: calc(100% / 6);
+  border-top: 1px solid var(--ui-hover-border);
+}
+.otto-org-page__department {
+  position: relative;
+  margin-top: 22px;
+  overflow: visible;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: 8px;
+  background: var(--ui-surface);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.otto-org-page__department::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  height: 23px;
+  border-left: 1px solid var(--ui-hover-border);
+}
+.otto-org-page__department:hover {
+  border-color: var(--ui-hover-border);
+  box-shadow: 0 5px 16px color-mix(in srgb, var(--ui-accent) 8%, transparent);
+}
+.otto-org-page__department.is-current {
+  border-color: var(--ui-accent);
+  box-shadow: inset 0 3px 0 var(--ui-accent);
+}
+.otto-org-page__department-toggle {
+  width: 100%;
+  min-height: 70px;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ui-text);
+  text-align: left;
+  cursor: pointer;
+}
+.otto-org-page__department-toggle:hover { background: var(--ui-accent-softer); }
+.otto-org-page__department-icon {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+  font-size: 15px;
+}
+.otto-org-page__department-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: grid;
+  gap: 3px;
+}
+.otto-org-page__department-copy strong {
+  overflow: hidden;
+  color: var(--ui-text-strong);
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.otto-org-page__department-copy small {
+  overflow: hidden;
+  color: var(--ui-text-ter);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.otto-org-page__current {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+  font-size: 9.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.otto-org-page__count {
+  flex: 0 0 auto;
+  color: var(--ui-text-ter);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.otto-org-page__chevron {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  color: var(--ui-text-ter);
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 0.15s ease;
+}
+.otto-org-page__department.is-expanded .otto-org-page__chevron {
+  transform: rotate(225deg) translate(-1px, -1px);
+}
+.otto-org-page__members {
+  padding: 0 12px 7px;
+  border-top: 1px solid var(--ui-border);
+}
+.otto-org-page__members[hidden] { display: none; }
+.otto-org-page__member {
+  width: 100%;
+  min-height: 54px;
+  padding: 8px 2px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  border-bottom: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--ui-text);
+  text-align: left;
+  cursor: pointer;
+}
+.otto-org-page__member:last-child { border-bottom: 0; }
+.otto-org-page__member:hover { background: var(--ui-accent-softer); }
+.otto-org-page__member:focus-visible {
+  outline: 2px solid var(--ui-hover-border);
+  outline-offset: -2px;
+}
+.otto-org-page__avatar {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--ui-bg);
+  color: var(--ui-text-sec);
+  font-size: 11px;
+  font-weight: 700;
+}
+.otto-org-page__membercopy {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: grid;
+  gap: 2px;
+}
+.otto-org-page__membercopy strong {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  color: var(--ui-text-strong);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.otto-org-page__membercopy strong b {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+  font-size: 9px;
+}
+.otto-org-page__membercopy small {
+  overflow: hidden;
+  color: var(--ui-text-ter);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.otto-org-page__presence {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ui-online);
+  font-size: 9.5px;
+}
+.otto-org-page__presence i {
+  width: 6px;
+  height: 6px;
+  box-shadow: none;
+}
+.otto-org-page__chatmark {
+  width: 18px;
+  flex: 0 0 auto;
+  color: var(--ui-text-ter);
+  font-size: 17px;
+  text-align: center;
+  opacity: 0;
+  transform: translateX(-2px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.otto-org-page__member:hover .otto-org-page__chatmark,
+.otto-org-page__member:focus-visible .otto-org-page__chatmark {
+  color: var(--ui-accent);
+  opacity: 1;
+  transform: translateX(0);
+}
+.otto-org-page__member.is-self {
+  cursor: default;
+}
+.otto-org-page__member.is-self:hover {
+  background: transparent;
+}
+.otto-org-page__presence.is-offline {
+  color: var(--ui-text-ter);
+}
+.otto-org-page__presence.is-offline i {
+  background: var(--ui-text-ter);
+}
+
+/* 组织成员直聊：沿用仓库 DirectMessagePanel 的结构与交互。 */
+.otto-enhance-direct-chat {
+  border-color: var(--ui-border-strong);
+  border-radius: var(--ui-radius);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+}
+.otto-enhance-direct-chat .otto-direct-chat__header {
+  background: var(--ui-surface);
+  border-bottom-color: var(--ui-border);
+  cursor: default;
+}
+.otto-enhance-direct-chat .otto-direct-chat__avatar {
+  border-radius: var(--ui-radius);
+  background: var(--ui-accent);
+}
+.otto-enhance-direct-chat .otto-direct-chat__presence {
+  border-color: var(--ui-border);
+  border-radius: var(--ui-radius);
+  background: color-mix(in srgb, var(--ui-online) 9%, var(--ui-surface));
+  color: var(--ui-online);
+}
+.otto-enhance-direct-chat .otto-direct-chat__actionbar,
+.otto-enhance-direct-chat .otto-direct-chat__messages,
+.otto-enhance-direct-chat .otto-direct-chat__composer {
+  border-color: var(--ui-border);
+  background: var(--ui-main-bg);
+}
+.otto-enhance-direct-chat .otto-direct-chat__empty {
+  border-color: var(--ui-border-strong);
+  border-radius: var(--ui-radius);
+  background: var(--ui-surface);
+}
+.otto-enhance-direct-chat .otto-direct-chat__bubble {
+  border-color: var(--ui-border);
+  border-radius: var(--ui-radius);
+  background: var(--ui-accent-soft);
+}
+.otto-enhance-direct-chat .otto-direct-chat__fileinput { display: none; }
+.otto-enhance-direct-chat .otto-direct-chat__composer textarea {
+  border-color: var(--ui-border-strong);
+  border-radius: var(--ui-radius);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+}
+.otto-enhance-direct-chat .otto-direct-chat__composer textarea:focus {
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent) 16%, transparent);
+}
+.otto-enhance-direct-chat .otto-direct-chat__icon,
+.otto-enhance-direct-chat .otto-direct-chat__otto,
+.otto-enhance-direct-chat .otto-direct-chat__attach,
+.otto-enhance-direct-chat .otto-direct-chat__composer-footer > button {
+  border-radius: var(--ui-radius);
+}
+.otto-enhance-direct-chat .otto-direct-chat__attach {
+  border: 1px solid var(--ui-border);
+  background: var(--ui-surface);
+  color: var(--ui-text-sec);
+}
+
+/* 园区服务：复用仓库的九类服务信息架构，补齐静态预览中的完整交互。 */
+.otto-enhance-park {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.26);
+  color: var(--ui-text);
+  font-family: var(--otto-font, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif);
+}
+.otto-enhance-park__dialog {
+  width: min(940px, calc(100vw - 48px));
+  height: min(660px, calc(100vh - 40px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius);
+  background: var(--ui-surface);
+  box-shadow: 0 24px 72px rgba(15, 23, 42, 0.24);
+}
+.otto-enhance-park__header {
+  min-height: 66px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--ui-border);
+  background: var(--ui-surface);
+}
+.otto-enhance-park__brandicon {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: var(--ui-radius);
+  background: var(--ui-accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+}
+.otto-enhance-park__header > div {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.otto-enhance-park__header h2 {
+  margin: 0;
+  color: var(--ui-text-strong);
+  font-size: 15px;
+  line-height: 1.35;
+}
+.otto-enhance-park__header p {
+  margin: 2px 0 0;
+  color: var(--ui-text-ter);
+  font-size: 11.5px;
+}
+.otto-enhance-park__header nav {
+  display: flex;
+  gap: 6px;
+}
+.otto-enhance-park__header nav button {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  background: var(--ui-card);
+  color: var(--ui-text-sec);
+  cursor: pointer;
+}
+.otto-enhance-park__header nav button:hover {
+  border-color: var(--ui-hover-border);
+  background: var(--ui-accent-softer);
+  color: var(--ui-accent);
+}
+.otto-enhance-park__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  background: var(--ui-main-bg);
+}
+.otto-enhance-park__home {
+  min-height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(270px, 0.7fr);
+}
+.otto-enhance-park__services {
+  padding: 20px;
+  border-right: 1px solid var(--ui-border);
+}
+.otto-enhance-park__services > header,
+.otto-enhance-park__activity-section > header,
+.otto-enhance-park__timeline > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.otto-enhance-park__services > header {
+  margin-bottom: 14px;
+}
+.otto-enhance-park__services > header > div {
+  display: grid;
+  gap: 2px;
+}
+.otto-enhance-park__services header strong,
+.otto-enhance-park__activity-section header strong,
+.otto-enhance-park__timeline header strong {
+  color: var(--ui-text-strong);
+  font-size: 13px;
+}
+.otto-enhance-park__services header span,
+.otto-enhance-park__services header small,
+.otto-enhance-park__activity-section header span,
+.otto-enhance-park__timeline header span {
+  color: var(--ui-text-ter);
+  font-size: 10.5px;
+}
+.otto-enhance-park__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+.otto-enhance-park__service {
+  min-width: 0;
+  min-height: 86px;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 12px 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  background: var(--ui-card);
+  color: var(--ui-text);
+  text-align: left;
+  cursor: pointer;
+}
+.otto-enhance-park__service:hover {
+  border-color: var(--ui-hover-border);
+  background: var(--ui-accent-softer);
+}
+.otto-enhance-park__service-icon {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: var(--ui-radius);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+  font-size: 11px;
+  font-weight: 800;
+}
+.otto-enhance-park__service > span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.otto-enhance-park__service strong {
+  color: var(--ui-text-strong);
+  font-size: 12px;
+}
+.otto-enhance-park__service small {
+  color: var(--ui-text-ter);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+.otto-enhance-park__activity {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px 16px;
+  overflow: auto;
+}
+.otto-enhance-park__activity-section {
+  display: grid;
+  gap: 7px;
+}
+.otto-enhance-park__activity-section > button {
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  background: var(--ui-card);
+  color: var(--ui-text);
+  text-align: left;
+  cursor: pointer;
+}
+.otto-enhance-park__activity-section > button:hover {
+  border-color: var(--ui-hover-border);
+  background: var(--ui-accent-softer);
+}
+.otto-enhance-park__activity-section > button span {
+  color: var(--ui-accent);
+  font-size: 9.5px;
+  font-weight: 700;
+}
+.otto-enhance-park__activity-section > button strong {
+  overflow: hidden;
+  color: var(--ui-text-strong);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.otto-enhance-park__activity-section > button small {
+  color: var(--ui-text-ter);
+  font-size: 10px;
+}
+.otto-enhance-park__content {
+  width: min(820px, 100%);
+  margin: 0 auto;
+  padding: 18px 20px 24px;
+}
+.otto-enhance-park__back {
+  margin-bottom: 12px;
+  padding: 6px 9px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  background: var(--ui-card);
+  color: var(--ui-text-sec);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.otto-enhance-park__back:hover {
+  color: var(--ui-accent);
+  border-color: var(--ui-hover-border);
+}
+.otto-enhance-park__publication-layout {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: 12px;
+}
+.otto-enhance-park__publication-layout nav {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+}
+.otto-enhance-park__publication-layout nav button {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  background: var(--ui-card);
+  color: var(--ui-text);
+  text-align: left;
+  cursor: pointer;
+}
+.otto-enhance-park__publication-layout nav button.is-active {
+  border-color: var(--ui-hover-border);
+  background: var(--ui-accent-soft);
+}
+.otto-enhance-park__publication-layout nav strong {
+  font-size: 12px;
+}
+.otto-enhance-park__publication-layout nav small {
+  color: var(--ui-text-ter);
+  font-size: 10px;
+}
+.otto-enhance-park__publication-detail,
+.otto-enhance-park__form-shell,
+.otto-enhance-park__survey,
+.otto-enhance-park__application-detail {
+  padding: 18px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  background: var(--ui-surface);
+}
+.otto-enhance-park__publication-detail > span,
+.otto-enhance-park__survey-status {
+  display: inline-flex;
+  padding: 3px 7px;
+  border-radius: var(--ui-radius);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+  font-size: 10px;
+  font-weight: 700;
+}
+.otto-enhance-park__publication-detail h3,
+.otto-enhance-park__survey h3 {
+  margin: 12px 0 8px;
+  color: var(--ui-text-strong);
+  font-size: 15px;
+}
+.otto-enhance-park__publication-detail p,
+.otto-enhance-park__survey > p {
+  margin: 0 0 18px;
+  color: var(--ui-text-sec);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+.otto-enhance-park__publication-detail > small {
+  color: var(--ui-text-ter);
+  font-size: 10.5px;
+}
+.otto-enhance-park__form-guide {
+  display: grid;
+  gap: 3px;
+  margin-bottom: 14px;
+}
+.otto-enhance-park__form-guide strong {
+  color: var(--ui-text-strong);
+  font-size: 14px;
+}
+.otto-enhance-park__form-guide span {
+  color: var(--ui-text-ter);
+  font-size: 11px;
+}
+.otto-enhance-park__form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 11px;
+}
+.otto-enhance-park__form-grid label {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  color: var(--ui-text-sec);
+  font-size: 11px;
+  font-weight: 600;
+}
+.otto-enhance-park__form-grid label.is-wide {
+  grid-column: 1 / -1;
+}
+.otto-enhance-park__form-grid input,
+.otto-enhance-park__form-grid select,
+.otto-enhance-park__form-grid textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 8px 9px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius);
+  background: var(--ui-card);
+  color: var(--ui-text);
+  font: inherit;
+  font-weight: 400;
+}
+.otto-enhance-park__form-grid textarea {
+  resize: vertical;
+}
+.otto-enhance-park__form-grid input:focus,
+.otto-enhance-park__form-grid select:focus,
+.otto-enhance-park__form-grid textarea:focus {
+  border-color: var(--ui-accent);
+  outline: 0;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent) 14%, transparent);
+}
+.otto-enhance-park__form-error {
+  min-height: 18px;
+  margin-top: 7px;
+  color: #c23b3b;
+  font-size: 11px;
+}
+.otto-enhance-park__primary {
+  min-width: 128px;
+  margin-top: 10px;
+  padding: 9px 14px;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: var(--ui-accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.otto-enhance-park__primary:disabled {
+  background: var(--ui-border-strong);
+  color: var(--ui-text-ter);
+  cursor: default;
+}
+.otto-enhance-park__application-detail > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--ui-border);
+}
+.otto-enhance-park__application-detail > header div {
+  display: grid;
+  gap: 3px;
+}
+.otto-enhance-park__application-detail > header span,
+.otto-enhance-park__application-summary span {
+  color: var(--ui-text-ter);
+  font-size: 10px;
+}
+.otto-enhance-park__application-detail > header strong {
+  color: var(--ui-text-strong);
+  font-size: 14px;
+}
+.otto-enhance-park__application-detail > header em {
+  align-self: center;
+  padding: 4px 8px;
+  border-radius: var(--ui-radius);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+  font-size: 10.5px;
+  font-style: normal;
+  font-weight: 700;
+}
+.otto-enhance-park__application-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  padding: 14px 0;
+}
+.otto-enhance-park__application-summary > div {
+  display: grid;
+  gap: 3px;
+  padding: 9px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  background: var(--ui-card);
+}
+.otto-enhance-park__application-summary .is-wide {
+  grid-column: 1 / -1;
+}
+.otto-enhance-park__application-summary strong {
+  color: var(--ui-text-strong);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.otto-enhance-park__timeline {
+  padding-top: 4px;
+}
+.otto-enhance-park__timeline ol {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.otto-enhance-park__timeline li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 9px;
+  padding-bottom: 14px;
+}
+.otto-enhance-park__timeline li:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  top: 10px;
+  bottom: 0;
+  left: 4px;
+  width: 1px;
+  background: var(--ui-border-strong);
+}
+.otto-enhance-park__timeline li > i {
+  z-index: 1;
+  width: 8px;
+  height: 8px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--ui-accent);
+}
+.otto-enhance-park__timeline li > div {
+  display: grid;
+  gap: 3px;
+}
+.otto-enhance-park__timeline time {
+  color: var(--ui-text-ter);
+  font-size: 9.5px;
+}
+.otto-enhance-park__timeline li strong {
+  color: var(--ui-text-strong);
+  font-size: 11.5px;
+}
+.otto-enhance-park__timeline p {
+  margin: 0;
+  color: var(--ui-text-sec);
+  font-size: 11px;
+}
+.otto-enhance-park.is-maximized {
+  padding: 10px;
+}
+.otto-enhance-park.is-maximized .otto-enhance-park__dialog {
+  width: 100%;
+  height: 100%;
+}
+.otto-enhance-park.is-minimized {
+  inset: auto 18px 18px auto;
+  display: block;
+  padding: 0;
+  background: transparent;
+  pointer-events: none;
+}
+.otto-enhance-park.is-minimized .otto-enhance-park__dialog {
+  width: 300px;
+  height: auto;
+  pointer-events: auto;
+}
+.otto-enhance-park.is-minimized .otto-enhance-park__body,
+.otto-enhance-park.is-minimized .otto-enhance-park__subtitle,
+.otto-enhance-park.is-minimized [data-park-window="maximize"] {
+  display: none;
+}
+.otto-enhance-park.is-minimized .otto-enhance-park__header {
+  min-height: 52px;
+  border-bottom: 0;
+}
+
+#root .otto-uiux-inbox-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+#root .otto-uiux-inbox-actions button {
+  margin: 0;
+}
+#root .otto-uiux-inbox-actions button.is-secondary {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-card);
+  color: var(--ui-text-sec);
+}
+#root .otto-uiux-inbox-actions > span {
+  color: var(--ui-text-ter);
+  font-size: 11px;
+}
 
 /* —— 工作日志模拟面板（覆盖在右栏 body 区域上方）—— */
 .otto-enhance-worklog {
@@ -491,5 +1672,132 @@
 /* 导览期间：透明遮罩挡住应用点击，聚光框不拦截，只有卡片按钮可点 */
 .otto-tour__mask { pointer-events: auto; }
 .otto-tour__spot { pointer-events: none; }
+
+/* ════════════════════════ 全局圆角规范 ════════════════════════
+ * 所有可交互控件与有边界的容器统一 8px；头像和状态圆点保留圆形语义。 */
+#root *,
+.otto-enhance-orgpage *,
+.otto-enhance-direct-chat *,
+.otto-enhance-park *,
+.otto-enhance-worklog *,
+.otto-enhance-allconv *,
+.otto-tour * {
+  letter-spacing: 0;
+}
+#root button,
+#root input,
+#root textarea,
+#root select,
+#root [role="button"],
+#root .otto-composer__inner,
+#root [class*="card"],
+#root [class*="bubble"],
+#root [class*="popover"],
+#root [class*="menu"],
+#root [class*="dialog"],
+#root .otto-custom-agents__empty,
+#root .otto-preview-panel,
+#root .otto-preview-tree-root,
+#root .otto-preview-departments details,
+#root .otto-preview-message-icon,
+#root .otto-preview-message-detail,
+#root .otto-preview-filters b,
+#root .otto-agenda__results,
+#root .otto-agenda__empty,
+#root .otto-agenda__results-empty {
+  border-radius: var(--ui-radius);
+}
+#root .otto-sidebar-account__avatar { border-radius: 50%; }
+.otto-org-page__viewmode,
+.otto-org-page__viewmode button,
+.otto-org-page__root,
+.otto-org-page__root > span,
+.otto-org-page__department,
+.otto-org-page__department-toggle,
+.otto-org-page__department-icon,
+.otto-org-page__current,
+.otto-org-page__member,
+.otto-org-page__membercopy strong b,
+.otto-enhance-direct-chat,
+.otto-enhance-direct-chat button,
+.otto-enhance-direct-chat textarea,
+.otto-enhance-park__dialog,
+.otto-enhance-park button,
+.otto-enhance-park input,
+.otto-enhance-park textarea,
+.otto-enhance-park select,
+.otto-enhance-park__brandicon,
+.otto-enhance-park__service-icon,
+.otto-enhance-park__publication-detail,
+.otto-enhance-park__form-shell,
+.otto-enhance-park__survey,
+.otto-enhance-park__application-detail,
+.otto-enhance-park__application-summary > div,
+.otto-enhance-worklog__demo,
+.otto-enhance-worklog__stat,
+.otto-enhance-worklog__item,
+.otto-enhance-worklog__tag,
+.otto-enhance-allconv__panel,
+.otto-enhance-allconv__close,
+.otto-enhance-allconv__search input,
+.otto-enhance-allconv__row,
+.otto-enhance-allconv__src,
+.otto-tour__spot,
+.otto-tour__card,
+.otto-tour__next {
+  border-radius: var(--ui-radius);
+}
+
+@media (max-width: 1000px) {
+  .otto-org-page__header {
+    align-items: flex-start;
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+  .otto-org-page__body {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+  .otto-org-page__department-copy small,
+  .otto-org-page__current { display: none; }
+  .otto-enhance-park {
+    padding: 10px;
+  }
+  .otto-enhance-park__dialog {
+    width: 100%;
+    height: 100%;
+  }
+  .otto-enhance-park__home {
+    grid-template-columns: 1fr;
+  }
+  .otto-enhance-park__services {
+    border-right: 0;
+    border-bottom: 1px solid var(--ui-border);
+  }
+  .otto-enhance-park__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  #root .otto-preview-panel {
+    width: calc(100vw - 20px);
+    height: calc(100vh - 20px);
+    display: block;
+    overflow: auto;
+  }
+  #root .otto-preview-message-list {
+    max-height: 42vh;
+  }
+  #root .otto-preview-message-detail {
+    margin: 0 12px 14px;
+  }
+  .otto-enhance-park__grid,
+  .otto-enhance-park__form-grid,
+  .otto-enhance-park__application-summary,
+  .otto-enhance-park__publication-layout {
+    grid-template-columns: 1fr;
+  }
+}
 
 /* 暗色下注入组件的背景已由变量覆盖，无需额外规则 */
