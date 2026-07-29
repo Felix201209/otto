@@ -1,0 +1,486 @@
+/* ==========================================================================
+ * Otto UIUX 预览覆盖层（ui/override.css）
+ *
+ * 只负责视觉：字号阶梯、对比度、色彩收敛、分区与密度、消息类型识别。
+ * 不修改 ui/main.js；删除本文件即恢复原状。
+ *
+ * 优先级策略：bundle 的预览层样式是单类选择器（0,1,0），本文件统一用
+ * `#root ` 前缀（1,1,0+）压过它，不依赖 <style> 注入顺序；仅在对付
+ * 行内样式时局部使用 !important（会注明）。
+ * ========================================================================== */
+
+/* ── 设计变量：收敛预览层散落的硬编码蓝（#3565c7/#3f6fe5/#4775d2/#4267b2）── */
+:root {
+  --ui-accent: #3565c7;
+  --ui-accent-strong: #3f6fe5;
+  --ui-accent-soft: #eaf2ff;
+  --ui-accent-softer: #f5f9ff;
+  --ui-hover-border: #7ca4ee;
+
+  --ui-bg: #f4f7fb;
+  --ui-main-bg: #f6f8fc;
+  --ui-surface: #ffffff;
+  --ui-card: #fbfdff;
+  --ui-border: #e3e9f2;
+  --ui-border-strong: #d9e2ef;
+
+  --ui-text: #1f2937;
+  --ui-text-strong: #26344d;
+  /* 次级/弱文字加深到 WCAG AA（白底 ≥4.5:1） */
+  --ui-text-sec: #4d5b74;
+  --ui-text-ter: #64748b;
+
+  /* 语义色（token 里 success/danger 同为灰 #4b5563，这里在预览层修正） */
+  --ui-success: #1f9d63;
+  --ui-danger: #d64545;
+  --ui-online: #2fa36b;
+
+  /* 消息类型色：同事=蓝 / 园区=绿 / 服务=紫 */
+  --ui-type-colleague: #3565c7;
+  --ui-type-park: #299263;
+  --ui-type-service: #7858c9;
+
+  --ui-overlay-mask: rgba(30, 45, 70, 0.32);
+  --ui-shadow-pop: 0 20px 60px rgba(25, 55, 95, 0.22);
+}
+
+/* ── 基础暗色适配（跟随系统；预览层原本硬编码浅色，这里补变量映射）── */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ui-accent: #7aa2ff;
+    --ui-accent-strong: #8fb0ff;
+    --ui-accent-soft: rgba(90, 130, 220, 0.24);
+    --ui-accent-softer: rgba(90, 130, 220, 0.12);
+    --ui-hover-border: #5b7fd6;
+
+    --ui-bg: #141924;
+    --ui-main-bg: #171c28;
+    --ui-surface: #1d2331;
+    --ui-card: #202737;
+    --ui-border: #2b3346;
+    --ui-border-strong: #37405a;
+
+    --ui-text: #e4e8f1;
+    --ui-text-strong: #eef1f8;
+    --ui-text-sec: #a8b1c6;
+    --ui-text-ter: #8b96ad;
+
+    --ui-success: #4cc58a;
+    --ui-danger: #e57272;
+    --ui-online: #4cc58a;
+
+    --ui-type-colleague: #7aa2ff;
+    --ui-type-park: #4cc58a;
+    --ui-type-service: #a98ef0;
+
+    --ui-overlay-mask: rgba(5, 8, 14, 0.55);
+    --ui-shadow-pop: 0 20px 60px rgba(0, 0, 0, 0.5);
+  }
+}
+
+/* ════════════════════════ 左侧栏 ════════════════════════ */
+
+#root .otto-app { background: var(--ui-bg); color: var(--ui-text); }
+#root .otto-sidebar { background: var(--ui-surface); border-right-color: var(--ui-border); }
+
+/* 主导航：11px → 13px，行高加宽，办公可读性 */
+#root .otto-sidebar__nav { gap: 4px; padding: 6px 12px 14px; border-bottom: 1px solid var(--ui-border); }
+#root .otto-sidebar__navitem {
+  min-height: 38px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ui-text-sec);
+  border-radius: 10px;
+}
+#root .otto-sidebar__navitem:hover { background: var(--ui-accent-softer); color: var(--ui-accent); }
+#root .otto-sidebar__navitem.is-active {
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+  box-shadow: inset 3px 0 0 var(--ui-accent-strong);
+}
+#root .otto-sidebar__navitem b { font-size: 10.5px; background: var(--ui-accent-soft); color: var(--ui-accent); }
+
+/* 「我的消息 / 企业树」打开的是弹窗而非整页：加 ↗ 角标提示行为差异 */
+#root .otto-sidebar__nav button:nth-of-type(2) > span::after,
+#root .otto-sidebar__nav button:nth-of-type(3) > span::after {
+  content: '↗';
+  margin-left: 4px;
+  font-size: 10px;
+  color: var(--ui-text-ter);
+  opacity: 0.85;
+}
+/* 「设置」实际打开的是模型配置：右侧小字澄清，与左下「设置与诊断」区分 */
+#root .otto-sidebar__nav button:nth-of-type(5)::after {
+  content: '模型与密钥';
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--ui-text-ter);
+}
+
+#root .otto-newchat { border-color: var(--ui-border-strong); background: var(--ui-accent-softer); color: var(--ui-accent); font-weight: 650; }
+#root .otto-newchat:hover { border-color: var(--ui-hover-border); }
+
+/* 工作区（企业组织 + 对话任务）：与主导航拉开分区 */
+#root .otto-sidebar__workspace { border-top: 1px solid var(--ui-border); padding-top: 10px; }
+#root .otto-sidebar__workspace::before {
+  content: '工作区';
+  display: block;
+  padding: 0 18px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--ui-text-ter);
+}
+#root .otto-conversations { border-color: var(--ui-border); }
+#root .otto-conversations__toggle,
+#root .otto-orgtree__toggle { font-size: 12.5px; color: var(--ui-text-sec); }
+#root .otto-session--active { background: var(--ui-accent-soft); box-shadow: inset 3px 0 0 var(--ui-accent-strong); }
+
+/* 底部账户区：与上面工作区分隔，弱化背景 */
+#root .otto-sidebar__footer { border-top: 1px solid var(--ui-border); background: color-mix(in srgb, var(--ui-bg) 55%, var(--ui-surface)); }
+#root .otto-viewall { font-size: 12.5px; color: var(--ui-text-sec); }
+
+/* ════════════════════════ 顶栏 ════════════════════════ */
+
+#root .otto-main { background: var(--ui-main-bg); }
+#root .otto-composer { background: var(--ui-surface); border-color: var(--ui-border-strong); }
+#root .otto-main__topbar { background: var(--ui-main-bg); border-bottom-color: var(--ui-border); }
+/* 「对话」label 降权：从粗蓝改为弱字距小标 */
+#root .otto-main__section-label {
+  color: var(--ui-text-ter);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+#root .otto-main__title { color: var(--ui-text-strong); }
+/* 五级身份面包屑：截断 + 弱化，完整内容保留在 title 悬浮提示（enhance.js 补） */
+#root .otto-main__topbar > span:not([class]) {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--ui-text-ter);
+}
+
+/* ════════════════════════ 右侧面板 ════════════════════════ */
+
+#root .otto-right-panel { background: var(--ui-surface); border-left-color: var(--ui-border); }
+#root .otto-right-panel__tabs { background: var(--ui-surface); border-bottom-color: var(--ui-border); }
+#root .otto-right-panel__tab { font-size: 12.5px; color: var(--ui-text-ter); }
+#root .otto-right-panel__tab.is-active { background: var(--ui-accent-soft); color: var(--ui-accent); }
+
+#root .otto-right-panel__workbench-title strong { color: var(--ui-text-strong); }
+#root .otto-right-panel__workbench-title span:not(.otto-right-panel__workbench-count) { font-size: 12px; color: var(--ui-text-ter); }
+#root .otto-right-panel__workbench-count { background: var(--ui-accent-soft); color: var(--ui-accent); font-size: 11px; }
+
+#root .otto-right-panel__head { font-size: 12.5px; color: var(--ui-text-sec); }
+#root .otto-right-panel__grouphead { font-size: 12.5px; color: var(--ui-text-sec); }
+
+/* 卡片：小字 9.5~11px → 11.5~12.5px；弱文字统一提到 --ui-text-ter（AA） */
+#root .otto-profile-card,
+#root .otto-expert-card,
+#root .otto-custom-agent-card { background: var(--ui-card); border-color: var(--ui-border); }
+#root .otto-profile-card:hover,
+#root .otto-expert-card:hover,
+#root .otto-custom-agent-card:hover { border-color: var(--ui-hover-border); background: var(--ui-accent-softer); }
+#root .otto-profile-card strong { font-size: 12.5px; }
+#root .otto-profile-card small { font-size: 11px; color: var(--ui-text-ter); }
+#root .otto-expert-card__desc { font-size: 12px; color: var(--ui-text-ter); }
+#root .otto-custom-agents__head strong { font-size: 12.5px; }
+#root .otto-custom-agents__head span { font-size: 11px; color: var(--ui-text-ter); }
+#root .otto-custom-agents__empty { font-size: 12px; color: var(--ui-text-ter); }
+#root .otto-auto-skill__empty { color: var(--ui-text-ter); }
+
+/* 企业专家长列表：默认收起为前 4 位（enhance.js 加类），点标题展开 */
+#root .otto-right-panel__head:has(+ .otto-profile-list) { cursor: pointer; user-select: none; }
+#root .otto-right-panel__head:has(+ .otto-profile-list):hover { color: var(--ui-accent); }
+#root .otto-right-panel__head:has(+ .otto-profile-list.otto-enhance-collapsed)::after {
+  content: '· 展开全部 ▸';
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ui-accent);
+}
+#root .otto-right-panel__head:has(+ .otto-profile-list:not(.otto-enhance-collapsed))::after {
+  content: '· 收起 ▾';
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ui-text-ter);
+}
+#root .otto-profile-list.otto-enhance-collapsed .otto-profile-card:nth-of-type(n+5) { display: none; }
+
+/* 小刺猬舞台：182px → 132px，办公场景让位给内容（保留收起按钮） */
+#root .otto-pet-stage { flex-basis: 132px; min-height: 132px; background: var(--ui-accent-softer); }
+#root .otto-pet-stage__scene { height: 92px; }
+#root .otto-pet-stage__motion { transform: translateX(-50%) scale(0.68); transform-origin: bottom center; }
+#root .otto-pet-stage__head { font-size: 11.5px; }
+#root .otto-right-panel__pet-heading { border-top-color: var(--ui-border); }
+#root .otto-right-panel__pet-heading strong { color: var(--ui-text-strong); }
+#root .otto-right-panel__pet-heading span { color: var(--ui-text-ter); }
+
+/* ════════════════════════ 预览弹窗（我的消息 / 企业树） ════════════════════════ */
+
+#root .otto-preview-overlay { background: var(--ui-overlay-mask); }
+#root .otto-preview-panel { background: var(--ui-main-bg); border-color: var(--ui-border-strong); box-shadow: var(--ui-shadow-pop); }
+#root .otto-preview-panel > header { background: var(--ui-surface); border-bottom-color: var(--ui-border); }
+#root .otto-preview-panel header h2 { color: var(--ui-text-strong); }
+#root .otto-preview-panel header p { color: var(--ui-text-ter); font-size: 12.5px; }
+#root .otto-preview-panel header button { background: var(--ui-bg); color: var(--ui-text-sec); }
+#root .otto-preview-panel header button:hover { background: var(--ui-accent-soft); color: var(--ui-accent); }
+#root .otto-preview-kicker { color: var(--ui-accent); }
+/* 遮罩点击可关闭的提示：遮罩区域光标 */
+#root .otto-preview-overlay { cursor: default; }
+
+/* 过滤 tab：12px → 13px */
+#root .otto-preview-filters { background: var(--ui-surface); border-bottom-color: var(--ui-border); }
+#root .otto-preview-filters button { font-size: 13px; color: var(--ui-text-ter); padding: 13px 2px; }
+#root .otto-preview-filters button:hover { color: var(--ui-accent); }
+#root .otto-preview-filters button.is-active { border-bottom-color: var(--ui-accent); color: var(--ui-accent); }
+#root .otto-preview-filters b { background: var(--ui-accent-soft); color: var(--ui-accent); font-size: 10.5px; }
+
+/* 消息卡：类型左侧色条（同事=蓝 / 园区=绿 / 服务=紫）+ 字号上调 */
+#root .otto-preview-message-card { background: var(--ui-surface); border-color: var(--ui-border); border-left-width: 3px; }
+#root .otto-preview-message-card:hover { border-color: var(--ui-hover-border); }
+#root .otto-preview-message-card:has(.otto-preview-message-icon.is-blue) { border-left-color: var(--ui-type-colleague); }
+#root .otto-preview-message-card:has(.otto-preview-message-icon.is-green) { border-left-color: var(--ui-type-park); }
+#root .otto-preview-message-card:has(.otto-preview-message-icon.is-purple) { border-left-color: var(--ui-type-service); }
+#root .otto-preview-message-icon.is-blue { background: color-mix(in srgb, var(--ui-type-colleague) 12%, transparent); color: var(--ui-type-colleague); }
+#root .otto-preview-message-icon.is-green { background: color-mix(in srgb, var(--ui-type-park) 12%, transparent); color: var(--ui-type-park); }
+#root .otto-preview-message-icon.is-purple { background: color-mix(in srgb, var(--ui-type-service) 14%, transparent); color: var(--ui-type-service); }
+#root .otto-preview-message-copy strong { font-size: 13.5px; color: var(--ui-text-strong); }
+#root .otto-preview-message-copy small { font-size: 11.5px; color: var(--ui-text-ter); }
+#root .otto-preview-message-copy > span { font-size: 12.5px; color: var(--ui-text-sec); }
+/* 未读点：橙色 → 主蓝，与整体色彩体系统一 */
+#root .otto-preview-unread { background: var(--ui-accent-strong); }
+#root .otto-preview-message-card.is-selected { background: var(--ui-accent-softer); border-color: var(--ui-hover-border); }
+#root .otto-preview-message-detail { background: var(--ui-card); border-color: var(--ui-border); }
+#root .otto-preview-message-detail h3 { color: var(--ui-text-strong); }
+#root .otto-preview-message-detail p { color: var(--ui-text-sec); }
+#root .otto-preview-message-detail button,
+#root .otto-preview-person-detail button { color: var(--ui-accent); border-color: var(--ui-border-strong); background: var(--ui-surface); }
+#root .otto-preview-message-detail button:hover,
+#root .otto-preview-person-detail button:hover { border-color: var(--ui-hover-border); background: var(--ui-accent-softer); }
+
+/* 企业树弹窗：字号上调 */
+#root .otto-preview-tree-root { background: var(--ui-accent-soft); border-color: var(--ui-border-strong); }
+#root .otto-preview-tree-mark { background: var(--ui-accent); }
+#root .otto-preview-tree-root strong { color: var(--ui-text-strong); }
+#root .otto-preview-tree-root small { color: var(--ui-text-ter); font-size: 11px; }
+#root .otto-preview-departments details { background: var(--ui-surface); border-color: var(--ui-border); }
+#root .otto-preview-departments summary { color: var(--ui-text-strong); font-size: 13px; }
+#root .otto-preview-departments summary span { color: var(--ui-accent); }
+#root .otto-preview-departments summary small { color: var(--ui-text-ter); font-size: 11px; }
+#root .otto-preview-person { font-size: 12.5px; color: var(--ui-text-sec); background: var(--ui-card); border-top-color: var(--ui-border); }
+#root .otto-preview-person:hover { background: var(--ui-accent-softer); }
+#root .otto-preview-person > span { background: var(--ui-accent-soft); color: var(--ui-accent); }
+#root .otto-preview-person em { color: var(--ui-online); font-size: 10.5px; }
+#root .otto-preview-person.is-selected { background: var(--ui-accent-softer); }
+#root .otto-preview-person-detail { background: var(--ui-card); border-color: var(--ui-border); }
+
+/* ════════════════════════ enhance.js 注入组件 ════════════════════════ */
+
+/* —— 工作日志模拟面板（覆盖在右栏 body 区域上方）—— */
+.otto-enhance-worklog {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  overflow: auto;
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font-family: var(--otto-font, -apple-system, 'PingFang SC', sans-serif);
+}
+.otto-enhance-worklog__head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.otto-enhance-worklog__head strong { font-size: 14px; color: var(--ui-text-strong); }
+.otto-enhance-worklog__demo {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+.otto-enhance-worklog__stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.otto-enhance-worklog__stat {
+  display: grid;
+  gap: 2px;
+  padding: 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: 10px;
+  background: var(--ui-card);
+  text-align: center;
+}
+.otto-enhance-worklog__stat b { font-size: 18px; color: var(--ui-accent); }
+.otto-enhance-worklog__stat span { font-size: 10.5px; color: var(--ui-text-ter); }
+.otto-enhance-worklog__timeline { display: grid; gap: 8px; }
+.otto-enhance-worklog__item {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: 10px;
+  background: var(--ui-card);
+}
+.otto-enhance-worklog__time { flex: 0 0 auto; font-family: var(--otto-font-mono, monospace); font-size: 11px; color: var(--ui-text-ter); padding-top: 1px; }
+.otto-enhance-worklog__itembody { display: grid; gap: 3px; min-width: 0; }
+.otto-enhance-worklog__itembody strong { font-size: 12.5px; color: var(--ui-text-strong); }
+.otto-enhance-worklog__itembody small { font-size: 11px; color: var(--ui-text-ter); line-height: 1.45; }
+.otto-enhance-worklog__tag {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+}
+.otto-enhance-worklog__tag--manual { background: color-mix(in srgb, var(--ui-text-ter) 14%, transparent); color: var(--ui-text-sec); }
+.otto-enhance-worklog__note { margin-top: auto; font-size: 11px; color: var(--ui-text-ter); line-height: 1.5; }
+
+/* —— 「查看全部对话」模拟浮层 —— */
+.otto-enhance-allconv {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--ui-overlay-mask);
+  backdrop-filter: blur(3px);
+  font-family: var(--otto-font, -apple-system, 'PingFang SC', sans-serif);
+}
+.otto-enhance-allconv__panel {
+  width: min(640px, 94vw);
+  max-height: min(680px, 88vh);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: 18px;
+  background: var(--ui-main-bg);
+  box-shadow: var(--ui-shadow-pop);
+  overflow: hidden;
+}
+.otto-enhance-allconv__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 22px 24px 14px;
+  background: var(--ui-surface);
+  border-bottom: 1px solid var(--ui-border);
+}
+.otto-enhance-allconv__head h2 { margin: 4px 0 4px; font-size: 20px; color: var(--ui-text-strong); }
+.otto-enhance-allconv__head p { margin: 0; font-size: 12px; color: var(--ui-text-ter); }
+.otto-enhance-allconv__kicker { font-size: 10px; font-weight: 800; letter-spacing: 0.12em; color: var(--ui-accent); }
+.otto-enhance-allconv__close {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--ui-bg);
+  color: var(--ui-text-sec);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.otto-enhance-allconv__close:hover { background: var(--ui-accent-soft); color: var(--ui-accent); }
+.otto-enhance-allconv__search { padding: 12px 24px; background: var(--ui-surface); border-bottom: 1px solid var(--ui-border); }
+.otto-enhance-allconv__search input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: 10px;
+  background: var(--ui-main-bg);
+  color: var(--ui-text);
+  font-size: 13px;
+  outline: none;
+}
+.otto-enhance-allconv__search input:focus { border-color: var(--ui-hover-border); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent) 18%, transparent); }
+.otto-enhance-allconv__list { display: grid; gap: 8px; padding: 16px 24px 22px; overflow: auto; }
+.otto-enhance-allconv__group { margin-top: 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; color: var(--ui-text-ter); }
+.otto-enhance-allconv__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--ui-border);
+  border-radius: 12px;
+  background: var(--ui-surface);
+  text-align: left;
+  cursor: pointer;
+}
+.otto-enhance-allconv__row:hover { border-color: var(--ui-hover-border); background: var(--ui-accent-softer); }
+.otto-enhance-allconv__rowbody { display: grid; gap: 3px; min-width: 0; flex: 1; }
+.otto-enhance-allconv__rowbody strong { font-size: 13px; color: var(--ui-text-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.otto-enhance-allconv__rowbody small { font-size: 11.5px; color: var(--ui-text-ter); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.otto-enhance-allconv__src {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+}
+.otto-enhance-allconv__src--local { background: color-mix(in srgb, var(--ui-text-ter) 14%, transparent); color: var(--ui-text-sec); }
+.otto-enhance-allconv__time { flex: 0 0 auto; font-size: 11px; color: var(--ui-text-ter); }
+.otto-enhance-allconv__empty { padding: 28px 0; text-align: center; font-size: 12.5px; color: var(--ui-text-ter); }
+
+/* —— 首次打开三步导览 —— */
+.otto-tour {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  font-family: var(--otto-font, -apple-system, 'PingFang SC', sans-serif);
+}
+/* 遮罩只挡点击、不调暗：调暗由聚光框的 4000px 外阴影完成，目标区域保持清晰 */
+.otto-tour__mask { position: absolute; inset: 0; }
+.otto-tour__spot {
+  position: absolute;
+  border: 2px solid var(--ui-accent-strong);
+  border-radius: 14px;
+  box-shadow: 0 0 0 4000px var(--ui-overlay-mask), 0 0 24px color-mix(in srgb, var(--ui-accent) 45%, transparent);
+  transition: top 0.25s ease, left 0.25s ease, width 0.25s ease, height 0.25s ease;
+  pointer-events: none;
+}
+.otto-tour__card {
+  position: absolute;
+  width: 300px;
+  padding: 18px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: 14px;
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-pop);
+  transition: top 0.25s ease, left 0.25s ease;
+}
+.otto-tour__step { font-size: 10.5px; font-weight: 800; letter-spacing: 0.1em; color: var(--ui-accent); }
+.otto-tour__card h3 { margin: 6px 0 6px; font-size: 15px; color: var(--ui-text-strong); }
+.otto-tour__card p { margin: 0 0 14px; font-size: 12.5px; line-height: 1.6; color: var(--ui-text-sec); }
+.otto-tour__actions { display: flex; justify-content: space-between; align-items: center; }
+.otto-tour__skip { border: 0; background: transparent; color: var(--ui-text-ter); font-size: 12px; cursor: pointer; padding: 6px 4px; }
+.otto-tour__skip:hover { color: var(--ui-text-sec); }
+.otto-tour__next {
+  border: 0;
+  border-radius: 9px;
+  padding: 8px 16px;
+  background: var(--ui-accent);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.otto-tour__next:hover { background: var(--ui-accent-strong); }
+
+/* 导览期间：透明遮罩挡住应用点击，聚光框不拦截，只有卡片按钮可点 */
+.otto-tour__mask { pointer-events: auto; }
+.otto-tour__spot { pointer-events: none; }
+
+/* 暗色下注入组件的背景已由变量覆盖，无需额外规则 */
