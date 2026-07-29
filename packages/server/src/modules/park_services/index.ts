@@ -21,6 +21,7 @@ export * from './parkServiceConfigurationRepository.js';
 export * from './parkServiceConfigurationTypes.js';
 export * from './parkStatisticsFacade.js';
 export * from './parkStatisticsRepository.js';
+export * from './parkStatisticsSchema.js';
 export * from './parkStatisticsTypes.js';
 export * from './parkServiceFormRules.js';
 export * from './parkTicketFacade.js';

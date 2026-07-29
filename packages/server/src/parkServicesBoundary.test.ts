@@ -48,6 +48,9 @@ describe('park services module boundary', () => {
     expect(parkServices.createParkResourceRepository).toBeTypeOf('function');
     expect(parkServices.PARK_MEETING_TIME_SLOTS).toHaveLength(84);
     expect(parkServices.createParkStatisticsFacade).toBeTypeOf('function');
+    expect(parkServices.PARK_STATISTICS_SCHEMA_CONTRIBUTOR).toMatchObject({
+      id: 'park_services_statistics',
+    });
     expect(parkServices.createParkDataStatisticsTask).toBeTypeOf('function');
     expect(parkServices.getParkServiceStatisticsFromRepository).toBeTypeOf(
       'function',
@@ -138,6 +141,26 @@ describe('park services module boundary', () => {
     );
     expect(databaseFacade).toMatch(
       /PARK_CORE_SCHEMA_CONTRIBUTOR,[\s\S]*?createParkPublicationSchemaContributor\(\{[\s\S]*?createCreditsSchemaContributor\(\{/,
+    );
+  });
+
+  it('keeps park statistics schema ownership in the park services module', () => {
+    const databaseFacade = fs.readFileSync(databaseFacadePath, 'utf8');
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS park_data_statistics_tasks',
+    );
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS park_data_statistics_assignments',
+    );
+    expect(databaseFacade).not.toContain('idx_park_statistics_tasks_park');
+    expect(databaseFacade).not.toContain(
+      'idx_park_statistics_assignments_account',
+    );
+    expect(databaseFacade).not.toContain(
+      'idx_park_statistics_assignments_org',
+    );
+    expect(databaseFacade).toMatch(
+      /createParkPublicationSchemaContributor\(\{[\s\S]*?PARK_STATISTICS_SCHEMA_CONTRIBUTOR,[\s\S]*?createCreditsSchemaContributor\(\{/,
     );
   });
 
