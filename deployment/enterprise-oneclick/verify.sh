@@ -17,10 +17,12 @@ ALLOW_SMS="${OTTO_ALLOW_SMS_DISABLED:-0}"
 RELEASE_JSON="$("$RUNTIME_NODE" "${SCRIPT_DIR}/tools/verify-release.mjs" "$CURRENT")"
 VERSION="$("$RUNTIME_NODE" -e "const x=JSON.parse(process.argv[1]);console.log(x.version)" "$RELEASE_JSON")"
 BUILD_ID="$("$RUNTIME_NODE" -e "const x=JSON.parse(process.argv[1]);console.log(x.buildCommit)" "$RELEASE_JSON")"
+SCHEMA_TO="$("$RUNTIME_NODE" -e "const x=JSON.parse(process.argv[1]);console.log(x.database.schemaTo)" "$RELEASE_JSON")"
 
 "$RUNTIME_NODE" "${SCRIPT_DIR}/tools/db-tool.mjs" inspect "$DATA_DB" >/dev/null
 "$RUNTIME_NODE" "${SCRIPT_DIR}/tools/health-check.mjs" \
   http://127.0.0.1:7778 "$VERSION" "$BUILD_ID" \
+  "$SCHEMA_TO" \
   "$([ "$ALLOW_SMS" = "1" ] && printf 'allow-sms-disabled' || printf 'require-sms')"
 
 if command -v systemctl >/dev/null 2>&1; then

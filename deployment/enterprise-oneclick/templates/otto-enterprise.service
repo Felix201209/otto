@@ -9,6 +9,9 @@ User=otto-enterprise
 Group=otto-enterprise
 WorkingDirectory=/opt/otto-enterprise/current
 EnvironmentFile=/etc/otto-enterprise/enterprise.env
+Environment=NODE_ENV=production
+Environment=OTTO_LICENSE_ENFORCE=true
+Environment=OTTO_LICENSE_TRUST_FILE=/opt/otto-enterprise/current/license-public-keys.json
 ExecStart=/opt/otto-enterprise/runtime/current/bin/node /opt/otto-enterprise/current/run.mjs
 Restart=on-failure
 RestartSec=3
@@ -21,6 +24,7 @@ StateDirectoryMode=0700
 RuntimeDirectory=otto-enterprise
 RuntimeDirectoryMode=0700
 ReadWritePaths=/var/lib/otto-enterprise
+ReadWritePaths=-/var/backups/otto-enterprise
 
 NoNewPrivileges=true
 PrivateTmp=true

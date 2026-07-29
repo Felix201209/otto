@@ -115,12 +115,12 @@
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",
       "darkModeSupport": true,
-      "identity": null,
+      "hardenedRuntime": true,
+      "gatekeeperAssess": true,
+      "notarize": true,
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Otto 使用麦克风将语音转换为聊天输入文字。"
       },
-      "hardenedRuntime": false,
-      "gatekeeperAssess": false,
       "extraResources": [
         {
           "from": "build/icon.png",
@@ -133,7 +133,7 @@
       ]
     },
     "dmg": {
-      "sign": false,
+      "sign": true,
       "contents": [
         {
           "x": 130,

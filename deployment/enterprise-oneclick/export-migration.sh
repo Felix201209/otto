@@ -76,6 +76,9 @@ PREFERRED_NODE="/opt/otto-enterprise/runtime/current/bin/node"
 if ! NODE_PATH="$(otto_resolve_node "$PREFERRED_NODE")"; then
   NODE_PATH="$(otto_install_node_runtime "${TEMP_DIR}/runtime")"
 fi
+RELEASE_SCHEMA_TO="$("$NODE_PATH" -e \
+  "const x=require(process.argv[1]);console.log(x.database.schemaTo)" \
+  "${SCRIPT_DIR}/release/manifest.json")"
 
 otto_log "创建在线一致性快照（服务无需停止）"
 "$NODE_PATH" "${SCRIPT_DIR}/tools/db-tool.mjs" \
@@ -85,10 +88,8 @@ otto_log "创建在线一致性快照（服务无需停止）"
 SOURCE_SCHEMA="$("$NODE_PATH" -e \
   "const x=require(process.argv[1]);console.log(x.userVersion)" \
   "${TEMP_DIR}/inspection.json")"
-case "$SOURCE_SCHEMA" in
-  2|3|4|5|6|7|8|9|10|11) ;;
-  *) otto_die "本迁入包只支持导出 schema 2 至 11，检测到 schema ${SOURCE_SCHEMA}；请先走受控升级" 5 ;;
-esac
+[ "$SOURCE_SCHEMA" -ge 2 ] && [ "$SOURCE_SCHEMA" -le "$RELEASE_SCHEMA_TO" ] \
+  || otto_die "本迁入包只支持导出 schema 2 至 ${RELEASE_SCHEMA_TO}，检测到 schema ${SOURCE_SCHEMA}；请先走受控升级" 5
 
 "$NODE_PATH" --input-type=module - \
   "${TEMP_DIR}/inspection.json" "${TEMP_DIR}/migration/manifest.json" <<'NODE'

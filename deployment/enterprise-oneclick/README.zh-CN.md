@@ -1,4 +1,4 @@
-# Otto Enterprise v1.9.4 LSTC 新服务器迁移包
+# Otto Enterprise LSTC 私有化部署包
 
 这是一套面向 Ubuntu 22.04/24.04 的“上传、填配置、执行一条安装命令”迁移包。它会安装固定并校验过 SHA-256 的 Node.js 22 LTS、最小企业服务、systemd 单元，并可选配置 Caddy HTTPS。
 
@@ -8,7 +8,7 @@
 
 - 只支持 `amd64/x86_64` 与 `arm64/aarch64`。
 - 默认面向全新服务器。完全相同 build 重跑时只验收、不重启；检测到不同的现有 Otto 安装会拒绝覆盖。
-- 这是“当前服务器原样迁入新机器”的 LSTC 包，数据导入接受生产 schema v2、v3、v4、v5、v6 或 v7，并在隔离副本上统一迁移到 v7；更旧 schema 必须先在旧服务器走单独的受控升级。
+- 这是“当前服务器原样迁入新机器”的 LSTC 包。实际可导入版本及目标版本以同一发布包内 `release/manifest.json` 的 `database.schemaFrom`、`database.schemaTo` 为准，安装器会在隔离副本上迁移并拒绝未声明或未来版本。
 - 数据导出使用 SQLite Online Backup API，不直接复制正在写入的 `data.db`。
 - 导入先在隔离目录迁移，再在 `127.0.0.1:17777` 启动 canary；schema、外键、数据行数和 health 全部通过后才安装。
 - 服务只监听 `127.0.0.1:7778`，公网必须经过 HTTPS 反向代理。
@@ -16,7 +16,7 @@
 - `managed` 模式会验收公网 HTTPS 和三个 404；`external` 模式只验收本机 systemd/health，不能据此宣称公网已完成。
 - 不自动修改 DNS、云安全组或 UFW。
 - 迁移包是包含账号、手机号、会话和企业密钥的敏感文件，默认权限为 0600；传输完成后请妥善删除。
-- 外层 SHA-256 与包内清单用于发现传输损坏或内容被改动，不是发布者数字签名。请从可信渠道向发送者核对外层 SHA-256。
+- 外层 SHA-256 与包内清单用于发现传输损坏；正式包还必须携带 Ed25519 `.sig`，并使用从独立可信渠道取得的 Otto 发布公钥验签，不能信任签名文件自行提供的公钥。
 - 正式写入前会创建 `/opt/otto-enterprise/.installing` 事务标记；断电或 `SIGKILL` 后标记会保留，重跑将 fail closed，避免把半安装状态当成新服务器。
 
 ## 一、在旧服务器导出
@@ -75,19 +75,30 @@ sudo systemctl start otto-enterprise
    - 迁移包 `.sha256`。
 5. 不要提前关闭旧服务器；保留它作为切回点。
 
-先在压缩包所在目录校验外层压缩包：
+正式包必须同时带有 `.sig`。先从 Otto 单独维护的可信渠道取得 Ed25519
+公钥，再校验发布者身份；签名文件内不会携带或选择公钥：
 
 ```bash
-sha256sum -c otto-enterprise-oneclick-v1.9.4-*.tar.gz.sha256
+node verify-enterprise-package-signature.mjs \
+  otto-enterprise-oneclick-v*-*.tar.gz \
+  otto-enterprise-oneclick-v*-*.tar.gz.sig \
+  /安全路径/otto-enterprise-release-public.pem
 ```
 
-`.sha256` 与压缩包放在同一渠道只能证明两者一致，不能证明发送者身份。至少通过另一条可信渠道核对 64 位摘要。
+然后校验传输完整性：
+
+```bash
+sha256sum -c otto-enterprise-oneclick-v*-*.tar.gz.sha256
+```
+
+`.sha256` 只负责发现传输损坏，不能替代 Ed25519 发布者签名。若签名、公钥或
+校验器缺少任意一项，不应把该包用于正式服务器。
 
 校验成功后再解压：
 
 ```bash
-tar -xzf otto-enterprise-oneclick-v1.9.4-*.tar.gz
-cd otto-enterprise-oneclick-v1.9.4-*
+tar -xzf otto-enterprise-oneclick-v*-*.tar.gz
+cd otto-enterprise-oneclick-v*-*
 ```
 
 ## 三、填写配置
@@ -145,7 +156,7 @@ sudo ./install.sh \
 2. 下载 Node.js `v22.23.1` 并核对官方 SHA-256；
 3. 校验最小 release 文件集合和每个文件的 SHA-256；
 4. 校验迁移数据库 `quick_check`、外键和 schema；
-5. 在隔离副本上迁移到 schema v7，并逐表对账；旧 schema 数据库会先保留在线一致性快照，迁移后任一原有表行数减少都会阻断安装；
+5. 按发布清单在隔离副本上迁移到该包声明的目标 schema，并逐表对账；旧 schema 数据库会先保留在线一致性快照，迁移后任一原有表行数减少都会阻断安装；
 6. 启动 `127.0.0.1:17777` canary；
 7. 安装专用 `otto-enterprise` 用户、只读 release 和 0600 运行配置；
 8. 启动 systemd 服务；
@@ -175,10 +186,10 @@ curl --fail --show-error \
 
 - `status: ok`
 - `apiVersion: 4`
-- `schemaVersion: 11`
+- `schemaVersion: 14`（必须与本次 release manifest 的 `schemaTo` 一致）
 - `db: connected`
 - `sms.configured: true`
-- `capabilities` 同时包含 `personal_enterprise_upgrade`、`direct_messages`、`atoa`、`position_invites`、`park_service_push`、`park_repair_v1`
+- `capabilities` 同时包含 `personal_enterprise_upgrade`、`direct_messages`、`atoa`、`position_invites`、`park_service_push`、`park_repair_v1`、`data_protection_v1`、`encrypted_attachment_storage_v1`
 
 浏览器验收：
 
@@ -226,7 +237,42 @@ sudo ls -ld /var/tmp/otto-enterprise-deploy-*
 
 本包在 macOS 上完成了语法、清单、release、SQLite 迁移、未来 schema 拒绝和本地隔离 canary 验证。Ubuntu 22.04/24.04 × amd64/arm64 的 systemd、apt、Caddy 和真实公网证书必须在目标机执行安装器自验，未跑目标机前不能声称该矩阵已经实机通过。
 
-## 九、常见问题
+## 九、备份、恢复与容量保护
+
+服务默认每 24 小时创建一份在线一致性快照，保留 30 天且至少保留 3 份。备份包含
+SQLite、加密附件对象、账号同步密钥和附件密钥，外层再使用 AES-256-GCM 加密；
+`/enterprise/health` 的 `dataProtection` 会显示最近成功时间、文件 SHA-256、失败原因、
+磁盘余量和异地副本状态。
+
+手动备份：
+
+```bash
+sudo /opt/otto-enterprise/deploy/backup-now.sh
+```
+
+恢复前会先完成解密认证、SQLite `quick_check`、外键和 schema 校验。恢复后服务不健康时
+脚本会自动换回恢复前数据：
+
+```bash
+sudo /opt/otto-enterprise/deploy/restore-backup.sh \
+  /var/lib/otto-enterprise/backups/otto-enterprise-*.otto-backup
+```
+
+`OTTO_BACKUP_ENCRYPTION_KEY` 必须由客户和交付方按合同约定离线托管；只剩备份文件但
+丢失该密钥时无法解密。需要异地副本时，将 NFS、对象存储网关或备份卷挂载到
+`/var/backups/otto-enterprise`，再设置
+`OTTO_BACKUP_REPLICA_DIR=/var/backups/otto-enterprise`。异地副本写入后会重新计算
+SHA-256，上传或复制失败不会阻断 Otto 业务，但会进入健康状态告警。
+
+聊天附件不再以大 BLOB 写进 SQLite，而是以 AES-256-GCM 加密对象写入
+`/var/lib/otto-enterprise/attachments`。大客户可把该目录映射到持久卷、MinIO/S3 网关
+或客户对象存储；数据库只保存受控对象键，不保存任意文件路径。
+
+建议每季度在隔离服务器执行一次真实恢复演练，并记录恢复点目标（默认 24 小时）和
+恢复时间目标。磁盘可用空间低于 `OTTO_DISK_MIN_FREE_MB` 时 health 会告警，空间不足以
+容纳校验副本时新备份会拒绝执行，但现有业务数据不会被自动删除。
+
+## 十、常见问题
 
 ### Caddy 证书申请失败
 

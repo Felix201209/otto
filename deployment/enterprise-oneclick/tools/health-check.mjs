@@ -8,9 +8,10 @@ function fail(message) {
 const baseUrl = process.argv[2];
 const expectedVersion = process.argv[3];
 const expectedBuild = process.argv[4];
-const requireSms = process.argv[5] !== 'allow-sms-disabled';
-if (!baseUrl || !expectedVersion || !expectedBuild) {
-  fail('用法：health-check.mjs <base-url> <version> <build-id> [allow-sms-disabled]');
+const expectedSchema = Number(process.argv[5]);
+const requireSms = process.argv[6] !== 'allow-sms-disabled';
+if (!baseUrl || !expectedVersion || !expectedBuild || !Number.isInteger(expectedSchema)) {
+  fail('用法：health-check.mjs <base-url> <version> <build-id> <schema> [allow-sms-disabled]');
 }
 
 let body;
@@ -36,6 +37,8 @@ const requiredCapabilities = [
   'position_invites',
   'park_service_push',
   'park_repair_v1',
+  'data_protection_v1',
+  'encrypted_attachment_storage_v1',
 ];
 const missing = requiredCapabilities.filter(
   (capability) => !body.capabilities?.includes(capability),
@@ -46,8 +49,9 @@ if (
   || body.apiVersion !== 4
   || body.version !== expectedVersion
   || body.buildCommit !== expectedBuild
-  || body.schemaVersion !== 11
+  || body.schemaVersion !== expectedSchema
   || body.db !== 'connected'
+  || body.deployment?.license?.enforce !== true
   || missing.length > 0
 ) {
   fail(`健康身份不匹配：${JSON.stringify(body)}`);

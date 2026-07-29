@@ -3,6 +3,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import {
   chmodSync,
@@ -22,7 +23,9 @@ const INSTALL_SH = path.resolve('deployment/enterprise-oneclick/install.sh');
 const EXPORT_MIGRATION_SH = path.resolve(
   'deployment/enterprise-oneclick/export-migration.sh',
 );
-const DB_TOOL = path.resolve('deployment/enterprise-oneclick/tools/db-tool.mjs');
+const DB_TOOL = path.resolve(
+  'deployment/enterprise-oneclick/tools/db-tool.mjs',
+);
 const MIGRATE_CHECK = path.resolve(
   'deployment/enterprise-oneclick/tools/migrate-check.mjs',
 );
@@ -38,78 +41,112 @@ const ENV_EXAMPLE = path.resolve(
 const README = path.resolve('deployment/enterprise-oneclick/README.zh-CN.md');
 const BUNDLE_SCRIPT = path.resolve('scripts/build-enterprise-oneclick.mjs');
 const SERVER_DATABASE = path.resolve('packages/server/src/enterprise/db.ts');
+const RUNTIME_ENTRY = path.resolve(
+  'deployment/enterprise-oneclick/runtime/run.mjs',
+);
+const SYSTEMD_SERVICE = path.resolve(
+  'deployment/enterprise-oneclick/templates/otto-enterprise.service',
+);
 
 function mode(target) {
   return statSync(target).mode & 0o777;
 }
 
 describe('enterprise one-click service layout', () => {
-  it('makes the root-owned runtime and release traversable by the systemd user', () => {
-    const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-oneclick-layout-'));
-    try {
-      const installRoot = path.join(sandbox, 'opt', 'otto-enterprise');
-      const runtime = path.join(installRoot, 'runtime');
-      const nodeBin = path.join(runtime, 'node-v22', 'bin', 'node');
-      const releases = path.join(installRoot, 'releases');
-      const release = path.join(releases, 'v1.9.0-test');
-      const serverEntry = path.join(release, 'src', 'enterprise', 'bin.js');
+  it.skipIf(process.platform === 'win32')(
+    'makes the root-owned runtime and release traversable by the systemd user',
+    () => {
+      const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-oneclick-layout-'));
+      try {
+        const installRoot = path.join(sandbox, 'opt', 'otto-enterprise');
+        const runtime = path.join(installRoot, 'runtime');
+        const nodeBin = path.join(runtime, 'node-v22', 'bin', 'node');
+        const releases = path.join(installRoot, 'releases');
+        const release = path.join(releases, 'v1.9.0-test');
+        const serverEntry = path.join(release, 'src', 'enterprise', 'bin.js');
 
-      mkdirSync(path.dirname(nodeBin), { recursive: true, mode: 0o700 });
-      mkdirSync(path.dirname(serverEntry), { recursive: true, mode: 0o700 });
-      writeFileSync(nodeBin, '#!/bin/sh\n', { mode: 0o700 });
-      writeFileSync(serverEntry, 'export {};\n', { mode: 0o600 });
-      for (const target of [
-        installRoot,
-        runtime,
-        path.join(runtime, 'node-v22'),
-        path.dirname(nodeBin),
-        releases,
-        release,
-        path.join(release, 'src'),
-        path.dirname(serverEntry),
-      ]) {
-        chmodSync(target, 0o700);
-      }
-
-      const result = spawnSync(
-        '/bin/bash',
-        [
-          '-c',
-          'source "$1"; shift; otto_prepare_service_layout "$@"',
-          'bash',
-          COMMON_SH,
+        mkdirSync(path.dirname(nodeBin), { recursive: true, mode: 0o700 });
+        mkdirSync(path.dirname(serverEntry), { recursive: true, mode: 0o700 });
+        writeFileSync(nodeBin, '#!/bin/sh\n', { mode: 0o700 });
+        writeFileSync(serverEntry, 'export {};\n', { mode: 0o600 });
+        for (const target of [
           installRoot,
+          runtime,
+          path.join(runtime, 'node-v22'),
+          path.dirname(nodeBin),
+          releases,
           release,
-        ],
-        { encoding: 'utf8' },
-      );
+          path.join(release, 'src'),
+          path.dirname(serverEntry),
+        ]) {
+          chmodSync(target, 0o700);
+        }
 
-      expect(result.status, result.stderr).toBe(0);
-      expect(mode(installRoot)).toBe(0o755);
-      expect(mode(runtime)).toBe(0o755);
-      expect(mode(path.join(runtime, 'node-v22', 'bin'))).toBe(0o755);
-      expect(mode(nodeBin)).toBe(0o755);
-      expect(mode(releases)).toBe(0o755);
-      expect(mode(path.dirname(serverEntry))).toBe(0o755);
-      expect(mode(serverEntry)).toBe(0o644);
-    } finally {
-      rmSync(sandbox, { recursive: true, force: true });
-    }
-  });
+        const result = spawnSync(
+          '/bin/bash',
+          [
+            '-c',
+            'source "$1"; shift; otto_prepare_service_layout "$@"',
+            'bash',
+            COMMON_SH,
+            installRoot,
+            release,
+          ],
+          { encoding: 'utf8' },
+        );
+
+        expect(result.status, result.stderr).toBe(0);
+        expect(mode(installRoot)).toBe(0o755);
+        expect(mode(runtime)).toBe(0o755);
+        expect(mode(path.join(runtime, 'node-v22', 'bin'))).toBe(0o755);
+        expect(mode(nodeBin)).toBe(0o755);
+        expect(mode(releases)).toBe(0o755);
+        expect(mode(path.dirname(serverEntry))).toBe(0o755);
+        expect(mode(serverEntry)).toBe(0o644);
+      } finally {
+        rmSync(sandbox, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('applies the service layout before systemd starts Otto', () => {
     const installer = readFileSync(INSTALL_SH, 'utf8');
     const hardening = installer.indexOf(
       'otto_prepare_service_layout "$INSTALL_ROOT" "$TARGET_RELEASE"',
     );
-    const serviceStart = installer.indexOf('systemctl enable --now otto-enterprise');
+    const serviceStart = installer.indexOf(
+      'systemctl enable --now otto-enterprise',
+    );
     expect(hardening).toBeGreaterThan(-1);
     expect(serviceStart).toBeGreaterThan(hardening);
+  });
+
+  it('loads License trust only from the signed release and enforces it in production', () => {
+    const bundle = readFileSync(BUNDLE_SCRIPT, 'utf8');
+    const runtime = readFileSync(RUNTIME_ENTRY, 'utf8');
+    const service = readFileSync(SYSTEMD_SERVICE, 'utf8');
+    const installer = readFileSync(INSTALL_SH, 'utf8');
+
+    expect(bundle).toContain('OTTO_LICENSE_PUBLIC_KEYS is required');
+    expect(bundle).toContain(
+      "path.join(releaseRoot, 'license-public-keys.json')",
+    );
+    expect(runtime).toContain("required('OTTO_LICENSE_TRUST_FILE')");
+    expect(runtime).toContain("process.env.OTTO_LICENSE_ENFORCE = 'true'");
+    expect(
+      runtime.indexOf("await import('./src/enterprise/db.js')"),
+    ).toBeGreaterThan(
+      runtime.indexOf('OTTO_LICENSE_PUBLIC_KEYS = JSON.stringify'),
+    );
+    expect(service).toContain('Environment=NODE_ENV=production');
+    expect(service).toContain('Environment=OTTO_LICENSE_ENFORCE=true');
+    expect(service).toContain('license-public-keys.json');
+    expect(installer).toContain('export OTTO_LICENSE_TRUST_FILE=');
   });
 });
 
 describe('enterprise one-click schema contract', () => {
-  it('declares LSTC v2-v11 migration input and v11 output consistently', () => {
+  it('derives one LSTC schema contract from the server source and release manifest', () => {
     const bundle = readFileSync(BUNDLE_SCRIPT, 'utf8');
     const serverDatabase = readFileSync(SERVER_DATABASE, 'utf8');
     const databaseTool = readFileSync(DB_TOOL, 'utf8');
@@ -120,27 +157,32 @@ describe('enterprise one-click schema contract', () => {
     const exporter = readFileSync(EXPORT_MIGRATION_SH, 'utf8');
 
     expect(bundle).toContain("const releaseChannel = 'lstc'");
-    expect(serverDatabase).toContain('export const ENTERPRISE_SCHEMA_VERSION = 11');
-    expect(bundle).toContain('releaseChannel,');
-    expect(bundle).toContain('schemaFrom: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]');
-    expect(bundle).toContain('schemaTo: 11');
-    expect(bundle).toContain("const enterpriseDist = path.join(serverDist, 'src', 'enterprise');");
-    expect(bundle).toContain(".filter((relative) => relative.endsWith('.js'))");
-    expect(bundle).toContain("path.join(releaseRoot, 'src', 'enterprise', 'server.js')");
-    expect(databaseTool).toContain('const EXPECTED_SCHEMA_VERSION = 11');
-    expect(migrationCheck).toContain('readiness.schemaVersion !== 11');
-    expect(healthCheck).toContain('body.apiVersion !== 4');
-    expect(healthCheck).toContain('body.schemaVersion !== 11');
-    expect(verifyRelease).toContain(
-      'const EXPECTED_SCHEMA_FROM = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]',
+    expect(serverDatabase).toContain(
+      'export const ENTERPRISE_SCHEMA_VERSION = 14',
     );
+    expect(bundle).toContain('releaseChannel,');
+    expect(bundle).toContain(
+      'const schemaVersionMatch = /ENTERPRISE_SCHEMA_VERSION',
+    );
+    expect(bundle).toContain('schemaFrom: supportedSchemaFrom');
+    expect(bundle).toContain('schemaTo: schemaVersion');
+    expect(bundle).toContain("filesBelow(path.join(serverDist, 'src'))");
+    expect(bundle).toContain(".filter((relative) => relative.endsWith('.js'))");
+    expect(databaseTool).toContain('function expectedSchemaVersion()');
+    expect(migrationCheck).toContain('manifest?.database?.schemaTo');
+    expect(migrationCheck).toContain(
+      'readiness.schemaVersion !== expectedSchemaVersion',
+    );
+    expect(healthCheck).toContain('body.apiVersion !== 4');
+    expect(healthCheck).toContain('body.schemaVersion !== expectedSchema');
+    expect(verifyRelease).toContain('manifest.database.schemaTo - 1');
     expect(verifyRelease).toContain("manifest.releaseChannel !== 'lstc'");
-    expect(verifyRelease).toContain('manifest.database.schemaTo !== 11');
-    expect(installer).toContain('2|3|4|5|6|7|8|9|10|11) ;;');
-    expect(exporter).toContain('2|3|4|5|6|7|8|9|10|11) ;;');
+    expect(installer).toContain('RELEASE_SCHEMA_TO=');
+    expect(installer).toContain('"$IMPORT_SCHEMA" -le "$RELEASE_SCHEMA_TO"');
+    expect(exporter).toContain('SCHEMA_TO=');
   });
 
-  it('accepts v3-v11 databases and rejects a future v12 database', () => {
+  it('accepts v3-v14 databases and rejects a future v15 database', () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-oneclick-schema-'));
     try {
       const createDatabase = (schemaVersion) => {
@@ -155,11 +197,14 @@ describe('enterprise one-click schema contract', () => {
         return target;
       };
 
-      for (const schemaVersion of [3, 4, 5, 6, 7, 8, 9, 10, 11]) {
+      for (const schemaVersion of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]) {
         const inspected = spawnSync(
           process.execPath,
           [DB_TOOL, 'inspect', createDatabase(schemaVersion)],
-          { encoding: 'utf8' },
+          {
+            encoding: 'utf8',
+            env: { ...process.env, OTTO_EXPECTED_SCHEMA_VERSION: '14' },
+          },
         );
         expect(inspected.status, inspected.stderr).toBe(0);
         expect(JSON.parse(inspected.stdout)).toMatchObject({
@@ -170,24 +215,27 @@ describe('enterprise one-click schema contract', () => {
         });
       }
 
-      const v12 = spawnSync(
+      const v15 = spawnSync(
         process.execPath,
-        [DB_TOOL, 'inspect', createDatabase(12)],
-        { encoding: 'utf8' },
+        [DB_TOOL, 'inspect', createDatabase(15)],
+        {
+          encoding: 'utf8',
+          env: { ...process.env, OTTO_EXPECTED_SCHEMA_VERSION: '14' },
+        },
       );
-      expect(v12.status).toBe(5);
-      expect(v12.stderr).toContain('高于部署包支持的 11');
+      expect(v15.status).toBe(5);
+      expect(v15.stderr).toContain('高于部署包支持的 14');
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }
   });
 
-  it('backs up v3 before migration and verifies that v11 preserves every row', () => {
+  it('backs up v3 before migration and verifies that v14 preserves every row', () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-oneclick-upgrade-'));
     try {
       const source = path.join(sandbox, 'source-v3.db');
       const backup = path.join(sandbox, 'backup-v3.db');
-      const migrated = path.join(sandbox, 'migrated-v11.db');
+      const migrated = path.join(sandbox, 'migrated-v14.db');
       const sourceDatabase = new DatabaseSync(source);
       sourceDatabase.exec(`
         CREATE TABLE accounts (id TEXT PRIMARY KEY, name TEXT NOT NULL);
@@ -216,7 +264,7 @@ describe('enterprise one-click schema contract', () => {
       );
       expect(copyResult.status, copyResult.stderr).toBe(0);
       const migratedDatabase = new DatabaseSync(migrated);
-      migratedDatabase.exec('PRAGMA user_version = 11;');
+      migratedDatabase.exec('PRAGMA user_version = 14;');
       migratedDatabase.close();
 
       const comparison = spawnSync(
@@ -227,7 +275,7 @@ describe('enterprise one-click schema contract', () => {
       expect(comparison.status, comparison.stderr).toBe(0);
       expect(JSON.parse(comparison.stdout)).toMatchObject({
         before: { userVersion: 3, rowCounts: { accounts: 2 } },
-        after: { userVersion: 11, rowCounts: { accounts: 2 } },
+        after: { userVersion: 14, rowCounts: { accounts: 2 } },
         preservedTables: 1,
       });
     } finally {
@@ -235,7 +283,7 @@ describe('enterprise one-click schema contract', () => {
     }
   });
 
-  it('rejects a release manifest that omits LSTC or still declares a v10 target', () => {
+  it('rejects a release manifest that omits LSTC or has an inconsistent schema range', () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-oneclick-manifest-'));
     try {
       const manifest = {
@@ -245,49 +293,50 @@ describe('enterprise one-click schema contract', () => {
         buildCommit: '0'.repeat(40),
         sourceCommit: '1'.repeat(40),
         database: {
-          schemaFrom: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-          schemaTo: 11,
+          schemaFrom: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+          schemaTo: 14,
           futureSchemaPolicy: 'reject',
         },
         files: {},
       };
+      const runtimePackage = `${JSON.stringify({ type: 'module', version: manifest.version })}\n`;
+      writeFileSync(path.join(sandbox, 'package.json'), runtimePackage);
+      manifest.files['package.json'] = createHash('sha256')
+        .update(runtimePackage)
+        .digest('hex');
       const manifestPath = path.join(sandbox, 'manifest.json');
       writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
 
-      const valid = spawnSync(
-        process.execPath,
-        [VERIFY_RELEASE, sandbox],
-        { encoding: 'utf8' },
-      );
+      const valid = spawnSync(process.execPath, [VERIFY_RELEASE, sandbox], {
+        encoding: 'utf8',
+      });
       expect(valid.status, valid.stderr).toBe(0);
       expect(JSON.parse(valid.stdout)).toMatchObject({
         ok: true,
         releaseChannel: 'lstc',
         database: {
-          schemaFrom: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-          schemaTo: 11,
+          schemaFrom: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+          schemaTo: 14,
           futureSchemaPolicy: 'reject',
         },
       });
 
-      manifest.database.schemaTo = 10;
+      manifest.database.schemaFrom = [2, 3, 4];
       writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
-      const stale = spawnSync(
-        process.execPath,
-        [VERIFY_RELEASE, sandbox],
-        { encoding: 'utf8' },
-      );
+      const stale = spawnSync(process.execPath, [VERIFY_RELEASE, sandbox], {
+        encoding: 'utf8',
+      });
       expect(stale.status).toBe(3);
       expect(stale.stderr).toContain('manifest.json 格式不正确');
 
-      manifest.database.schemaTo = 11;
+      manifest.database.schemaFrom = [
+        2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
+      ];
       delete manifest.releaseChannel;
       writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
-      const unmarked = spawnSync(
-        process.execPath,
-        [VERIFY_RELEASE, sandbox],
-        { encoding: 'utf8' },
-      );
+      const unmarked = spawnSync(process.execPath, [VERIFY_RELEASE, sandbox], {
+        encoding: 'utf8',
+      });
       expect(unmarked.status).toBe(3);
       expect(unmarked.stderr).toContain('manifest.json 格式不正确');
     } finally {
@@ -295,8 +344,10 @@ describe('enterprise one-click schema contract', () => {
     }
   });
 
-  it('accepts only a completed v11 migration readiness result', () => {
-    const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-oneclick-readiness-'));
+  it('accepts only a completed v14 migration readiness result', () => {
+    const sandbox = mkdtempSync(
+      path.join(tmpdir(), 'otto-oneclick-readiness-'),
+    );
     try {
       const release = path.join(sandbox, 'release');
       const data = path.join(sandbox, 'data');
@@ -306,6 +357,10 @@ describe('enterprise one-click schema contract', () => {
       writeFileSync(
         path.join(release, 'package.json'),
         `${JSON.stringify({ type: 'module' })}\n`,
+      );
+      writeFileSync(
+        path.join(release, 'manifest.json'),
+        `${JSON.stringify({ database: { schemaTo: 14 } })}\n`,
       );
       const writeDatabaseModule = (schemaVersion) => {
         writeFileSync(
@@ -318,7 +373,7 @@ describe('enterprise one-click schema contract', () => {
         );
       };
 
-      writeDatabaseModule(11);
+      writeDatabaseModule(14);
       const ready = spawnSync(
         process.execPath,
         [MIGRATE_CHECK, release, data],
@@ -327,7 +382,7 @@ describe('enterprise one-click schema contract', () => {
       expect(ready.status, ready.stderr).toBe(0);
       expect(JSON.parse(ready.stdout)).toEqual({
         ready: true,
-        schemaVersion: 11,
+        schemaVersion: 14,
       });
 
       writeDatabaseModule(3);
@@ -371,10 +426,12 @@ describe('enterprise one-click runtime configuration contract', () => {
     const common = readFileSync(COMMON_SH, 'utf8');
     const installer = readFileSync(INSTALL_SH, 'utf8');
     const readme = readFileSync(README, 'utf8');
-    const allowlist = common.match(/case "\$key" in([\s\S]*?)\n\s*\*\)/)?.[1] ?? '';
-    const runtimeEnv = installer.match(
-      /write_env "\$ENV_TEMP" \\\n([\s\S]*?)\ninstall -o root/,
-    )?.[1] ?? '';
+    const allowlist =
+      common.match(/case "\$key" in([\s\S]*?)\n\s*\*\)/)?.[1] ?? '';
+    const runtimeEnv =
+      installer.match(
+        /write_env "\$ENV_TEMP" \\\n([\s\S]*?)\ninstall -o root/,
+      )?.[1] ?? '';
     const keys = [
       'ALIYUN_SMS_NOTIFICATION_TEMPLATE_ID',
       'OTTO_ENTERPRISE_FEISHU_APP_ID',
@@ -396,7 +453,13 @@ describe('enterprise one-click health contract', () => {
     const healthCheck = readFileSync(HEALTH_CHECK, 'utf8');
     const readme = readFileSync(README, 'utf8');
 
-    for (const capability of ['personal_enterprise_upgrade', 'atoa', 'park_repair_v1']) {
+    for (const capability of [
+      'personal_enterprise_upgrade',
+      'atoa',
+      'park_repair_v1',
+      'data_protection_v1',
+      'encrypted_attachment_storage_v1',
+    ]) {
       expect(healthCheck).toContain(`  '${capability}',`);
       expect(readme).toContain(`\`${capability}\``);
     }
@@ -406,10 +469,12 @@ describe('enterprise one-click health contract', () => {
 describe('enterprise one-click provenance contract', () => {
   it('tracks every root build input in both dirty scope and source hashes', () => {
     const bundle = readFileSync(BUNDLE_SCRIPT, 'utf8');
-    const sourceScope = bundle.match(/const sourceScope = \[([\s\S]*?)\n\];/)?.[1] ?? '';
-    const sourceInputFiles = bundle.match(
-      /const sourceInputFiles = \[([\s\S]*?)\n\]\.sort\(\);/,
-    )?.[1] ?? '';
+    const sourceScope =
+      bundle.match(/const sourceScope = \[([\s\S]*?)\n\];/)?.[1] ?? '';
+    const sourceInputFiles =
+      bundle.match(
+        /const sourceInputFiles = \[([\s\S]*?)\n\]\.sort\(\);/,
+      )?.[1] ?? '';
 
     for (const input of ['tsconfig.json', 'scripts/build_package.js']) {
       expect(sourceScope).toContain(`  '${input}',`);

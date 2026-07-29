@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  sign,
+} from 'node:crypto';
 import {
   chmodSync,
   cpSync,
@@ -18,13 +23,88 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const repoRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+);
 const sourceDir = path.join(repoRoot, 'deployment', 'enterprise-oneclick');
 const outputDir = path.join(repoRoot, 'deliverables');
-const rootPackage = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+const rootPackage = JSON.parse(
+  readFileSync(path.join(repoRoot, 'package.json'), 'utf8'),
+);
 const version = rootPackage.version;
+const enterpriseDbSource = readFileSync(
+  path.join(repoRoot, 'packages', 'server', 'src', 'enterprise', 'db.ts'),
+  'utf8',
+);
+const schemaVersionMatch = /ENTERPRISE_SCHEMA_VERSION\s*=\s*(\d+)/.exec(
+  enterpriseDbSource,
+);
+if (!schemaVersionMatch) {
+  throw new Error(
+    'unable to resolve ENTERPRISE_SCHEMA_VERSION from server source',
+  );
+}
+const schemaVersion = Number(schemaVersionMatch[1]);
+const supportedSchemaFrom = Array.from(
+  { length: schemaVersion - 1 },
+  (_, index) => index + 2,
+);
 const releaseChannel = 'lstc';
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const allowUnsignedEnterprisePackage =
+  process.env.OTTO_ALLOW_UNSIGNED_ENTERPRISE_PACKAGE === '1';
+const enterpriseSigningPrivateKey = process.env
+  .OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY_FILE
+  ? readFileSync(process.env.OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY_FILE, 'utf8')
+  : process.env.OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY?.replace(/\\n/g, '\n');
+if (!enterpriseSigningPrivateKey && !allowUnsignedEnterprisePackage) {
+  throw new Error(
+    'enterprise package signing key missing; set OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY(_FILE), or explicitly allow an unsigned local build',
+  );
+}
+
+function normalizeLicensePublicKey(value) {
+  const trimmed = value.trim().replace(/\\n/g, '\n');
+  const key = trimmed.includes('BEGIN PUBLIC KEY')
+    ? createPublicKey(trimmed)
+    : createPublicKey({
+        key: Buffer.from(trimmed, 'base64'),
+        format: 'der',
+        type: 'spki',
+      });
+  if (key.asymmetricKeyType !== 'ed25519') {
+    throw new Error('license trust store only accepts Ed25519 public keys');
+  }
+  return key.export({ format: 'pem', type: 'spki' }).toString();
+}
+
+function parseLicensePublicKeys(raw) {
+  const value = raw?.trim();
+  if (!value) {
+    throw new Error(
+      'OTTO_LICENSE_PUBLIC_KEYS is required for enterprise packages',
+    );
+  }
+  const values = value.startsWith('[') ? JSON.parse(value) : [value];
+  if (!Array.isArray(values) || values.length === 0) {
+    throw new Error('OTTO_LICENSE_PUBLIC_KEYS must contain at least one key');
+  }
+  return Array.from(
+    new Set(
+      values.map((item) => {
+        if (typeof item !== 'string' || !item.trim()) {
+          throw new Error('license public key entry is invalid');
+        }
+        return normalizeLicensePublicKey(item);
+      }),
+    ),
+  );
+}
+
+const licensePublicKeys = parseLicensePublicKeys(
+  process.env.OTTO_LICENSE_PUBLIC_KEYS,
+);
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -34,8 +114,12 @@ function run(command, args, options = {}) {
     ...options,
   });
   if (result.status !== 0) {
-    const detail = options.capture ? `${result.stdout || ''}${result.stderr || ''}` : '';
-    throw new Error(`${command} ${args.join(' ')} failed (${result.status})\n${detail}`);
+    const detail = options.capture
+      ? `${result.stdout || ''}${result.stderr || ''}`
+      : '';
+    throw new Error(
+      `${command} ${args.join(' ')} failed (${result.status})\n${detail}`,
+    );
   }
   return options.capture ? String(result.stdout).trim() : '';
 }
@@ -53,15 +137,20 @@ function filesBelow(root, current = root) {
   for (const entry of readdirSync(current, { withFileTypes: true })) {
     const absolute = path.join(current, entry.name);
     if (entry.isDirectory()) output.push(...filesBelow(root, absolute));
-    else if (entry.isFile()) output.push(path.relative(root, absolute).split(path.sep).join('/'));
+    else if (entry.isFile())
+      output.push(path.relative(root, absolute).split(path.sep).join('/'));
     else throw new Error(`unsupported release entry: ${absolute}`);
   }
   return output.sort();
 }
 
 console.log('[bundle] 构建 otto-core 与 otto-server');
-run(npmCommand, ['run', 'build', '--workspace', 'otto-core'], { shell: process.platform === 'win32' });
-run(npmCommand, ['run', 'build', '--workspace', 'otto-server'], { shell: process.platform === 'win32' });
+run(npmCommand, ['run', 'build', '--workspace', 'otto-core'], {
+  shell: process.platform === 'win32',
+});
+run(npmCommand, ['run', 'build', '--workspace', 'otto-server'], {
+  shell: process.platform === 'win32',
+});
 
 const sourceCommit = run('git', ['rev-parse', 'HEAD'], { capture: true });
 const sourceScope = [
@@ -72,13 +161,13 @@ const sourceScope = [
   'packages/server/tsconfig.json',
   'scripts/build_package.js',
   'scripts/copy_files.js',
-  'packages/server/src/enterprise',
-  'packages/server/src/sqlite-compat.ts',
+  'packages/server/src',
   'packages/core/package.json',
   'packages/core/tsconfig.json',
   'packages/core/src/services/aliyunSmsSender.ts',
   'deployment/enterprise-oneclick',
   'scripts/build-enterprise-oneclick.mjs',
+  'scripts/verify-enterprise-package-signature.mjs',
 ];
 const sourceStatus = run(
   'git',
@@ -94,25 +183,32 @@ const sourceInputFiles = [
   'packages/server/tsconfig.json',
   'scripts/build_package.js',
   'scripts/copy_files.js',
-  'packages/server/src/sqlite-compat.ts',
+  ...filesBelow(path.join(repoRoot, 'packages', 'server', 'src')).map(
+    (relative) => path.join('packages/server/src', relative),
+  ),
   'packages/core/package.json',
   'packages/core/tsconfig.json',
   'packages/core/src/services/aliyunSmsSender.ts',
   'scripts/build-enterprise-oneclick.mjs',
-  ...filesBelow(path.join(repoRoot, 'packages', 'server', 'src', 'enterprise'))
-    .map((relative) => path.join('packages/server/src/enterprise', relative)),
-  ...filesBelow(sourceDir)
-    .map((relative) => path.join('deployment/enterprise-oneclick', relative)),
+  'scripts/verify-enterprise-package-signature.mjs',
+  ...filesBelow(sourceDir).map((relative) =>
+    path.join('deployment/enterprise-oneclick', relative),
+  ),
 ].sort();
 const sourceInputHashes = Object.fromEntries(
-  sourceInputFiles.map((relative) => [relative, shaFile(path.join(repoRoot, relative))]),
+  sourceInputFiles.map((relative) => [
+    relative,
+    shaFile(path.join(repoRoot, relative)),
+  ]),
 );
 const sourceInputIdentity = sourceInputFiles
   .map((relative) => `${relative}\0${sourceInputHashes[relative]}\n`)
   .join('');
 const sourceInputSha256 = sha(sourceInputIdentity);
 
-const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'otto-enterprise-oneclick-'));
+const temporaryRoot = mkdtempSync(
+  path.join(os.tmpdir(), 'otto-enterprise-oneclick-'),
+);
 try {
   const packageNameBase = `otto-enterprise-oneclick-v${version}`;
   const packageRoot = path.join(temporaryRoot, packageNameBase);
@@ -121,22 +217,33 @@ try {
     filter: (source) => path.basename(source) !== 'release',
   });
   const releaseRoot = path.join(packageRoot, 'release');
-  mkdirSync(path.join(releaseRoot, 'src', 'enterprise', 'public'), { recursive: true });
-  mkdirSync(path.join(releaseRoot, 'node_modules', 'otto-core', 'dist', 'src', 'services'), {
+  mkdirSync(path.join(releaseRoot, 'src', 'enterprise', 'public'), {
     recursive: true,
   });
+  mkdirSync(
+    path.join(
+      releaseRoot,
+      'node_modules',
+      'otto-core',
+      'dist',
+      'src',
+      'services',
+    ),
+    {
+      recursive: true,
+    },
+  );
 
   const serverDist = path.join(repoRoot, 'packages', 'server', 'dist');
-  const enterpriseDist = path.join(serverDist, 'src', 'enterprise');
   const serverFiles = [
-    ...filesBelow(enterpriseDist)
+    ...filesBelow(path.join(serverDist, 'src'))
       .filter((relative) => relative.endsWith('.js'))
-      .map((relative) => path.posix.join('src/enterprise', relative)),
-    'src/sqlite-compat.js',
+      .map((relative) => path.posix.join('src', relative)),
   ];
   for (const relative of serverFiles) {
     const source = path.join(serverDist, relative);
-    if (!existsSync(source)) throw new Error(`missing built server file: ${source}`);
+    if (!existsSync(source))
+      throw new Error(`missing built server file: ${source}`);
     const target = path.join(releaseRoot, relative);
     mkdirSync(path.dirname(target), { recursive: true });
     cpSync(source, target);
@@ -243,28 +350,44 @@ export class FeatureFlagManager {
   );
   writeFileSync(
     path.join(releaseRoot, 'node_modules', 'otto-core', 'package.json'),
-    `${JSON.stringify({
-      name: 'otto-core',
-      version: '1.1.0-enterprise-adapter',
-      private: true,
-      type: 'module',
-      main: 'dist/index.js',
-      exports: { '.': './dist/index.js' },
-      dependencies: {},
-    }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        name: 'otto-core',
+        version: '1.1.0-enterprise-adapter',
+        private: true,
+        type: 'module',
+        main: 'dist/index.js',
+        exports: { '.': './dist/index.js' },
+        dependencies: {},
+      },
+      null,
+      2,
+    )}\n`,
   );
   writeFileSync(
     path.join(releaseRoot, 'package.json'),
-    `${JSON.stringify({
-      name: 'otto-enterprise-runtime',
-      version,
-      private: true,
-      type: 'module',
-      engines: { node: '>=22.16.0 <23' },
-    }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        name: 'otto-enterprise-runtime',
+        version,
+        private: true,
+        type: 'module',
+        engines: { node: '>=22.16.0 <23' },
+      },
+      null,
+      2,
+    )}\n`,
   );
-  cpSync(path.join(sourceDir, 'runtime', 'run.mjs'), path.join(releaseRoot, 'run.mjs'));
+  cpSync(
+    path.join(sourceDir, 'runtime', 'run.mjs'),
+    path.join(releaseRoot, 'run.mjs'),
+  );
   chmodSync(path.join(releaseRoot, 'run.mjs'), 0o755);
+  writeFileSync(
+    path.join(releaseRoot, 'license-public-keys.json'),
+    `${JSON.stringify(licensePublicKeys, null, 2)}\n`,
+    { mode: 0o644 },
+  );
 
   const smokeDataRoot = path.join(temporaryRoot, 'smoke-data');
   mkdirSync(smokeDataRoot, { recursive: true });
@@ -285,17 +408,18 @@ export class FeatureFlagManager {
 
   const releaseFiles = filesBelow(releaseRoot);
   const fileHashes = Object.fromEntries(
-    releaseFiles.map((relative) => [relative, shaFile(path.join(releaseRoot, relative))]),
+    releaseFiles.map((relative) => [
+      relative,
+      shaFile(path.join(releaseRoot, relative)),
+    ]),
   );
   const contentIdentity = releaseFiles
     .map((relative) => `${relative}\0${fileHashes[relative]}\n`)
     .join('');
   const buildCommit = sha(contentIdentity, 'sha1');
-  const sourceDiff = run(
-    'git',
-    ['diff', '--binary', '--', ...sourceScope],
-    { capture: true },
-  );
+  const sourceDiff = run('git', ['diff', '--binary', '--', ...sourceScope], {
+    capture: true,
+  });
   const manifest = {
     format: 'otto-enterprise-release-v1',
     version,
@@ -312,8 +436,8 @@ export class FeatureFlagManager {
       supportedArchitectures: ['linux-x64', 'linux-arm64'],
     },
     database: {
-      schemaFrom: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-      schemaTo: 11,
+      schemaFrom: supportedSchemaFrom,
+      schemaTo: schemaVersion,
       futureSchemaPolicy: 'reject',
     },
     files: fileHashes,
@@ -335,23 +459,28 @@ export class FeatureFlagManager {
 
   writeFileSync(
     path.join(finalPackageRoot, 'BUILD-INFO.json'),
-    `${JSON.stringify({
-      version,
-      releaseChannel,
-      buildCommit,
-      sourceCommit,
-      sourceTreeDirty,
-      sourceDiffSha256: manifest.sourceDiffSha256,
-      sourceInputSha256,
-      sourceStatus: sourceStatus ? sourceStatus.split('\n') : [],
-      nodeVersion: manifest.runtime.node,
-      schemaVersion: manifest.database.schemaTo,
-    }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        version,
+        releaseChannel,
+        buildCommit,
+        sourceCommit,
+        sourceTreeDirty,
+        sourceDiffSha256: manifest.sourceDiffSha256,
+        sourceInputSha256,
+        sourceStatus: sourceStatus ? sourceStatus.split('\n') : [],
+        nodeVersion: manifest.runtime.node,
+        schemaVersion,
+      },
+      null,
+      2,
+    )}\n`,
   );
   writeFileSync(
     path.join(finalPackageRoot, 'SOURCE-INPUTS.sha256'),
-    `${sourceInputFiles.map((relative) =>
-      `${sourceInputHashes[relative]}  ${relative}`).join('\n')}\n`,
+    `${sourceInputFiles
+      .map((relative) => `${sourceInputHashes[relative]}  ${relative}`)
+      .join('\n')}\n`,
   );
 
   for (const script of [
@@ -359,6 +488,8 @@ export class FeatureFlagManager {
     'upgrade.sh',
     'export-migration.sh',
     'verify.sh',
+    'backup-now.sh',
+    'restore-backup.sh',
     'lib/common.sh',
     'tools/db-tool.mjs',
     'tools/verify-release.mjs',
@@ -368,26 +499,42 @@ export class FeatureFlagManager {
     chmodSync(path.join(finalPackageRoot, script), 0o755);
   }
 
-  const packageFiles = filesBelow(finalPackageRoot)
-    .filter((relative) => relative !== 'PACKAGE-MANIFEST.sha256');
+  const packageFiles = filesBelow(finalPackageRoot).filter(
+    (relative) => relative !== 'PACKAGE-MANIFEST.sha256',
+  );
   writeFileSync(
     path.join(finalPackageRoot, 'PACKAGE-MANIFEST.sha256'),
-    `${packageFiles.map((relative) =>
-      `${shaFile(path.join(finalPackageRoot, relative))}  ${relative}`).join('\n')}\n`,
+    `${packageFiles
+      .map(
+        (relative) =>
+          `${shaFile(path.join(finalPackageRoot, relative))}  ${relative}`,
+      )
+      .join('\n')}\n`,
   );
 
   mkdirSync(outputDir, { recursive: true });
   const archive = path.join(outputDir, `${finalPackageName}.tar.gz`);
   const checksum = `${archive}.sha256`;
-  if (existsSync(archive) || existsSync(checksum)) {
-    throw new Error(`deliverable already exists, refusing overwrite: ${archive}`);
+  const signaturePath = `${archive}.sig`;
+  if (
+    existsSync(archive) ||
+    existsSync(checksum) ||
+    existsSync(signaturePath)
+  ) {
+    throw new Error(
+      `deliverable already exists, refusing overwrite: ${archive}`,
+    );
   }
-  run('tar', ['--no-xattrs', '-czf', archive, '-C', temporaryRoot, finalPackageName], {
-    env: {
-      ...process.env,
-      COPYFILE_DISABLE: '1',
+  run(
+    'tar',
+    ['--no-xattrs', '-czf', archive, '-C', temporaryRoot, finalPackageName],
+    {
+      env: {
+        ...process.env,
+        COPYFILE_DISABLE: '1',
+      },
     },
-  });
+  );
   const archiveTar = gunzipSync(readFileSync(archive));
   for (const forbiddenMetadataMarker of [
     'LIBARCHIVE.xattr.',
@@ -395,24 +542,80 @@ export class FeatureFlagManager {
     'com.apple.provenance',
   ]) {
     if (archiveTar.includes(Buffer.from(forbiddenMetadataMarker))) {
-      throw new Error(`archive contains non-portable metadata marker: ${forbiddenMetadataMarker}`);
+      throw new Error(
+        `archive contains non-portable metadata marker: ${forbiddenMetadataMarker}`,
+      );
     }
   }
   const archiveEntries = run('tar', ['-tzf', archive], { capture: true })
     .split('\n')
     .filter(Boolean);
   const nonPortableEntries = archiveEntries.filter(
-    (entry) => path.basename(entry).startsWith('._') || path.basename(entry) === '.DS_Store',
+    (entry) =>
+      path.basename(entry).startsWith('._') ||
+      path.basename(entry) === '.DS_Store',
   );
   if (nonPortableEntries.length > 0) {
-    throw new Error(`archive contains non-portable entries: ${nonPortableEntries.join(', ')}`);
+    throw new Error(
+      `archive contains non-portable entries: ${nonPortableEntries.join(', ')}`,
+    );
   }
   const archiveHash = shaFile(archive);
   writeFileSync(checksum, `${archiveHash}  ${path.basename(archive)}\n`);
+  if (!enterpriseSigningPrivateKey) {
+    console.warn(
+      '[bundle] unsigned enterprise package explicitly allowed for local use',
+    );
+  } else {
+    const privateKey = createPrivateKey(enterpriseSigningPrivateKey);
+    const publicKey = createPublicKey(privateKey);
+    const publicKeyPem = publicKey
+      .export({ format: 'pem', type: 'spki' })
+      .toString();
+    const publicKeyDer = publicKey.export({ format: 'der', type: 'spki' });
+    writeFileSync(
+      signaturePath,
+      `${JSON.stringify(
+        {
+          format: 'otto-enterprise-package-signature-v1',
+          algorithm: 'Ed25519',
+          file: path.basename(archive),
+          sha256: archiveHash,
+          keyId: sha(publicKeyDer).slice(0, 16),
+          signature: sign(null, readFileSync(archive), privateKey).toString(
+            'base64url',
+          ),
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    run(
+      process.execPath,
+      [
+        path.join(
+          repoRoot,
+          'scripts',
+          'verify-enterprise-package-signature.mjs',
+        ),
+        archive,
+        signaturePath,
+      ],
+      {
+        env: {
+          ...process.env,
+          OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY: publicKeyPem,
+        },
+      },
+    );
+    console.log(`[bundle] Ed25519 signature: ${signaturePath}`);
+  }
   console.log(`[bundle] 完成：${archive}`);
   console.log(`[bundle] SHA-256：${archiveHash}`);
   console.log(`[bundle] build id：${buildCommit}`);
-  console.log(`[bundle] source commit：${sourceCommit}${sourceTreeDirty ? ' + tracked local changes' : ''}`);
+  console.log(
+    `[bundle] source commit：${sourceCommit}${sourceTreeDirty ? ' + tracked local changes' : ''}`,
+  );
 } finally {
   rmSync(temporaryRoot, { recursive: true, force: true });
 }
