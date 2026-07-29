@@ -39,29 +39,15 @@ import {
   PERSONAL_INTELLIGENCE_SCHEMA_CONTRIBUTOR,
 } from '../modules/personal_intelligence/index.js';
 import {
-  createParkLifecycleFacade,
-  createParkMembershipFacade,
-  createParkPublicationFacade,
   createParkPublicationSchemaContributor,
-  createParkResourceFacade,
   PARK_RESOURCE_SCHEMA_CONTRIBUTOR,
-  createParkServiceConfigurationFacade,
-  createParkStatisticsFacade,
-  createParkTicketFacade,
+  createParkServicesComposition,
   createParkTicketSchemaContributor,
-  listParkTenantOrganizationsFromRepository,
   listParkTicketsForBackup,
   listTicketDeliveriesForBackup,
   migrateLegacyParkTicketEvents,
   PARK_CORE_SCHEMA_CONTRIBUTOR,
   PARK_STATISTICS_SCHEMA_CONTRIBUTOR,
-  type ParkInviteView,
-  type ParkDataStatisticsAssignmentView,
-  type ParkDataStatisticsTaskView,
-  type ParkServiceSpecialistView,
-  type ParkServiceView,
-  type ParkTenantProfileView,
-  type ParkView,
 } from '../modules/park_services/index.js';
 import path from 'path';
 import os from 'os';
@@ -833,378 +819,81 @@ export const PARK_SERVICE_IDS = new Set<string>(
   DEFAULT_PARK_SERVICES.map(([serviceId]) => serviceId),
 );
 
-const parkLifecycleStore = {
-  db: getDB,
-  getAccount,
-  getOrganization: getEnterpriseOrganization,
-  getActiveOrganizationAdmin: (organizationId: string) =>
-    listAccounts(organizationId).find(
-      (account) => account.isAdmin && account.status === 'active',
-    ) ?? null,
-  normalizeOptionalText,
-  normalizeSlug: normalizeOrganizationSlug,
-  createParkId: () => `park_${randomUUID()}`,
-  createDefaultSlug: () => `park-${randomBytes(5).toString('hex')}`,
-  createInviteSecret: () => randomBytes(32).toString('hex'),
-  defaultServices: DEFAULT_PARK_SERVICES.map(([id, name]) => ({ id, name })),
-};
-const parkLifecycle = createParkLifecycleFacade(parkLifecycleStore);
-
-const parkServiceStore = {
-  db: getDB,
-  getAccount,
-  getPark,
-  normalizeOptionalText,
-};
-const parkServiceConfiguration =
-  createParkServiceConfigurationFacade(parkServiceStore);
-
-export function listParkServices(parkId: string): ParkServiceView[] {
-  return parkServiceConfiguration.listServices(parkId);
-}
-
-export function updateParkService(input: {
-  parkId: string;
-  actorAccountId: string;
-  serviceId: string;
-  name?: string;
-  enabled?: boolean;
-  config?: Record<string, string>;
-}): ParkServiceView {
-  return parkServiceConfiguration.updateService(input);
-}
-
-export function getPark(id: string): ParkView | null {
-  return parkLifecycle.getPark(id);
-}
-
-export function getParkForOrganization(
-  organizationId: string,
-): ParkView | null {
-  return parkLifecycle.getParkForOrganization(organizationId);
-}
-
-const parkTenantOrganizationStore = {
-  db: getDB,
-  getPark,
-  toOrganizationView: toOrganizationDirectoryView,
-};
-
-export function listParkTenantOrganizations(
-  parkId: string,
-): OrganizationView[] {
-  return listParkTenantOrganizationsFromRepository(
-    parkTenantOrganizationStore,
-    parkId,
-  );
-}
-
-const parkMembershipStore = {
-  db: getDB,
-  getAccount,
-  getPark,
-  getParkForOrganization,
-  createInviteId: () => `park_invite_${randomUUID()}`,
-  createInviteNonce: () => randomBytes(20).toString('hex'),
-  inviteValidityMs: ORGANIZATION_INVITE_VALIDITY_MS,
-  inviteAlphabet: ORGANIZATION_INVITE_ALPHABET,
-  inviteCodeRawLength: INVITE_CODE_RAW_LENGTH,
-  normalizeInviteCode: normalizeOrganizationInviteCode,
-  normalizeOptionalText,
-};
-const parkMembership = createParkMembershipFacade(parkMembershipStore);
-
-const parkPublicationStore = {
-  db: getDB,
-  getAccount,
-  getParkForOrganization,
-  createPublicationId: () => `park_publication_${randomUUID()}`,
-  audit: logAudit,
-};
-
 export const {
+  createPark,
+  createParkAsPlatform,
+  createParkMeetingRoom,
+  createParkDataStatisticsTask,
   createParkPublication,
-  listParkAnnouncementResults,
-  listParkPublications,
-  listParkSurveyResults,
-  markParkPublicationRead,
-  submitParkSurvey,
-} = createParkPublicationFacade(parkPublicationStore);
-
-export function getParkTenantProfile(
-  organizationId: string,
-): ParkTenantProfileView | null {
-  return parkMembership.getTenantProfile(organizationId);
-}
-
-export function updateParkTenantProfile(input: {
-  organizationId: string;
-  actorAccountId: string;
-  address: string;
-  roomNumber: string;
-}): ParkTenantProfileView {
-  return parkMembership.updateTenantProfile(input);
-}
-
-const parkStatisticsStore = {
-  db: getDB,
-  getAccount,
-  getPark,
-  getParkForOrganization,
-  getOrganizationFeatures,
-  listAccounts,
-  listParkServices,
-  listParkTenantOrganizations,
-  createTaskId: () => `park_statistics_${randomUUID()}`,
-  createAssignmentId: () => `park_statistics_assignment_${randomUUID()}`,
-  nowISO: () => new Date().toISOString(),
-  audit: (
-    event: string,
-    employeeId: string | null,
-    detail: string,
-    organizationId: string,
-  ) => logAudit(event, employeeId, detail, organizationId),
-};
-const parkStatistics = createParkStatisticsFacade(parkStatisticsStore);
-export const getParkServiceStatistics =
-  parkStatistics.getParkServiceStatistics;
-
-export function createParkDataStatisticsTask(input: {
-  createdByAccountId: string;
-  title: string;
-  description: string;
-  deadline: string;
-  fields?: string[];
-  templateName?: string | null;
-  templateData?: string | null;
-  organizationIds?: string[];
-}): { task: ParkDataStatisticsTaskView; recipientCount: number } {
-  return parkStatistics.createParkDataStatisticsTask(input);
-}
-
-export function listParkDataStatisticsTasks(
-  accountId: string,
-): ParkDataStatisticsTaskView[] {
-  return parkStatistics.listParkDataStatisticsTasks(accountId);
-}
-
-export function markParkDataStatisticsRead(
-  taskId: string,
-  accountId: string,
-): ParkDataStatisticsAssignmentView {
-  return parkStatistics.markParkDataStatisticsRead(taskId, accountId);
-}
-
-export function getParkDataStatisticsTemplate(
-  taskId: string,
-  accountId: string,
-): {
-  name: string;
-  data: string;
-} {
-  return parkStatistics.getParkDataStatisticsTemplate(taskId, accountId);
-}
-
-export function delegateParkDataStatistics(
-  taskId: string,
-  accountId: string,
-  assigneeAccountId: string,
-): ParkDataStatisticsAssignmentView {
-  return parkStatistics.delegateParkDataStatistics(
-    taskId,
-    accountId,
-    assigneeAccountId,
-  );
-}
-
-export function submitParkDataStatisticsDraft(
-  taskId: string,
-  accountId: string,
-  responseData: Record<string, string>,
-): ParkDataStatisticsAssignmentView {
-  return parkStatistics.submitParkDataStatisticsDraft(
-    taskId,
-    accountId,
-    responseData,
-  );
-}
-
-export function reviewParkDataStatistics(
-  taskId: string,
-  accountId: string,
-  approved: boolean,
-  reason?: string,
-): ParkDataStatisticsAssignmentView {
-  return parkStatistics.reviewParkDataStatistics(
-    taskId,
-    accountId,
-    approved,
-    reason,
-  );
-}
-
-export function remindParkDataStatistics(
-  taskId: string,
-  adminAccountId: string,
-): ParkDataStatisticsTaskView {
-  return parkStatistics.remindParkDataStatistics(taskId, adminAccountId);
-}
-
-export function returnParkDataStatistics(
-  taskId: string,
-  adminAccountId: string,
-  organizationId: string,
-  reason: string,
-): ParkDataStatisticsAssignmentView {
-  return parkStatistics.returnParkDataStatistics(
-    taskId,
-    adminAccountId,
-    organizationId,
-    reason,
-  );
-}
-export function createParkAsPlatform(input: {
-  adminOrganizationId: string;
-  name?: string;
-  slug?: string;
-  brandName?: string;
-}): ParkView {
-  return parkLifecycle.createParkAsPlatform(input);
-}
-
-export function updateParkAsPlatform(input: {
-  adminOrganizationId: string;
-  name?: string;
-  brandName?: string;
-}): ParkView {
-  return parkLifecycle.updateParkAsPlatform(input);
-}
-
-export function createPark(input: {
-  adminOrganizationId: string;
-  actorAccountId: string;
-  name: string;
-  slug?: string;
-  brandName?: string;
-}): ParkView {
-  return parkLifecycle.createPark(input);
-}
-
-export function issueParkInvite(input: {
-  parkId: string;
-  actorAccountId: string;
-  maxUses?: number | null;
-  now?: number;
-}): ParkInviteView {
-  return parkMembership.issueInvite(input);
-}
-
-export function joinOrganizationToPark(input: {
-  organizationId: string;
-  actorAccountId: string;
-  code: string;
-  address: string;
-  roomNumber: string;
-  now?: number;
-}): ParkView {
-  return parkMembership.joinOrganization(input);
-}
-
-export function listParkServiceSpecialists(
-  parkId: string,
-): ParkServiceSpecialistView[] {
-  return parkServiceConfiguration.listSpecialists(parkId);
-}
-
-export function setParkServiceSpecialist(input: {
-  parkId: string;
-  actorAccountId: string;
-  serviceId: string;
-  accountId: string;
-}): ParkServiceSpecialistView {
-  return parkServiceConfiguration.setSpecialist(input);
-}
-
-export function removeParkServiceSpecialist(input: {
-  parkId: string;
-  actorAccountId: string;
-  serviceId: string;
-  accountId: string;
-}): void {
-  parkServiceConfiguration.removeSpecialist(input);
-}
-
-const parkTicketStore = {
-  db: getDB,
-  getAccount,
-  isOrganizationActive: (organizationId: string) =>
-    getOrganization(organizationId)?.status === 'active',
-  getOrganizationFeatures,
-  getPark,
-  getParkForOrganization,
-  listParkServices,
-  listParkServiceSpecialists,
-  listActiveOrganizationAdmins: (organizationId: string) =>
-    listAccounts(organizationId).filter(
-      (account) => account.isAdmin && account.status === 'active',
-    ),
-  listActiveAccountsByDepartment: (
-    organizationId: string,
-    department: string,
-    excludeAccountId: string,
-  ) => listAccounts(organizationId).filter(
-    (account) => account.status === 'active'
-      && account.department === department
-      && account.id !== excludeAccountId,
-  ),
-  listActiveAccountsByTags: (organizationId: string, tags: string[]) =>
-    listAccounts(organizationId).filter(
-      (account) => account.status === 'active'
-        && tags.every((tag) => account.tags.includes(tag)),
-    ),
-  normalizeTags,
-  isParkServiceId: (serviceId: string) => PARK_SERVICE_IDS.has(serviceId),
-  createTicketId: () => `ticket_${randomUUID()}`,
-  createTicketEventId: () => `ticket_event_${randomUUID()}`,
-  createTicketNotificationId: () => `ticket_notice_${randomUUID()}`,
-  audit: logAudit,
-};
-const parkTickets = createParkTicketFacade<AccountView>(parkTicketStore);
-
-export const {
   createTicket,
+  deleteParkMeetingRoom,
+  delegateParkDataStatistics,
+  getPark,
+  getParkDataStatisticsTemplate,
+  getParkForOrganization,
+  getParkServiceStatistics,
+  getParkSettings,
+  getParkTenantProfile,
   getTicketCreatorForAccount,
   getTicketForAccount,
   getTicketNotificationRecipients,
   getTicketTransferredNotificationRecipients,
   isTicketFeatureEnabledForAccount,
+  issueParkInvite,
+  joinOrganizationToPark,
+  listParkAnnouncementResults,
+  listParkDataStatisticsTasks,
+  listParkMeetingRooms,
+  listParkMeetingSlots,
+  listParkPublications,
+  listParkServices,
+  listParkServiceSpecialists,
+  listParkSurveyResults,
+  listParkTenantOrganizations,
   listTicketInbox,
   listTicketsForAccount,
+  markParkDataStatisticsRead,
+  markParkPublicationRead,
   markTicketRead,
   normalizeParkServiceFormData,
   recordTicketNotification,
-  updateTicket,
-} = parkTickets;
-
-const parkResourceStore = {
-  db: getDB,
-  createMeetingRoomId: () => `park_room_${randomUUID()}`,
-  createMeetingBookingId: () => `park_booking_${randomUUID()}`,
-};
-const parkResources = createParkResourceFacade(parkResourceStore);
-
-export const {
-  createParkMeetingRoom,
-  deleteParkMeetingRoom,
-  getParkSettings,
-  listParkMeetingRooms,
-  listParkMeetingSlots,
+  remindParkDataStatistics,
+  removeParkServiceSpecialist,
   reserveParkMeetingPeriod,
   reserveParkMeetingSlot,
+  returnParkDataStatistics,
+  reviewParkDataStatistics,
   setParkMeetingSlotAvailability,
+  setParkServiceSpecialist,
+  submitParkDataStatisticsDraft,
+  submitParkSurvey,
+  updateParkAsPlatform,
   updateParkMeetingRoom,
+  updateParkService,
   updateParkSettings,
-} = parkResources;
+  updateParkTenantProfile,
+  updateTicket,
+} = createParkServicesComposition<AccountView, OrganizationView>({
+  db: getDB,
+  getAccount,
+  getOrganization: getEnterpriseOrganization,
+  isOrganizationActive: (organizationId) =>
+    getOrganization(organizationId)?.status === 'active',
+  listAccounts,
+  getOrganizationFeatures,
+  toOrganizationView: toOrganizationDirectoryView,
+  normalizeOptionalText,
+  normalizeSlug: normalizeOrganizationSlug,
+  normalizeInviteCode: normalizeOrganizationInviteCode,
+  normalizeTags,
+  createUuid: randomUUID,
+  createRandomHex: (byteLength) => randomBytes(byteLength).toString('hex'),
+  inviteValidityMs: ORGANIZATION_INVITE_VALIDITY_MS,
+  inviteAlphabet: ORGANIZATION_INVITE_ALPHABET,
+  inviteCodeRawLength: INVITE_CODE_RAW_LENGTH,
+  defaultServices: DEFAULT_PARK_SERVICES.map(([id, name]) => ({ id, name })),
+  audit: logAudit,
+});
 
 export {
   PARK_MEETING_CLOSE_MINUTES,

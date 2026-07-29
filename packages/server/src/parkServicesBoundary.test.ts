@@ -14,6 +14,7 @@ const databaseFacadePath = path.join(sourceRoot, 'enterprise', 'db.ts');
 
 describe('park services module boundary', () => {
   it('publishes lifecycle, membership, publications, resources, statistics, tickets, and service configuration through one entrypoint', () => {
+    expect(parkServices.createParkServicesComposition).toBeTypeOf('function');
     expect(parkServices.createParkLifecycleFacade).toBeTypeOf('function');
     expect(parkServices.PARK_CORE_SCHEMA_CONTRIBUTOR).toMatchObject({
       id: 'park_services_core',
@@ -286,13 +287,16 @@ describe('park services module boundary', () => {
         ),
       ),
     ).toBe(false);
-    expect(databaseFacade).toContain('createParkMembershipFacade');
-    expect(databaseFacade).toContain('createParkLifecycleFacade');
-    expect(databaseFacade).toContain('createParkServiceConfigurationFacade');
-    expect(databaseFacade).toContain('createParkPublicationFacade');
-    expect(databaseFacade).toContain('createParkResourceFacade');
-    expect(databaseFacade).toContain('createParkStatisticsFacade');
-    expect(databaseFacade).toContain('createParkTicketFacade');
+    expect(databaseFacade).toContain('createParkServicesComposition');
+    expect(databaseFacade).not.toContain('createParkMembershipFacade');
+    expect(databaseFacade).not.toContain('createParkLifecycleFacade');
+    expect(databaseFacade).not.toContain(
+      'createParkServiceConfigurationFacade',
+    );
+    expect(databaseFacade).not.toContain('createParkPublicationFacade');
+    expect(databaseFacade).not.toContain('createParkResourceFacade');
+    expect(databaseFacade).not.toContain('createParkStatisticsFacade');
+    expect(databaseFacade).not.toContain('createParkTicketFacade');
     expect(databaseFacade).not.toContain("from './parkInviteRepository.js'");
     expect(databaseFacade).not.toContain("from './parkServiceRepository.js'");
     expect(databaseFacade).not.toContain(
