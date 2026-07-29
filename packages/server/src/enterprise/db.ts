@@ -20,7 +20,7 @@ import {
   type AccountPresenceView as CollaborationAccountPresenceView,
 } from '../modules/collaboration/index.js';
 import {
-  createEnterpriseKnowledgeFacade,
+  createEnterpriseKnowledgeComposition,
   createEnterpriseKnowledgeSchemaContributor,
 } from '../modules/enterprise_knowledge/index.js';
 import { createIntegrationAdaptersComposition } from '../modules/integration_adapters/index.js';
@@ -800,19 +800,16 @@ export type {
 // ============================================================
 // Knowledge operations
 // ============================================================
-const enterpriseKnowledgeStore = {
-  db: getDB,
-  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
-  organizationExists: (organizationId: string) =>
-    Boolean(getOrganization(organizationId)),
-};
-
 export const {
   addKnowledge,
   getKnowledge,
   getMemberKnowledge,
   searchKnowledge,
-} = createEnterpriseKnowledgeFacade(enterpriseKnowledgeStore);
+} = createEnterpriseKnowledgeComposition({
+  db: getDB,
+  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+  getOrganization,
+});
 
 // ============================================================
 // Invite codes

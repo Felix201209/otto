@@ -19,6 +19,9 @@ const legacyRepositoryPath = path.join(
 
 describe('enterprise knowledge module boundary', () => {
   it('publishes repository and facade capabilities through one entrypoint', () => {
+    expect(enterpriseKnowledge.createEnterpriseKnowledgeComposition).toBeTypeOf(
+      'function',
+    );
     expect(
       enterpriseKnowledge.createEnterpriseKnowledgeSchemaContributor,
     ).toBeTypeOf('function');
@@ -61,10 +64,18 @@ describe('enterprise knowledge module boundary', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('removes the legacy repository and keeps SQL behind the facade', () => {
+  it('removes the legacy repository and composes knowledge in db.ts', () => {
     const databaseFacade = fs.readFileSync(databaseFacadePath, 'utf8');
     expect(fs.existsSync(legacyRepositoryPath)).toBe(false);
-    expect(databaseFacade).toContain('createEnterpriseKnowledgeFacade');
+    expect(databaseFacade).toContain('createEnterpriseKnowledgeComposition');
+    expect(databaseFacade).not.toContain('createEnterpriseKnowledgeFacade');
+    expect(databaseFacade).not.toContain('enterpriseKnowledgeStore');
+    const composition = fs.readFileSync(
+      path.join(moduleDir, 'enterpriseKnowledgeComposition.ts'),
+      'utf8',
+    );
+    expect(composition).toContain('organizationExists:');
+    expect(composition).toContain('options.getOrganization');
     expect(databaseFacade).not.toContain("from './knowledgeRepository.js'");
     expect(databaseFacade).not.toContain('INSERT INTO knowledge');
     expect(databaseFacade).not.toContain('content LIKE ?');
@@ -75,7 +86,7 @@ describe('enterprise knowledge module boundary', () => {
       'CREATE TABLE IF NOT EXISTS knowledge',
     );
     expect(databaseFacade).not.toContain(
-      "ALTER TABLE knowledge ADD COLUMN source_id TEXT",
+      'ALTER TABLE knowledge ADD COLUMN source_id TEXT',
     );
   });
 });
