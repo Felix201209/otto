@@ -126,26 +126,22 @@
   color: var(--ui-text-ter);
 }
 
-#root .otto-newchat { border-color: var(--ui-border-strong); background: var(--ui-accent-softer); color: var(--ui-accent); font-weight: 650; }
+/* 新建对话上移到品牌下方（导航之上）：侧栏 flex 子项显式排序，不动 DOM */
+#root .otto-sidebar__traffic { order: 0; }
+#root .otto-sidebar__brandrow { order: 1; padding-bottom: 8px; }
+#root .otto-newchat { order: 2; margin: 2px 16px 10px; border-color: var(--ui-border-strong); background: var(--ui-accent-softer); color: var(--ui-accent); font-weight: 650; }
 #root .otto-newchat:hover { border-color: var(--ui-hover-border); }
+#root .otto-sidebar__nav { order: 3; }
+#root .otto-sidebar__workspace { order: 4; }
+#root .otto-sidebar__footer { order: 5; }
 
-/* 工作区（对话任务）：与主导航分区；「企业组织」内联区与导航「企业树」重复，隐藏
-   （树内容统一走导航入口的弹窗，侧栏保持三层：主导航 → 对话任务 → 系统与账户） */
-#root .otto-sidebar__workspace { border-top: 1px solid var(--ui-border); padding-top: 8px; }
+/* 「企业组织」内联区与导航「企业树」重复，隐藏；「对话任务」折叠头整个去掉——
+   导航下方横线（nav border-bottom）之后直接是历史对话列表 */
 #root .otto-sidebar__workspace .otto-orgtree { display: none; }
-
-/* 对话任务去卡片化：去掉外框/阴影的盒子感，分区标签 + 平铺会话行 */
 #root .otto-conversations { margin: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; overflow: visible; }
-#root .otto-conversations__toggle {
-  padding: 4px 18px 6px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  color: var(--ui-text-ter);
-}
-#root .otto-conversations__toggle:hover { background: transparent; color: var(--ui-text-sec); }
-#root .otto-conversations .otto-sessions { border-top: 0; padding: 2px 8px 8px; }
-#root .otto-group__label { padding: 8px 12px 4px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; color: var(--ui-text-ter); }
+#root .otto-conversations__toggle { display: none; }
+#root .otto-conversations .otto-sessions { border-top: 0; padding: 6px 8px 8px; }
+#root .otto-group__label { padding: 4px 12px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; color: var(--ui-text-ter); }
 #root .otto-session { border-radius: 10px; }
 #root .otto-session--active { background: var(--ui-accent-soft); box-shadow: inset 3px 0 0 var(--ui-accent-strong); }
 
