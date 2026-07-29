@@ -184,6 +184,20 @@ describe('private deployment license repository', () => {
         eventType: 'agent_runtime',
         payload: { calls: 3, latencyMs: 120, errorCode: null },
       });
+      database.prepare(
+        `INSERT INTO telemetry_events
+           (id, deployment_id, organization_id, event_type, payload_json,
+            signature, status, created_at_ms)
+         VALUES (?, ?, ?, ?, ?, ?, 'sent', ?)`,
+      ).run(
+        'tel_expired_retention',
+        deploymentId,
+        'org-licensed',
+        'runtime_health',
+        '{}',
+        'expired',
+        now - 91 * 24 * 60 * 60 * 1000,
+      );
       let uploadedBody: Record<string, unknown> | null = null;
       const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
         uploadedBody = JSON.parse(String(init?.body));
@@ -195,6 +209,10 @@ describe('private deployment license repository', () => {
         failed: 0,
       });
       expect(control.getTelemetryQueueSummary()).toMatchObject({ sent: 1 });
+      expect(
+        database.prepare('SELECT 1 FROM telemetry_events WHERE id = ?')
+          .get('tel_expired_retention'),
+      ).toBeUndefined();
       expect(
         control.ingestTelemetryBatch(
           uploadedBody,

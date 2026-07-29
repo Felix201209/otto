@@ -39,6 +39,7 @@ export interface CommercialControlCompositionOptions {
   licenseVerificationPublicKeys(): readonly string[];
   telemetryEndpoint(): string | null;
   telemetryIngestSecret(): string;
+  telemetryRetentionDays?(): number;
   databaseReadiness(): { ready: true; schemaVersion: number };
 }
 
@@ -70,6 +71,7 @@ export function createCommercialControlComposition(
     licenseVerificationPublicKeys: options.licenseVerificationPublicKeys,
     telemetryEndpoint: options.telemetryEndpoint,
     telemetryIngestSecret: options.telemetryIngestSecret,
+    telemetryRetentionDays: options.telemetryRetentionDays,
     databaseReadiness: options.databaseReadiness,
     audit: audit.logAudit,
   };

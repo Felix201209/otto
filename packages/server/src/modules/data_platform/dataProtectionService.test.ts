@@ -32,8 +32,12 @@ describe('data protection service', () => {
     const replicaDirectory = path.join(root, 'replica');
     const accountKeyPath = path.join(root, 'account-sync.key');
     const attachmentKeyPath = path.join(root, 'attachment-storage.key');
+    const privacyLedgerPath = path.join(root, 'privacy-deletions.jsonl');
+    const privacyLedgerKeyPath = path.join(root, 'privacy-deletions.key');
     fs.writeFileSync(accountKeyPath, Buffer.alloc(32, 2));
     fs.writeFileSync(attachmentKeyPath, Buffer.alloc(32, 3));
+    fs.writeFileSync(privacyLedgerPath, 'encrypted deletion tombstone\n');
+    fs.writeFileSync(privacyLedgerKeyPath, Buffer.alloc(32, 4));
     const database = new Database(databasePath);
     database.exec(`
       CREATE TABLE direct_message_attachments (
@@ -70,6 +74,8 @@ describe('data protection service', () => {
       accountSyncKeyPath: accountKeyPath,
       attachmentKeyPath,
       attachmentDirectory,
+      privacyDeletionLedgerPath: privacyLedgerPath,
+      privacyDeletionLedgerKeyPath: privacyLedgerKeyPath,
       attachmentObjectStore: objectStore,
       getDatabase: () => database,
       backupDirectory,
@@ -106,6 +112,8 @@ describe('data protection service', () => {
         'manifest.json',
         'keys/account-sync.key',
         'keys/attachment-storage.key',
+        'privacy/privacy-deletions.jsonl',
+        'privacy/privacy-deletions.key',
         `attachments/${retainedObject.key}`,
       ]),
     );

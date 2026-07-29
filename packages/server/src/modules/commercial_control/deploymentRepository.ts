@@ -35,6 +35,7 @@ export interface DeploymentRepositoryStore {
   licenseVerificationPublicKeys(): readonly string[];
   telemetryEndpoint(): string | null;
   telemetryIngestSecret(): string;
+  telemetryRetentionDays?(): number;
   databaseReadiness(): { ready: true; schemaVersion: number };
   audit(
     event: string,
@@ -753,6 +754,13 @@ export async function flushTelemetryQueue(
     failed: 0,
     skippedReason: null,
   };
+  const configuredRetentionDays = store.telemetryRetentionDays?.() ?? 90;
+  const retentionDays = Number.isFinite(configuredRetentionDays)
+    ? Math.max(1, Math.min(3650, Math.floor(configuredRetentionDays)))
+    : 90;
+  store.db()
+    .prepare('DELETE FROM telemetry_events WHERE created_at_ms < ?')
+    .run(now - retentionDays * 24 * 60 * 60 * 1000);
   const settings = getTelemetrySettings(store);
   const license = getDeploymentLicense(store);
   if (!settings.enabled) return { ...result, skippedReason: 'disabled' };

@@ -40,11 +40,13 @@ import { IconSettings, IconChevron, IconClose } from './icons.js';
 import type { UseProductWorkspace } from '../state/useProductWorkspace.js';
 import { EnterpriseModelsPanel, OrganizationPanel } from './hub/ProductWorkspacePanels.js';
 import { SearchPanel } from './hub/SearchPanel.js';
+import { PrivacyDataPanel } from './hub/PrivacyDataPanel.js';
 import type { EnterpriseAccount } from '../../preload/index.js';
 
 export type TabId =
   | 'prefs'
   | 'organization'
+  | 'privacy'
   | 'models'
   | 'search'
   | 'feishu'
@@ -80,6 +82,7 @@ export function resolveInitialSettingsTab(initialTab?: TabId): TabId {
 const TAB_LABEL: Record<TabId, string> = {
   prefs: '外观与回复',
   organization: '企业与身份',
+  privacy: '隐私与数据',
   models: '企业模型',
   search: '联网搜索',
   feishu: '飞书接入',
@@ -104,7 +107,7 @@ const TAB_LABEL: Record<TabId, string> = {
  */
 const SIMPLE_NAV_GROUPS: Array<{ label: string; tabs: TabId[] }> = [
   { label: '常用', tabs: ['prefs', 'search', 'update'] },
-  { label: '账号与连接', tabs: ['organization', 'feishu', 'local-agent'] },
+  { label: '账号与连接', tabs: ['organization', 'privacy', 'feishu', 'local-agent'] },
 ];
 
 const ADVANCED_NAV_GROUPS: Array<{ label: string; tabs: TabId[] }> = [
@@ -267,6 +270,7 @@ export function SettingsHubPage({
                 onManageAccounts={onManageAccounts}
               />
             ) : null}
+            {tab === 'privacy' ? <PrivacyDataPanel /> : null}
             {tab === 'models' ? <EnterpriseModelsPanel product={product} models={models} /> : null}
             {tab === 'search' ? <SearchPanel data={data} /> : null}
             {tab === 'feishu' ? <FeishuPanel /> : null}

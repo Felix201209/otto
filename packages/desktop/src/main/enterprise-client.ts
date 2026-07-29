@@ -548,6 +548,76 @@ export interface EnterpriseSessionResult {
   connectionError?: string;
 }
 
+export interface EnterpriseDataGovernanceProfile {
+  controller: { name: string; privacyContact: string; configured: boolean };
+  residency: {
+    mode: string;
+    region: string;
+    crossBorderEnabled: boolean;
+    localizationReady: boolean;
+  };
+  security: {
+    publicTransport: string;
+    database: string;
+    encryptedData: string[];
+    hashedData: string[];
+    plaintextData: string[];
+  };
+  retention: {
+    securityAuditMinimumDays: number;
+    encryptedBackupDefaultDays: number;
+    healthTelemetryDefaultDays: number;
+  };
+  readiness: { configured: boolean; warnings: string[] };
+  documents: Array<{
+    id: 'terms' | 'privacy';
+    title: string;
+    version: string;
+    effectiveAt: string;
+    required: true;
+    summary: string[];
+    sourceUrls: string[];
+    hash: string;
+    accepted: boolean;
+    acceptedAt: number | null;
+  }>;
+  processingActivities: Array<{
+    id: string;
+    category: string;
+    purpose: string;
+    sensitivity: 'ordinary' | 'sensitive' | 'security';
+    storage: 'user_device' | 'enterprise_server' | 'configured_provider';
+    atRest: string;
+    transport: string;
+    retention: string;
+    deletion: string;
+    recipients: string[];
+    crossBorder: boolean;
+  }>;
+  rights: string[];
+  currentConsentComplete: boolean;
+  authorization: {
+    deploymentId: string;
+    license: {
+      status: string; plan: string; expiresAt: string; seatLimit: number;
+      activeSeatCount: number; modules: string[]; offline: boolean; enforce: boolean;
+    };
+    telemetry: { enabled: boolean; contentMode: string };
+    dataBoundary: Record<string, unknown>;
+  };
+}
+
+export interface EnterprisePrivacyDeletionReceipt {
+  requestId: string;
+  accountId: string;
+  organizationId: string;
+  completedAt: string;
+  deleted: string[];
+  anonymized: string[];
+  retained: Array<{ category: string; reason: string; restriction: string }>;
+  backupExpiry: string;
+}
+
 interface EnterpriseServerHealth {
   status?: unknown;
   apiVersion?: unknown;
@@ -799,6 +869,7 @@ export class EnterpriseClient {
     code: string;
     name: string;
     password: string;
+    legalConsent: true;
   }): Promise<{
     account: EnterpriseAccount;
     expiresAt: string;
@@ -1024,6 +1095,38 @@ export class EnterpriseClient {
     return this.request(`/enterprise/accounts/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     });
+  }
+
+  async getDataGovernanceProfile(): Promise<EnterpriseDataGovernanceProfile> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['data_governance_v1']);
+    return this.request('/enterprise/privacy');
+  }
+
+  async acceptCurrentLegalDocuments(): Promise<EnterpriseDataGovernanceProfile> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    return this.request('/enterprise/privacy/accept', {
+      method: 'POST',
+      body: JSON.stringify({ accepted: true }),
+    });
+  }
+
+  async exportMyAccountData(): Promise<Record<string, unknown>> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    return this.request('/enterprise/privacy/export', { method: 'GET' });
+  }
+
+  async deleteMyAccount(input: {
+    password: string;
+    confirmation: string;
+  }): Promise<EnterprisePrivacyDeletionReceipt> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    const result = await this.request<EnterprisePrivacyDeletionReceipt>(
+      '/enterprise/privacy/account',
+      { method: 'DELETE', body: JSON.stringify(input) },
+    );
+    this.invalidateSession();
+    return result;
   }
 
   async recordTokenUsage(input: TokenUsageRecordInput): Promise<{

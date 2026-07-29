@@ -271,6 +271,10 @@ export async function handleAuthRoute({
     const code = typeof body.code === 'string' ? body.code.trim() : '';
     const name = typeof body.name === 'string' ? body.name.trim() : '';
     const password = typeof body.password === 'string' ? body.password : '';
+    if (body.legalConsent !== true) {
+      sendJSON(res, 400, { error: '请先阅读并同意用户协议和隐私规则' });
+      return true;
+    }
     if (!challengeId.startsWith('smsreg_') || !/^\d{6}$/.test(code)) {
       sendJSON(res, 400, { error: '请输入 6 位短信验证码' });
       return true;
@@ -317,11 +321,13 @@ export async function handleAuthRoute({
       }
       throw error;
     }
+    db.recordCurrentLegalConsent(account, 'registration');
     const session = db.createAuthSession(account.id);
     sendJSON(res, 200, {
       account,
       token: session.token,
       expiresAt: session.expiresAt,
+      legalConsentRecorded: true,
     });
     return true;
   }

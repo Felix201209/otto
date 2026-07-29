@@ -754,6 +754,9 @@ h6.otto-prose__h {
 .otto-auth-mode-switch button:focus-visible { outline: 2px solid rgba(168,255,208,.42); outline-offset: 3px; }
 .otto-auth-legal { margin: -5px 0 0; text-align: center; color: #66778f; font-size: 8.5px; line-height: 1.5; }
 .otto-auth-legal span { margin-right: 5px; color: #27a96b; font-size: 7px; }
+.otto-auth-consent { display:flex; align-items:flex-start; gap:9px; color:#9aabc2; font-size:10px; line-height:1.5; cursor:pointer; }
+.otto-auth-consent input { width:15px; height:15px; margin:0; accent-color:var(--auth-electric); flex:0 0 auto; }
+.otto-auth-consent button { padding:0 2px; border:0; color:var(--auth-electric); background:transparent; font:inherit; cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
 
 /* 身份控制台 */
 .otto-viewall--accounts.is-active { color: var(--otto-accent); background: var(--otto-accent-soft); }
@@ -5416,6 +5419,20 @@ h6.otto-prose__h {
   background: color-mix(in srgb, #ef4444 10%, transparent);
   color: #ef4444;
 }
+.otto-hub__privacy-notice,.otto-hub__privacy-error,.otto-hub__privacy-warning{padding:11px 13px;border:1px solid var(--otto-border);border-radius:var(--otto-radius-sm);font-size:12px;line-height:1.5}
+.otto-hub__privacy-notice{color:var(--otto-accent-hover);background:var(--otto-accent-soft)}
+.otto-hub__privacy-error{color:#b42318;background:color-mix(in srgb,#ef4444 9%,var(--otto-surface))}
+.otto-hub__privacy-warning{color:#854d0e;background:color-mix(in srgb,#f59e0b 11%,var(--otto-surface));border-color:color-mix(in srgb,#f59e0b 30%,var(--otto-border))}
+.otto-hub__privacy-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));overflow:visible}
+.otto-hub__privacy-summary>div{min-width:0;display:grid;grid-template-columns:1fr auto;gap:4px 10px;padding:16px 18px;border-right:1px solid var(--otto-border);border-bottom:1px solid var(--otto-border)}
+.otto-hub__privacy-summary>div:nth-child(2n){border-right:0}.otto-hub__privacy-summary>div:nth-last-child(-n+2){border-bottom:0}
+.otto-hub__privacy-summary span,.otto-hub__privacy-summary small{color:var(--otto-text-tertiary);font-size:11px}.otto-hub__privacy-summary strong{font-size:14px}.otto-hub__privacy-summary small{grid-column:1/-1}
+.otto-hub__privacy-section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-top:8px}.otto-hub__privacy-section-head>div{display:grid;gap:3px}.otto-hub__privacy-section-head strong{font-size:14px}.otto-hub__privacy-section-head span{color:var(--otto-text-tertiary);font-size:11.5px}
+.otto-hub__privacy-activities{display:grid;gap:8px}.otto-hub__privacy-activities details{border:1px solid var(--otto-border);border-radius:var(--otto-radius-sm);background:var(--otto-surface)}
+.otto-hub__privacy-activities summary{min-height:54px;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 15px;cursor:pointer;list-style:none}.otto-hub__privacy-activities summary::-webkit-details-marker{display:none}.otto-hub__privacy-activities summary>span{display:grid;gap:3px}.otto-hub__privacy-activities summary small{color:var(--otto-text-tertiary);font-size:11px}
+.otto-hub__privacy-activities dl{margin:0;padding:0 15px 14px;display:grid;gap:8px}.otto-hub__privacy-activities dl>div{display:grid;grid-template-columns:82px minmax(0,1fr);gap:10px}.otto-hub__privacy-activities dt{color:var(--otto-text-tertiary);font-size:11px}.otto-hub__privacy-activities dd{margin:0;color:var(--otto-text-secondary);font-size:11.5px}
+.otto-hub__privacy-delete{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto auto;gap:8px;width:100%}
+@media(max-width:720px){.otto-hub__privacy-summary{grid-template-columns:1fr}.otto-hub__privacy-summary>div{border-right:0;border-bottom:1px solid var(--otto-border)!important}.otto-hub__privacy-summary>div:last-child{border-bottom:0!important}.otto-hub__privacy-delete{grid-template-columns:1fr}.otto-hub__privacy-activities summary{align-items:flex-start;flex-direction:column}.otto-hub__privacy-activities dl>div{grid-template-columns:1fr;gap:2px}}
 
 /* ── 园区服务插件（右下角悬浮小钮 + 居中对话框）─────────────────── */
 /* 入口小钮：默认弱化只露图标，不抢聊天注意力；hover 提亮并横向展开标签。 */

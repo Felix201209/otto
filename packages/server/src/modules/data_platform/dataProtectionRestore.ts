@@ -17,6 +17,7 @@ export interface DataProtectionRestoreReceipt {
   rollbackDirectory: string;
   schemaVersion: number;
   attachmentObjects: number;
+  privacyDeletionLedgerRestored: boolean;
 }
 
 function assertServiceStopped(dataDirectory: string): void {
@@ -299,6 +300,35 @@ export async function restoreDataProtectionBackup(input: {
       attachmentsDirectory: restoredAttachments,
       attachmentKeyPath: restoredAttachmentKey,
     });
+    const restoredPrivacyLedger = path.join(
+      stagingDirectory,
+      'privacy',
+      'privacy-deletions.jsonl',
+    );
+    const restoredPrivacyLedgerKey = path.join(
+      stagingDirectory,
+      'privacy',
+      'privacy-deletions.key',
+    );
+    const hasRestoredPrivacyLedger = fs.existsSync(restoredPrivacyLedger);
+    const hasRestoredPrivacyLedgerKey = fs.existsSync(restoredPrivacyLedgerKey);
+    if (hasRestoredPrivacyLedger !== hasRestoredPrivacyLedgerKey) {
+      throw new Error('backup privacy deletion ledger is incomplete');
+    }
+    const currentPrivacyLedger = path.join(
+      dataDirectory,
+      'privacy-deletions.jsonl',
+    );
+    const currentPrivacyLedgerKey = path.join(
+      dataDirectory,
+      'privacy-deletions.key',
+    );
+    const hasCurrentPrivacyLedger = fs.existsSync(currentPrivacyLedger);
+    const hasCurrentPrivacyLedgerKey = fs.existsSync(currentPrivacyLedgerKey);
+    if (hasCurrentPrivacyLedger !== hasCurrentPrivacyLedgerKey) {
+      throw new Error('current privacy deletion ledger is incomplete');
+    }
+    let privacyDeletionLedgerRestored = false;
     fs.mkdirSync(rollbackDirectory, { recursive: true, mode: 0o700 });
     for (const name of [
       'data.db',
@@ -327,6 +357,11 @@ export async function restoreDataProtectionBackup(input: {
         restoredAttachmentKey,
         path.join(dataDirectory, 'attachment-storage.key'),
       );
+      if (!hasCurrentPrivacyLedger && hasRestoredPrivacyLedger) {
+        moveIfPresent(restoredPrivacyLedger, currentPrivacyLedger);
+        moveIfPresent(restoredPrivacyLedgerKey, currentPrivacyLedgerKey);
+        privacyDeletionLedgerRestored = true;
+      }
     } catch (error) {
       for (const name of [
         'data.db',
@@ -345,6 +380,10 @@ export async function restoreDataProtectionBackup(input: {
           path.join(dataDirectory, name),
         );
       }
+      if (privacyDeletionLedgerRestored) {
+        fs.rmSync(currentPrivacyLedger, { force: true });
+        fs.rmSync(currentPrivacyLedgerKey, { force: true });
+      }
       throw error;
     }
     const receipt: DataProtectionRestoreReceipt = {
@@ -354,6 +393,7 @@ export async function restoreDataProtectionBackup(input: {
       rollbackDirectory,
       schemaVersion,
       attachmentObjects: attachmentObjects.length,
+      privacyDeletionLedgerRestored,
     };
     fs.writeFileSync(
       path.join(rollbackDirectory, 'restore-receipt.json'),
@@ -378,9 +418,13 @@ export function rollbackDataProtectionRestore(input: {
   if (!rollbackDirectory.startsWith(`${expectedRoot}${path.sep}`)) {
     throw new Error('restore rollback directory is outside the protected root');
   }
-  if (!fs.existsSync(path.join(rollbackDirectory, 'restore-receipt.json'))) {
+  const receiptPath = path.join(rollbackDirectory, 'restore-receipt.json');
+  if (!fs.existsSync(receiptPath)) {
     throw new Error('restore rollback receipt is missing');
   }
+  const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Partial<
+    DataProtectionRestoreReceipt
+  >;
   for (const name of [
     'data.db',
     'data.db-wal',
@@ -394,5 +438,13 @@ export function rollbackDataProtectionRestore(input: {
       path.join(rollbackDirectory, name),
       path.join(dataDirectory, name),
     );
+  }
+  if (receipt.privacyDeletionLedgerRestored) {
+    fs.rmSync(path.join(dataDirectory, 'privacy-deletions.jsonl'), {
+      force: true,
+    });
+    fs.rmSync(path.join(dataDirectory, 'privacy-deletions.key'), {
+      force: true,
+    });
   }
 }

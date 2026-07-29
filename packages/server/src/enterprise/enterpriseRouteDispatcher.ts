@@ -16,6 +16,7 @@ import {
   type AuthRouteSmsSender,
 } from './authRoutes.js';
 import { handleCommunicationRoute } from './communicationRoutes.js';
+import { handleDataGovernanceRoute } from '../modules/data_governance/index.js';
 import { handleCreditsRoute } from './creditsRoutes.js';
 import {
   handleDeploymentRoute,
@@ -144,6 +145,21 @@ export async function dispatchEnterpriseRoute({
 
   if (
     await handleLocalAgentRoute({ path, method, req, res, readBody, sendJSON })
+  ) {
+    return true;
+  }
+
+  if (
+    await handleDataGovernanceRoute({
+      path,
+      method,
+      req,
+      res,
+      memberAccount,
+      services: db,
+      readBody,
+      sendJSON,
+    })
   ) {
     return true;
   }

@@ -628,6 +628,25 @@ export class AccountDataSyncService {
     return run;
   }
 
+  erase(identity: AccountDataSyncIdentity): Promise<void> {
+    const identityKey = accountDataSyncIdentityKey(identity);
+    const run = this.queue.then(async () => {
+      for (const scope of ACCOUNT_SYNC_SCOPES) {
+        await clearManagedScope(scope, this.userRoot, this.worklogRoot);
+      }
+      await fs.rm(path.join(this.syncRoot, 'profiles', identityKey), {
+        recursive: true,
+        force: true,
+      });
+      const state = await readJson<AccountDataSyncState>(this.statePath());
+      if (state?.schemaVersion === 1 && state.activeIdentityKey === identityKey) {
+        await fs.rm(this.statePath(), { force: true });
+      }
+    });
+    this.queue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
   private statePath(): string {
     return path.join(this.syncRoot, 'state.json');
   }

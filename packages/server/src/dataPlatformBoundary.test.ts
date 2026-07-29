@@ -122,7 +122,7 @@ describe('data_platform storage kernel', () => {
     );
     expect(databaseFacade).toContain('createDataPlatformComposition');
     expect(databaseFacade).not.toContain('createEnterpriseDatabaseLifecycle');
-    expect(databaseFacade).not.toContain('createFileEncryptionKeyProvider');
+    expect(databaseFacade).toContain("from '../modules/data_platform/index.js'");
     expect(databaseFacade).toContain('initializeSchema: initSchema');
     expect(databaseFacade).not.toMatch(/\blet db:\s*Database/);
     expect(databaseFacade).not.toContain('new Database(DB_PATH)');

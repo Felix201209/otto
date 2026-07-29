@@ -18,6 +18,7 @@ afterEach(cleanup);
 describe('SettingsHubPage internal-test navigation', () => {
   it('hides the unfinished enterprise local-agent pairing entry', () => {
     expect(isSettingsTabVisible('organization')).toBe(true);
+    expect(isSettingsTabVisible('privacy')).toBe(true);
     expect(isSettingsTabVisible('feishu')).toBe(true);
     expect(isSettingsTabVisible('local-agent')).toBe(false);
   });

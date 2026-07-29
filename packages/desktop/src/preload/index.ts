@@ -287,6 +287,58 @@ export interface EnterpriseSessionState {
   connectionError?: string;
 }
 
+export interface EnterpriseDataGovernanceProfile {
+  controller: { name: string; privacyContact: string; configured: boolean };
+  residency: { mode: string; region: string; crossBorderEnabled: boolean; localizationReady: boolean };
+  security: {
+    publicTransport: string;
+    database: string;
+    encryptedData: string[];
+    hashedData: string[];
+    plaintextData: string[];
+  };
+  retention: {
+    securityAuditMinimumDays: number;
+    encryptedBackupDefaultDays: number;
+    healthTelemetryDefaultDays: number;
+  };
+  readiness: { configured: boolean; warnings: string[] };
+  documents: Array<{
+    id: 'terms' | 'privacy'; title: string; version: string; effectiveAt: string;
+    required: true; summary: string[]; sourceUrls: string[]; hash: string;
+    accepted: boolean; acceptedAt: number | null;
+  }>;
+  processingActivities: Array<{
+    id: string; category: string; purpose: string;
+    sensitivity: 'ordinary' | 'sensitive' | 'security';
+    storage: 'user_device' | 'enterprise_server' | 'configured_provider';
+    atRest: string; transport: string; retention: string; deletion: string;
+    recipients: string[]; crossBorder: boolean;
+  }>;
+  rights: string[];
+  currentConsentComplete: boolean;
+  authorization: {
+    deploymentId: string;
+    license: {
+      status: string; plan: string; expiresAt: string; seatLimit: number;
+      activeSeatCount: number; modules: string[]; offline: boolean; enforce: boolean;
+    };
+    telemetry: { enabled: boolean; contentMode: string };
+    dataBoundary: Record<string, unknown>;
+  };
+}
+
+export interface EnterprisePrivacyDeletionReceipt {
+  requestId: string;
+  accountId: string;
+  organizationId: string;
+  completedAt: string;
+  deleted: string[];
+  anonymized: string[];
+  retained: Array<{ category: string; reason: string; restriction: string }>;
+  backupExpiry: string;
+}
+
 export interface EnterpriseTokenUsageInput {
   sessionId: string;
   messageId: string;
@@ -734,6 +786,10 @@ const IPC = {
   enterpriseAccountCreate: 'otto:enterprise-account-create',
   enterpriseAccountUpdate: 'otto:enterprise-account-update',
   enterpriseAccountDelete: 'otto:enterprise-account-delete',
+  enterpriseDataGovernanceGet: 'otto:enterprise-data-governance-get',
+  enterpriseLegalAccept: 'otto:enterprise-legal-accept',
+  enterprisePrivacyExport: 'otto:enterprise-privacy-export',
+  enterprisePrivacyDelete: 'otto:enterprise-privacy-delete',
   enterprisePair: 'otto:enterprise-pair',
   enterpriseUsageRecord: 'otto:enterprise-usage-record',
   enterpriseKnowledgeRecord: 'otto:enterprise-knowledge-record',
@@ -1040,6 +1096,7 @@ export interface OttoBridge {
     code: string;
     name: string;
     password: string;
+    legalConsent: true;
   }): Promise<{ serverUrl: string; account: EnterpriseAccount; expiresAt: string }>;
   enterpriseJoinOrganization(input: {
     inviteCode: string;
@@ -1055,6 +1112,13 @@ export interface OttoBridge {
   enterpriseAccountCreate(input: EnterpriseAccountCreateInput): Promise<EnterpriseAccount>;
   enterpriseAccountUpdate(id: string, input: EnterpriseAccountUpdateInput): Promise<EnterpriseAccount>;
   enterpriseAccountDelete(id: string): Promise<{ id: string; deleted: true }>;
+  enterpriseDataGovernanceGet(): Promise<EnterpriseDataGovernanceProfile>;
+  enterpriseLegalAccept(): Promise<EnterpriseDataGovernanceProfile>;
+  enterprisePrivacyExport(): Promise<{ ok: true; path: string } | null>;
+  enterprisePrivacyDelete(input: {
+    password: string;
+    confirmation: string;
+  }): Promise<EnterprisePrivacyDeletionReceipt>;
   enterpriseUsageRecord(input: EnterpriseTokenUsageInput): Promise<{
     recorded: boolean;
     source: 'client_reported';
@@ -1785,6 +1849,7 @@ const bridge: OttoBridge = {
     code: string;
     name: string;
     password: string;
+    legalConsent: true;
   }): Promise<{ serverUrl: string; account: EnterpriseAccount; expiresAt: string }> {
     return ipcRenderer.invoke(IPC.enterpriseRegister, input) as Promise<{
       serverUrl: string;
@@ -1827,6 +1892,21 @@ const bridge: OttoBridge = {
       id: string;
       deleted: true;
     }>;
+  },
+  enterpriseDataGovernanceGet(): Promise<EnterpriseDataGovernanceProfile> {
+    return ipcRenderer.invoke(IPC.enterpriseDataGovernanceGet) as Promise<EnterpriseDataGovernanceProfile>;
+  },
+  enterpriseLegalAccept(): Promise<EnterpriseDataGovernanceProfile> {
+    return ipcRenderer.invoke(IPC.enterpriseLegalAccept) as Promise<EnterpriseDataGovernanceProfile>;
+  },
+  enterprisePrivacyExport(): Promise<{ ok: true; path: string } | null> {
+    return ipcRenderer.invoke(IPC.enterprisePrivacyExport) as Promise<{ ok: true; path: string } | null>;
+  },
+  enterprisePrivacyDelete(input: {
+    password: string;
+    confirmation: string;
+  }): Promise<EnterprisePrivacyDeletionReceipt> {
+    return ipcRenderer.invoke(IPC.enterprisePrivacyDelete, input) as Promise<EnterprisePrivacyDeletionReceipt>;
   },
   enterpriseUsageRecord(input: EnterpriseTokenUsageInput): Promise<{
     recorded: boolean;

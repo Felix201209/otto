@@ -48,6 +48,8 @@ export interface DataProtectionServiceOptions {
   accountSyncKeyPath: string;
   attachmentKeyPath: string;
   attachmentDirectory: string;
+  privacyDeletionLedgerPath?: string;
+  privacyDeletionLedgerKeyPath?: string;
   attachmentObjectStore: EncryptedObjectStore;
   getDatabase(): DatabaseHandle;
   backupDirectory?: string;
@@ -476,6 +478,28 @@ export function createDataProtectionService(
         [options.attachmentKeyPath, 'keys/attachment-storage.key'],
       ] as const) {
         if (fs.existsSync(sourcePath)) files.push({ sourcePath, archivePath });
+      }
+      const privacyLedgerPath = options.privacyDeletionLedgerPath;
+      const privacyLedgerKeyPath = options.privacyDeletionLedgerKeyPath;
+      if (privacyLedgerPath || privacyLedgerKeyPath) {
+        if (!privacyLedgerPath || !privacyLedgerKeyPath) {
+          throw new Error('privacy deletion ledger paths must be configured together');
+        }
+        if (fs.existsSync(privacyLedgerPath)) {
+          if (!fs.existsSync(privacyLedgerKeyPath)) {
+            throw new Error('privacy deletion ledger key is missing');
+          }
+          files.push(
+            {
+              sourcePath: privacyLedgerPath,
+              archivePath: 'privacy/privacy-deletions.jsonl',
+            },
+            {
+              sourcePath: privacyLedgerKeyPath,
+              archivePath: 'privacy/privacy-deletions.key',
+            },
+          );
+        }
       }
       for (const key of objectKeys) {
         files.push({

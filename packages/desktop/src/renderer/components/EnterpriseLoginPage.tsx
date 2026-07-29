@@ -70,6 +70,7 @@ export function isRegistrationReady(input: {
   confirmPassword: string;
   challengeId: string;
   code: string;
+  legalConsent: boolean;
 }): boolean {
   return (!input.inviteRequired
     || input.inviteCode.replace(/[^A-HJ-NP-Za-km-z2-9]/g, '').length === 12)
@@ -77,7 +78,8 @@ export function isRegistrationReady(input: {
     && isAcceptableRegistrationPassword(input.password)
     && input.password === input.confirmPassword
     && Boolean(input.challengeId)
-    && /^\d{6}$/.test(input.code);
+    && /^\d{6}$/.test(input.code)
+    && input.legalConsent;
 }
 
 function enterpriseServerHost(serverUrl: string): string {
@@ -152,7 +154,7 @@ export function EnterpriseLoginPage({
     registrationMode?: 'personal' | 'enterprise';
     organization: { id: string; name: string } | null;
   }>;
-  onRegister: (input: { challengeId: string; code: string; name: string; password: string }) => Promise<void>;
+  onRegister: (input: { challengeId: string; code: string; name: string; password: string; legalConsent: true }) => Promise<void>;
   onClearError: () => void;
 }): React.JSX.Element {
   const [mode, setMode] = useState<LoginMode>(initialInviteCode ? 'join' : 'login');
@@ -177,6 +179,7 @@ export function EnterpriseLoginPage({
   const [code, setCode] = useState('');
   const [challengeId, setChallengeId] = useState('');
   const [notice, setNotice] = useState('');
+  const [legalConsent, setLegalConsent] = useState(false);
   const [organizationName, setOrganizationName] = useState('');
   const [requesting, setRequesting] = useState(false);
   const [countdown, setCountdown] = useState(0);
@@ -291,6 +294,7 @@ export function EnterpriseLoginPage({
       confirmPassword,
       challengeId,
       code,
+      legalConsent,
     })) return;
     if (
       mode === 'login'
@@ -310,6 +314,7 @@ export function EnterpriseLoginPage({
           code: code.trim(),
           name: name.trim(),
           password: registrationPassword,
+          legalConsent: true,
         });
       } else if (loginMethod === 'password') {
         await onPasswordLogin({
@@ -532,6 +537,20 @@ export function EnterpriseLoginPage({
                 <div className="otto-auth-organization" role="status">将加入「{organizationName}」</div>
               ) : null}
               {notice ? <div className="otto-auth-notice" role="status">{notice}</div> : null}
+              <label className="otto-auth-consent">
+                <input
+                  type="checkbox"
+                  checked={legalConsent}
+                  disabled={formPending}
+                  onChange={(event) => {
+                    setLegalConsent(event.target.checked);
+                    onClearError();
+                  }}
+                />
+                <span>我已阅读并同意
+                  <button type="button" onClick={() => void window.otto.openExternal(`${initialServerUrl.replace(/\/+$/u, '')}/enterprise/legal`)}>《用户服务协议》与《隐私规则》</button>
+                </span>
+              </label>
             </>
           ) : (
             <>
@@ -671,6 +690,7 @@ export function EnterpriseLoginPage({
                 confirmPassword,
                 challengeId,
                 code,
+                legalConsent,
               }))}
           >
             <span>

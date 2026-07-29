@@ -121,6 +121,8 @@ const ENTERPRISE_CAPABILITIES = [
   'usage_summary',
   'admin_console',
   'account_deletion',
+  'data_governance_v1',
+  'privacy_self_service',
   'multi_organization',
   'direct_messages',
   'direct_message_attachments_v1',

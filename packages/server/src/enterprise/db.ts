@@ -16,6 +16,10 @@ import {
 } from '../modules/data_platform/index.js';
 import { createAuthorizationComposition } from '../modules/authorization/index.js';
 import {
+  createDataGovernanceComposition,
+  DATA_GOVERNANCE_SCHEMA_CONTRIBUTOR,
+} from '../modules/data_governance/index.js';
+import {
   COLLABORATION_SCHEMA_CONTRIBUTOR,
   createCollaborationComposition,
   type AccountPresenceView as CollaborationAccountPresenceView,
@@ -139,6 +143,10 @@ export {
   AccountSyncConflictError,
 } from '../modules/personal_intelligence/index.js';
 export type {
+  DataGovernanceAccount,
+  PrivacyDeletionReceipt,
+} from '../modules/data_governance/index.js';
+export type {
   AccountSyncFile,
   AccountSyncPayload,
   AccountSyncScope,
@@ -175,9 +183,17 @@ const ATTACHMENT_STORAGE_KEY_PATH = path.join(
 );
 const BACKUP_STORAGE_DIR =
   process.env.OTTO_BACKUP_DIR || path.join(DATA_DIR, 'backups');
+const PRIVACY_DELETION_LEDGER_PATH = path.join(
+  DATA_DIR,
+  'privacy-deletions.jsonl',
+);
+const PRIVACY_DELETION_LEDGER_KEY_PATH = path.join(
+  DATA_DIR,
+  'privacy-deletions.key',
+);
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
-export const ENTERPRISE_SCHEMA_VERSION = 14;
+export const ENTERPRISE_SCHEMA_VERSION = 15;
 export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
@@ -217,6 +233,7 @@ function initSchema(d: Database): void {
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
     }),
     PERSONAL_INTELLIGENCE_SCHEMA_CONTRIBUTOR,
+    DATA_GOVERNANCE_SCHEMA_CONTRIBUTOR,
     PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR,
     createAuditLogSchemaContributor({
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
@@ -268,6 +285,8 @@ const dataProtection = createDataProtectionService({
   accountSyncKeyPath: ACCOUNT_SYNC_KEY_PATH,
   attachmentKeyPath: ATTACHMENT_STORAGE_KEY_PATH,
   attachmentDirectory: ATTACHMENT_STORAGE_DIR,
+  privacyDeletionLedgerPath: PRIVACY_DELETION_LEDGER_PATH,
+  privacyDeletionLedgerKeyPath: PRIVACY_DELETION_LEDGER_KEY_PATH,
   attachmentObjectStore,
   getDatabase: dataPlatform.getDatabase,
   backupDirectory: BACKUP_STORAGE_DIR,
@@ -352,6 +371,8 @@ export const {
   telemetryEndpoint: () => process.env.OTTO_TELEMETRY_ENDPOINT || null,
   telemetryIngestSecret: () =>
     process.env.OTTO_TELEMETRY_INGEST_SECRET || '',
+  telemetryRetentionDays: () =>
+    Number(process.env.OTTO_TELEMETRY_RETENTION_DAYS || 90),
   databaseReadiness: getDatabaseReadiness,
 });
 
@@ -712,6 +733,24 @@ export const {
   attachmentObjectStore,
   getAccount,
 });
+
+export const {
+  getDataGovernanceProfile,
+  recordCurrentLegalConsent,
+  exportAccountData,
+  deleteOwnAccountData,
+  reapplyPrivacyDeletionTombstones,
+} = createDataGovernanceComposition({
+  db: getDB,
+  ledgerPath: PRIVACY_DELETION_LEDGER_PATH,
+  ledgerKeyPath: PRIVACY_DELETION_LEDGER_KEY_PATH,
+  attachmentObjectStore,
+  createDeletionPasswordHash: passwordHash,
+});
+
+// The ledger lives outside data.db. Restoring an older encrypted backup cannot
+// resurrect an account whose deletion was already completed.
+reapplyPrivacyDeletionTombstones();
 
 export type AccountPresenceView = CollaborationAccountPresenceView;
 

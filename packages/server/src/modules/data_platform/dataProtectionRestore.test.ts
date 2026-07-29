@@ -61,6 +61,14 @@ describe('data protection restore', () => {
       path.join(dataDirectory, 'account-sync.key'),
       'old-account-key',
     );
+    fs.writeFileSync(
+      path.join(dataDirectory, 'privacy-deletions.jsonl'),
+      'newer-current-tombstone',
+    );
+    fs.writeFileSync(
+      path.join(dataDirectory, 'privacy-deletions.key'),
+      'newer-current-key',
+    );
     fs.mkdirSync(path.join(dataDirectory, 'attachments'));
     fs.writeFileSync(
       path.join(dataDirectory, 'attachments', 'old'),
@@ -71,10 +79,14 @@ describe('data protection restore', () => {
     const restoredAccountKey = path.join(sources, 'account-sync.key');
     const restoredAttachmentKey = path.join(sources, 'attachment-storage.key');
     const restoredObject = path.join(sources, 'restored.otto-object');
+    const restoredPrivacyLedger = path.join(sources, 'privacy-deletions.jsonl');
+    const restoredPrivacyLedgerKey = path.join(sources, 'privacy-deletions.key');
     createDatabase(restoredDatabase, 'new');
     fs.writeFileSync(restoredAccountKey, 'new-account-key');
     fs.writeFileSync(restoredAttachmentKey, 'new-attachment-key');
     fs.writeFileSync(restoredObject, 'authenticated-object-bytes');
+    fs.writeFileSync(restoredPrivacyLedger, 'older-backup-tombstone');
+    fs.writeFileSync(restoredPrivacyLedgerKey, 'older-backup-key');
     const objectKey = `${'a'.repeat(2)}/${'b'.repeat(2)}/${'c'.repeat(64)}.otto-object`;
     const archivePath = path.join(root, 'backup.otto-backup');
     const encryptionKey = Buffer.alloc(32, 7);
@@ -91,6 +103,14 @@ describe('data protection restore', () => {
           sourcePath: restoredAttachmentKey,
           archivePath: 'keys/attachment-storage.key',
         },
+        {
+          sourcePath: restoredPrivacyLedger,
+          archivePath: 'privacy/privacy-deletions.jsonl',
+        },
+        {
+          sourcePath: restoredPrivacyLedgerKey,
+          archivePath: 'privacy/privacy-deletions.key',
+        },
         { sourcePath: restoredObject, archivePath: `attachments/${objectKey}` },
       ],
     });
@@ -104,6 +124,7 @@ describe('data protection restore', () => {
     });
     expect(receipt.schemaVersion).toBe(14);
     expect(receipt.attachmentObjects).toBe(1);
+    expect(receipt.privacyDeletionLedgerRestored).toBe(false);
     expect(readState(path.join(dataDirectory, 'data.db'))).toBe('new');
     expect(
       fs.readFileSync(path.join(dataDirectory, 'account-sync.key'), 'utf8'),
@@ -113,6 +134,9 @@ describe('data protection restore', () => {
         path.join(dataDirectory, 'attachments', ...objectKey.split('/')),
       ),
     ).toBe(true);
+    expect(
+      fs.readFileSync(path.join(dataDirectory, 'privacy-deletions.jsonl'), 'utf8'),
+    ).toBe('newer-current-tombstone');
 
     rollbackDataProtectionRestore({
       dataDirectory,
@@ -125,6 +149,54 @@ describe('data protection restore', () => {
     expect(
       fs.readFileSync(path.join(dataDirectory, 'attachments', 'old'), 'utf8'),
     ).toBe('old-object');
+    expect(
+      fs.readFileSync(path.join(dataDirectory, 'privacy-deletions.jsonl'), 'utf8'),
+    ).toBe('newer-current-tombstone');
+  });
+
+  it('restores deletion tombstones on a fresh host and removes them on rollback', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-restore-privacy-'));
+    temporaryDirectories.push(root);
+    const dataDirectory = path.join(root, 'data');
+    const sources = path.join(root, 'sources');
+    fs.mkdirSync(dataDirectory);
+    fs.mkdirSync(sources);
+    createDatabase(path.join(dataDirectory, 'data.db'), 'old');
+    const restoredDatabase = path.join(sources, 'data.db');
+    const restoredPrivacyLedger = path.join(sources, 'privacy-deletions.jsonl');
+    const restoredPrivacyLedgerKey = path.join(sources, 'privacy-deletions.key');
+    createDatabase(restoredDatabase, 'new');
+    fs.writeFileSync(restoredPrivacyLedger, 'encrypted-tombstone');
+    fs.writeFileSync(restoredPrivacyLedgerKey, 'encrypted-ledger-key');
+    const archivePath = path.join(root, 'privacy-backup.otto-backup');
+    const key = Buffer.alloc(32, 10);
+    await createEncryptedBackupArchive({
+      targetPath: archivePath,
+      key,
+      files: [
+        { sourcePath: restoredDatabase, archivePath: 'database/data.db' },
+        { sourcePath: restoredPrivacyLedger, archivePath: 'privacy/privacy-deletions.jsonl' },
+        { sourcePath: restoredPrivacyLedgerKey, archivePath: 'privacy/privacy-deletions.key' },
+      ],
+    });
+
+    const receipt = await restoreDataProtectionBackup({
+      archivePath,
+      dataDirectory,
+      key,
+      maximumSchemaVersion: 14,
+    });
+    expect(receipt.privacyDeletionLedgerRestored).toBe(true);
+    expect(
+      fs.readFileSync(path.join(dataDirectory, 'privacy-deletions.jsonl'), 'utf8'),
+    ).toBe('encrypted-tombstone');
+
+    rollbackDataProtectionRestore({
+      dataDirectory,
+      rollbackDirectory: receipt.rollbackDirectory,
+    });
+    expect(fs.existsSync(path.join(dataDirectory, 'privacy-deletions.jsonl'))).toBe(false);
+    expect(fs.existsSync(path.join(dataDirectory, 'privacy-deletions.key'))).toBe(false);
   });
 
   it('refuses future schemas and a data directory used by a live server', async () => {

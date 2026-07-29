@@ -126,6 +126,7 @@ import {
   type AccountUpdateInput,
   type EnterpriseAccount,
   type EnterpriseDirectMessageAttachmentUpload,
+  type EnterprisePrivacyDeletionReceipt,
   type EnterpriseKnowledgeRecordInput,
   type EnterpriseModuleUpdateDescriptor,
   type EnterpriseOrganizationFeatures,
@@ -358,6 +359,10 @@ const IPC = {
   enterpriseAccountCreate: 'otto:enterprise-account-create',
   enterpriseAccountUpdate: 'otto:enterprise-account-update',
   enterpriseAccountDelete: 'otto:enterprise-account-delete',
+  enterpriseDataGovernanceGet: 'otto:enterprise-data-governance-get',
+  enterpriseLegalAccept: 'otto:enterprise-legal-accept',
+  enterprisePrivacyExport: 'otto:enterprise-privacy-export',
+  enterprisePrivacyDelete: 'otto:enterprise-privacy-delete',
   enterprisePair: 'otto:enterprise-pair',
   enterpriseUsageRecord: 'otto:enterprise-usage-record',
   enterpriseKnowledgeRecord: 'otto:enterprise-knowledge-record',
@@ -1748,7 +1753,8 @@ function registerIpc(): void {
     if (!input || typeof input !== 'object') throw new Error('注册信息格式不正确');
     const body = input as Record<string, unknown>;
     if (typeof body.challengeId !== 'string' || typeof body.code !== 'string'
-      || typeof body.name !== 'string' || typeof body.password !== 'string') {
+      || typeof body.name !== 'string' || typeof body.password !== 'string'
+      || body.legalConsent !== true) {
       throw new Error('姓名、密码和验证码均为必填项');
     }
     return enterpriseAuthOperations.run(async () => {
@@ -1758,6 +1764,7 @@ function registerIpc(): void {
           code: body.code as string,
           name: body.name as string,
           password: body.password as string,
+          legalConsent: true,
         }),
         enterpriseClient,
         synchronizeAuthenticatedEnterpriseAccount,
@@ -1875,6 +1882,63 @@ function registerIpc(): void {
     loadEnterpriseSession();
     if (typeof id !== 'string' || !id) throw new Error('账号 ID 不正确');
     return enterpriseClient.deleteAccount(id);
+  });
+  ipcMain.handle(IPC.enterpriseDataGovernanceGet, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.getDataGovernanceProfile();
+  });
+  ipcMain.handle(IPC.enterpriseLegalAccept, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.acceptCurrentLegalDocuments();
+  });
+  ipcMain.handle(IPC.enterprisePrivacyExport, async () => {
+    loadEnterpriseSession();
+    const payload = await enterpriseClient.exportMyAccountData();
+    const account = enterpriseClient.authenticatedAccountSnapshot();
+    const suggested = `otto-personal-data-${account?.id ?? 'account'}-${new Date().toISOString().slice(0, 10)}.json`;
+    const win = BrowserWindow.getFocusedWindow() ?? mainWindow;
+    const result = win
+      ? await dialog.showSaveDialog(win, {
+        title: '导出我的 Otto 数据',
+        defaultPath: path.join(app.getPath('documents'), suggested),
+        filters: [{ name: 'JSON 数据文件', extensions: ['json'] }],
+      })
+      : await dialog.showSaveDialog({
+        title: '导出我的 Otto 数据',
+        defaultPath: path.join(app.getPath('documents'), suggested),
+        filters: [{ name: 'JSON 数据文件', extensions: ['json'] }],
+      });
+    if (result.canceled || !result.filePath) return null;
+    await fs.promises.writeFile(
+      result.filePath,
+      `${JSON.stringify(payload, null, 2)}\n`,
+      { encoding: 'utf8', mode: 0o600 },
+    );
+    return { ok: true as const, path: result.filePath };
+  });
+  ipcMain.handle(IPC.enterprisePrivacyDelete, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('注销信息格式不正确');
+    const body = input as Record<string, unknown>;
+    if (typeof body.password !== 'string' || typeof body.confirmation !== 'string') {
+      throw new Error('请输入登录密码和注销确认文字');
+    }
+    return enterpriseAuthOperations.run(async (): Promise<EnterprisePrivacyDeletionReceipt> => {
+      const account = enterpriseClient.authenticatedAccountSnapshot();
+      if (!account) throw new Error('登录已失效，请重新登录');
+      const identity = accountDataSyncIdentity(account);
+      const receipt = await enterpriseClient.deleteMyAccount({
+        password: body.password as string,
+        confirmation: body.confirmation as string,
+      });
+      if (identity) await accountDataSyncService.erase(identity);
+      await synchronizeAuthenticatedEnterpriseAccount(null);
+      saveEnterpriseSession();
+      fileAccessGrants.clear();
+      notificationService.clearAll();
+      resetEnterpriseModuleUpdateState();
+      return receipt;
+    });
   });
   ipcMain.handle(IPC.enterpriseUsageRecord, async (_e, input: unknown) => {
     loadEnterpriseSession();

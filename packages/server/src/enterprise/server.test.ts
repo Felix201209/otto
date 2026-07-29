@@ -46,6 +46,12 @@ const ENV_KEYS = [
   'OTTO_LICENSE_PUBLIC_KEY',
   'OTTO_LICENSE_PUBLIC_KEYS',
   'OTTO_TELEMETRY_ENDPOINT',
+  'OTTO_DATA_CONTROLLER_NAME',
+  'OTTO_PRIVACY_CONTACT',
+  'OTTO_DATA_REGION',
+  'OTTO_DATA_RESIDENCY',
+  'OTTO_CROSS_BORDER_DATA_ENABLED',
+  'OTTO_TELEMETRY_RETENTION_DAYS',
 ] as const;
 
 const ADMIN_TOKEN = 'test-admin-token-abc123';
@@ -95,6 +101,64 @@ beforeEach(() => {
   process.env.OTTO_ENTERPRISE_DIR = tmpDir;
   servers = [];
   closeDatabases = [];
+});
+
+describe('数据治理自助闭环', { timeout: 30_000 }, () => {
+  it('License 受限时仍允许查看规则、导出和注销本人数据', async () => {
+    process.env.OTTO_LICENSE_ENFORCE = 'true';
+    process.env.OTTO_DATA_CONTROLLER_NAME = '星河科技有限公司';
+    process.env.OTTO_PRIVACY_CONTACT = 'privacy@example.test';
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const database: DatabaseModule = await import('./db.js');
+    const account = database.createPersonalRegisteredAccount({
+      phone: '13800138001',
+      name: '隐私测试用户',
+      password: 'privacy-password-1',
+    });
+    const token = database.createAuthSession(account.id).token;
+    const auth = { authorization: `Bearer ${token}` };
+
+    const publicLegal = await fetch(`${base}/enterprise/legal`, {
+      headers: { accept: 'text/html' },
+    });
+    expect(publicLegal.status).toBe(200);
+    expect(publicLegal.headers.get('content-type')).toContain('text/html');
+    expect(await publicLegal.text()).toContain('Otto 用户协议与隐私规则');
+
+    const profile = await fetch(`${base}/enterprise/privacy`, { headers: auth });
+    expect(profile.status).toBe(200);
+    await expect(profile.json()).resolves.toMatchObject({
+      controller: { configured: true },
+      authorization: { license: { status: 'missing', enforce: true } },
+      currentConsentComplete: false,
+    });
+
+    const accept = await fetch(`${base}/enterprise/privacy/accept`, {
+      method: 'POST',
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ accepted: true }),
+    });
+    expect(accept.status).toBe(200);
+    await expect(accept.json()).resolves.toMatchObject({ currentConsentComplete: true });
+
+    const exported = await fetch(`${base}/enterprise/privacy/export`, { headers: auth });
+    expect(exported.status).toBe(200);
+    await expect(exported.json()).resolves.toMatchObject({
+      account: { id: account.id, phone: '+8613800138001' },
+    });
+
+    const deleted = await fetch(`${base}/enterprise/privacy/account`, {
+      method: 'DELETE',
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        password: 'privacy-password-1',
+        confirmation: '注销我的 Otto 账号',
+      }),
+    });
+    expect(deleted.status).toBe(200);
+    await expect(deleted.json()).resolves.toMatchObject({ accountId: account.id });
+    expect(database.getAccountBySession(token)).toBeNull();
+  });
 });
 
 afterEach(async () => {
@@ -479,6 +543,8 @@ describe('受保护 vs 公开路由边界', () => {
       'usage_summary',
       'admin_console',
       'account_deletion',
+      'data_governance_v1',
+      'privacy_self_service',
       'multi_organization',
       'direct_messages',
       'atoa',
@@ -537,7 +603,7 @@ describe('受保护 vs 公开路由边界', () => {
     await expect(backup.json()).resolves.toMatchObject({
       lastError: null,
       backupCount: 1,
-      latestSchemaVersion: 14,
+      latestSchemaVersion: 15,
     });
 
     const telemetry = await fetch(`${base}/enterprise/deployment/telemetry`, {
@@ -1900,6 +1966,20 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     });
     expect(incomplete.status).toBe(400);
 
+    const withoutConsent = await fetch(`${base}/enterprise/auth/register/sms/verify`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        challengeId: registrationChallenge.challengeId,
+        code: sent[0]?.code,
+        name: '王小明',
+        password: 'registered-password-1',
+      }),
+    });
+    expect(withoutConsent.status).toBe(400);
+    await expect(withoutConsent.json()).resolves.toEqual({
+      error: '请先阅读并同意用户协议和隐私规则',
+    });
+
     const register = await fetch(`${base}/enterprise/auth/register/sms/verify`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -1907,6 +1987,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         code: sent[0]?.code,
         name: '王小明',
         password: 'registered-password-1',
+        legalConsent: true,
       }),
     });
     expect(register.status).toBe(200);
@@ -2047,6 +2128,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
           code: sentCode,
           name,
           password: 'personal-password-1',
+          legalConsent: true,
         }),
       });
       expect(verify.status).toBe(200);
@@ -3487,6 +3569,7 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
         code: sent[0]?.code,
         name: 'Alpha 新员工',
         password: 'alpha-member-password',
+        legalConsent: true,
       }),
     });
     expect(register.status).toBe(200);

@@ -36,6 +36,7 @@ export * from './modules/commercial_control/index.js';
 export * from './modules/data_platform/index.js';
 export * from './modules/authorization/index.js';
 export * from './modules/identity_organization/index.js';
+export * from './modules/data_governance/index.js';
 export * from './productModules.js';
 export * from './productWorkspace.js';
 export * from './productWorkspaceStore.js';

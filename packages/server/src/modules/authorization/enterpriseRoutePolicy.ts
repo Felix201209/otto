@@ -64,6 +64,10 @@ const MEMBER_ROUTES = new Set([
   '/enterprise/park-statistics/inbox',
   '/enterprise/modules/updates/client',
   '/enterprise/account-sync',
+  '/enterprise/privacy',
+  '/enterprise/privacy/accept',
+  '/enterprise/privacy/export',
+  '/enterprise/privacy/account',
 ]);
 
 export const FEATURE_ADMIN_PREFIX = '/admin/features';
@@ -118,6 +122,10 @@ export function isLicenseMaintenanceRoute(path: string): boolean {
     path === '/enterprise/deployment/data-protection/backup' ||
     path === '/enterprise/deployment/diagnostics' ||
     path === '/enterprise/account-sync' ||
+    path === '/enterprise/privacy' ||
+    path === '/enterprise/privacy/accept' ||
+    path === '/enterprise/privacy/export' ||
+    path === '/enterprise/privacy/account' ||
     path.startsWith('/enterprise/auth/')
   );
 }
