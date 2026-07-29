@@ -55,7 +55,7 @@ import {
 } from '../modules/park_services/index.js';
 import path from 'path';
 import os from 'os';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import {
   createAuditLogFacade,
   createAuditLogSchemaContributor,
@@ -86,6 +86,7 @@ import {
 import {
   backfillLegacyOrganizationStructure,
   createAccountDirectoryFacade,
+  createAccountAuthSchemaContributor,
   createAccountLifecycleFacade,
   createAccountRegistrationFacade,
   createAssignmentIdentityFacade,
@@ -110,6 +111,7 @@ import {
   hashIdentitySecret,
   identitySecretMatches,
   isAcceptableAccountPassword as isAcceptableIdentityAccountPassword,
+  migrateLegacyAuthSessions,
   type EmployeeRecord,
   type OrganizationDepartmentView as IdentityOrganizationDepartmentView,
   type OrganizationDirectoryRow,
@@ -205,87 +207,6 @@ export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
 const INVITE_CODE_RAW_LENGTH = 12;
-
-function migrateLegacyAuthSessions(d: Database): void {
-  const table = d
-    .prepare(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'auth_sessions'",
-    )
-    .get() as { name?: string } | undefined;
-  if (!table) return;
-  const columns = d.prepare('PRAGMA table_info(auth_sessions)').all() as Array<{
-    name: string;
-  }>;
-  const names = new Set(columns.map((column) => column.name));
-  if (names.has('token_hash') && names.has('id')) return;
-  if (
-    !names.has('token') ||
-    !names.has('account_id') ||
-    !names.has('expires_at')
-  )
-    return;
-
-  d.exec('PRAGMA foreign_keys = OFF');
-  d.exec('BEGIN IMMEDIATE');
-  try {
-    d.exec('ALTER TABLE auth_sessions RENAME TO auth_sessions_legacy_v195');
-    d.exec(`
-      CREATE TABLE auth_sessions (
-        id TEXT PRIMARY KEY,
-        organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
-        account_id TEXT NOT NULL,
-        token_hash TEXT NOT NULL UNIQUE,
-        expires_at TEXT NOT NULL,
-        revoked_at TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        last_used_at TEXT
-      )
-    `);
-    const legacyColumns = d
-      .prepare('PRAGMA table_info(auth_sessions_legacy_v195)')
-      .all() as Array<{ name: string }>;
-    const legacyNames = new Set(legacyColumns.map((column) => column.name));
-    const organizationExpr = legacyNames.has('organization_id')
-      ? 'COALESCE(organization_id, ?)'
-      : '? AS organization_id';
-    const rows = d
-      .prepare(
-        `SELECT token, account_id, expires_at, created_at, ${organizationExpr}
-       FROM auth_sessions_legacy_v195
-       WHERE token IS NOT NULL AND token <> ''`,
-      )
-      .all(DEFAULT_ORGANIZATION_ID) as Array<{
-      token: string;
-      account_id: string;
-      expires_at: string;
-      created_at: string | null;
-      organization_id: string | null;
-    }>;
-    const insert = d.prepare(
-      `INSERT OR IGNORE INTO auth_sessions
-       (id, organization_id, account_id, token_hash, expires_at, created_at)
-       VALUES (?, ?, ?, ?, ?, COALESCE(?, datetime('now')))`,
-    );
-    for (const row of rows) {
-      const hashed = createHash('sha256').update(row.token).digest('hex');
-      insert.run(
-        `session_legacy_${hashed.slice(0, 24)}`,
-        row.organization_id || DEFAULT_ORGANIZATION_ID,
-        row.account_id,
-        hashed,
-        row.expires_at,
-        row.created_at,
-      );
-    }
-    d.exec('DROP TABLE auth_sessions_legacy_v195');
-    d.exec('COMMIT');
-  } catch (error) {
-    d.exec('ROLLBACK');
-    throw error;
-  } finally {
-    d.exec('PRAGMA foreign_keys = ON');
-  }
-}
 
 /** v11 adds the auditable property-repair transfer action without losing existing history. */
 function migrateLegacyTicketEvents(d: Database): void {
@@ -496,85 +417,6 @@ function initSchema(d: Database): void {
       created_by TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       expires_at TEXT,
-      FOREIGN KEY (organization_id) REFERENCES organizations(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS accounts (
-      id TEXT PRIMARY KEY,
-      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
-      account_type TEXT NOT NULL DEFAULT 'enterprise',
-      employee_id TEXT UNIQUE,
-      username TEXT NOT NULL COLLATE NOCASE UNIQUE,
-      phone TEXT,
-      feishu_open_id TEXT,
-      password_hash TEXT NOT NULL,
-      name TEXT NOT NULL,
-      role TEXT,
-      department TEXT,
-      department_id TEXT,
-      position_id TEXT,
-      position_title TEXT,
-      avatar_url TEXT,
-      is_admin INTEGER NOT NULL DEFAULT 0,
-      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'disabled')),
-      deleted_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (employee_id) REFERENCES employees(id),
-      FOREIGN KEY (organization_id) REFERENCES organizations(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS account_tags (
-      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
-      account_id TEXT NOT NULL,
-      tag TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      PRIMARY KEY (account_id, tag),
-      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
-      FOREIGN KEY (organization_id) REFERENCES organizations(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS auth_sessions (
-      id TEXT PRIMARY KEY,
-      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
-      account_id TEXT NOT NULL,
-      token_hash TEXT NOT NULL UNIQUE,
-      expires_at TEXT NOT NULL,
-      revoked_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      last_used_at TEXT,
-      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
-      FOREIGN KEY (organization_id) REFERENCES organizations(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS sms_login_challenges (
-      id TEXT PRIMARY KEY,
-      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
-      account_id TEXT NOT NULL,
-      code_hash TEXT NOT NULL,
-      expires_at_ms INTEGER NOT NULL,
-      attempts_remaining INTEGER NOT NULL DEFAULT 5,
-      consumed_at_ms INTEGER,
-      created_at_ms INTEGER NOT NULL,
-      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
-      FOREIGN KEY (organization_id) REFERENCES organizations(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS sms_registration_challenges (
-      id TEXT PRIMARY KEY,
-      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
-      phone TEXT NOT NULL,
-      code_hash TEXT NOT NULL,
-      expires_at_ms INTEGER NOT NULL,
-      attempts_remaining INTEGER NOT NULL DEFAULT 5,
-      organization_invite_id TEXT,
-      department TEXT,
-      department_id TEXT,
-      position_id TEXT,
-      position_title TEXT,
-      role TEXT,
-      consumed_at_ms INTEGER,
-      created_at_ms INTEGER NOT NULL,
       FOREIGN KEY (organization_id) REFERENCES organizations(id)
     );
 
@@ -803,13 +645,6 @@ function initSchema(d: Database): void {
       ON park_invites(park_id, expires_at_ms, revoked_at_ms);
     CREATE INDEX IF NOT EXISTS idx_organization_invites_active
       ON organization_invites(organization_id, expires_at_ms, revoked_at_ms);
-    CREATE INDEX IF NOT EXISTS idx_accounts_status ON accounts(status);
-    CREATE INDEX IF NOT EXISTS idx_account_tags_tag ON account_tags(tag, account_id);
-    CREATE INDEX IF NOT EXISTS idx_sessions_token ON auth_sessions(token_hash);
-    CREATE INDEX IF NOT EXISTS idx_sms_challenges_account_created
-      ON sms_login_challenges(account_id, created_at_ms);
-    CREATE INDEX IF NOT EXISTS idx_sms_registration_phone_created
-      ON sms_registration_challenges(phone, created_at_ms);
     CREATE INDEX IF NOT EXISTS idx_ticket_deliveries_account ON ticket_deliveries(account_id, delivered_at);
     CREATE INDEX IF NOT EXISTS idx_ticket_notifications_ticket
       ON ticket_notifications(ticket_id, created_at);
@@ -839,6 +674,9 @@ function initSchema(d: Database): void {
 
   applyDatabaseSchemaContributors(d, [
     IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,
+    createAccountAuthSchemaContributor({
+      defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+    }),
     createCreditsSchemaContributor({
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
     }),
@@ -871,21 +709,6 @@ function initSchema(d: Database): void {
     randomBytes(32).toString('hex'),
   );
 
-  // v1.8 以前的线上库没有手机号列。先探测再做幂等迁移，保留既有账号和会话。
-  const accountColumns = d
-    .prepare('PRAGMA table_info(accounts)')
-    .all() as Array<{ name: string }>;
-  if (!accountColumns.some((column) => column.name === 'phone')) {
-    d.exec('ALTER TABLE accounts ADD COLUMN phone TEXT');
-  }
-  if (!accountColumns.some((column) => column.name === 'feishu_open_id')) {
-    d.exec('ALTER TABLE accounts ADD COLUMN feishu_open_id TEXT');
-  }
-  d.exec(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_phone_unique
-      ON accounts(phone) WHERE phone IS NOT NULL;
-  `);
-
   // B2B v2：旧库所有既有数据归入默认企业，密码、标签和会话继续有效。
   const ensureOrganizationColumn = (table: string): void => {
     const columns = d.prepare(`PRAGMA table_info(${table})`).all() as Array<{
@@ -899,11 +722,6 @@ function initSchema(d: Database): void {
   };
   for (const table of [
     'invite_codes',
-    'accounts',
-    'account_tags',
-    'auth_sessions',
-    'sms_login_challenges',
-    'sms_registration_challenges',
     'it_tickets',
     'ticket_deliveries',
     'ticket_notifications',
@@ -975,23 +793,7 @@ function initSchema(d: Database): void {
   ensureTextColumn('organization_invites', 'position_id');
   ensureTextColumn('organization_invites', 'position_title');
   ensureTextColumn('organization_invites', 'default_role');
-  ensureTextColumn('sms_registration_challenges', 'department');
-  ensureTextColumn('sms_registration_challenges', 'organization_invite_id');
-  ensureTextColumn('sms_registration_challenges', 'department_id');
-  ensureTextColumn('sms_registration_challenges', 'position_id');
-  ensureTextColumn('sms_registration_challenges', 'position_title');
-  ensureTextColumn('sms_registration_challenges', 'role');
-  ensureTextColumn('accounts', 'employee_id');
-  ensureTextColumn('accounts', 'position_id');
-  ensureTextColumn('accounts', 'position_title');
-  ensureTextColumn('accounts', 'department_id');
-  ensureTextColumn('accounts', 'avatar_url');
-  ensureTextColumn('accounts', 'account_type');
-  ensureTextColumn('accounts', 'deleted_at');
   ensureTextColumn('it_tickets', 'park_id');
-  d.exec(
-    "UPDATE accounts SET account_type = 'enterprise' WHERE account_type IS NULL",
-  );
   backfillEnterpriseAccountEmployees(d);
   backfillLegacyOrganizationStructure(d);
   const ensureIntegerColumn = (
@@ -1013,9 +815,6 @@ function initSchema(d: Database): void {
     'INTEGER NOT NULL DEFAULT 0',
   );
   d.exec(`
-    CREATE INDEX IF NOT EXISTS idx_accounts_organization ON accounts(organization_id, status);
-    CREATE INDEX IF NOT EXISTS idx_accounts_feishu_open_id
-      ON accounts(organization_id, feishu_open_id) WHERE feishu_open_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_ticket_notifications_recipient
       ON ticket_notifications(recipient_account_id, created_at);
     PRAGMA user_version = ${ENTERPRISE_SCHEMA_VERSION};
@@ -1028,7 +827,7 @@ const databaseLifecycle = createEnterpriseDatabaseLifecycle({
   legacyBackupPath: `${DB_PATH}.pre-b2b-v2.bak`,
   schemaVersion: ENTERPRISE_SCHEMA_VERSION,
   beforeForeignKeys(database) {
-    migrateLegacyAuthSessions(database);
+    migrateLegacyAuthSessions(database, DEFAULT_ORGANIZATION_ID);
     migrateLegacyTicketEvents(database);
   },
   initializeSchema: initSchema,

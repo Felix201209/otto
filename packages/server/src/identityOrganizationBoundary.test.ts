@@ -146,6 +146,12 @@ describe('identity_organization invitation kernel', () => {
     expect(identityOrganization.identitySecretMatches).toBeTypeOf('function');
     expect(identityOrganization.assertAccountPassword).toBeTypeOf('function');
     expect(identityOrganization.createAuthSessionFacade).toBeTypeOf('function');
+    expect(identityOrganization.createAccountAuthSchemaContributor).toBeTypeOf(
+      'function',
+    );
+    expect(identityOrganization.migrateLegacyAuthSessions).toBeTypeOf(
+      'function',
+    );
     expect(identityOrganization.AUTH_SESSION_DEFAULT_TTL_MS).toBe(
       30 * 24 * 60 * 60 * 1000,
     );
@@ -277,6 +283,54 @@ describe('identity_organization invitation kernel', () => {
       /export function (?:createAuthSession|getAccountBySession|revokeAuthSession)/,
     );
     expect(databaseFacade).not.toContain('function tokenHash(');
+  });
+
+  it('keeps account and authentication schema ownership in the identity module', () => {
+    const databaseFacade = fs.readFileSync(
+      path.join(enterpriseDir, 'db.ts'),
+      'utf8',
+    );
+    for (const table of [
+      'accounts',
+      'account_tags',
+      'auth_sessions',
+      'sms_login_challenges',
+      'sms_registration_challenges',
+    ]) {
+      expect(databaseFacade).not.toContain(
+        `CREATE TABLE IF NOT EXISTS ${table}`,
+      );
+    }
+    for (const index of [
+      'idx_accounts_status',
+      'idx_account_tags_tag',
+      'idx_sessions_token',
+      'idx_sms_challenges_account_created',
+      'idx_sms_registration_phone_created',
+      'idx_accounts_phone_unique',
+      'idx_accounts_organization',
+      'idx_accounts_feishu_open_id',
+    ]) {
+      expect(databaseFacade).not.toContain(
+        `CREATE INDEX IF NOT EXISTS ${index}`,
+      );
+      expect(databaseFacade).not.toContain(
+        `CREATE UNIQUE INDEX IF NOT EXISTS ${index}`,
+      );
+    }
+    expect(databaseFacade).not.toContain('function migrateLegacyAuthSessions');
+    expect(databaseFacade).not.toContain(
+      "ensureTextColumn('sms_registration_challenges'",
+    );
+    expect(databaseFacade).not.toContain("ensureTextColumn('accounts'");
+    expect(databaseFacade).not.toContain('ALTER TABLE accounts');
+    expect(databaseFacade).not.toMatch(/['"]auth_sessions['"],/);
+    expect(databaseFacade).toMatch(
+      /IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,[\s\S]*?createAccountAuthSchemaContributor\(\{[\s\S]*?createCreditsSchemaContributor\(\{/,
+    );
+    expect(databaseFacade).toContain(
+      'migrateLegacyAuthSessions(database, DEFAULT_ORGANIZATION_ID)',
+    );
   });
 
   it('keeps account directory reads behind the identity module facade', () => {

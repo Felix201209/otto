@@ -33,6 +33,7 @@ export * from './smsChallengeFacade.js';
 export * from './smsChallengeRepository.js';
 export * from './authSessionFacade.js';
 export * from './authSessionRepository.js';
+export * from './accountAuthSchema.js';
 export * from './memberFacade.js';
 export * from './memberRepository.js';
 export * from './memberSchema.js';
