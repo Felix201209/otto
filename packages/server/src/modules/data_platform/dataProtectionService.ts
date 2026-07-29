@@ -47,6 +47,7 @@ export interface DataProtectionServiceOptions {
   schemaVersion: number;
   accountSyncKeyPath: string;
   attachmentKeyPath: string;
+  fieldEncryptionKeyPath: string;
   attachmentDirectory: string;
   privacyDeletionLedgerPath?: string;
   privacyDeletionLedgerKeyPath?: string;
@@ -476,6 +477,7 @@ export function createDataProtectionService(
       for (const [sourcePath, archivePath] of [
         [options.accountSyncKeyPath, 'keys/account-sync.key'],
         [options.attachmentKeyPath, 'keys/attachment-storage.key'],
+        [options.fieldEncryptionKeyPath, 'keys/field-encryption.key'],
       ] as const) {
         if (fs.existsSync(sourcePath)) files.push({ sourcePath, archivePath });
       }

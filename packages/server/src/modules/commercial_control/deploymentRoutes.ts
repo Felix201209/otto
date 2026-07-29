@@ -36,6 +36,11 @@ export interface DeploymentRouteServices {
   ingestTelemetryBatch(
     raw: unknown,
     authorization: string | undefined,
+    authentication: {
+      timestamp: string | undefined;
+      nonce: string | undefined;
+      signature: string | undefined;
+    },
   ): { accepted: number; duplicates: number };
   recordTelemetryEvent(input: {
     organizationId?: string | null;
@@ -157,6 +162,17 @@ export async function handleDeploymentRoute({
         typeof req.headers.authorization === 'string'
           ? req.headers.authorization
           : undefined,
+        {
+          timestamp: typeof req.headers['x-otto-timestamp'] === 'string'
+            ? req.headers['x-otto-timestamp']
+            : undefined,
+          nonce: typeof req.headers['x-otto-nonce'] === 'string'
+            ? req.headers['x-otto-nonce']
+            : undefined,
+          signature: typeof req.headers['x-otto-signature'] === 'string'
+            ? req.headers['x-otto-signature']
+            : undefined,
+        },
       );
       sendJSON(res, 202, receipt);
     } catch (error) {

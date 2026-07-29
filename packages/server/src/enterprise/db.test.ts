@@ -170,7 +170,7 @@ describe('旧账号会话迁移', () => {
     const db = await freshDb();
     expect(db.getDatabaseReadiness()).toEqual({
       ready: true,
-      schemaVersion: 15,
+      schemaVersion: 16,
     });
     const sessionColumns = db
       .getDB()
@@ -209,7 +209,7 @@ describe('数据库 readiness', () => {
     const db = await freshDb();
     expect(db.getDatabaseReadiness()).toEqual({
       ready: true,
-      schemaVersion: 15,
+      schemaVersion: 16,
     });
   });
 
@@ -251,7 +251,7 @@ describe('数据库 readiness', () => {
 
     vi.resetModules();
     const reopened: DbModule = await import('./db.js');
-    expect(reopened.getDatabaseReadiness()).toEqual({ ready: true, schemaVersion: 15 });
+    expect(reopened.getDatabaseReadiness()).toEqual({ ready: true, schemaVersion: 16 });
     const tableSql = (reopened.getDB().prepare(
       "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ticket_events'",
     ).get() as { sql: string }).sql;
@@ -309,7 +309,7 @@ describe('数据库 readiness', () => {
     try {
       expect(reopened.getDatabaseReadiness()).toEqual({
         ready: true,
-        schemaVersion: 15,
+        schemaVersion: 16,
       });
       const migrated = reopened.getTicketForAccount(
         legacyTicket.id,
@@ -386,7 +386,7 @@ describe('数据库 readiness', () => {
     try {
       expect(reopened.getDatabaseReadiness()).toEqual({
         ready: true,
-        schemaVersion: 15,
+        schemaVersion: 16,
       });
       const organizationColumns = reopened
         .getDB()
@@ -533,12 +533,12 @@ describe('数据库 readiness', () => {
     future.exec(`
       CREATE TABLE future_only (id TEXT PRIMARY KEY);
       INSERT INTO future_only (id) VALUES ('preserve-me');
-      PRAGMA user_version = 16;
+      PRAGMA user_version = 17;
     `);
     future.close();
 
     const db = await freshDb();
-    expect(() => db.getDB()).toThrow(/schema version 16.*current version 15/i);
+    expect(() => db.getDB()).toThrow(/schema version 17.*current version 16/i);
 
     const reopened = new Database(path.join(tmpDir, 'data.db'));
     try {
@@ -548,7 +548,7 @@ describe('数据库 readiness', () => {
             user_version: number;
           }
         ).user_version,
-      ).toBe(16);
+      ).toBe(17);
       expect(
         (reopened.prepare('SELECT id FROM future_only').get() as { id: string })
           .id,

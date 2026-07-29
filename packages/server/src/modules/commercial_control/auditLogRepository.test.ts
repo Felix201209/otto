@@ -74,4 +74,21 @@ describe('commercial control audit log repository', () => {
 
     expect(audit.getAuditLogs()).toEqual([]);
   });
+
+  it('redacts credentials before writing durable audit details', () => {
+    const audit = createFacade();
+    audit.logAudit(
+      'security-test',
+      null,
+      'Authorization: Bearer bearer-value password=hunter2 ' +
+        'https://example.test/path?access_token=url-secret sk_1234567890abcdef',
+    );
+
+    const detail = audit.getAuditLogs()[0]?.detail || '';
+    expect(detail).not.toContain('bearer-value');
+    expect(detail).not.toContain('hunter2');
+    expect(detail).not.toContain('url-secret');
+    expect(detail).not.toContain('sk_1234567890abcdef');
+    expect(detail).toContain('[REDACTED]');
+  });
 });

@@ -564,9 +564,11 @@ describe('受保护 vs 公开路由边界', () => {
       'private_deployment_v1',
       'license_enforcement_v1',
       'encrypted_telemetry_queue_v1',
+      'signed_telemetry_transport_v1',
       'diagnostic_bundle_v1',
       'data_protection_v1',
       'encrypted_attachment_storage_v1',
+      'encrypted_message_storage_v1',
     ]));
     expect(body.uptime).toEqual(expect.any(Number));
   });
@@ -603,7 +605,7 @@ describe('受保护 vs 公开路由边界', () => {
     await expect(backup.json()).resolves.toMatchObject({
       lastError: null,
       backupCount: 1,
-      latestSchemaVersion: 15,
+      latestSchemaVersion: 16,
     });
 
     const telemetry = await fetch(`${base}/enterprise/deployment/telemetry`, {

@@ -127,6 +127,7 @@ const ENTERPRISE_CAPABILITIES = [
   'direct_messages',
   'direct_message_attachments_v1',
   'encrypted_attachment_storage_v1',
+  'encrypted_message_storage_v1',
   'atoa',
   'position_invites',
   'park_service_push',
@@ -144,6 +145,7 @@ const ENTERPRISE_CAPABILITIES = [
   'private_deployment_v1',
   'license_enforcement_v1',
   'encrypted_telemetry_queue_v1',
+  'signed_telemetry_transport_v1',
   'diagnostic_bundle_v1',
   'data_protection_v1',
   'park_resources_v1',
@@ -562,6 +564,9 @@ export function startEnterpriseServer(
   opts: EnterpriseServerOptions = {},
 ): Server {
   const validatedOptions = validatedStartOptions(opts);
+  db.getDatabaseReadiness();
+  db.ensureDirectMessageContentEncrypted();
+  db.ensureDeploymentLicenseSecretsEncrypted();
   const { server, host, port, publicBaseUrl, adminToken, generatedToken } =
     createEnterpriseServer(validatedOptions);
   const generatedTokenPath = generatedToken

@@ -186,10 +186,10 @@ curl --fail --show-error \
 
 - `status: ok`
 - `apiVersion: 4`
-- `schemaVersion: 15`（必须与本次 release manifest 的 `schemaTo` 一致）
+- `schemaVersion: 16`（必须与本次 release manifest 的 `schemaTo` 一致）
 - `db: connected`
 - `sms.configured: true`
-- `capabilities` 同时包含 `personal_enterprise_upgrade`、`direct_messages`、`atoa`、`position_invites`、`park_service_push`、`park_repair_v1`、`data_protection_v1`、`encrypted_attachment_storage_v1`
+- `capabilities` 同时包含 `personal_enterprise_upgrade`、`direct_messages`、`atoa`、`position_invites`、`park_service_push`、`park_repair_v1`、`data_protection_v1`、`encrypted_attachment_storage_v1`、`encrypted_message_storage_v1`、`signed_telemetry_transport_v1`
 
 浏览器验收：
 
@@ -240,7 +240,7 @@ sudo ls -ld /var/tmp/otto-enterprise-deploy-*
 ## 九、备份、恢复与容量保护
 
 服务默认每 24 小时创建一份在线一致性快照，保留 30 天且至少保留 3 份。备份包含
-SQLite、加密附件对象、账号同步密钥和附件密钥，外层再使用 AES-256-GCM 加密；
+SQLite、加密附件对象、账号同步密钥、附件密钥和消息字段密钥，外层再使用 AES-256-GCM 加密；
 `/enterprise/health` 的 `dataProtection` 会显示最近成功时间、文件 SHA-256、失败原因、
 磁盘余量和异地副本状态。
 
@@ -263,6 +263,22 @@ sudo /opt/otto-enterprise/deploy/restore-backup.sh \
 `/var/backups/otto-enterprise`，再设置
 `OTTO_BACKUP_REPLICA_DIR=/var/backups/otto-enterprise`。异地副本写入后会重新计算
 SHA-256，上传或复制失败不会阻断 Otto 业务，但会进入健康状态告警。
+
+高安全部署可以预先创建三个恰好 32 字节的原始密钥文件，并在配置中填写
+`OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE`、`OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE`、
+`OTTO_FIELD_ENCRYPTION_KEY_FILE`。文件必须使用绝对路径、不能是符号链接，并且
+`otto-enterprise` 服务账号必须可读；恢复时外部密钥与备份不一致会 fail closed，安装器
+不会替客户覆盖密钥。私聊正文以及 License 内的租约令牌、遥测令牌均使用字段密钥
+AES-256-GCM 加密，服务启动时会先迁移旧明文数据并验证密钥，失败时拒绝对外提供服务。
+
+如配置 `OTTO_TELEMETRY_ENDPOINT`，地址必须使用 HTTPS。遥测请求除 Bearer 令牌外还
+携带 HMAC-SHA256 签名、时间戳和一次性随机数；接收端只接受 5 分钟窗口内且未重放的
+请求，本地遥测保留期由 `OTTO_TELEMETRY_RETENTION_DAYS` 控制。正式交付前必须填写
+`OTTO_DATA_CONTROLLER_NAME` 和 `OTTO_PRIVACY_CONTACT`，
+并确认 `OTTO_DATA_REGION`、`OTTO_DATA_RESIDENCY` 与
+`OTTO_CROSS_BORDER_DATA_ENABLED` 符合客户实际数据流。只有数据目录所在磁盘已经启用
+LUKS、云盘加密卷或等价保护后，才能把 `OTTO_STORAGE_VOLUME_ENCRYPTED` 设为 `true`；
+否则管理页会持续显示未达到数据治理就绪状态。
 
 聊天附件不再以大 BLOB 写进 SQLite，而是以 AES-256-GCM 加密对象写入
 `/var/lib/otto-enterprise/attachments`。大客户可把该目录映射到持久卷、MinIO/S3 网关

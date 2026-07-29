@@ -148,6 +148,25 @@ function validateRestoredDatabase(
   }
 }
 
+function databaseContainsEncryptedMessages(databasePath: string): boolean {
+  const database = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    const columns = new Set(
+      (
+        database.prepare('PRAGMA table_info(direct_messages)').all() as Array<{
+          name: string;
+        }>
+      ).map((column) => column.name),
+    );
+    if (!columns.has('content_ciphertext')) return false;
+    return Boolean(database.prepare(
+      'SELECT 1 FROM direct_messages WHERE content_ciphertext IS NOT NULL LIMIT 1',
+    ).get());
+  } finally {
+    database.close();
+  }
+}
+
 function listAttachmentObjects(directory: string): string[] {
   if (!fs.existsSync(directory)) return [];
   const output: string[] = [];
@@ -204,6 +223,16 @@ export async function verifyDataProtectionBackup(input: {
       path.join(extractionDirectory, 'database', 'data.db'),
       input.maximumSchemaVersion,
     );
+    if (
+      databaseContainsEncryptedMessages(
+        path.join(extractionDirectory, 'database', 'data.db'),
+      ) &&
+      !fs.existsSync(
+        path.join(extractionDirectory, 'keys', 'field-encryption.key'),
+      )
+    ) {
+      throw new Error('backup with encrypted fields is missing its encryption key');
+    }
     const attachmentObjects = listAttachmentObjects(
       path.join(extractionDirectory, 'attachments'),
     );
@@ -240,6 +269,35 @@ function moveIfPresent(source: string, target: string): void {
   fs.renameSync(source, target);
 }
 
+function restoreEncryptionKey(input: {
+  sourcePath: string;
+  configuredPath: string;
+  defaultPath: string;
+  label: string;
+}): void {
+  if (!fs.existsSync(input.sourcePath)) return;
+  if (input.configuredPath === input.defaultPath) {
+    moveIfPresent(input.sourcePath, input.configuredPath);
+    return;
+  }
+  if (!fs.existsSync(input.configuredPath)) {
+    throw new Error(
+      `customer-managed ${input.label} encryption key is missing`,
+    );
+  }
+  const metadata = fs.lstatSync(input.configuredPath);
+  if (metadata.isSymbolicLink() || !metadata.isFile()) {
+    throw new Error(
+      `customer-managed ${input.label} encryption key path is unsafe`,
+    );
+  }
+  if (!fs.readFileSync(input.configuredPath).equals(fs.readFileSync(input.sourcePath))) {
+    throw new Error(
+      `customer-managed ${input.label} encryption key does not match the backup`,
+    );
+  }
+}
+
 /**
  * Restores only after authentication and SQLite checks, preserving the previous
  * database, attachment objects and encryption keys for an explicit rollback.
@@ -249,10 +307,31 @@ export async function restoreDataProtectionBackup(input: {
   dataDirectory: string;
   key: Buffer;
   maximumSchemaVersion: number;
+  accountSyncKeyPath?: string;
+  attachmentKeyPath?: string;
+  fieldEncryptionKeyPath?: string;
   now?: () => Date;
 }): Promise<DataProtectionRestoreReceipt> {
   const archivePath = path.resolve(input.archivePath);
   const dataDirectory = path.resolve(input.dataDirectory);
+  const defaultFieldEncryptionKeyPath = path.join(
+    dataDirectory,
+    'field-encryption.key',
+  );
+  const defaultAccountSyncKeyPath = path.join(dataDirectory, 'account-sync.key');
+  const accountSyncKeyPath = path.resolve(
+    input.accountSyncKeyPath || defaultAccountSyncKeyPath,
+  );
+  const defaultAttachmentKeyPath = path.join(
+    dataDirectory,
+    'attachment-storage.key',
+  );
+  const attachmentKeyPath = path.resolve(
+    input.attachmentKeyPath || defaultAttachmentKeyPath,
+  );
+  const fieldEncryptionKeyPath = path.resolve(
+    input.fieldEncryptionKeyPath || defaultFieldEncryptionKeyPath,
+  );
   assertServiceStopped(dataDirectory);
   if (
     !fs.existsSync(archivePath) ||
@@ -285,6 +364,14 @@ export async function restoreDataProtectionBackup(input: {
       restoredDatabase,
       input.maximumSchemaVersion,
     );
+    if (
+      databaseContainsEncryptedMessages(restoredDatabase) &&
+      !fs.existsSync(
+        path.join(stagingDirectory, 'keys', 'field-encryption.key'),
+      )
+    ) {
+      throw new Error('backup with encrypted fields is missing its encryption key');
+    }
     const restoredAttachments = path.join(stagingDirectory, 'attachments');
     const attachmentObjects = listAttachmentObjects(restoredAttachments);
     const restoredAttachmentKey = path.join(
@@ -337,6 +424,7 @@ export async function restoreDataProtectionBackup(input: {
       'attachments',
       'account-sync.key',
       'attachment-storage.key',
+      'field-encryption.key',
     ]) {
       moveIfPresent(
         path.join(dataDirectory, name),
@@ -349,14 +437,29 @@ export async function restoreDataProtectionBackup(input: {
         restoredAttachments,
         path.join(dataDirectory, 'attachments'),
       );
-      moveIfPresent(
-        path.join(stagingDirectory, 'keys', 'account-sync.key'),
-        path.join(dataDirectory, 'account-sync.key'),
+      restoreEncryptionKey({
+        sourcePath: path.join(stagingDirectory, 'keys', 'account-sync.key'),
+        configuredPath: accountSyncKeyPath,
+        defaultPath: defaultAccountSyncKeyPath,
+        label: 'account sync',
+      });
+      restoreEncryptionKey({
+        sourcePath: restoredAttachmentKey,
+        configuredPath: attachmentKeyPath,
+        defaultPath: defaultAttachmentKeyPath,
+        label: 'attachment',
+      });
+      const restoredFieldEncryptionKey = path.join(
+        stagingDirectory,
+        'keys',
+        'field-encryption.key',
       );
-      moveIfPresent(
-        restoredAttachmentKey,
-        path.join(dataDirectory, 'attachment-storage.key'),
-      );
+      restoreEncryptionKey({
+        sourcePath: restoredFieldEncryptionKey,
+        configuredPath: fieldEncryptionKeyPath,
+        defaultPath: defaultFieldEncryptionKeyPath,
+        label: 'field',
+      });
       if (!hasCurrentPrivacyLedger && hasRestoredPrivacyLedger) {
         moveIfPresent(restoredPrivacyLedger, currentPrivacyLedger);
         moveIfPresent(restoredPrivacyLedgerKey, currentPrivacyLedgerKey);
@@ -370,6 +473,7 @@ export async function restoreDataProtectionBackup(input: {
         'attachments',
         'account-sync.key',
         'attachment-storage.key',
+        'field-encryption.key',
       ]) {
         fs.rmSync(path.join(dataDirectory, name), {
           recursive: true,
@@ -432,6 +536,7 @@ export function rollbackDataProtectionRestore(input: {
     'attachments',
     'account-sync.key',
     'attachment-storage.key',
+    'field-encryption.key',
   ]) {
     fs.rmSync(path.join(dataDirectory, name), { recursive: true, force: true });
     moveIfPresent(

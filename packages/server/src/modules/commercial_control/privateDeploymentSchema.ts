@@ -82,12 +82,21 @@ export const PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor =
         PRIMARY KEY (deployment_id, event_id)
       );
 
+      CREATE TABLE IF NOT EXISTS telemetry_ingest_nonces (
+        deployment_id TEXT NOT NULL,
+        nonce TEXT NOT NULL,
+        received_at_ms INTEGER NOT NULL,
+        PRIMARY KEY (deployment_id, nonce)
+      );
+
       CREATE INDEX IF NOT EXISTS idx_telemetry_events_status_created
         ON telemetry_events(status, created_at_ms);
       CREATE INDEX IF NOT EXISTS idx_telemetry_events_deployment_created
         ON telemetry_events(deployment_id, created_at_ms);
       CREATE INDEX IF NOT EXISTS idx_telemetry_ingest_received
         ON telemetry_ingest_events(received_at_ms);
+      CREATE INDEX IF NOT EXISTS idx_telemetry_ingest_nonces_received
+        ON telemetry_ingest_nonces(received_at_ms);
     `);
 
       const licenseColumns = new Set(

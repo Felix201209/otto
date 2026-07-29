@@ -3,11 +3,12 @@
  */
 
 import type { OrganizationFeatureKey } from '../../productModules.js';
-import type { Database } from '../data_platform/index.js';
+import type { Database, EncryptedFieldCipher } from '../data_platform/index.js';
 import { createAuditLogFacade } from './auditLogFacade.js';
 import { createCreditsFacade } from './creditsFacade.js';
 import {
   exportDeploymentDiagnostics as exportDeploymentDiagnosticsFromRepository,
+  ensureDeploymentLicenseSecretsEncrypted as ensureDeploymentLicenseSecretsEncryptedInRepository,
   flushTelemetryQueue as flushTelemetryQueueInRepository,
   getDeploymentId as getDeploymentIdFromRepository,
   getDeploymentLicense as getDeploymentLicenseFromRepository,
@@ -40,6 +41,7 @@ export interface CommercialControlCompositionOptions {
   telemetryEndpoint(): string | null;
   telemetryIngestSecret(): string;
   telemetryRetentionDays?(): number;
+  fieldCipher?: EncryptedFieldCipher;
   databaseReadiness(): { ready: true; schemaVersion: number };
 }
 
@@ -72,6 +74,7 @@ export function createCommercialControlComposition(
     telemetryEndpoint: options.telemetryEndpoint,
     telemetryIngestSecret: options.telemetryIngestSecret,
     telemetryRetentionDays: options.telemetryRetentionDays,
+    fieldCipher: options.fieldCipher,
     databaseReadiness: options.databaseReadiness,
     audit: audit.logAudit,
   };
@@ -113,6 +116,8 @@ export function createCommercialControlComposition(
       importDeploymentLicenseIntoRepository(deploymentStore, raw),
     importDeploymentLicenseLease: (raw: unknown) =>
       importDeploymentLicenseLeaseIntoRepository(deploymentStore, raw),
+    ensureDeploymentLicenseSecretsEncrypted: () =>
+      ensureDeploymentLicenseSecretsEncryptedInRepository(deploymentStore),
     refreshDeploymentLicenseLease: (
       fetchImpl?: Parameters<typeof refreshDeploymentLicenseLeaseInRepository>[1],
     ) => refreshDeploymentLicenseLeaseInRepository(deploymentStore, fetchImpl),
@@ -132,10 +137,14 @@ export function createCommercialControlComposition(
     ingestTelemetryBatch: (
       raw: unknown,
       authorization: string | undefined,
+      authentication: Parameters<typeof ingestTelemetryBatchIntoRepository>[3],
+      now?: number,
     ) => ingestTelemetryBatchIntoRepository(
       deploymentStore,
       raw,
       authorization,
+      authentication,
+      now,
     ),
     getPrivateDeploymentStatus: () =>
       getPrivateDeploymentStatusFromRepository(deploymentStore),

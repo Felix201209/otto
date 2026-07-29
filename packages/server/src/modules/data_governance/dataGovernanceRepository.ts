@@ -2,7 +2,11 @@
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Database, EncryptedObjectStore } from '../data_platform/index.js';
+import type {
+  Database,
+  EncryptedFieldCipher,
+  EncryptedObjectStore,
+} from '../data_platform/index.js';
 import {
   CURRENT_LEGAL_DOCUMENTS,
   dataGovernanceConfiguration,
@@ -27,6 +31,7 @@ export interface DataGovernanceRepositoryStore {
   now(): number;
   createId(): string;
   createDeletionPasswordHash(): string;
+  fieldCipher?: EncryptedFieldCipher;
   attachmentObjectStore?: EncryptedObjectStore;
   appendDeletionTombstone(entry: PrivacyDeletionTombstone): void;
 }
@@ -76,6 +81,64 @@ function retainedTicketFormData(raw: string | null): string {
   } catch {
     return JSON.stringify({ privacyScrubbed: true });
   }
+}
+
+function exportedDirectMessages(
+  store: DataGovernanceRepositoryStore,
+  account: DataGovernanceAccount,
+): Array<Record<string, unknown>> {
+  const database = store.db();
+  const sharedWhere = `FROM direct_messages WHERE organization_id = ?
+    AND (sender_account_id = ? OR recipient_account_id = ?) ORDER BY created_at`;
+  if (!store.fieldCipher) {
+    return rows<Record<string, unknown>>(
+      database,
+      'direct_messages',
+      `SELECT id, sender_account_id, recipient_account_id, content, created_at, read_at
+       ${sharedWhere}`,
+      account.organizationId,
+      account.id,
+      account.id,
+    );
+  }
+  const encryptedRows = rows<{
+    id: string;
+    organization_id: string;
+    sender_account_id: string;
+    recipient_account_id: string;
+    content: string;
+    content_ciphertext: string | null;
+    content_iv: string | null;
+    content_auth_tag: string | null;
+    content_key_version: number | null;
+    created_at: string;
+    read_at: string | null;
+  }>(
+    database,
+    'direct_messages',
+    `SELECT id, organization_id, sender_account_id, recipient_account_id,
+            content, content_ciphertext, content_iv, content_auth_tag,
+            content_key_version, created_at, read_at
+     ${sharedWhere}`,
+    account.organizationId,
+    account.id,
+    account.id,
+  );
+  return encryptedRows.map((row) => ({
+    id: row.id,
+    sender_account_id: row.sender_account_id,
+    recipient_account_id: row.recipient_account_id,
+    content: row.content_ciphertext
+      ? store.fieldCipher!.decryptText({
+        ciphertext: row.content_ciphertext,
+        iv: row.content_iv || '',
+        authTag: row.content_auth_tag || '',
+        keyVersion: Number(row.content_key_version),
+      }, `direct-message:${row.organization_id}:${row.id}`)
+      : row.content,
+    created_at: row.created_at,
+    read_at: row.read_at,
+  }));
 }
 
 export function recordCurrentLegalConsentInRepository(
@@ -177,13 +240,7 @@ export function exportAccountDataFromRepository(
       ? rows<Record<string, unknown>>(database, 'task_logs', 'SELECT task_type, context, result, duration_min, tokens_used, cost_cny, created_at FROM task_logs WHERE employee_id = ? ORDER BY created_at', account.employeeId)
       : [],
     modelUsage: rows<Record<string, unknown>>(database, 'account_token_usage', 'SELECT session_id, message_id, model, input_tokens, output_tokens, total_tokens, created_at FROM account_token_usage WHERE account_id = ? ORDER BY created_at', account.id),
-    messages: rows<Record<string, unknown>>(
-      database, 'direct_messages',
-      `SELECT id, sender_account_id, recipient_account_id, content, created_at, read_at
-       FROM direct_messages WHERE organization_id = ?
-         AND (sender_account_id = ? OR recipient_account_id = ?) ORDER BY created_at`,
-      account.organizationId, account.id, account.id,
-    ),
+    messages: exportedDirectMessages(store, account),
     messageAttachments: rows<Record<string, unknown>>(
       database, 'direct_message_attachments',
       `SELECT a.id, a.message_id, a.file_name, a.mime_type, a.byte_size

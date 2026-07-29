@@ -9,6 +9,7 @@
 import {
   applyDatabaseSchemaContributors,
   createDataProtectionService,
+  createEncryptedFieldCipher,
   createEncryptedObjectStore,
   createDataPlatformComposition,
   createFileEncryptionKeyProvider,
@@ -174,13 +175,20 @@ const DATA_DIR =
   process.env.OTTO_ENTERPRISE_DIR ||
   path.join(os.homedir(), '.otto-enterprise');
 const DB_PATH = path.join(DATA_DIR, 'data.db');
-const ACCOUNT_SYNC_KEY_PATH = path.join(DATA_DIR, 'account-sync.key');
+const ACCOUNT_SYNC_EXTERNAL_KEY_PATH =
+  process.env.OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE?.trim() || null;
+const ACCOUNT_SYNC_KEY_PATH =
+  ACCOUNT_SYNC_EXTERNAL_KEY_PATH || path.join(DATA_DIR, 'account-sync.key');
 const ATTACHMENT_STORAGE_DIR =
   process.env.OTTO_ATTACHMENT_STORAGE_DIR || path.join(DATA_DIR, 'attachments');
-const ATTACHMENT_STORAGE_KEY_PATH = path.join(
-  DATA_DIR,
-  'attachment-storage.key',
-);
+const ATTACHMENT_EXTERNAL_KEY_PATH =
+  process.env.OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE?.trim() || null;
+const ATTACHMENT_STORAGE_KEY_PATH =
+  ATTACHMENT_EXTERNAL_KEY_PATH || path.join(DATA_DIR, 'attachment-storage.key');
+const FIELD_EXTERNAL_KEY_PATH =
+  process.env.OTTO_FIELD_ENCRYPTION_KEY_FILE?.trim() || null;
+const FIELD_ENCRYPTION_KEY_PATH =
+  FIELD_EXTERNAL_KEY_PATH || path.join(DATA_DIR, 'field-encryption.key');
 const BACKUP_STORAGE_DIR =
   process.env.OTTO_BACKUP_DIR || path.join(DATA_DIR, 'backups');
 const PRIVACY_DELETION_LEDGER_PATH = path.join(
@@ -193,7 +201,7 @@ const PRIVACY_DELETION_LEDGER_KEY_PATH = path.join(
 );
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
-export const ENTERPRISE_SCHEMA_VERSION = 15;
+export const ENTERPRISE_SCHEMA_VERSION = 16;
 export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
@@ -255,6 +263,8 @@ const dataPlatform = createDataPlatformComposition({
     keyPath: ACCOUNT_SYNC_KEY_PATH,
     keyBytes: 32,
     invalidKeyMessage: 'account sync encryption key is invalid',
+    createIfMissing: !ACCOUNT_SYNC_EXTERNAL_KEY_PATH,
+    managePermissions: !ACCOUNT_SYNC_EXTERNAL_KEY_PATH,
   },
   database: {
     dataDirectory: DATA_DIR,
@@ -273,6 +283,18 @@ const attachmentStorageKeyProvider = createFileEncryptionKeyProvider({
   keyPath: ATTACHMENT_STORAGE_KEY_PATH,
   keyBytes: 32,
   invalidKeyMessage: 'attachment storage encryption key is invalid',
+  createIfMissing: !ATTACHMENT_EXTERNAL_KEY_PATH,
+  managePermissions: !ATTACHMENT_EXTERNAL_KEY_PATH,
+});
+const fieldEncryptionKeyProvider = createFileEncryptionKeyProvider({
+  keyPath: FIELD_ENCRYPTION_KEY_PATH,
+  keyBytes: 32,
+  invalidKeyMessage: 'field encryption key is invalid',
+  createIfMissing: !FIELD_EXTERNAL_KEY_PATH,
+  managePermissions: !FIELD_EXTERNAL_KEY_PATH,
+});
+const fieldCipher = createEncryptedFieldCipher({
+  keyProvider: fieldEncryptionKeyProvider,
 });
 const attachmentObjectStore = createEncryptedObjectStore({
   root: ATTACHMENT_STORAGE_DIR,
@@ -284,6 +306,7 @@ const dataProtection = createDataProtectionService({
   schemaVersion: ENTERPRISE_SCHEMA_VERSION,
   accountSyncKeyPath: ACCOUNT_SYNC_KEY_PATH,
   attachmentKeyPath: ATTACHMENT_STORAGE_KEY_PATH,
+  fieldEncryptionKeyPath: FIELD_ENCRYPTION_KEY_PATH,
   attachmentDirectory: ATTACHMENT_STORAGE_DIR,
   privacyDeletionLedgerPath: PRIVACY_DELETION_LEDGER_PATH,
   privacyDeletionLedgerKeyPath: PRIVACY_DELETION_LEDGER_KEY_PATH,
@@ -308,6 +331,7 @@ export function closeEnterpriseDatabase(): void {
     dataPlatform.closeDatabase();
   } finally {
     attachmentStorageKeyProvider.clear();
+    fieldEncryptionKeyProvider.clear();
   }
 }
 
@@ -351,6 +375,7 @@ export const {
   getTelemetryQueueSummary,
   flushTelemetryQueue,
   ingestTelemetryBatch,
+  ensureDeploymentLicenseSecretsEncrypted,
   getPrivateDeploymentStatus,
   exportDeploymentDiagnostics,
   isLicenseUsableForOrganizationFeature,
@@ -373,6 +398,7 @@ export const {
     process.env.OTTO_TELEMETRY_INGEST_SECRET || '',
   telemetryRetentionDays: () =>
     Number(process.env.OTTO_TELEMETRY_RETENTION_DAYS || 90),
+  fieldCipher,
   databaseReadiness: getDatabaseReadiness,
 });
 
@@ -718,6 +744,7 @@ export const {
 });
 
 export const {
+  ensureDirectMessageContentEncrypted,
   getDirectMessageAttachment,
   listDirectMessages,
   listPendingAtoaRequests,
@@ -730,6 +757,7 @@ export const {
   db: getDB,
   now: Date.now,
   createId: randomUUID,
+  fieldCipher,
   attachmentObjectStore,
   getAccount,
 });
@@ -744,6 +772,7 @@ export const {
   db: getDB,
   ledgerPath: PRIVACY_DELETION_LEDGER_PATH,
   ledgerKeyPath: PRIVACY_DELETION_LEDGER_KEY_PATH,
+  fieldCipher,
   attachmentObjectStore,
   createDeletionPasswordHash: passwordHash,
 });

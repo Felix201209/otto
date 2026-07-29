@@ -421,7 +421,18 @@ const IPC = {
 
 const enterpriseFetch = createEnterpriseNetworkFetch(fetch, INTERNAL_TEST_ACCESS_ENABLED);
 const enterpriseAuthOperations = new EnterpriseAuthOperationQueue();
-const accountDataSyncService = new AccountDataSyncService();
+const accountDataSyncService = new AccountDataSyncService({
+  protectMirror(plaintext) {
+    if (!safeStorage.isEncryptionAvailable()) return null;
+    return safeStorage.encryptString(plaintext).toString('base64');
+  },
+  unprotectMirror(protectedValue) {
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error('system secure storage is unavailable');
+    }
+    return safeStorage.decryptString(Buffer.from(protectedValue, 'base64'));
+  },
+});
 
 type AuthenticatedEnterpriseAccount =
   import('./enterprise-identity.js').AuthenticatedEnterpriseAccountInput;

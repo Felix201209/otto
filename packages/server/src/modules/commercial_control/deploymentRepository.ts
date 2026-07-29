@@ -9,7 +9,11 @@ import {
   randomUUID,
   timingSafeEqual,
 } from 'node:crypto';
-import type { Database } from '../data_platform/index.js';
+import type {
+  Database,
+  EncryptedFieldCipher,
+  EncryptedFieldValue,
+} from '../data_platform/index.js';
 import {
   LICENSE_MODULE_FEATURES,
   licenseModuleCatalog,
@@ -36,6 +40,7 @@ export interface DeploymentRepositoryStore {
   telemetryEndpoint(): string | null;
   telemetryIngestSecret(): string;
   telemetryRetentionDays?(): number;
+  fieldCipher?: EncryptedFieldCipher;
   databaseReadiness(): { ready: true; schemaVersion: number };
   audit(
     event: string,
@@ -70,6 +75,74 @@ function safeJsonObject(value: unknown): Record<string, unknown> {
     : {};
 }
 
+const LICENSE_ENCRYPTED_SECRETS_FIELD = '_ottoEncryptedSecretsV1';
+const LICENSE_SECRET_FIELDS = ['leaseToken', 'telemetryToken'] as const;
+
+function licenseSecretContext(licenseId: string, field: string): string {
+  return `deployment-license:${licenseId}:${field}`;
+}
+
+function encryptedFieldValue(value: unknown): EncryptedFieldValue {
+  const object = safeJsonObject(value);
+  return {
+    ciphertext: String(object.ciphertext || ''),
+    iv: String(object.iv || ''),
+    authTag: String(object.authTag || ''),
+    keyVersion: Number(object.keyVersion),
+  };
+}
+
+function protectLicensePayload(
+  store: DeploymentRepositoryStore,
+  payload: Record<string, unknown>,
+  licenseId: string,
+): string {
+  const protectedPayload = { ...payload };
+  const encryptedSecrets: Record<string, EncryptedFieldValue> = {};
+  for (const field of LICENSE_SECRET_FIELDS) {
+    const secret = protectedPayload[field];
+    if (typeof secret !== 'string' || secret.length === 0) continue;
+    if (!store.fieldCipher) {
+      throw new Error('license secret encryption is unavailable');
+    }
+    encryptedSecrets[field] = store.fieldCipher.encryptText(
+      secret,
+      licenseSecretContext(licenseId, field),
+    );
+    delete protectedPayload[field];
+  }
+  if (Object.keys(encryptedSecrets).length > 0) {
+    protectedPayload[LICENSE_ENCRYPTED_SECRETS_FIELD] = encryptedSecrets;
+  }
+  return JSON.stringify(protectedPayload);
+}
+
+function restoreLicensePayload(
+  store: DeploymentRepositoryStore,
+  storedPayload: Record<string, unknown>,
+  storedLicenseId?: string,
+): Record<string, unknown> {
+  const encryptedSecrets = safeJsonObject(
+    storedPayload[LICENSE_ENCRYPTED_SECRETS_FIELD],
+  );
+  if (Object.keys(encryptedSecrets).length === 0) return storedPayload;
+  if (!store.fieldCipher) {
+    throw new Error('license secret decryption is unavailable');
+  }
+  const licenseId = storedLicenseId || String(storedPayload.id || '');
+  if (!licenseId) throw new Error('encrypted license id is missing');
+  const restored = { ...storedPayload };
+  delete restored[LICENSE_ENCRYPTED_SECRETS_FIELD];
+  for (const field of LICENSE_SECRET_FIELDS) {
+    if (!(field in encryptedSecrets)) continue;
+    restored[field] = store.fieldCipher.decryptText(
+      encryptedFieldValue(encryptedSecrets[field]),
+      licenseSecretContext(licenseId, field),
+    );
+  }
+  return restored;
+}
+
 function parseModules(value: string): string[] {
   try {
     const parsed = JSON.parse(value);
@@ -97,6 +170,27 @@ function verifyDeploymentLicensePayload(
 
 function telemetryIntegrityHash(payload: unknown): string {
   return `sha256:${createHash('sha256').update(canonicalJson(payload)).digest('base64url')}`;
+}
+
+const TELEMETRY_REQUEST_SIGNATURE_PREFIX = 'hmac-sha256:';
+const TELEMETRY_REQUEST_MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
+export interface TelemetryRequestAuthentication {
+  timestamp: string | undefined;
+  nonce: string | undefined;
+  signature: string | undefined;
+}
+
+export function signTelemetryRequest(input: {
+  token: string;
+  timestamp: number;
+  nonce: string;
+  body: unknown;
+}): string {
+  const message = `${input.timestamp}\n${input.nonce}\n${canonicalJson(input.body)}`;
+  return TELEMETRY_REQUEST_SIGNATURE_PREFIX + createHmac('sha256', input.token)
+    .update(message, 'utf8')
+    .digest('base64url');
 }
 
 function activeSeatCount(
@@ -209,7 +303,11 @@ function toDeploymentLicenseView(
   else if (row.expires_at_ms - now <= 14 * 24 * 60 * 60 * 1000)
     status = 'expiring';
   try {
-    const payload = JSON.parse(row.raw_json);
+    const payload = restoreLicensePayload(
+      store,
+      safeJsonObject(JSON.parse(row.raw_json)),
+      row.id,
+    );
     const verification = verifyDeploymentLicensePayload(
       store,
       payload,
@@ -312,6 +410,9 @@ export function importDeploymentLicense(
 ): DeploymentLicenseView {
   const envelope = safeJsonObject(raw);
   const payload = safeJsonObject(envelope.license ?? envelope.payload);
+  if (LICENSE_ENCRYPTED_SECRETS_FIELD in payload) {
+    throw new Error('license payload contains a reserved field');
+  }
   const signature =
     typeof envelope.signature === 'string' ? envelope.signature : '';
   const verification = verifyDeploymentLicensePayload(
@@ -437,7 +538,7 @@ export function importDeploymentLicense(
       signature,
       verification.keyId,
       offline ? null : leaseEndpoint,
-      JSON.stringify(payload),
+      protectLicensePayload(store, payload, id),
     );
   store.db()
     .prepare('DELETE FROM deployment_license_leases WHERE license_id = ?')
@@ -711,14 +812,49 @@ function latestLicensePayload(
   store: DeploymentRepositoryStore,
 ): Record<string, unknown> {
   const row = store.db()
-    .prepare('SELECT raw_json FROM deployment_license ORDER BY updated_at DESC LIMIT 1')
-    .get() as { raw_json: string } | undefined;
+    .prepare('SELECT id, raw_json FROM deployment_license ORDER BY updated_at DESC LIMIT 1')
+    .get() as { id: string; raw_json: string } | undefined;
   if (!row) return {};
   try {
-    return safeJsonObject(JSON.parse(row.raw_json));
+    return restoreLicensePayload(
+      store,
+      safeJsonObject(JSON.parse(row.raw_json)),
+      row.id,
+    );
   } catch {
     return {};
   }
+}
+
+/** Migrates legacy plaintext lease and telemetry tokens before accepting traffic. */
+export function ensureDeploymentLicenseSecretsEncrypted(
+  store: DeploymentRepositoryStore,
+): number {
+  const rows = store.db()
+    .prepare('SELECT id, raw_json FROM deployment_license')
+    .all() as Array<{ id: string; raw_json: string }>;
+  let migrated = 0;
+  runInTransaction(store.db(), () => {
+    const update = store.db().prepare(
+      `UPDATE deployment_license
+       SET raw_json = ?, updated_at = datetime('now')
+       WHERE id = ?`,
+    );
+    for (const row of rows) {
+      const payload = safeJsonObject(JSON.parse(row.raw_json));
+      if (LICENSE_ENCRYPTED_SECRETS_FIELD in payload) {
+        restoreLicensePayload(store, payload, row.id);
+        continue;
+      }
+      const hasSecret = LICENSE_SECRET_FIELDS.some(
+        (field) => typeof payload[field] === 'string' && payload[field] !== '',
+      );
+      if (!hasSecret) continue;
+      update.run(protectLicensePayload(store, payload, row.id), row.id);
+      migrated += 1;
+    }
+  });
+  return migrated;
 }
 
 function telemetryRetryDelayMs(attempts: number): number {
@@ -831,20 +967,31 @@ export async function flushTelemetryQueue(
   }
   if (events.length === 0) return result;
   try {
+    const requestBody = {
+      version: 1,
+      deploymentId: getDeploymentId(store),
+      machineFingerprint: getMachineFingerprint(),
+      licenseId: license.id,
+      events,
+    };
+    const requestTimestamp = now;
+    const requestNonce = randomUUID();
     const response = await fetchImpl(endpoint, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${telemetryToken}`,
         'content-type': 'application/json',
         'user-agent': 'Otto-Private-Deployment/1',
+        'x-otto-timestamp': String(requestTimestamp),
+        'x-otto-nonce': requestNonce,
+        'x-otto-signature': signTelemetryRequest({
+          token: telemetryToken,
+          timestamp: requestTimestamp,
+          nonce: requestNonce,
+          body: requestBody,
+        }),
       },
-      body: JSON.stringify({
-        version: 1,
-        deploymentId: getDeploymentId(store),
-        machineFingerprint: getMachineFingerprint(),
-        licenseId: license.id,
-        events,
-      }),
+      body: JSON.stringify(requestBody),
       signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok) throw new Error(`telemetry endpoint returned ${response.status}`);
@@ -923,6 +1070,7 @@ export function ingestTelemetryBatch(
   store: DeploymentRepositoryStore,
   raw: unknown,
   authorization: string | undefined,
+  authentication: TelemetryRequestAuthentication,
   now = Date.now(),
 ): { accepted: number; duplicates: number } {
   const secret = store.telemetryIngestSecret();
@@ -936,6 +1084,27 @@ export function ingestTelemetryBatch(
     .digest('base64url');
   if (!equalSecret(bearerToken(authorization), expectedToken))
     throw new Error('telemetry authorization invalid');
+  const timestamp = Number(authentication.timestamp);
+  const nonce = authentication.nonce?.trim() || '';
+  const signature = authentication.signature?.trim() || '';
+  if (
+    !Number.isFinite(timestamp) ||
+    Math.abs(now - timestamp) > TELEMETRY_REQUEST_MAX_CLOCK_SKEW_MS
+  ) {
+    throw new Error('telemetry request timestamp invalid');
+  }
+  if (!/^[a-zA-Z0-9._:-]{16,128}$/.test(nonce)) {
+    throw new Error('telemetry request nonce invalid');
+  }
+  const expectedSignature = signTelemetryRequest({
+    token: expectedToken,
+    timestamp,
+    nonce,
+    body,
+  });
+  if (!equalSecret(signature, expectedSignature)) {
+    throw new Error('telemetry request signature invalid');
+  }
   if (!Array.isArray(body.events) || body.events.length === 0 || body.events.length > 100)
     throw new Error('telemetry events invalid');
   let accepted = 0;
@@ -947,6 +1116,22 @@ export function ingestTelemetryBatch(
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   runInTransaction(store.db(), () => {
+    store.db().prepare(
+      'DELETE FROM telemetry_ingest_nonces WHERE received_at_ms < ?',
+    ).run(now - TELEMETRY_REQUEST_MAX_CLOCK_SKEW_MS * 2);
+    try {
+      store.db().prepare(
+        `INSERT INTO telemetry_ingest_nonces
+         (deployment_id, nonce, received_at_ms) VALUES (?, ?, ?)`,
+      ).run(deploymentId, nonce, now);
+    } catch (error) {
+      if (/UNIQUE constraint failed: telemetry_ingest_nonces\./i.test(
+        safeErrorMessage(error),
+      )) {
+        throw new Error('telemetry request replay detected');
+      }
+      throw error;
+    }
     for (const item of body.events as unknown[]) {
       const event = safeJsonObject(item);
       const id = String(event.id || '');

@@ -82,13 +82,13 @@ export function dataProcessingInventory(): DataProcessingActivity[] {
     },
     {
       id: 'collaboration', category: '私聊与附件', purpose: '企业协作与 A2A',
-      sensitivity: 'sensitive', storage: 'enterprise_server', atRest: '附件使用 AES-256-GCM 对象加密；消息存于企业数据库',
-      transport: 'HTTPS/TLS', retention: '账号存续期间或企业配置期限',
+      sensitivity: 'sensitive', storage: 'enterprise_server', atRest: '消息正文和附件对象均使用 AES-256-GCM 加密；检索元数据存于企业数据库',
+      transport: 'HTTPS/TLS；服务端鉴权，不是端到端加密', retention: '账号存续期间或企业配置期限',
       deletion: '注销时删除本人参与的私聊及附件对象', recipients: ['聊天双方', '企业服务器管理员'], crossBorder: false,
     },
     {
       id: 'personal_intelligence', category: '个人记忆、工作日志与自动 Skill', purpose: '跨设备恢复与个性化协助',
-      sensitivity: 'sensitive', storage: 'user_device', atRest: '本机文件；服务器同步快照使用 AES-256-GCM',
+      sensitivity: 'sensitive', storage: 'user_device', atRest: '本机活动文件由操作系统磁盘保护；桌面同步镜像使用系统安全存储；服务器快照使用 AES-256-GCM',
       transport: 'HTTPS/TLS', retention: '账号存续期间', deletion: '注销时删除服务器快照并清理当前设备托管文件',
       recipients: ['用户本人', '所连接的企业服务器'], crossBorder: false,
     },
@@ -109,7 +109,7 @@ export function dataProcessingInventory(): DataProcessingActivity[] {
     {
       id: 'telemetry', category: '授权、健康与用量遥测', purpose: 'License 校验、稳定性和容量分析',
       sensitivity: 'security', storage: 'enterprise_server', atRest: '签名队列；不包含聊天、文件、会议和个人记忆原文',
-      transport: 'HTTPS + payload 签名', retention: '默认 90 天，可由部署方缩短或关闭',
+      transport: 'HTTPS + HMAC-SHA256 请求签名、时间戳与一次性随机数', retention: '默认 90 天，可由部署方缩短或关闭',
       deletion: '到期清理；关闭后停止产生和上传新遥测', recipients: ['客户管理员', '明确配置的 Otto 运营端点'], crossBorder: false,
     },
     {
@@ -127,6 +127,8 @@ export function dataGovernanceConfiguration() {
   const privacyContact = process.env.OTTO_PRIVACY_CONTACT?.trim() || '';
   const region = process.env.OTTO_DATA_REGION?.trim() || 'CN';
   const crossBorder = process.env.OTTO_CROSS_BORDER_DATA_ENABLED === 'true';
+  const storageVolumeEncrypted =
+    process.env.OTTO_STORAGE_VOLUME_ENCRYPTED === 'true';
   const configuredTelemetryRetention = Number(
     process.env.OTTO_TELEMETRY_RETENTION_DAYS || 90,
   );
@@ -148,9 +150,10 @@ export function dataGovernanceConfiguration() {
     security: {
       publicTransport: 'HTTPS/TLS required',
       database: 'SQLite on the selected enterprise server',
-      encryptedData: ['account sync snapshots', 'message attachment objects', 'data-protection backups'],
+      storageVolumeEncrypted,
+      encryptedData: ['account sync snapshots', 'desktop account-sync mirrors', 'direct-message bodies', 'message attachment objects', 'data-protection backups'],
       hashedData: ['passwords', 'session tokens', 'SMS verification codes'],
-      plaintextData: ['business database fields needed for search, permissions and statistics'],
+      plaintextData: ['non-content business fields needed for search, permissions and statistics'],
     },
     retention: {
       securityAuditMinimumDays: 180,
@@ -158,10 +161,15 @@ export function dataGovernanceConfiguration() {
       healthTelemetryDefaultDays: telemetryRetentionDays,
     },
     readiness: {
-      configured: Boolean(controllerName && privacyContact),
+      configured: Boolean(
+        controllerName && privacyContact && storageVolumeEncrypted,
+      ),
       warnings: [
         ...(!controllerName ? ['OTTO_DATA_CONTROLLER_NAME 未配置'] : []),
         ...(!privacyContact ? ['OTTO_PRIVACY_CONTACT 未配置'] : []),
+        ...(!storageVolumeEncrypted
+          ? ['OTTO_STORAGE_VOLUME_ENCRYPTED 未确认，结构化业务字段缺少磁盘级静态保护']
+          : []),
         ...(crossBorder ? ['已开启跨境数据处理，需单独同意、影响评估和适用出境机制'] : []),
       ],
     },

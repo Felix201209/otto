@@ -16,6 +16,8 @@ export interface DataPlatformEncryptionKeyOptions {
   keyPath: string;
   keyBytes: number;
   invalidKeyMessage: string;
+  createIfMissing?: boolean;
+  managePermissions?: boolean;
 }
 
 export interface DataPlatformCompositionOptions {

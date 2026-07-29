@@ -7,7 +7,11 @@ import {
   createDirectMessageFacade,
   type DirectMessageRepositoryStore,
 } from './modules/collaboration/index.js';
-import { Database } from './modules/data_platform/index.js';
+import {
+  createEncryptedFieldCipher,
+  Database,
+  type EncryptedFieldCipher,
+} from './modules/data_platform/index.js';
 
 const REQUEST_PREFIX = 'OTTO_ATOA_REQUEST ';
 const RESPONSE_PREFIX = 'OTTO_ATOA_RESPONSE ';
@@ -33,6 +37,11 @@ function createDatabase(): Database {
       sender_account_id TEXT NOT NULL,
       recipient_account_id TEXT NOT NULL,
       content TEXT NOT NULL CHECK(length(content) BETWEEN 1 AND 4000),
+      content_ciphertext TEXT,
+      content_iv TEXT,
+      content_auth_tag TEXT,
+      content_key_version INTEGER,
+      content_type TEXT NOT NULL DEFAULT 'message',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       read_at TEXT,
       FOREIGN KEY (organization_id) REFERENCES organizations(id),
@@ -93,11 +102,15 @@ function seedAccounts(database: Database): void {
     );
 }
 
-function createStore(database: Database): DirectMessageRepositoryStore {
+function createStore(
+  database: Database,
+  fieldCipher?: EncryptedFieldCipher,
+): DirectMessageRepositoryStore {
   let sequence = 0;
   return {
     db: () => database,
     createId: () => `message-${++sequence}`,
+    fieldCipher,
     getActiveAccountInOrganization(accountId, organizationId) {
       const row = database
         .prepare(
@@ -113,6 +126,81 @@ function createStore(database: Database): DirectMessageRepositoryStore {
 }
 
 describe('collaboration direct message kernel', () => {
+  it('migrates legacy plaintext messages before serving collaboration traffic', () => {
+    const database = createDatabase();
+    seedAccounts(database);
+    database.prepare(
+      `INSERT INTO direct_messages
+         (id, organization_id, sender_account_id, recipient_account_id, content)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run('legacy-message', 'org-a', 'alice', 'bob', 'legacy private message');
+    const key = Buffer.alloc(32, 7);
+    const messages = createDirectMessageFacade(createStore(
+      database,
+      createEncryptedFieldCipher({
+        keyProvider: { getKey: () => key, clear() {} },
+      }),
+    ));
+
+    try {
+      expect(messages.ensureDirectMessageContentEncrypted()).toBe(1);
+      const stored = database.prepare(
+        `SELECT content, content_ciphertext FROM direct_messages WHERE id = ?`,
+      ).get('legacy-message') as Record<string, string>;
+      expect(stored.content).toBe('[encrypted:v1]');
+      expect(stored.content_ciphertext).not.toContain('legacy private message');
+      expect(messages.listDirectMessages({
+        organizationId: 'org-a',
+        accountId: 'alice',
+        peerAccountId: 'bob',
+      })[0]?.content).toBe('legacy private message');
+    } finally {
+      database.close();
+    }
+  });
+
+  it('encrypts message bodies at rest while preserving chat and A2A behavior', () => {
+    const database = createDatabase();
+    seedAccounts(database);
+    const key = Buffer.alloc(32, 6);
+    const fieldCipher = createEncryptedFieldCipher({
+      keyProvider: { getKey: () => key, clear() {} },
+    });
+    const messages = createDirectMessageFacade(
+      createStore(database, fieldCipher),
+    );
+
+    try {
+      const sent = messages.sendDirectMessage({
+        organizationId: 'org-a',
+        senderAccountId: 'alice',
+        recipientAccountId: 'bob',
+        content: `${REQUEST_PREFIX}{"v":1}`,
+      });
+      const stored = database.prepare(
+        `SELECT content, content_ciphertext, content_iv, content_auth_tag
+         FROM direct_messages WHERE id = ?`,
+      ).get(sent.id) as Record<string, string>;
+      expect(stored.content).toBe('[encrypted:v1]');
+      expect(stored.content_ciphertext).not.toContain(REQUEST_PREFIX);
+      expect(stored.content_iv).toBeTruthy();
+      expect(stored.content_auth_tag).toBeTruthy();
+      expect(messages.listDirectMessages({
+        organizationId: 'org-a',
+        accountId: 'alice',
+        peerAccountId: 'bob',
+      })[0]?.content).toBe(`${REQUEST_PREFIX}{"v":1}`);
+      expect(messages.listPendingAtoaRequests({
+        organizationId: 'org-a',
+        accountId: 'bob',
+        requestPrefix: REQUEST_PREFIX,
+        responsePrefix: RESPONSE_PREFIX,
+      })).toHaveLength(1);
+    } finally {
+      database.close();
+    }
+  });
+
   it('rejects inactive and cross-organization senders or recipients', () => {
     const database = createDatabase();
     seedAccounts(database);

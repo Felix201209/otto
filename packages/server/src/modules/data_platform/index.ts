@@ -4,6 +4,7 @@
 
 export * from './sqliteCompat.js';
 export * from './fileEncryptionKeyProvider.js';
+export * from './encryptedFieldCipher.js';
 export * from './encryptedObjectStore.js';
 export * from './encryptedBackupArchive.js';
 export * from './dataProtectionService.js';

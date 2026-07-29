@@ -3,7 +3,11 @@
  */
 
 import { randomBytes, randomUUID } from 'node:crypto';
-import type { Database, EncryptedObjectStore } from '../data_platform/index.js';
+import type {
+  Database,
+  EncryptedFieldCipher,
+  EncryptedObjectStore,
+} from '../data_platform/index.js';
 import {
   deleteOwnAccountDataInRepository,
   exportAccountDataFromRepository,
@@ -18,6 +22,7 @@ export function createDataGovernanceComposition(input: {
   db(): Database;
   ledgerPath: string;
   ledgerKeyPath: string;
+  fieldCipher?: EncryptedFieldCipher;
   attachmentObjectStore?: EncryptedObjectStore;
   createDeletionPasswordHash(secret: string): string;
   now?(): number;
@@ -31,6 +36,7 @@ export function createDataGovernanceComposition(input: {
     now: input.now ?? Date.now,
     createId: randomUUID,
     createDeletionPasswordHash: () => input.createDeletionPasswordHash(randomBytes(32).toString('base64url')),
+    fieldCipher: input.fieldCipher,
     attachmentObjectStore: input.attachmentObjectStore,
     appendDeletionTombstone: ledger.append,
   };

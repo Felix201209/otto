@@ -4,6 +4,7 @@
 
 import type {
   Database,
+  EncryptedFieldCipher,
   EncryptedObjectStore,
 } from '../data_platform/index.js';
 import { createDirectMessageFacade } from './directMessageFacade.js';
@@ -21,6 +22,7 @@ export interface CollaborationCompositionOptions<
   db(): Database;
   now(): number;
   createId(): string;
+  fieldCipher?: EncryptedFieldCipher;
   attachmentObjectStore?: EncryptedObjectStore;
   getAccount(accountId: string, organizationId: string): TAccount | null;
 }
@@ -33,15 +35,20 @@ export function createCollaborationComposition<
     const account = options.getAccount(accountId, organizationId);
     return account?.status === 'active' ? account : null;
   };
-  const directMessages = createDirectMessageFacade({
+  const directMessageStore = {
     db: options.db,
     createId: options.createId,
+    fieldCipher: options.fieldCipher,
     attachmentObjectStore: options.attachmentObjectStore,
-    getActiveAccountInOrganization(accountId, organizationId) {
+    getActiveAccountInOrganization(
+      accountId: string,
+      organizationId: string,
+    ) {
       const account = getActiveAccount(accountId, organizationId);
       return account ? { id: account.id, name: account.name } : null;
     },
-  });
+  };
+  const directMessages = createDirectMessageFacade(directMessageStore);
   const presence = createAccountPresenceFacade({
     db: options.db,
     now: options.now,

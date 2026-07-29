@@ -39,6 +39,8 @@ const requiredCapabilities = [
   'park_repair_v1',
   'data_protection_v1',
   'encrypted_attachment_storage_v1',
+  'encrypted_message_storage_v1',
+  'signed_telemetry_transport_v1',
   'data_governance_v1',
   'privacy_self_service',
 ];

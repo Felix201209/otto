@@ -128,6 +128,58 @@ afterEach(async () => {
 });
 
 describe('account data sync', () => {
+  it('protects account mirrors and never writes plaintext when protection is unavailable', async () => {
+    const device = await makeDevice('protected-mirror');
+    const memoryPath = path.join(device.userRoot, 'memory', 'global.md');
+    await writeText(memoryPath, '- Sensitive account memory\n');
+    const protectMirror = (plaintext: string) => Buffer.from(plaintext, 'utf8').toString('base64');
+    const unprotectMirror = (sealed: string) => Buffer.from(sealed, 'base64').toString('utf8');
+    const remote = new MemoryAccountSyncRemote();
+    const protectedService = new AccountDataSyncService({
+      userRoot: device.userRoot,
+      worklogRoot: device.worklogRoot,
+      deviceId: 'protected-device',
+      protectMirror,
+      unprotectMirror,
+    });
+
+    await protectedService.sync(remote, IDENTITY);
+    const mirrorPath = path.join(
+      device.userRoot,
+      'account-sync',
+      'profiles',
+      accountDataSyncIdentityKey(IDENTITY),
+      'personal_memory.json',
+    );
+    const storedMirror = await fs.readFile(mirrorPath, 'utf8');
+    expect(storedMirror).not.toContain('Sensitive account memory');
+    expect(JSON.parse(storedMirror)).toMatchObject({
+      schemaVersion: 1,
+      protection: 'electron-safe-storage',
+    });
+
+    const unavailableDevice = await makeDevice('unavailable-protection');
+    await writeText(
+      path.join(unavailableDevice.userRoot, 'memory', 'global.md'),
+      '- Must not reach a plaintext mirror\n',
+    );
+    const unavailableService = new AccountDataSyncService({
+      userRoot: unavailableDevice.userRoot,
+      worklogRoot: unavailableDevice.worklogRoot,
+      deviceId: 'unavailable-device',
+      protectMirror: () => null,
+      unprotectMirror,
+    });
+    await unavailableService.sync(new MemoryAccountSyncRemote(), IDENTITY);
+    await expect(fs.stat(path.join(
+      unavailableDevice.userRoot,
+      'account-sync',
+      'profiles',
+      accountDataSyncIdentityKey(IDENTITY),
+      'personal_memory.json',
+    ))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('restores personal memory, worklogs and generated skills on a new device', async () => {
     const first = await makeDevice('source');
     await writeText(

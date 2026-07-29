@@ -4,9 +4,10 @@
 
 import { createHash, createHmac, generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import { Database } from '../data_platform/index.js';
+import { createEncryptedFieldCipher, Database } from '../data_platform/index.js';
 import { createAuditLogSchemaContributor } from './auditLogSchema.js';
 import { createCommercialControlComposition } from './commercialControlComposition.js';
+import { signTelemetryRequest } from './deploymentRepository.js';
 import { PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR } from './privateDeploymentSchema.js';
 import { canonicalJson, signEd25519Envelope } from './signedEnvelope.js';
 
@@ -46,6 +47,9 @@ function setup() {
     telemetryEndpoint: () => 'https://telemetry.otto.example/v1/events',
     telemetryIngestSecret: () =>
       'test-ingest-secret-at-least-32-characters',
+    fieldCipher: createEncryptedFieldCipher({
+      keyProvider: { getKey: () => Buffer.alloc(32, 17), clear() {} },
+    }),
     databaseReadiness: () => ({ ready: true, schemaVersion: 1 }),
   });
   return { database, control, privateKey };
@@ -127,6 +131,26 @@ describe('private deployment license repository', () => {
           signature: signEd25519Envelope(licensePayload, privateKey),
         }).status,
       ).toBe('lease_missing');
+      const storedLicense = database
+        .prepare('SELECT raw_json FROM deployment_license WHERE id = ?')
+        .get('lic-online') as { raw_json: string };
+      expect(storedLicense.raw_json).not.toContain(licensePayload.leaseToken);
+      expect(storedLicense.raw_json).not.toContain(licensePayload.telemetryToken);
+      expect(storedLicense.raw_json).toContain('_ottoEncryptedSecretsV1');
+
+      database
+        .prepare('UPDATE deployment_license SET raw_json = ? WHERE id = ?')
+        .run(JSON.stringify(licensePayload), 'lic-online');
+      expect(control.ensureDeploymentLicenseSecretsEncrypted()).toBe(1);
+      expect(control.ensureDeploymentLicenseSecretsEncrypted()).toBe(0);
+      const migratedLicense = database
+        .prepare('SELECT raw_json FROM deployment_license WHERE id = ?')
+        .get('lic-online') as { raw_json: string };
+      expect(migratedLicense.raw_json).not.toContain(licensePayload.leaseToken);
+      expect(migratedLicense.raw_json).not.toContain(
+        licensePayload.telemetryToken,
+      );
+      expect(control.getDeploymentLicense().status).toBe('lease_missing');
 
       const leasePayload = {
         id: 'lease-1',
@@ -199,8 +223,12 @@ describe('private deployment license repository', () => {
         now - 91 * 24 * 60 * 60 * 1000,
       );
       let uploadedBody: Record<string, unknown> | null = null;
+      let uploadedHeaders: Record<string, string> = {};
       const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
         uploadedBody = JSON.parse(String(init?.body));
+        uploadedHeaders = Object.fromEntries(
+          Object.entries(init?.headers as Record<string, string>),
+        );
         return new Response('{}', { status: 202 });
       }) as unknown as typeof fetch;
       await expect(control.flushTelemetryQueue(fetchImpl)).resolves.toMatchObject({
@@ -217,14 +245,42 @@ describe('private deployment license repository', () => {
         control.ingestTelemetryBatch(
           uploadedBody,
           `Bearer ${telemetryToken}`,
+          {
+            timestamp: uploadedHeaders['x-otto-timestamp'],
+            nonce: uploadedHeaders['x-otto-nonce'],
+            signature: uploadedHeaders['x-otto-signature'],
+          },
+          now,
         ),
       ).toEqual({ accepted: 1, duplicates: 0 });
-      expect(
+      expect(() =>
         control.ingestTelemetryBatch(
           uploadedBody,
           `Bearer ${telemetryToken}`,
+          {
+            timestamp: uploadedHeaders['x-otto-timestamp'],
+            nonce: uploadedHeaders['x-otto-nonce'],
+            signature: uploadedHeaders['x-otto-signature'],
+          },
+          now,
         ),
-      ).toEqual({ accepted: 0, duplicates: 1 });
+      ).toThrow('replay detected');
+      const duplicateNonce = 'telemetry-duplicate-nonce-0001';
+      expect(control.ingestTelemetryBatch(
+        uploadedBody,
+        `Bearer ${telemetryToken}`,
+        {
+          timestamp: String(now),
+          nonce: duplicateNonce,
+          signature: signTelemetryRequest({
+            token: telemetryToken,
+            timestamp: now,
+            nonce: duplicateNonce,
+            body: uploadedBody,
+          }),
+        },
+        now,
+      )).toEqual({ accepted: 0, duplicates: 1 });
 
       const forbiddenPayload = {
         deploymentId,
@@ -235,23 +291,62 @@ describe('private deployment license repository', () => {
       const integrity = `sha256:${createHash('sha256')
         .update(canonicalJson(forbiddenPayload))
         .digest('base64url')}`;
+      const forbiddenBatch = {
+        deploymentId,
+        events: [
+          {
+            id: 'tel_1234567890abcdef',
+            eventType: 'agent_runtime',
+            createdAtMs: now,
+            payload: forbiddenPayload,
+            integrity,
+          },
+        ],
+      };
+      const forbiddenNonce = 'telemetry-forbidden-nonce-0001';
       expect(() =>
         control.ingestTelemetryBatch(
-          {
-            deploymentId,
-            events: [
-              {
-                id: 'tel_1234567890abcdef',
-                eventType: 'agent_runtime',
-                createdAtMs: now,
-                payload: forbiddenPayload,
-                integrity,
-              },
-            ],
-          },
+          forbiddenBatch,
           `Bearer ${telemetryToken}`,
+          {
+            timestamp: String(now),
+            nonce: forbiddenNonce,
+            signature: signTelemetryRequest({
+              token: telemetryToken,
+              timestamp: now,
+              nonce: forbiddenNonce,
+              body: forbiddenBatch,
+            }),
+          },
+          now,
         ),
       ).toThrow('content payload forbidden');
+
+      database.exec(`
+        CREATE TRIGGER telemetry_nonce_storage_failure
+        BEFORE INSERT ON telemetry_ingest_nonces
+        BEGIN
+          SELECT RAISE(ABORT, 'nonce storage unavailable');
+        END;
+      `);
+      const storageFailureNonce = 'telemetry-storage-failure-0001';
+      expect(() =>
+        control.ingestTelemetryBatch(
+          uploadedBody,
+          `Bearer ${telemetryToken}`,
+          {
+            timestamp: String(now),
+            nonce: storageFailureNonce,
+            signature: signTelemetryRequest({
+              token: telemetryToken,
+              timestamp: now,
+              nonce: storageFailureNonce,
+              body: uploadedBody,
+            }),
+          },
+          now,
+        ),
+      ).toThrow('nonce storage unavailable');
     } finally {
       database.close();
     }

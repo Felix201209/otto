@@ -71,6 +71,12 @@ async function main(): Promise<void> {
     dataDirectory,
     key,
     maximumSchemaVersion,
+    accountSyncKeyPath:
+      process.env.OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE?.trim() || undefined,
+    attachmentKeyPath:
+      process.env.OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE?.trim() || undefined,
+    fieldEncryptionKeyPath:
+      process.env.OTTO_FIELD_ENCRYPTION_KEY_FILE?.trim() || undefined,
   });
   const receiptPath = argument('--receipt');
   if (receiptPath) {
