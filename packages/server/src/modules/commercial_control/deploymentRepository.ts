@@ -3,7 +3,12 @@
  */
 
 import os from 'os';
-import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import {
+  createHash,
+  createHmac,
+  randomUUID,
+  timingSafeEqual,
+} from 'node:crypto';
 import type { Database } from '../data_platform/index.js';
 import {
   LICENSE_MODULE_FEATURES,
@@ -19,6 +24,7 @@ import type {
   DeploymentTelemetrySettings,
   PrivateDeploymentStatus,
 } from './deploymentTypes.js';
+import { canonicalJson, verifyEd25519Envelope } from './signedEnvelope.js';
 
 export interface DeploymentRepositoryStore {
   db(): Database;
@@ -26,8 +32,9 @@ export interface DeploymentRepositoryStore {
   writeSetting(key: string, value: string): void;
   defaultOrganizationId: string;
   licenseEnforcementEnabled(): boolean;
-  licenseSigningSecret(): string;
+  licenseVerificationPublicKeys(): readonly string[];
   telemetryEndpoint(): string | null;
+  telemetryIngestSecret(): string;
   databaseReadiness(): { ready: true; schemaVersion: number };
   audit(
     event: string,
@@ -75,36 +82,20 @@ function parseModules(value: string): string[] {
   }
 }
 
-function signDeploymentPayload(
-  store: DeploymentRepositoryStore,
-  payload: unknown,
-): string {
-  const secret = store.licenseSigningSecret() || getDeploymentId(store);
-  return createHmac('sha256', secret)
-    .update(JSON.stringify(payload))
-    .digest('base64url');
-}
-
 function verifyDeploymentLicensePayload(
   store: DeploymentRepositoryStore,
   payload: unknown,
   signature: string,
-): boolean {
-  const secret = store.licenseSigningSecret();
-  if (!secret || !signature) return false;
-  const expected = createHmac('sha256', secret)
-    .update(JSON.stringify(payload))
-    .digest('base64url');
-  return tokensEqual(expected, signature);
+): { valid: boolean; keyId: string | null } {
+  return verifyEd25519Envelope(
+    payload,
+    signature,
+    store.licenseVerificationPublicKeys(),
+  );
 }
 
-function tokensEqual(a: string, b: string): boolean {
-  if (!a || !b || a.length !== b.length) return false;
-  try {
-    return timingSafeEqual(Buffer.from(a), Buffer.from(b));
-  } catch {
-    return false;
-  }
+function telemetryIntegrityHash(payload: unknown): string {
+  return `sha256:${createHash('sha256').update(canonicalJson(payload)).digest('base64url')}`;
 }
 
 function activeSeatCount(
@@ -126,6 +117,7 @@ interface DeploymentLicenseRow {
   id: string;
   deployment_id: string;
   organization_id: string | null;
+  machine_fingerprint: string | null;
   customer_name: string;
   plan: string;
   expires_at_ms: number;
@@ -136,8 +128,38 @@ interface DeploymentLicenseRow {
   issued_at_ms: number;
   revoked_at_ms: number | null;
   signature: string;
+  signature_algorithm: string;
+  signing_key_id: string | null;
+  lease_endpoint: string | null;
   raw_json: string;
   updated_at: string;
+}
+
+interface DeploymentLicenseLeaseRow {
+  license_id: string;
+  lease_id: string;
+  deployment_id: string;
+  machine_fingerprint: string;
+  issued_at_ms: number;
+  expires_at_ms: number;
+  revoked_at_ms: number | null;
+  signature: string;
+  signature_algorithm: string;
+  signing_key_id: string | null;
+  raw_json: string;
+  last_refresh_at_ms: number;
+  last_error: string | null;
+}
+
+function getLicenseLeaseRow(
+  store: DeploymentRepositoryStore,
+  licenseId: string,
+): DeploymentLicenseLeaseRow | null {
+  return (
+    (store.db()
+      .prepare('SELECT * FROM deployment_license_leases WHERE license_id = ?')
+      .get(licenseId) as DeploymentLicenseLeaseRow | undefined) ?? null
+  );
 }
 
 function toDeploymentLicenseView(
@@ -153,6 +175,7 @@ function toDeploymentLicenseView(
       id: 'unlicensed',
       deploymentId: getDeploymentId(store),
       organizationId: null,
+      machineFingerprint: null,
       customerName: 'Unlicensed deployment',
       plan: enforce ? 'locked' : 'development-open',
       expiresAt: dateFromMs(now + 365 * 24 * 60 * 60 * 1000),
@@ -162,6 +185,16 @@ function toDeploymentLicenseView(
       modules,
       offline: true,
       telemetryAllowed: false,
+      signatureAlgorithm: 'none',
+      signingKeyId: null,
+      lease: {
+        required: false,
+        status: 'not_required',
+        endpoint: null,
+        expiresAt: null,
+        lastRefreshAt: null,
+        lastError: null,
+      },
       status: enforce ? 'missing' : 'active',
       enforce,
       updatedAt: dateFromMs(now),
@@ -169,22 +202,68 @@ function toDeploymentLicenseView(
   }
   const modules = parseModules(row.modules_json);
   let status: DeploymentLicenseStatus = 'active';
+  let signingKeyId = row.signing_key_id;
   if (row.revoked_at_ms != null) status = 'revoked';
   else if (now >= row.expires_at_ms) status = 'expired';
   else if (row.expires_at_ms - now <= 14 * 24 * 60 * 60 * 1000)
     status = 'expiring';
   try {
     const payload = JSON.parse(row.raw_json);
-    if (!verifyDeploymentLicensePayload(store, payload, row.signature))
+    const verification = verifyDeploymentLicensePayload(
+      store,
+      payload,
+      row.signature,
+    );
+    signingKeyId = verification.keyId;
+    if (
+      !verification.valid ||
+      row.signature_algorithm !== 'ed25519' ||
+      row.deployment_id !== getDeploymentId(store) ||
+      row.machine_fingerprint !== getMachineFingerprint() ||
+      typeof payload.organizationId !== 'string' ||
+      payload.organizationId !== row.organization_id
+    ) {
       status = 'invalid';
+    }
   } catch {
     status = 'invalid';
+  }
+  const leaseRow = row.offline === 1 ? null : getLicenseLeaseRow(store, row.id);
+  let leaseStatus: DeploymentLicenseView['lease']['status'] =
+    row.offline === 1 ? 'not_required' : 'missing';
+  if (leaseRow) {
+    let leaseValid = false;
+    try {
+      const leasePayload = JSON.parse(leaseRow.raw_json);
+      leaseValid =
+        verifyDeploymentLicensePayload(
+          store,
+          leasePayload,
+          leaseRow.signature,
+        ).valid &&
+        leaseRow.signature_algorithm === 'ed25519' &&
+        leaseRow.license_id === row.id &&
+        leaseRow.deployment_id === row.deployment_id &&
+        leaseRow.machine_fingerprint === row.machine_fingerprint;
+    } catch {
+      leaseValid = false;
+    }
+    if (!leaseValid) leaseStatus = 'revoked';
+    else if (leaseRow.revoked_at_ms != null) leaseStatus = 'revoked';
+    else if (now >= leaseRow.expires_at_ms) leaseStatus = 'expired';
+    else leaseStatus = 'active';
+  }
+  if (status === 'active' || status === 'expiring') {
+    if (leaseStatus === 'missing') status = 'lease_missing';
+    if (leaseStatus === 'expired') status = 'lease_expired';
+    if (leaseStatus === 'revoked') status = 'revoked';
   }
   const seats = activeSeatCount(store, row.organization_id);
   return {
     id: row.id,
     deploymentId: row.deployment_id,
     organizationId: row.organization_id,
+    machineFingerprint: row.machine_fingerprint,
     customerName: row.customer_name,
     plan: row.plan,
     expiresAt: dateFromMs(row.expires_at_ms),
@@ -194,6 +273,21 @@ function toDeploymentLicenseView(
     modules,
     offline: row.offline === 1,
     telemetryAllowed: row.telemetry_allowed === 1,
+    signatureAlgorithm: 'ed25519',
+    signingKeyId,
+    lease: {
+      required: row.offline !== 1,
+      status: leaseStatus,
+      endpoint: row.lease_endpoint,
+      expiresAt: leaseRow ? dateFromMs(leaseRow.expires_at_ms) : null,
+      lastRefreshAt: leaseRow
+        ? dateFromMs(leaseRow.last_refresh_at_ms)
+        : null,
+      lastError:
+        leaseRow?.last_error ||
+        store.readSetting('license_lease_last_error') ||
+        null,
+    },
     status,
     enforce,
     updatedAt: row.updated_at,
@@ -216,25 +310,38 @@ export function importDeploymentLicense(
   raw: unknown,
 ): DeploymentLicenseView {
   const envelope = safeJsonObject(raw);
-  const payload = safeJsonObject(
-    envelope.license ?? envelope.payload ?? envelope,
-  );
+  const payload = safeJsonObject(envelope.license ?? envelope.payload);
   const signature =
-    typeof envelope.signature === 'string'
-      ? envelope.signature
-      : typeof payload.signature === 'string'
-        ? payload.signature
-        : '';
-  if (!verifyDeploymentLicensePayload(store, payload, signature))
+    typeof envelope.signature === 'string' ? envelope.signature : '';
+  const verification = verifyDeploymentLicensePayload(
+    store,
+    payload,
+    signature,
+  );
+  if (!verification.valid)
     throw new Error('license signature invalid');
-  const deploymentId = String(payload.deploymentId || getDeploymentId(store));
+  const deploymentId = String(payload.deploymentId || '');
   if (deploymentId !== getDeploymentId(store))
     throw new Error('license deploymentId mismatch');
+  const machineFingerprint = String(payload.machineFingerprint || '');
+  if (machineFingerprint !== getMachineFingerprint())
+    throw new Error('license machineFingerprint mismatch');
+  const organizationId = String(payload.organizationId || '');
+  if (!organizationId) throw new Error('license organizationId required');
+  const organization = store.db()
+    .prepare('SELECT id FROM organizations WHERE id = ?')
+    .get(organizationId) as { id: string } | undefined;
+  if (!organization) throw new Error('license organizationId mismatch');
   const modules = Array.isArray(payload.modules)
     ? [...new Set(payload.modules
         .filter((item): item is string => typeof item === 'string' && item.length > 0)
         .map((item) => canonicalLicenseCapabilityId(item) ?? item))]
     : [];
+  const knownModules = new Set(
+    licenseModuleCatalog().map((entry) => entry.module),
+  );
+  const unknownModule = modules.find((moduleName) => !knownModules.has(moduleName));
+  if (unknownModule) throw new Error(`license module unknown: ${unknownModule}`);
   const expiresAtMs = Number(
     payload.expiresAtMs ?? Date.parse(String(payload.expiresAt || '')),
   );
@@ -246,17 +353,56 @@ export function importDeploymentLicense(
   const seatLimit = Math.max(0, Math.floor(Number(payload.seatLimit ?? 0)));
   if (!Number.isFinite(expiresAtMs) || expiresAtMs <= 0)
     throw new Error('license expiresAt invalid');
+  if (!Number.isFinite(issuedAtMs) || issuedAtMs <= 0)
+    throw new Error('license issuedAt invalid');
+  if (issuedAtMs > Date.now() + 5 * 60 * 1000)
+    throw new Error('license issuedAt is in the future');
+  if (expiresAtMs <= issuedAtMs)
+    throw new Error('license expiresAt must be after issuedAt');
+  if (seatLimit <= 0) throw new Error('license seatLimit must be positive');
   if (modules.length === 0) throw new Error('license modules required');
   const id = String(payload.id || `lic_${randomUUID().replace(/-/g, '')}`);
+  const offline = payload.offline !== false;
+  const telemetryAllowed = payload.telemetryAllowed !== false;
+  if (
+    telemetryAllowed &&
+    (typeof payload.telemetryToken !== 'string' ||
+      payload.telemetryToken.length < 32)
+  ) {
+    throw new Error('license telemetryToken required');
+  }
+  const leaseEndpoint =
+    typeof payload.leaseEndpoint === 'string'
+      ? payload.leaseEndpoint.trim()
+      : '';
+  if (!offline) {
+    let parsedLeaseEndpoint: URL;
+    try {
+      parsedLeaseEndpoint = new URL(leaseEndpoint);
+    } catch {
+      throw new Error('online license leaseEndpoint invalid');
+    }
+    if (parsedLeaseEndpoint.protocol !== 'https:')
+      throw new Error('online license leaseEndpoint must use HTTPS');
+    if (
+      typeof payload.leaseToken !== 'string' ||
+      payload.leaseToken.length < 32
+    ) {
+      throw new Error('online license leaseToken required');
+    }
+  }
   store.db()
     .prepare(
       `INSERT INTO deployment_license
-       (id, deployment_id, organization_id, customer_name, plan, expires_at_ms, seat_limit,
-        modules_json, offline, telemetry_allowed, issued_at_ms, revoked_at_ms, signature, raw_json, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+       (id, deployment_id, organization_id, machine_fingerprint, customer_name, plan,
+        expires_at_ms, seat_limit, modules_json, offline, telemetry_allowed, issued_at_ms,
+        revoked_at_ms, signature, signature_algorithm, signing_key_id, lease_endpoint,
+        raw_json, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ed25519', ?, ?, ?, datetime('now'))
      ON CONFLICT(id) DO UPDATE SET
        deployment_id = excluded.deployment_id,
        organization_id = excluded.organization_id,
+       machine_fingerprint = excluded.machine_fingerprint,
        customer_name = excluded.customer_name,
        plan = excluded.plan,
        expires_at_ms = excluded.expires_at_ms,
@@ -267,27 +413,34 @@ export function importDeploymentLicense(
        issued_at_ms = excluded.issued_at_ms,
        revoked_at_ms = excluded.revoked_at_ms,
        signature = excluded.signature,
+       signature_algorithm = excluded.signature_algorithm,
+       signing_key_id = excluded.signing_key_id,
+       lease_endpoint = excluded.lease_endpoint,
        raw_json = excluded.raw_json,
        updated_at = excluded.updated_at`,
     )
     .run(
       id,
       deploymentId,
-      typeof payload.organizationId === 'string'
-        ? payload.organizationId
-        : null,
+      organizationId,
+      machineFingerprint,
       String(payload.customerName || 'Private customer'),
       String(payload.plan || 'enterprise'),
       expiresAtMs,
       seatLimit,
       JSON.stringify(modules),
-      payload.offline === false ? 0 : 1,
-      payload.telemetryAllowed === false ? 0 : 1,
+      offline ? 1 : 0,
+      telemetryAllowed ? 1 : 0,
       issuedAtMs,
       payload.revokedAtMs == null ? null : Number(payload.revokedAtMs),
       signature,
+      verification.keyId,
+      offline ? null : leaseEndpoint,
       JSON.stringify(payload),
     );
+  store.db()
+    .prepare('DELETE FROM deployment_license_leases WHERE license_id = ?')
+    .run(id);
   store.audit(
     'deployment_license_import',
     null,
@@ -295,6 +448,137 @@ export function importDeploymentLicense(
     store.defaultOrganizationId,
   );
   return getDeploymentLicense(store);
+}
+
+export function importDeploymentLicenseLease(
+  store: DeploymentRepositoryStore,
+  raw: unknown,
+): DeploymentLicenseView {
+  const license = getDeploymentLicense(store);
+  if (license.id === 'unlicensed' || license.offline)
+    throw new Error('online license required');
+  const envelope = safeJsonObject(raw);
+  const payload = safeJsonObject(envelope.lease ?? envelope.payload);
+  const signature =
+    typeof envelope.signature === 'string' ? envelope.signature : '';
+  const verification = verifyDeploymentLicensePayload(
+    store,
+    payload,
+    signature,
+  );
+  if (!verification.valid) throw new Error('license lease signature invalid');
+  if (String(payload.licenseId || '') !== license.id)
+    throw new Error('license lease licenseId mismatch');
+  if (String(payload.deploymentId || '') !== license.deploymentId)
+    throw new Error('license lease deploymentId mismatch');
+  if (String(payload.machineFingerprint || '') !== getMachineFingerprint())
+    throw new Error('license lease machineFingerprint mismatch');
+  const issuedAtMs = Number(payload.issuedAtMs);
+  const expiresAtMs = Number(payload.expiresAtMs);
+  if (!Number.isFinite(issuedAtMs) || !Number.isFinite(expiresAtMs))
+    throw new Error('license lease timestamps invalid');
+  if (issuedAtMs > Date.now() + 5 * 60 * 1000 || expiresAtMs <= Date.now())
+    throw new Error('license lease is not active');
+  if (expiresAtMs - issuedAtMs > 24 * 60 * 60 * 1000)
+    throw new Error('license lease duration exceeds 24 hours');
+  const leaseId = String(payload.id || '');
+  if (!leaseId) throw new Error('license lease id required');
+  const refreshedAtMs = Date.now();
+  store.db()
+    .prepare(
+      `INSERT INTO deployment_license_leases
+       (license_id, lease_id, deployment_id, machine_fingerprint, issued_at_ms,
+        expires_at_ms, revoked_at_ms, signature, signature_algorithm, signing_key_id,
+        raw_json, last_refresh_at_ms, last_error, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ed25519', ?, ?, ?, NULL, datetime('now'))
+       ON CONFLICT(license_id) DO UPDATE SET
+         lease_id = excluded.lease_id,
+         deployment_id = excluded.deployment_id,
+         machine_fingerprint = excluded.machine_fingerprint,
+         issued_at_ms = excluded.issued_at_ms,
+         expires_at_ms = excluded.expires_at_ms,
+         revoked_at_ms = excluded.revoked_at_ms,
+         signature = excluded.signature,
+         signature_algorithm = excluded.signature_algorithm,
+         signing_key_id = excluded.signing_key_id,
+         raw_json = excluded.raw_json,
+         last_refresh_at_ms = excluded.last_refresh_at_ms,
+         last_error = NULL,
+         updated_at = excluded.updated_at`,
+    )
+    .run(
+      license.id,
+      leaseId,
+      license.deploymentId,
+      getMachineFingerprint(),
+      issuedAtMs,
+      expiresAtMs,
+      payload.revokedAtMs == null ? null : Number(payload.revokedAtMs),
+      signature,
+      verification.keyId,
+      JSON.stringify(payload),
+      refreshedAtMs,
+    );
+  store.audit(
+    'deployment_license_lease_import',
+    null,
+    `License lease imported: ${leaseId}`,
+    store.defaultOrganizationId,
+  );
+  return getDeploymentLicense(store);
+}
+
+export async function refreshDeploymentLicenseLease(
+  store: DeploymentRepositoryStore,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ refreshed: boolean; skippedReason: string | null; error: string | null }> {
+  const license = getDeploymentLicense(store);
+  if (license.id === 'unlicensed')
+    return { refreshed: false, skippedReason: 'license_missing', error: null };
+  if (license.offline)
+    return { refreshed: false, skippedReason: 'offline_license', error: null };
+  if (!license.lease.endpoint)
+    return { refreshed: false, skippedReason: 'lease_endpoint_missing', error: null };
+  const payload = latestLicensePayload(store);
+  const leaseToken = payload.leaseToken;
+  if (typeof leaseToken !== 'string' || leaseToken.length < 32) {
+    return { refreshed: false, skippedReason: 'lease_token_missing', error: null };
+  }
+  try {
+    const response = await fetchImpl(license.lease.endpoint, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${leaseToken}`,
+        'content-type': 'application/json',
+        'user-agent': 'Otto-Private-Deployment/1',
+      },
+      body: JSON.stringify({
+        version: 1,
+        licenseId: license.id,
+        deploymentId: license.deploymentId,
+        organizationId: license.organizationId,
+        machineFingerprint: getMachineFingerprint(),
+        nonce: randomUUID(),
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error(`license endpoint returned ${response.status}`);
+    const envelope = await response.json();
+    importDeploymentLicenseLease(store, envelope);
+    store.writeSetting('license_lease_last_error', '');
+    return { refreshed: true, skippedReason: null, error: null };
+  } catch (error) {
+    const message = safeErrorMessage(error);
+    store.writeSetting('license_lease_last_error', message);
+    store.db()
+      .prepare(
+        `UPDATE deployment_license_leases
+         SET last_error = ?, updated_at = datetime('now')
+         WHERE license_id = ?`,
+      )
+      .run(message, license.id);
+    return { refreshed: false, skippedReason: null, error: message };
+  }
 }
 
 export function getTelemetrySettings(
@@ -366,7 +650,7 @@ export function recordTelemetryEvent(
       payload.organizationId,
       input.eventType,
       JSON.stringify(payload),
-      signDeploymentPayload(store, payload),
+      telemetryIntegrityHash(payload),
       payload.createdAtMs,
     );
 }
@@ -401,6 +685,289 @@ export function getTelemetryQueueSummary(store: DeploymentRepositoryStore): {
       summary.lastQueuedAt = dateFromMs(row.lastQueuedAt);
   }
   return summary;
+}
+
+interface TelemetryQueueRow {
+  id: string;
+  deployment_id: string;
+  organization_id: string | null;
+  event_type: string;
+  payload_json: string;
+  signature: string;
+  attempts: number;
+  created_at_ms: number;
+}
+
+export interface TelemetryFlushResult {
+  attempted: number;
+  sent: number;
+  discarded: number;
+  failed: number;
+  skippedReason: string | null;
+}
+
+function latestLicensePayload(
+  store: DeploymentRepositoryStore,
+): Record<string, unknown> {
+  const row = store.db()
+    .prepare('SELECT raw_json FROM deployment_license ORDER BY updated_at DESC LIMIT 1')
+    .get() as { raw_json: string } | undefined;
+  if (!row) return {};
+  try {
+    return safeJsonObject(JSON.parse(row.raw_json));
+  } catch {
+    return {};
+  }
+}
+
+function telemetryRetryDelayMs(attempts: number): number {
+  return Math.min(60 * 60 * 1000, 5_000 * 2 ** Math.min(attempts, 10));
+}
+
+function safeErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/[\r\n]+/g, ' ').slice(0, 300);
+}
+
+function runInTransaction<T>(database: Database, action: () => T): T {
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const result = action();
+    database.exec('COMMIT');
+    return result;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+export async function flushTelemetryQueue(
+  store: DeploymentRepositoryStore,
+  fetchImpl: typeof fetch = fetch,
+  now = Date.now(),
+): Promise<TelemetryFlushResult> {
+  const result: TelemetryFlushResult = {
+    attempted: 0,
+    sent: 0,
+    discarded: 0,
+    failed: 0,
+    skippedReason: null,
+  };
+  const settings = getTelemetrySettings(store);
+  const license = getDeploymentLicense(store);
+  if (!settings.enabled) return { ...result, skippedReason: 'disabled' };
+  if (!license.telemetryAllowed)
+    return { ...result, skippedReason: 'license_disallows_telemetry' };
+  if (!settings.endpoint)
+    return { ...result, skippedReason: 'endpoint_missing' };
+  let endpoint: URL;
+  try {
+    endpoint = new URL(settings.endpoint);
+  } catch {
+    return { ...result, skippedReason: 'endpoint_invalid' };
+  }
+  if (endpoint.protocol !== 'https:')
+    return { ...result, skippedReason: 'endpoint_requires_https' };
+  const telemetryToken = latestLicensePayload(store).telemetryToken;
+  if (typeof telemetryToken !== 'string' || telemetryToken.length < 32) {
+    return { ...result, skippedReason: 'telemetry_token_missing' };
+  }
+  const rows = store.db()
+    .prepare(
+      `SELECT id, deployment_id, organization_id, event_type, payload_json,
+              signature, attempts, created_at_ms
+       FROM telemetry_events
+       WHERE status IN ('queued', 'failed')
+         AND (next_attempt_at_ms IS NULL OR next_attempt_at_ms <= ?)
+       ORDER BY created_at_ms ASC
+       LIMIT 50`,
+    )
+    .all(now) as TelemetryQueueRow[];
+  if (rows.length === 0) return result;
+  result.attempted = rows.length;
+  const events: Array<Record<string, unknown>> = [];
+  const validRows: TelemetryQueueRow[] = [];
+  for (const row of rows) {
+    try {
+      const payload = JSON.parse(row.payload_json);
+      if (telemetryIntegrityHash(payload) !== row.signature) {
+        store.db()
+          .prepare(
+            `UPDATE telemetry_events
+             SET status = 'discarded', last_error = ?, updated_at = datetime('now')
+             WHERE id = ?`,
+          )
+          .run('local telemetry integrity mismatch', row.id);
+        result.discarded += 1;
+        continue;
+      }
+      events.push({
+        id: row.id,
+        organizationId: row.organization_id,
+        eventType: row.event_type,
+        createdAtMs: row.created_at_ms,
+        payload,
+        integrity: row.signature,
+      });
+      validRows.push(row);
+    } catch {
+      store.db()
+        .prepare(
+          `UPDATE telemetry_events
+           SET status = 'discarded', last_error = ?, updated_at = datetime('now')
+           WHERE id = ?`,
+        )
+        .run('local telemetry payload invalid', row.id);
+      result.discarded += 1;
+    }
+  }
+  if (events.length === 0) return result;
+  try {
+    const response = await fetchImpl(endpoint, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${telemetryToken}`,
+        'content-type': 'application/json',
+        'user-agent': 'Otto-Private-Deployment/1',
+      },
+      body: JSON.stringify({
+        version: 1,
+        deploymentId: getDeploymentId(store),
+        machineFingerprint: getMachineFingerprint(),
+        licenseId: license.id,
+        events,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error(`telemetry endpoint returned ${response.status}`);
+    runInTransaction(store.db(), () => {
+      const statement = store.db().prepare(
+        `UPDATE telemetry_events
+         SET status = 'sent', sent_at_ms = ?, next_attempt_at_ms = NULL,
+             last_error = NULL, updated_at = datetime('now')
+         WHERE id = ?`,
+      );
+      for (const row of validRows) statement.run(now, row.id);
+    });
+    result.sent = validRows.length;
+  } catch (error) {
+    const message = safeErrorMessage(error);
+    runInTransaction(store.db(), () => {
+      const statement = store.db().prepare(
+        `UPDATE telemetry_events
+         SET status = 'failed', attempts = attempts + 1,
+             next_attempt_at_ms = ?, last_error = ?, updated_at = datetime('now')
+         WHERE id = ?`,
+      );
+      for (const row of validRows) {
+        statement.run(
+          now + telemetryRetryDelayMs(row.attempts + 1),
+          message,
+          row.id,
+        );
+      }
+    });
+    result.failed = validRows.length;
+  }
+  return result;
+}
+
+const FORBIDDEN_TELEMETRY_KEYS = new Set([
+  'message',
+  'messages',
+  'content',
+  'file',
+  'files',
+  'attachment',
+  'attachments',
+  'audio',
+  'meetingaudio',
+  'transcript',
+  'prompt',
+  'completion',
+  'document',
+  'documents',
+]);
+
+function telemetryContainsContent(value: unknown, depth = 0): boolean {
+  if (depth > 8) return true;
+  if (Array.isArray(value))
+    return value.some((item) => telemetryContainsContent(item, depth + 1));
+  if (!value || typeof value !== 'object') return false;
+  return Object.entries(value as Record<string, unknown>).some(
+    ([key, item]) =>
+      FORBIDDEN_TELEMETRY_KEYS.has(key.toLowerCase().replace(/[_-]/g, '')) ||
+      telemetryContainsContent(item, depth + 1),
+  );
+}
+
+function bearerToken(authorization: string | undefined): string {
+  const match = /^Bearer\s+(.+)$/i.exec(authorization?.trim() || '');
+  return match?.[1] || '';
+}
+
+function equalSecret(left: string, right: string): boolean {
+  if (!left || left.length !== right.length) return false;
+  return timingSafeEqual(Buffer.from(left), Buffer.from(right));
+}
+
+export function ingestTelemetryBatch(
+  store: DeploymentRepositoryStore,
+  raw: unknown,
+  authorization: string | undefined,
+  now = Date.now(),
+): { accepted: number; duplicates: number } {
+  const secret = store.telemetryIngestSecret();
+  if (secret.length < 32) throw new Error('telemetry ingest is not configured');
+  const body = safeJsonObject(raw);
+  const deploymentId = String(body.deploymentId || '');
+  if (!/^dep_[a-z0-9]{16,64}$/i.test(deploymentId))
+    throw new Error('telemetry deploymentId invalid');
+  const expectedToken = createHmac('sha256', secret)
+    .update(deploymentId)
+    .digest('base64url');
+  if (!equalSecret(bearerToken(authorization), expectedToken))
+    throw new Error('telemetry authorization invalid');
+  if (!Array.isArray(body.events) || body.events.length === 0 || body.events.length > 100)
+    throw new Error('telemetry events invalid');
+  let accepted = 0;
+  let duplicates = 0;
+  const insert = store.db().prepare(
+    `INSERT OR IGNORE INTO telemetry_ingest_events
+     (deployment_id, event_id, organization_id, event_type, payload_json,
+      integrity, source_created_at_ms, received_at_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  runInTransaction(store.db(), () => {
+    for (const item of body.events as unknown[]) {
+      const event = safeJsonObject(item);
+      const id = String(event.id || '');
+      const eventType = String(event.eventType || '');
+      const createdAtMs = Number(event.createdAtMs);
+      const integrity = String(event.integrity || '');
+      if (!/^tel_[a-z0-9]{16,64}$/i.test(id) || !/^[a-z0-9_.:-]{2,80}$/i.test(eventType))
+        throw new Error('telemetry event identity invalid');
+      if (!Number.isFinite(createdAtMs) || createdAtMs <= 0 || createdAtMs > now + 5 * 60 * 1000)
+        throw new Error('telemetry event timestamp invalid');
+      if (telemetryContainsContent(event.payload))
+        throw new Error('telemetry content payload forbidden');
+      if (telemetryIntegrityHash(event.payload) !== integrity)
+        throw new Error('telemetry event integrity invalid');
+      const info = insert.run(
+        deploymentId,
+        id,
+        typeof event.organizationId === 'string' ? event.organizationId : null,
+        eventType,
+        JSON.stringify(event.payload),
+        integrity,
+        createdAtMs,
+        now,
+      );
+      if (info.changes === 1) accepted += 1;
+      else duplicates += 1;
+    }
+  });
+  return { accepted, duplicates };
 }
 
 function getDeploymentRuntimeHealth(

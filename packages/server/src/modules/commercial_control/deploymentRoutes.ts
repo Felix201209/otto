@@ -12,6 +12,7 @@ export interface DeploymentRoutePrincipal {
 export interface DeploymentRouteServices {
   getPrivateDeploymentStatus(): PrivateDeploymentStatus;
   importDeploymentLicense(raw: unknown): DeploymentLicenseView;
+  importDeploymentLicenseLease(raw: unknown): DeploymentLicenseView;
   updateTelemetrySettings(
     patch: Partial<DeploymentTelemetrySettings>,
   ): DeploymentTelemetrySettings;
@@ -21,6 +22,17 @@ export interface DeploymentRouteServices {
     sent: number;
     lastQueuedAt: string | null;
   };
+  flushTelemetryQueue(): Promise<{
+    attempted: number;
+    sent: number;
+    discarded: number;
+    failed: number;
+    skippedReason: string | null;
+  }>;
+  ingestTelemetryBatch(
+    raw: unknown,
+    authorization: string | undefined,
+  ): { accepted: number; duplicates: number };
   recordTelemetryEvent(input: {
     organizationId?: string | null;
     eventType: string;
@@ -83,6 +95,22 @@ export async function handleDeploymentRoute({
     return true;
   }
 
+  if (path === '/enterprise/deployment/license/lease' && method === 'POST') {
+    const body = await readBody(req);
+    try {
+      const license = services.importDeploymentLicenseLease(body);
+      sendJSON(res, 200, { license });
+    } catch (error) {
+      sendJSON(res, 400, {
+        error:
+          error instanceof Error
+            ? error.message
+            : 'license lease import failed',
+      });
+    }
+    return true;
+  }
+
   if (path === '/enterprise/deployment/telemetry' && method === 'PATCH') {
     const body = await readBody(req);
     const settings = services.updateTelemetrySettings({
@@ -95,6 +123,30 @@ export async function handleDeploymentRoute({
     sendJSON(res, 200, {
       telemetry: { ...settings, ...services.getTelemetryQueueSummary() },
     });
+    return true;
+  }
+
+  if (path === '/enterprise/deployment/telemetry/flush' && method === 'POST') {
+    sendJSON(res, 200, { result: await services.flushTelemetryQueue() });
+    return true;
+  }
+
+  if (path === '/enterprise/deployment/telemetry/ingest' && method === 'POST') {
+    const body = await readBody(req);
+    try {
+      const receipt = services.ingestTelemetryBatch(
+        body,
+        typeof req.headers.authorization === 'string'
+          ? req.headers.authorization
+          : undefined,
+      );
+      sendJSON(res, 202, receipt);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      const status = message.includes('not configured') ? 404 :
+        message.includes('authorization') ? 401 : 400;
+      sendJSON(res, status, { error: message || 'telemetry ingest failed' });
+    }
     return true;
   }
 

@@ -52,6 +52,7 @@ import {
   createAuditLogSchemaContributor,
   createCommercialControlComposition,
   createCreditsSchemaContributor,
+  parsePublicKeyList,
   PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR,
 } from '../modules/commercial_control/index.js';
 import {
@@ -271,10 +272,14 @@ export const {
   getMachineFingerprint,
   getDeploymentLicense,
   importDeploymentLicense,
+  importDeploymentLicenseLease,
+  refreshDeploymentLicenseLease,
   getTelemetrySettings,
   updateTelemetrySettings,
   recordTelemetryEvent,
   getTelemetryQueueSummary,
+  flushTelemetryQueue,
+  ingestTelemetryBatch,
   getPrivateDeploymentStatus,
   exportDeploymentDiagnostics,
   isLicenseUsableForOrganizationFeature,
@@ -283,9 +288,18 @@ export const {
   db: getDB,
   defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
   creditTokenRate: () => process.env.OTTO_CREDIT_TOKEN_RATE,
-  licenseEnforcementEnabled: () => process.env.OTTO_LICENSE_ENFORCE === 'true',
-  licenseSigningSecret: () => process.env.OTTO_LICENSE_SIGNING_SECRET || '',
+  licenseEnforcementEnabled: () =>
+    process.env.OTTO_LICENSE_ENFORCE === 'true' ||
+    (process.env.NODE_ENV === 'production' &&
+      process.env.OTTO_LICENSE_ENFORCE !== 'false'),
+  licenseVerificationPublicKeys: () =>
+    parsePublicKeyList(
+      process.env.OTTO_LICENSE_PUBLIC_KEYS ||
+        process.env.OTTO_LICENSE_PUBLIC_KEY,
+    ),
   telemetryEndpoint: () => process.env.OTTO_TELEMETRY_ENDPOINT || null,
+  telemetryIngestSecret: () =>
+    process.env.OTTO_TELEMETRY_INGEST_SECRET || '',
   databaseReadiness: getDatabaseReadiness,
 });
 

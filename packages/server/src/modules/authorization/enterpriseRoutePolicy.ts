@@ -32,7 +32,9 @@ const ADMIN_ROUTES = new Set([
   '/enterprise/usage/summary',
   '/enterprise/deployment/status',
   '/enterprise/deployment/license',
+  '/enterprise/deployment/license/lease',
   '/enterprise/deployment/telemetry',
+  '/enterprise/deployment/telemetry/flush',
   '/enterprise/deployment/diagnostics',
   '/enterprise/modules/updates',
   '/enterprise/organizations',
@@ -107,7 +109,9 @@ export function isLicenseMaintenanceRoute(path: string): boolean {
     path === '/enterprise/export' ||
     path === '/enterprise/deployment/status' ||
     path === '/enterprise/deployment/license' ||
+    path === '/enterprise/deployment/license/lease' ||
     path === '/enterprise/deployment/telemetry' ||
+    path === '/enterprise/deployment/telemetry/flush' ||
     path === '/enterprise/deployment/diagnostics' ||
     path === '/enterprise/account-sync' ||
     path.startsWith('/enterprise/auth/')

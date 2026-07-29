@@ -8,6 +8,7 @@ import { createAuditLogFacade } from './auditLogFacade.js';
 import { createCreditsFacade } from './creditsFacade.js';
 import {
   exportDeploymentDiagnostics as exportDeploymentDiagnosticsFromRepository,
+  flushTelemetryQueue as flushTelemetryQueueInRepository,
   getDeploymentId as getDeploymentIdFromRepository,
   getDeploymentLicense as getDeploymentLicenseFromRepository,
   getMachineFingerprint as getMachineFingerprintFromRepository,
@@ -15,9 +16,12 @@ import {
   getTelemetryQueueSummary as getTelemetryQueueSummaryFromRepository,
   getTelemetrySettings as getTelemetrySettingsFromRepository,
   importDeploymentLicense as importDeploymentLicenseIntoRepository,
+  importDeploymentLicenseLease as importDeploymentLicenseLeaseIntoRepository,
+  ingestTelemetryBatch as ingestTelemetryBatchIntoRepository,
   isLicenseRestricted as isLicenseRestrictedInRepository,
   isLicenseUsableForOrganizationFeature as isLicenseUsableForOrganizationFeatureInRepository,
   recordTelemetryEvent as recordTelemetryEventInRepository,
+  refreshDeploymentLicenseLease as refreshDeploymentLicenseLeaseInRepository,
   updateTelemetrySettings as updateTelemetrySettingsInRepository,
 } from './deploymentRepository.js';
 import { createDeploymentSettingsRepository } from './deploymentSettingsRepository.js';
@@ -32,8 +36,9 @@ export interface CommercialControlCompositionOptions {
   defaultOrganizationId: string;
   creditTokenRate(): string | undefined;
   licenseEnforcementEnabled(): boolean;
-  licenseSigningSecret(): string;
+  licenseVerificationPublicKeys(): readonly string[];
   telemetryEndpoint(): string | null;
+  telemetryIngestSecret(): string;
   databaseReadiness(): { ready: true; schemaVersion: number };
 }
 
@@ -62,8 +67,9 @@ export function createCommercialControlComposition(
     ...settings,
     defaultOrganizationId: options.defaultOrganizationId,
     licenseEnforcementEnabled: options.licenseEnforcementEnabled,
-    licenseSigningSecret: options.licenseSigningSecret,
+    licenseVerificationPublicKeys: options.licenseVerificationPublicKeys,
     telemetryEndpoint: options.telemetryEndpoint,
+    telemetryIngestSecret: options.telemetryIngestSecret,
     databaseReadiness: options.databaseReadiness,
     audit: audit.logAudit,
   };
@@ -103,6 +109,11 @@ export function createCommercialControlComposition(
       getDeploymentLicenseFromRepository(deploymentStore),
     importDeploymentLicense: (raw: unknown) =>
       importDeploymentLicenseIntoRepository(deploymentStore, raw),
+    importDeploymentLicenseLease: (raw: unknown) =>
+      importDeploymentLicenseLeaseIntoRepository(deploymentStore, raw),
+    refreshDeploymentLicenseLease: (
+      fetchImpl?: Parameters<typeof refreshDeploymentLicenseLeaseInRepository>[1],
+    ) => refreshDeploymentLicenseLeaseInRepository(deploymentStore, fetchImpl),
     getTelemetrySettings: () =>
       getTelemetrySettingsFromRepository(deploymentStore),
     updateTelemetrySettings: (
@@ -113,6 +124,17 @@ export function createCommercialControlComposition(
     ) => recordTelemetryEventInRepository(deploymentStore, input),
     getTelemetryQueueSummary: () =>
       getTelemetryQueueSummaryFromRepository(deploymentStore),
+    flushTelemetryQueue: (
+      fetchImpl?: Parameters<typeof flushTelemetryQueueInRepository>[1],
+    ) => flushTelemetryQueueInRepository(deploymentStore, fetchImpl),
+    ingestTelemetryBatch: (
+      raw: unknown,
+      authorization: string | undefined,
+    ) => ingestTelemetryBatchIntoRepository(
+      deploymentStore,
+      raw,
+      authorization,
+    ),
     getPrivateDeploymentStatus: () =>
       getPrivateDeploymentStatusFromRepository(deploymentStore),
     exportDeploymentDiagnostics: (

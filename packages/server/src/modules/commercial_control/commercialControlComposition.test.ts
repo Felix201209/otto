@@ -29,8 +29,9 @@ describe('commercial control composition', () => {
       defaultOrganizationId: 'org-default',
       creditTokenRate: () => undefined,
       licenseEnforcementEnabled: () => false,
-      licenseSigningSecret: () => '',
+      licenseVerificationPublicKeys: () => [],
       telemetryEndpoint: () => 'https://telemetry.example.test',
+      telemetryIngestSecret: () => '',
       databaseReadiness: () => ({ ready: true, schemaVersion: 1 }),
     });
 

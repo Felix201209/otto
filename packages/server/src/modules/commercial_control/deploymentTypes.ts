@@ -8,12 +8,29 @@ import type {
 } from '../../productModules.js';
 
 export type DeploymentLicenseStatus =
-  'active' | 'expiring' | 'expired' | 'revoked' | 'missing' | 'invalid';
+  | 'active'
+  | 'expiring'
+  | 'expired'
+  | 'revoked'
+  | 'missing'
+  | 'invalid'
+  | 'lease_missing'
+  | 'lease_expired';
+
+export interface DeploymentLicenseLeaseView {
+  required: boolean;
+  status: 'not_required' | 'active' | 'missing' | 'expired' | 'revoked';
+  endpoint: string | null;
+  expiresAt: string | null;
+  lastRefreshAt: string | null;
+  lastError: string | null;
+}
 
 export interface DeploymentLicenseView {
   id: string;
   deploymentId: string;
   organizationId: string | null;
+  machineFingerprint: string | null;
   customerName: string;
   plan: string;
   expiresAt: string;
@@ -23,6 +40,9 @@ export interface DeploymentLicenseView {
   modules: string[];
   offline: boolean;
   telemetryAllowed: boolean;
+  signatureAlgorithm: 'ed25519' | 'none';
+  signingKeyId: string | null;
+  lease: DeploymentLicenseLeaseView;
   status: DeploymentLicenseStatus;
   enforce: boolean;
   updatedAt: string;

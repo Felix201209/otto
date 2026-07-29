@@ -62,6 +62,7 @@ import {
   type LoginRateLimiter,
   type PasswordLoginRateLimitOptions,
 } from './enterpriseHttpSecurity.js';
+import { startPrivateDeploymentRuntime } from '../modules/commercial_control/index.js';
 
 export { adminAccountsHTML } from './adminAccountsPage.js';
 export {
@@ -596,5 +597,10 @@ export function startEnterpriseServer(
     );
     console.log('[Otto Enterprise] Ctrl+C 停止');
   });
+  const stopPrivateDeploymentRuntime = startPrivateDeploymentRuntime(db, {
+    onError: (error) =>
+      console.error('[Otto Enterprise] private deployment runtime failed', error),
+  });
+  server.once('close', stopPrivateDeploymentRuntime);
   return server;
 }

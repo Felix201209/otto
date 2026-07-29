@@ -9,10 +9,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import { request as httpRequest, type Server } from 'node:http';
-import { createHash, createHmac } from 'node:crypto';
+import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { canonicalJson } from '../modules/commercial_control/signedEnvelope.js';
 import {
   buildAtoaRequest,
   buildAtoaResponse,
@@ -42,15 +43,24 @@ const ENV_KEYS = [
   'OTTO_ENTERPRISE_FEISHU_APP_SECRET',
   'OTTO_ENTERPRISE_FEISHU_DOMAIN',
   'OTTO_LICENSE_ENFORCE',
-  'OTTO_LICENSE_SIGNING_SECRET',
+  'OTTO_LICENSE_PUBLIC_KEY',
+  'OTTO_LICENSE_PUBLIC_KEYS',
   'OTTO_TELEMETRY_ENDPOINT',
 ] as const;
 
 const ADMIN_TOKEN = 'test-admin-token-abc123';
-const LICENSE_SECRET = 'test-license-secret';
+const LICENSE_KEY_PAIR = generateKeyPairSync('ed25519');
+const LICENSE_PUBLIC_KEY = LICENSE_KEY_PAIR.publicKey.export({
+  format: 'pem',
+  type: 'spki',
+}).toString();
 
 function signLicensePayload(payload: Record<string, unknown>): string {
-  return createHmac('sha256', LICENSE_SECRET).update(JSON.stringify(payload)).digest('base64url');
+  return `ed25519:${sign(
+    null,
+    Buffer.from(canonicalJson(payload)),
+    LICENSE_KEY_PAIR.privateKey,
+  ).toString('base64url')}`;
 }
 
 /** 起一个隔离的企业服务端（临时端口），返回 baseUrl + 关闭句柄。 */
@@ -495,7 +505,7 @@ describe('受保护 vs 公开路由边界', () => {
 
   it('private deployment license enforcement keeps only maintenance routes open', async () => {
     process.env.OTTO_LICENSE_ENFORCE = 'true';
-    process.env.OTTO_LICENSE_SIGNING_SECRET = LICENSE_SECRET;
+    process.env.OTTO_LICENSE_PUBLIC_KEY = LICENSE_PUBLIC_KEY;
     const { base } = await startIsolated(ADMIN_TOKEN);
     const headers = { 'x-otto-admin-token': ADMIN_TOKEN };
 
@@ -534,7 +544,7 @@ describe('受保护 vs 公开路由边界', () => {
 
   it('signed private deployment license reopens business routes and limits server-side modules', async () => {
     process.env.OTTO_LICENSE_ENFORCE = 'true';
-    process.env.OTTO_LICENSE_SIGNING_SECRET = LICENSE_SECRET;
+    process.env.OTTO_LICENSE_PUBLIC_KEY = LICENSE_PUBLIC_KEY;
     const { base } = await startIsolated(ADMIN_TOKEN);
     const headers = { 'x-otto-admin-token': ADMIN_TOKEN };
 
@@ -543,6 +553,8 @@ describe('受保护 vs 公开路由边界', () => {
     const payload = {
       id: 'lic_test_enterprise',
       deploymentId: deployment.deploymentId,
+      organizationId: 'org_default',
+      machineFingerprint: deployment.machineFingerprint,
       customerName: 'Private Customer',
       plan: 'enterprise',
       expiresAtMs: Date.now() + 90 * 24 * 60 * 60 * 1000,
@@ -550,6 +562,7 @@ describe('受保护 vs 公开路由边界', () => {
       modules: ['enterprise_tree', 'direct_messages'],
       offline: true,
       telemetryAllowed: true,
+      telemetryToken: 'test-telemetry-token-at-least-32-characters',
       issuedAtMs: Date.now(),
     };
 
