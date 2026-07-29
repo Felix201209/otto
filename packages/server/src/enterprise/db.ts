@@ -111,8 +111,11 @@ import {
   createOrganizationStructureFacade,
   IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,
   IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR,
+  listAccountTagsInRepository,
+  listOrganizationAccountTagsInRepository,
+  normalizeAccountTags,
   normalizeOrganizationSlug,
-  replaceAccountTagsInRepository,
+  replaceMigratedAccountTagsInRepository,
   toOrganizationDirectoryView,
   assertAccountPassword as assertIdentityAccountPassword,
   hashIdentitySecret,
@@ -689,11 +692,7 @@ function normalizeOptionalAvatarUrl(
   return avatarUrl;
 }
 
-export function normalizeTags(tags: string[] | undefined): string[] {
-  return [
-    ...new Set((tags ?? []).map((tag) => tag.trim()).filter(Boolean)),
-  ].sort((a, b) => a.localeCompare(b, 'zh-CN'));
-}
+export const normalizeTags = normalizeAccountTags;
 
 const passwordHash = hashIdentitySecret;
 const passwordMatches = identitySecretMatches;
@@ -701,15 +700,7 @@ const assertAccountPassword = assertIdentityAccountPassword;
 export const isAcceptableAccountPassword =
   isAcceptableIdentityAccountPassword;
 
-function tagsForAccount(accountId: string, organizationId: string): string[] {
-  return (
-    getDB()
-      .prepare(
-        'SELECT tag FROM account_tags WHERE account_id = ? AND organization_id = ? ORDER BY tag',
-      )
-      .all(accountId, organizationId) as Array<{ tag: string }>
-  ).map((row) => row.tag);
-}
+const accountTagStore = { db: getDB };
 
 export function toAccountView(row: AccountRow): AccountView {
   const organization = getOrganization(row.organization_id);
@@ -731,7 +722,11 @@ export function toAccountView(row: AccountRow): AccountView {
     avatarUrl: row.avatar_url,
     isAdmin: row.is_admin === 1,
     status: row.status,
-    tags: tagsForAccount(row.id, row.organization_id),
+    tags: listAccountTagsInRepository(
+      accountTagStore,
+      row.id,
+      row.organization_id,
+    ),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -783,7 +778,6 @@ const accountLifecycleStore = {
   normalizeOptionalPhone,
   normalizeOptionalFeishuOpenId,
   normalizeOptionalAvatarUrl,
-  normalizeTags,
   assertPassword: assertAccountPassword,
   hashPassword: passwordHash,
   createId: (prefix: 'acc' | 'emp') => `${prefix}_${randomUUID()}`,
@@ -883,11 +877,8 @@ const accountRegistrationStore = {
     organizationId: string,
     tags: string[],
   ) {
-    getDB()
-      .prepare('DELETE FROM account_tags WHERE account_id = ?')
-      .run(accountId);
-    replaceAccountTagsInRepository(
-      accountLifecycleStore,
+    replaceMigratedAccountTagsInRepository(
+      accountTagStore,
       accountId,
       organizationId,
       tags,
@@ -1494,12 +1485,10 @@ export function exportAll(organizationId = DEFAULT_ORGANIZATION_ID) {
     // 账号导出不包含 password_hash / session token 摘要；备份可迁移组织信息，
     // 但不能把登录凭证扩散到普通数据导出文件。
     accounts: listAccounts(organizationId),
-    accountTags: getDB()
-      .prepare(
-        `SELECT account_id, tag, created_at FROM account_tags
-       WHERE organization_id = ?`,
-      )
-      .all(organizationId),
+    accountTags: listOrganizationAccountTagsInRepository(
+      accountTagStore,
+      organizationId,
+    ),
     tickets: getDB()
       .prepare(
         `SELECT * FROM it_tickets WHERE organization_id = ? ORDER BY created_at DESC`,

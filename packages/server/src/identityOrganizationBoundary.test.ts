@@ -121,6 +121,13 @@ describe('identity_organization invitation kernel', () => {
     expect(identityOrganization.backfillEnterpriseAccountEmployees).toBeTypeOf(
       'function',
     );
+    expect(identityOrganization.normalizeAccountTags).toBeTypeOf('function');
+    expect(identityOrganization.listAccountTagsInRepository).toBeTypeOf(
+      'function',
+    );
+    expect(
+      identityOrganization.replaceMigratedAccountTagsInRepository,
+    ).toBeTypeOf('function');
     expect(identityOrganization.createAssignmentIdentityFacade).toBeTypeOf(
       'function',
     );
@@ -329,6 +336,10 @@ describe('identity_organization invitation kernel', () => {
       path.join(enterpriseDir, 'db.ts'),
       'utf8',
     );
+    const accountLifecycleRepository = fs.readFileSync(
+      path.join(moduleDir, 'accountLifecycleRepository.ts'),
+      'utf8',
+    );
     for (const table of [
       'accounts',
       'account_tags',
@@ -363,6 +374,17 @@ describe('identity_organization invitation kernel', () => {
     );
     expect(databaseFacade).not.toContain("ensureTextColumn('accounts'");
     expect(databaseFacade).not.toContain('ALTER TABLE accounts');
+    expect(databaseFacade).not.toContain('SELECT tag FROM account_tags');
+    expect(databaseFacade).not.toContain('DELETE FROM account_tags');
+    expect(databaseFacade).not.toContain('INSERT INTO account_tags');
+    expect(databaseFacade).not.toContain(
+      'SELECT account_id, tag, created_at FROM account_tags',
+    );
+    expect(databaseFacade).toContain('listAccountTagsInRepository');
+    expect(databaseFacade).toContain(
+      'listOrganizationAccountTagsInRepository',
+    );
+    expect(accountLifecycleRepository).not.toContain('account_tags');
     expect(databaseFacade).not.toMatch(/['"]auth_sessions['"],/);
     expect(databaseFacade).toMatch(
       /IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,[\s\S]*?createAccountAuthSchemaContributor\(\{[\s\S]*?createCreditsSchemaContributor\(\{/,

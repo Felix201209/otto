@@ -26,6 +26,7 @@ export * from './organizationProvisioningRepository.js';
 export * from './organizationSchema.js';
 export * from './accountDirectoryFacade.js';
 export * from './accountDirectoryRepository.js';
+export * from './accountTagRepository.js';
 export * from './accountLifecycleFacade.js';
 export * from './accountLifecycleRepository.js';
 export * from './accountRegistrationFacade.js';
