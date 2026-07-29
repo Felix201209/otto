@@ -14,6 +14,7 @@ export * from './departmentInviteRepository.js';
 export type * from './departmentInviteTypes.js';
 export * from './organizationDirectoryFacade.js';
 export * from './organizationDirectoryRepository.js';
+export * from './organizationWorkforceComposition.js';
 export * from './organizationFeatureFacade.js';
 export * from './organizationFeatureRepository.js';
 export * from './organizationStructureFacade.js';

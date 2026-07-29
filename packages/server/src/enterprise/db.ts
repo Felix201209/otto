@@ -102,18 +102,13 @@ import {
   createAccountAuthSchemaContributor,
   createAccountLifecycleFacade,
   createAccountRegistrationFacade,
-  createAssignmentIdentityFacade,
   createAuthSessionFacade,
-  createDepartmentInviteFacade,
   createEnterpriseInviteSchemaContributor,
-  createMemberDirectoryFacade,
   createMemberSchemaContributor,
   createSmsChallengeFacade,
-  createOrganizationDirectoryFacade,
   createOrganizationFeatureFacade,
-  createOrganizationInviteFacade,
   createOrganizationProvisioningFacade,
-  createOrganizationStructureFacade,
+  createOrganizationWorkforceComposition,
   IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,
   IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR,
   getOrganizationPositionRoleMappingFromRepository,
@@ -327,40 +322,13 @@ export const {
 
 export type OrganizationView = OrganizationDirectoryView;
 
-const organizationDirectoryStore = { db: getDB };
-
 export const {
   getOrganization,
   listOrganizations,
   getEnterpriseOrganization,
   listEnterpriseOrganizations,
-} = createOrganizationDirectoryFacade(organizationDirectoryStore);
-
-const departmentInvites = createDepartmentInviteFacade({
-  db: getDB,
-  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
-  getOrganization,
-  logAudit,
-});
-
-export const { createInviteCode, validateInviteCode } = departmentInvites;
-
-export type OrganizationPositionRoleMapping =
-  IdentityOrganizationPositionRoleMapping;
-export type OrganizationPositionView = IdentityOrganizationPositionView;
-export type OrganizationDepartmentView = IdentityOrganizationDepartmentView;
-
-const organizationStructureStore = {
-  db: getDB,
-  logAudit: (
-    event: string,
-    employeeId: string | null,
-    detail: string,
-  organizationId: string,
-  ) => logAudit(event, employeeId, detail, organizationId),
-};
-
-export const {
+  createInviteCode,
+  validateInviteCode,
   listOrganizationStructure,
   createOrganizationDepartment,
   updateOrganizationDepartment,
@@ -368,7 +336,31 @@ export const {
   createOrganizationPosition,
   updateOrganizationPosition,
   deleteOrganizationPosition,
-} = createOrganizationStructureFacade(organizationStructureStore);
+  resolveAssignmentIdentity,
+  createEmployee,
+  getEmployee,
+  listEmployees,
+  offboardEmployee,
+  normalizeOrganizationInviteCode,
+  inspectOrganizationInvite,
+  issueOrganizationInvite,
+  getOrganizationInvite,
+  resolveOrganizationInviteWithDefaults,
+  resolveOrganizationInvite,
+} = createOrganizationWorkforceComposition({
+  db: getDB,
+  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+  organizationInviteValidityMs: ORGANIZATION_INVITE_VALIDITY_MS,
+  organizationInviteAlphabet: ORGANIZATION_INVITE_ALPHABET,
+  organizationInviteCodeRawLength: INVITE_CODE_RAW_LENGTH,
+  normalizeOptionalText,
+  audit: logAudit,
+});
+
+export type OrganizationPositionRoleMapping =
+  IdentityOrganizationPositionRoleMapping;
+export type OrganizationPositionView = IdentityOrganizationPositionView;
+export type OrganizationDepartmentView = IdentityOrganizationDepartmentView;
 
 export type OrganizationFeatures = IdentityOrganizationFeatures;
 
@@ -527,46 +519,6 @@ function normalizeOptionalText(
     throw new Error(`${label}不能超过 ${maxLength} 个字符`);
   return clean;
 }
-
-const assignmentIdentities = createAssignmentIdentityFacade();
-export const { resolveAssignmentIdentity } = assignmentIdentities;
-
-const memberDirectoryStore = {
-  db: getDB,
-  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
-  organizationExists: (organizationId: string) =>
-    getOrganization(organizationId) !== null,
-  resolveAssignmentIdentity,
-  audit: (
-    event: string,
-    employeeId: string | null,
-    detail: string,
-    organizationId: string,
-  ) => logAudit(event, employeeId, detail, organizationId),
-};
-
-export const { createEmployee, getEmployee, listEmployees, offboardEmployee } =
-  createMemberDirectoryFacade(memberDirectoryStore);
-
-const organizationInviteStore = {
-  db: getDB,
-  inviteValidityMs: ORGANIZATION_INVITE_VALIDITY_MS,
-  inviteAlphabet: ORGANIZATION_INVITE_ALPHABET,
-  inviteCodeRawLength: INVITE_CODE_RAW_LENGTH,
-  toOrganizationView: toOrganizationDirectoryView,
-  resolveAssignmentIdentity,
-  normalizeOptionalText,
-  logAudit,
-};
-
-export const {
-  normalizeOrganizationInviteCode,
-  inspectOrganizationInvite,
-  issueOrganizationInvite,
-  getOrganizationInvite,
-  resolveOrganizationInviteWithDefaults,
-  resolveOrganizationInvite,
-} = createOrganizationInviteFacade(organizationInviteStore);
 
 // ============================================================
 // Preset accounts, tags and sessions

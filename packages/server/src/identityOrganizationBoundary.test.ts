@@ -75,6 +75,9 @@ describe('identity_organization invitation kernel', () => {
     expect(identityOrganization.createDepartmentInviteFacade).toBeTypeOf(
       'function',
     );
+    expect(
+      identityOrganization.createOrganizationWorkforceComposition,
+    ).toBeTypeOf('function');
     expect(identityOrganization.issueOrganizationInvite).toBeTypeOf('function');
     expect(identityOrganization.inspectOrganizationInvite).toBeTypeOf(
       'function',
@@ -297,7 +300,8 @@ describe('identity_organization invitation kernel', () => {
       path.join(enterpriseDir, 'db.ts'),
       'utf8',
     );
-    expect(databaseFacade).toContain('createDepartmentInviteFacade');
+    expect(databaseFacade).toContain('createOrganizationWorkforceComposition');
+    expect(databaseFacade).not.toContain('createDepartmentInviteFacade');
     expect(databaseFacade).not.toMatch(
       /export function (?:createInviteCode|validateInviteCode)\s*\(/,
     );
@@ -455,7 +459,8 @@ describe('identity_organization invitation kernel', () => {
       path.join(enterpriseDir, 'db.ts'),
       'utf8',
     );
-    expect(databaseFacade).toContain('createOrganizationDirectoryFacade');
+    expect(databaseFacade).toContain('createOrganizationWorkforceComposition');
+    expect(databaseFacade).not.toContain('createOrganizationDirectoryFacade');
     expect(databaseFacade).not.toMatch(
       /export function (?:getOrganization|listOrganizations|getEnterpriseOrganization|listEnterpriseOrganizations)\s*\(/,
     );
@@ -467,7 +472,8 @@ describe('identity_organization invitation kernel', () => {
       path.join(enterpriseDir, 'db.ts'),
       'utf8',
     );
-    expect(databaseFacade).toContain('createOrganizationStructureFacade');
+    expect(databaseFacade).toContain('createOrganizationWorkforceComposition');
+    expect(databaseFacade).not.toContain('createOrganizationStructureFacade');
     expect(databaseFacade).not.toMatch(
       /export function (?:listOrganizationStructure|createOrganizationDepartment|updateOrganizationDepartment|deleteOrganizationDepartment|createOrganizationPosition|updateOrganizationPosition|deleteOrganizationPosition)\s*\(/,
     );
@@ -484,7 +490,8 @@ describe('identity_organization invitation kernel', () => {
       path.join(enterpriseDir, 'db.ts'),
       'utf8',
     );
-    expect(databaseFacade).toContain('createAssignmentIdentityFacade');
+    expect(databaseFacade).toContain('createOrganizationWorkforceComposition');
+    expect(databaseFacade).not.toContain('createAssignmentIdentityFacade');
     expect(databaseFacade).not.toMatch(
       /export function resolveAssignmentIdentity\s*\(/,
     );
@@ -492,6 +499,24 @@ describe('identity_organization invitation kernel', () => {
       'SELECT id, name FROM organization_departments WHERE organization_id = ?',
     );
     expect(databaseFacade).not.toContain('该职位 ID 已绑定其他部门或职位名称');
+  });
+
+  it('composes organization workforce internals behind one module factory', () => {
+    const databaseFacade = fs.readFileSync(
+      path.join(enterpriseDir, 'db.ts'),
+      'utf8',
+    );
+    expect(databaseFacade).toContain('createOrganizationWorkforceComposition');
+    for (const factory of [
+      'createOrganizationDirectoryFacade',
+      'createDepartmentInviteFacade',
+      'createOrganizationStructureFacade',
+      'createAssignmentIdentityFacade',
+      'createMemberDirectoryFacade',
+      'createOrganizationInviteFacade',
+    ]) {
+      expect(databaseFacade).not.toContain(factory);
+    }
   });
 
   it('keeps feature persistence and license access behind module facades', () => {
