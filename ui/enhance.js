@@ -212,6 +212,15 @@
         openAllconvMock();
         return;
       }
+      // 4) 企业与好友抽屉里的「打开企业组织树」：内联树已隐藏，导流到导航「企业树」弹窗
+      var drawerBtn = e.target.closest ? e.target.closest('.otto-collab-drawer button') : null;
+      if (drawerBtn && drawerBtn.textContent.indexOf('打开企业组织树') !== -1) {
+        e.stopPropagation();
+        e.preventDefault();
+        var navItems = $$('.otto-sidebar__nav .otto-sidebar__navitem');
+        if (navItems[2]) navItems[2].click();
+        return;
+      }
     } catch (err) {
       console.warn(LOG, '拦截异常（已放行）', err);
     }
@@ -308,7 +317,7 @@
     {
       selector: '.otto-sidebar',
       title: '左侧：导航与工作区',
-      body: '五个主入口在这里：工作台是日常对话主页；「我的消息」「企业树」会打开弹窗（带 ↗ 角标）；下面是企业组织和历史对话任务。',
+      body: '五个主入口在这里：工作台是日常对话主页；「我的消息」「企业树」会打开弹窗（带 ↗ 角标）；下面是历史对话任务，点一下就能切回去。',
     },
     {
       selector: '.otto-main',
