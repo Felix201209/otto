@@ -281,6 +281,9 @@ const enterpriseNotificationIdentityBoundary = new EnterpriseNotificationIdentit
 );
 /** 当前 server 端点（发现的或拉起的）。renderer 经 IPC 取它建 WS。 */
 let endpoint: ServerEndpoint | undefined;
+let endpointEnsurePromise: Promise<void> | undefined;
+let endpointRetryTimer: ReturnType<typeof setTimeout> | undefined;
+let endpointRetryAttempt = 0;
 /** 主窗口单例引用。 */
 let mainWindow: BrowserWindow | undefined;
 /** macOS 后台提醒句柄；窗口重新聚焦时主动取消。 */
@@ -1540,12 +1543,15 @@ function applyCsp(): void {
     // 内嵌 server 端口，CSP 也必须从第一帧就放行同一端口，否则 WS 会被浏览器拦截、
     // UI 永久显示“正在重连”，即使 server 实际已健康监听。
     const configuredPort = Number(process.env.OTTO_SERVER_PORT);
-    const port = endpoint?.port
-      ?? (Number.isFinite(configuredPort) && configuredPort > 0
+    const configuredStartPort =
+      Number.isFinite(configuredPort) && configuredPort > 0
         ? configuredPort
-        : CSP_FALLBACK_PORT);
+        : CSP_FALLBACK_PORT;
+    const ports = endpoint
+      ? [endpoint.port]
+      : Array.from({ length: 11 }, (_, index) => configuredStartPort + index);
     // HTTPS 只用于员工头像图片；脚本和网络请求仍严格限制在自身与本地 server。
-    const csp = buildRendererCsp(host, port);
+    const csp = buildRendererCsp(host, ports);
     callback({
       responseHeaders: {
         ...details.responseHeaders,
@@ -1569,18 +1575,47 @@ function applyCsp(): void {
 // ────────────────────────────────────────────────────────────────────────
 
 /** 确保 server 可用并把端点缓存下来；失败不抛（renderer 显示「未连接」）。 */
+function scheduleEndpointRetry(): void {
+  if (isQuitting || endpointRetryTimer) return;
+  const waitMs = Math.min(30_000, 1_000 * 2 ** Math.min(endpointRetryAttempt, 5));
+  endpointRetryAttempt += 1;
+  endpointRetryTimer = setTimeout(() => {
+    endpointRetryTimer = undefined;
+    void ensureEndpoint();
+  }, waitMs);
+  endpointRetryTimer.unref();
+}
+
 async function ensureEndpoint(): Promise<void> {
+  if (endpointEnsurePromise) return endpointEnsurePromise;
+  const operation = (async () => {
+    try {
+      tracer.updateStatus('正在连接服务…');
+      const ensured = await serverManager.ensure();
+      endpoint = ensured.endpoint;
+      endpointRetryAttempt = 0;
+      if (endpointRetryTimer) {
+        clearTimeout(endpointRetryTimer);
+        endpointRetryTimer = undefined;
+      }
+      tracer.updateStatus('服务运行中');
+      console.log(
+        `[otto-desktop] server ${ensured.ownership} @ http://${endpoint.host}:${endpoint.port}`,
+      );
+      pushEndpointToRenderer();
+    } catch (e) {
+      endpoint = undefined;
+      tracer.updateStatus('服务启动失败，正在重试');
+      pushEndpointToRenderer();
+      scheduleEndpointRetry();
+      console.error('[otto-desktop] server 启动失败:', e);
+    }
+  })();
+  endpointEnsurePromise = operation;
   try {
-    tracer.updateStatus('正在连接服务…');
-    const ensured = await serverManager.ensure();
-    endpoint = ensured.endpoint;
-    tracer.updateStatus('服务运行中');
-    console.log(
-      `[otto-desktop] server ${ensured.ownership} @ http://${endpoint.host}:${endpoint.port}`,
-    );
-    pushEndpointToRenderer();
-  } catch (e) {
-    console.error('[otto-desktop] server 启动失败:', e);
+    await operation;
+  } finally {
+    if (endpointEnsurePromise === operation) endpointEnsurePromise = undefined;
   }
 }
 
@@ -2282,7 +2317,10 @@ function registerIpc(): void {
     return transcribeAudio(bytes, mimeType, loadVoiceConfig());
   });
   // renderer 经 preload 拉当前端点（连接前 / 重连时）。
-  ipcMain.handle(IPC.getEndpoint, () => endpoint ?? null);
+  ipcMain.handle(IPC.getEndpoint, () => {
+    if (!endpoint) void ensureEndpoint();
+    return endpoint ?? null;
+  });
 
   // host-only 命令（替代 webview 的 vscode host 命令；交付文档 [WEBVIEW] §5）。
   ipcMain.handle(IPC.openExternal, (_e, url: unknown) => {
@@ -2889,6 +2927,10 @@ if (!gotLock) {
 
   app.on('before-quit', (event) => {
     isQuitting = true;
+    if (endpointRetryTimer) {
+      clearTimeout(endpointRetryTimer);
+      endpointRetryTimer = undefined;
+    }
     stopEnterpriseIdentityRefresh();
     stopEnterpriseModuleUpdatePolling();
     if (quitCleanupFinished) return;
