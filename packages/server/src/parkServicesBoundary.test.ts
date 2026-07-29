@@ -33,6 +33,9 @@ describe('park services module boundary', () => {
     expect(parkServices.updateParkTenantProfileInRepository).toBeTypeOf(
       'function',
     );
+    expect(parkServices.listParkTenantOrganizationsFromRepository).toBeTypeOf(
+      'function',
+    );
     expect(parkServices.createParkPublicationFacade).toBeTypeOf('function');
     expect(parkServices.createParkPublicationSchemaContributor).toBeTypeOf(
       'function',
@@ -307,6 +310,9 @@ describe('park services module boundary', () => {
     expect(databaseFacade).not.toContain("from './ticketRepository.js'");
     expect(databaseFacade).not.toContain('INSERT INTO park_invites');
     expect(databaseFacade).not.toContain('INSERT INTO park_tenant_profiles');
+    expect(databaseFacade).not.toContain(
+      'LEFT JOIN park_tenant_profiles profile',
+    );
     expect(databaseFacade).not.toContain('INSERT INTO parks');
     expect(databaseFacade).not.toContain('UPDATE park_services SET');
     expect(databaseFacade).not.toContain(

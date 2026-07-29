@@ -49,6 +49,25 @@ interface ParkTenantProfileRow {
   updated_at: string;
 }
 
+interface ParkTenantOrganizationRow {
+  id: string;
+  name: string;
+  slug: string;
+  invite_secret: string;
+  park_id: string | null;
+  park_address: string | null;
+  park_room_number: string | null;
+  status: 'active' | 'disabled';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ParkTenantOrganizationRepositoryStore<TOrganization> {
+  db(): Database;
+  getPark(parkId: string): ParkMembershipPark | null;
+  toOrganizationView(row: ParkTenantOrganizationRow): TOrganization;
+}
+
 export interface ParkMembershipRepositoryStore {
   db(): Database;
   getAccount(
@@ -142,6 +161,26 @@ export interface JoinOrganizationToParkInput {
   address: string;
   roomNumber: string;
   now?: number;
+}
+
+export function listParkTenantOrganizationsFromRepository<TOrganization>(
+  store: ParkTenantOrganizationRepositoryStore<TOrganization>,
+  parkId: string,
+): TOrganization[] {
+  const park = store.getPark(parkId);
+  if (!park) throw new Error('Park not found');
+  return (
+    store
+      .db()
+      .prepare(
+        `SELECT o.*, profile.address AS park_address, profile.room_number AS park_room_number
+         FROM organizations o
+         LEFT JOIN park_tenant_profiles profile ON profile.organization_id = o.id AND profile.park_id = o.park_id
+         WHERE o.park_id = ? AND o.id <> ?
+         ORDER BY o.name COLLATE NOCASE, o.slug`,
+      )
+      .all(park.id, park.adminOrganizationId) as ParkTenantOrganizationRow[]
+  ).map(store.toOrganizationView);
 }
 
 export function getParkTenantProfileFromRepository(

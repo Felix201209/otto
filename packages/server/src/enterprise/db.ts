@@ -50,6 +50,7 @@ import {
   createParkStatisticsFacade,
   createParkTicketFacade,
   createParkTicketSchemaContributor,
+  listParkTenantOrganizationsFromRepository,
   listParkTicketsForBackup,
   listTicketDeliveriesForBackup,
   migrateLegacyParkTicketEvents,
@@ -115,6 +116,7 @@ import {
   createOrganizationStructureFacade,
   IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,
   IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR,
+  getOrganizationPositionRoleMappingFromRepository,
   listAccountTagsInRepository,
   listDepartmentInvitesForBackup,
   listEmployeesForBackup,
@@ -130,7 +132,6 @@ import {
   migrateLegacyAuthSessions,
   type EmployeeRecord,
   type OrganizationDepartmentView as IdentityOrganizationDepartmentView,
-  type OrganizationDirectoryRow,
   type OrganizationDirectoryView,
   type OrganizationInviteView,
   type OrganizationFeatures as IdentityOrganizationFeatures,
@@ -804,19 +805,15 @@ const accountLifecycleStore = {
       organizationId,
       input,
     );
-    const positionMapping = assignment.positionId
-      ? (database
-          .prepare(
-            `SELECT role_mapping FROM organization_positions
-             WHERE id = ? AND organization_id = ?`,
-          )
-          .get(assignment.positionId, organizationId) as
-          | { role_mapping: OrganizationPositionRoleMapping }
-          | undefined)
-      : undefined;
     return {
       ...assignment,
-      roleMapping: positionMapping?.role_mapping ?? null,
+      roleMapping: assignment.positionId
+        ? getOrganizationPositionRoleMappingFromRepository(
+            database,
+            organizationId,
+            assignment.positionId,
+          )
+        : null,
     };
   },
   createEmployee,
@@ -1063,22 +1060,19 @@ export function getParkForOrganization(
   return parkLifecycle.getParkForOrganization(organizationId);
 }
 
+const parkTenantOrganizationStore = {
+  db: getDB,
+  getPark,
+  toOrganizationView: toOrganizationDirectoryView,
+};
+
 export function listParkTenantOrganizations(
   parkId: string,
 ): OrganizationView[] {
-  const park = getPark(parkId);
-  if (!park) throw new Error('Park not found');
-  return (
-    getDB()
-      .prepare(
-        `SELECT o.*, profile.address AS park_address, profile.room_number AS park_room_number
-         FROM organizations o
-         LEFT JOIN park_tenant_profiles profile ON profile.organization_id = o.id AND profile.park_id = o.park_id
-         WHERE o.park_id = ? AND o.id <> ?
-         ORDER BY o.name COLLATE NOCASE, o.slug`,
-      )
-      .all(park.id, park.adminOrganizationId) as OrganizationDirectoryRow[]
-  ).map(toOrganizationDirectoryView);
+  return listParkTenantOrganizationsFromRepository(
+    parkTenantOrganizationStore,
+    parkId,
+  );
 }
 
 const parkMembershipStore = {

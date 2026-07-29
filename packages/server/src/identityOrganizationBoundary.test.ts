@@ -149,6 +149,9 @@ describe('identity_organization invitation kernel', () => {
     expect(identityOrganization.createOrganizationStructureFacade).toBeTypeOf(
       'function',
     );
+    expect(
+      identityOrganization.getOrganizationPositionRoleMappingFromRepository,
+    ).toBeTypeOf('function');
     expect(identityOrganization.createOrganizationFeatureFacade).toBeTypeOf(
       'function',
     );
@@ -462,6 +465,9 @@ describe('identity_organization invitation kernel', () => {
     );
     expect(databaseFacade).not.toContain(
       'function toOrganizationPositionView(',
+    );
+    expect(databaseFacade).not.toContain(
+      'SELECT role_mapping FROM organization_positions',
     );
   });
 
