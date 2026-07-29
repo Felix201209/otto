@@ -55,7 +55,7 @@ describe('park services module boundary', () => {
     expect(parkServices.PARK_RESOURCE_SCHEMA_CONTRIBUTOR).toMatchObject({
       id: 'park_services_resources',
     });
-    expect(parkServices.PARK_MEETING_TIME_SLOTS).toHaveLength(84);
+    expect(parkServices.PARK_MEETING_TIME_SLOTS).toHaveLength(28);
     expect(parkServices.createParkStatisticsFacade).toBeTypeOf('function');
     expect(parkServices.PARK_STATISTICS_SCHEMA_CONTRIBUTOR).toMatchObject({
       id: 'park_services_statistics',

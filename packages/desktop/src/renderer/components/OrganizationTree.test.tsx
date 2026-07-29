@@ -119,20 +119,31 @@ const internalTestAccount: EnterpriseAccount = {
   department: '内部测试',
 };
 
+function ensureOrganizationTreeOpen(): HTMLElement {
+  const toggle = screen.getByRole('button', { name: '企业组织' });
+  if (toggle.getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle);
+  return toggle;
+}
+
+function ensureDepartmentOpen(name: string): HTMLElement {
+  const toggle = screen.getByRole('button', { name });
+  if (toggle.getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle);
+  return toggle;
+}
+
 describe('OrganizationTree', () => {
-  it('收起时只显示“企业组织”，点击后完整展开公司、部门、姓名和职位', () => {
+  it('默认展示公司和一级部门，仍可手动收起整棵组织树', () => {
     render(<OrganizationTree workspace={workspace} />);
     const toggle = screen.getByRole('button', { name: '企业组织' });
-    expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    expect(screen.queryByText('北辰科技')).toBeNull();
-    expect(screen.queryByText('CEO 办公室')).toBeNull();
-
-    fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByText('北辰科技')).toBeTruthy();
     expect(screen.getByText('CEO 办公室')).toBeTruthy();
     expect(screen.getByText('Felix')).toBeTruthy();
     expect(screen.getAllByText('CEO').length).toBeGreaterThan(0);
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('北辰科技')).toBeNull();
   });
 
   it('右栏请求打开组织树时展开左侧真实组织入口', () => {
@@ -140,6 +151,7 @@ describe('OrganizationTree', () => {
       <OrganizationTree workspace={workspace} openRequest={0} />,
     );
     const toggle = screen.getByRole('button', { name: '企业组织' });
+    fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
 
     rerender(<OrganizationTree workspace={workspace} openRequest={1} />);
@@ -171,7 +183,7 @@ describe('OrganizationTree', () => {
     );
     await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
 
-    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    ensureOrganizationTreeOpen();
     expect(screen.getByText('正在加载组织信息…')).toBeTruthy();
 
     resolveOrganization({
@@ -230,7 +242,8 @@ describe('OrganizationTree', () => {
       />,
     );
     await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    ensureOrganizationTreeOpen();
+    ensureDepartmentOpen('市场部');
 
     expect(await screen.findByText('品牌运营')).toBeTruthy();
     expect(screen.queryByText('成员')).toBeNull();
@@ -249,7 +262,7 @@ describe('OrganizationTree', () => {
         enterpriseAccount={authenticatedEnterpriseAccount}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    ensureOrganizationTreeOpen();
 
     expect(await screen.findByText('组织信息加载失败：服务器暂不可用')).toBeTruthy();
     expect(screen.queryByText('正在加载组织信息…')).toBeNull();
@@ -285,7 +298,7 @@ describe('OrganizationTree', () => {
     );
 
     await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    ensureOrganizationTreeOpen();
     expect(await screen.findByText('星河科技')).toBeTruthy();
     expect(screen.getByText('研发部')).toBeTruthy();
     expect(screen.getByText('员工一号')).toBeTruthy();
@@ -320,7 +333,7 @@ describe('OrganizationTree', () => {
     );
 
     await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    ensureOrganizationTreeOpen();
     expect(await screen.findByText('星河科技')).toBeTruthy();
   });
 
@@ -368,7 +381,7 @@ describe('OrganizationTree', () => {
     );
 
     await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    ensureOrganizationTreeOpen();
     expect(await screen.findByText('服务端星河科技')).toBeTruthy();
     expect(screen.queryByText('北辰科技')).toBeNull();
   });
@@ -448,7 +461,7 @@ describe('OrganizationTree', () => {
         enterpriseAccount={internalTestAccount}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    ensureOrganizationTreeOpen();
 
     expect(enterpriseOrganizationView).not.toHaveBeenCalled();
     expect(screen.getByText('已通过链接加入；组织详情将在企业服务同步后显示。'))
@@ -512,7 +525,7 @@ describe('OrganizationTree', () => {
         await Promise.resolve();
       });
       expect(enterpriseOrganizationView).toHaveBeenCalledOnce();
-      fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+      ensureOrganizationTreeOpen();
       expect(screen.getByText('Alice')).toBeTruthy();
       expect(screen.queryByText('Bob')).toBeNull();
 
@@ -544,8 +557,16 @@ describe('OrganizationTree', () => {
         department: 'Skunkworks Lab',
         isAdmin: false,
         status: 'active' as const,
+      }, {
+        id: 'acc_2',
+        username: 'bob',
+        name: 'Bob',
+        role: 'Finance',
+        department: '财务部',
+        isAdmin: false,
+        status: 'active' as const,
       }],
-      employeeCount: 1,
+      employeeCount: 2,
     }));
     Object.assign(window.otto, { enterpriseOrganizationView });
 
@@ -557,10 +578,13 @@ describe('OrganizationTree', () => {
     );
 
     await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    ensureOrganizationTreeOpen();
     const department = await screen.findByRole('button', { name: 'Skunkworks Lab' });
+    const otherDepartment = screen.getByRole('button', { name: '财务部' });
     expect(screen.getByText('Alice')).toBeTruthy();
     expect(department.getAttribute('aria-expanded')).toBe('true');
+    expect(otherDepartment.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('Bob')).toBeNull();
 
     fireEvent.click(department);
 
@@ -635,7 +659,8 @@ describe('OrganizationTree', () => {
     );
 
     await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    ensureOrganizationTreeOpen();
+    ensureDepartmentOpen('R&D');
     fireEvent.click(await screen.findByText('Bob'));
     expect(await screen.findByText('Please help review the proposal today.')).toBeTruthy();
     fireEvent.change(screen.getByRole('textbox'), {
@@ -705,7 +730,7 @@ describe('OrganizationTree', () => {
     );
 
     await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    ensureOrganizationTreeOpen();
     expect(await screen.findByLabelText('3 条未读消息')).toBeTruthy();
     expect(await screen.findByText('在线')).toBeTruthy();
 
@@ -765,8 +790,10 @@ describe('OrganizationTree', () => {
     );
 
     await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    ensureOrganizationTreeOpen();
+    ensureDepartmentOpen('R&D');
     fireEvent.click(await screen.findByRole('button', { name: /Bob/ }));
+    ensureDepartmentOpen('Design');
     fireEvent.click(await screen.findByRole('button', { name: /Carol/ }));
 
     const bobChat = await screen.findByRole('dialog', { name: '与 Bob 聊天' });
@@ -883,7 +910,7 @@ describe('OrganizationTree', () => {
     );
 
     await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    ensureOrganizationTreeOpen();
     fireEvent.click(await screen.findByRole('button', { name: /Bob/ }));
     expect(await screen.findByText('旧消息')).toBeTruthy();
     expect(scrollIntoView).toHaveBeenCalled();
@@ -1009,7 +1036,8 @@ describe('OrganizationTree', () => {
       />,
     );
     await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    ensureOrganizationTreeOpen();
+    ensureDepartmentOpen('R&D');
     fireEvent.click(await screen.findByText('Bob'));
     await screen.findByText('还没有消息，开始聊聊吧。');
 
@@ -1083,7 +1111,7 @@ describe('OrganizationTree', () => {
     );
 
     await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    ensureOrganizationTreeOpen();
     expect(await screen.findByText('1/3 在线')).toBeTruthy();
     expect(screen.getByRole('button', { name: '刷新企业组织在线状态' })).toBeTruthy();
     const bob = await screen.findByRole('button', { name: /Bob/ });
@@ -1138,7 +1166,8 @@ describe('OrganizationTree', () => {
     );
 
     await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    ensureOrganizationTreeOpen();
+    ensureDepartmentOpen('R&D');
     fireEvent.click(await screen.findByText('Bob'));
     await waitFor(() => expect(enterpriseMessagesList).toHaveBeenCalledWith('acc_2'));
     const input = screen.getByRole('textbox');
@@ -1198,7 +1227,8 @@ describe('OrganizationTree', () => {
     );
 
     await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    ensureOrganizationTreeOpen();
+    ensureDepartmentOpen('R&D');
     fireEvent.click(await screen.findByText('Bob'));
     await waitFor(() => expect(enterpriseMessagesList).toHaveBeenCalledWith('acc_2'));
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Are you free now?' } });
@@ -1243,7 +1273,8 @@ describe('OrganizationTree', () => {
       />,
     );
     await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole('button', { name: '企业组织' }));
+    ensureOrganizationTreeOpen();
+    ensureDepartmentOpen('R&D');
     fireEvent.click(await screen.findByText('Bob'));
     await screen.findByText('还没有消息，开始聊聊吧。');
 

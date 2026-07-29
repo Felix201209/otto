@@ -23,7 +23,8 @@ import JSZip from 'jszip';
 import iconv from 'iconv-lite';
 
 function hasBin(name: string): boolean {
-  try { execSync('command -v ' + name, { stdio: 'ignore' }); return true; } catch { return false; }
+  const locator = process.platform === 'win32' ? 'where' : 'command -v';
+  try { execSync(`${locator} ${name}`, { stdio: 'ignore' }); return true; } catch { return false; }
 }
 
 class FakeBrowserProcess implements BrowserProcessHandle {
@@ -322,7 +323,11 @@ describe('GenerateDocumentTool', () => {
     );
     expect(r.llmContent).toContain('FAIL');
     expect(r.llmContent.toLowerCase()).toContain('typst');
-    expect(r.llmContent).toContain('brew install typst');
+    expect(r.llmContent).toContain(
+      process.platform === 'win32'
+        ? 'winget install --id Typst.Typst'
+        : 'brew install typst',
+    );
   });
 
   it('slides->pptx renders local HTML to images before packaging OOXML', async () => {

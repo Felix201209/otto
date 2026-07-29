@@ -123,7 +123,7 @@ function createRoom(
 }
 
 describe('park resource module', () => {
-  it('lists today, closes every already-started ten-minute slot and keeps 22:00-23:00 complete', () => {
+  it('lists today, closes every already-started 30-minute slot and keeps 22:00-23:00 complete', () => {
     const database = createDatabase();
     const now = new Date('2026-07-28T02:05:30.000Z');
     const resources = createParkResourceFacade(
@@ -133,18 +133,18 @@ describe('park resource module', () => {
     const today = '2026-07-28';
 
     const slots = resources.listParkMeetingSlots('park-admin', today, today);
-    expect(slots).toHaveLength(84);
+    expect(slots).toHaveLength(28);
     expect(
       slots.filter((slot) => slot.slotKey <= '10:00').every(
         (slot) => slot.status === 'closed',
       ),
     ).toBe(true);
-    expect(slots.find((slot) => slot.slotKey === '10:10')?.status).toBe(
+    expect(slots.find((slot) => slot.slotKey === '10:30')?.status).toBe(
       'available',
     );
     expect(
       slots.filter((slot) => slot.slotKey >= '22:00'),
-    ).toHaveLength(6);
+    ).toHaveLength(2);
     expect(
       slots.filter((slot) => slot.slotKey >= '22:00').every(
         (slot) => slot.status === 'available',
@@ -156,7 +156,7 @@ describe('park resource module', () => {
         roomId: room.id,
         date: today,
         startTime: '10:00',
-        endTime: '10:10',
+        endTime: '10:30',
         ticketId: 'ticket-past',
       }),
     ).toThrow(/未开放|重新选择/);
@@ -164,8 +164,8 @@ describe('park resource module', () => {
       resources.reserveParkMeetingPeriod('park-admin', {
         roomId: room.id,
         date: today,
-        startTime: '10:10',
-        endTime: '10:20',
+        startTime: '10:30',
+        endTime: '11:00',
         ticketId: 'ticket-future-today',
       }),
     ).toHaveLength(1);
@@ -180,12 +180,12 @@ describe('park resource module', () => {
     createRoom(resources);
 
     const slots = resources.listParkMeetingSlots('park-admin');
-    expect(slots).toHaveLength(31 * 84);
+    expect(slots).toHaveLength(31 * 28);
     expect(new Set(slots.map((slot) => slot.date)).size).toBe(31);
     expect(slots[0]).toMatchObject({ date: '2026-07-28', slotKey: '09:00' });
     expect(slots.at(-1)).toMatchObject({
       date: '2026-08-27',
-      slotKey: '22:50',
+      slotKey: '22:30',
     });
   });
 
@@ -224,7 +224,7 @@ describe('park resource module', () => {
     expect(slots.find((slot) => slot.slotKey === '10:00')?.status).toBe(
       'closed',
     );
-    expect(slots.find((slot) => slot.slotKey === '10:10')?.status).toBe(
+    expect(slots.find((slot) => slot.slotKey === '10:30')?.status).toBe(
       'available',
     );
   });
@@ -241,7 +241,7 @@ describe('park resource module', () => {
     expect(room).toMatchObject({ name: '创新厅', capacity: 20 });
     expect(
       resources.listParkMeetingSlots('park-admin', tomorrow(), tomorrow()),
-    ).toHaveLength(84);
+    ).toHaveLength(28);
 
     expect(() => resources.listParkMeetingRooms('ordinary-org')).toThrow();
     expect(() => resources.getParkSettings('disabled-admin')).toThrow();
@@ -267,7 +267,7 @@ describe('park resource module', () => {
       endTime: '10:00',
       ticketId: 'ticket-1',
     });
-    expect(booked).toHaveLength(6);
+    expect(booked).toHaveLength(2);
     expect(booked.every((slot) => slot.status === 'booked')).toBe(true);
     expect(database.inTransaction).toBe(false);
 

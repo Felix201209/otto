@@ -237,6 +237,83 @@ interface SlideTheme {
   coverText: string;
 }
 
+interface NativeSlideTextBlock {
+  lines: string[];
+  fontSize: number;
+  color?: string;
+  bold?: boolean;
+  isBullet?: boolean;
+  indent?: number;
+}
+
+interface NativeSlideTable {
+  headers: string[];
+  rows: string[][];
+}
+
+interface NativePptxTextRun {
+  text: string;
+  options: {
+    fontSize: number;
+    color: string;
+    fontFace: string;
+    bold?: boolean;
+    bullet?: { code: string; color: string };
+    breakType?: 'none';
+    fill?: { color: string };
+  };
+}
+
+type NativePptxTableRow = NativePptxTextRun[];
+
+interface NativePptxTextOptions {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  valign?: 'top' | 'middle' | 'bottom';
+  lineSpacingMultiple?: number;
+}
+
+interface NativePptxSlide {
+  background: { color: string };
+  addImage(options: { path: string; altText: string; x: number; y: number; w: number; h: number }): void;
+  addNotes(notes: string): void;
+  addShape(shapeName: string, options: {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    fill: { color: string };
+    line: { color: string; width: number };
+  }): void;
+  addTable(rows: NativePptxTableRow[], options: {
+    x: number;
+    y: number;
+    w: number;
+    border: { type: 'solid'; pt: number; color: string };
+    rowH: number;
+  }): void;
+  addText(text: string | NativePptxTextRun[], options: NativePptxTextOptions & {
+    fontSize?: number;
+    bold?: boolean;
+    align?: 'left' | 'center' | 'right';
+    color?: string;
+    fontFace?: string;
+  }): void;
+}
+
+interface NativePptxPresentation {
+  layout: string;
+  author: string;
+  company: string;
+  subject: string;
+  title: string;
+  readonly ShapeType?: { rect?: string };
+  addSlide(): NativePptxSlide;
+  writeFile(options: { fileName: string; compression: boolean }): Promise<unknown>;
+}
+
 export type BrowserRunner = (
   executable: string,
   args: string[],
@@ -727,6 +804,17 @@ async function preflightBinaries(names: string[]): Promise<string | null> {
   const wanted = remaining;
   const binAliases = new Set<string>([...remaining, 'marp-cli']);
   const gatedRunner: CommandRunner = (command, timeoutMs) => {
+    const locator = command.match(/^(?:where|which)\s+([^\s]+)$/i);
+    if (locator && binAliases.has(locator[1])) {
+      const bin = locator[1];
+      const candidates = process.platform === 'win32'
+        ? [bin, `${bin}.exe`, `${bin}.cmd`, `${bin}.bat`]
+        : [bin];
+      const executable = findExecutableOnPath(candidates);
+      return executable
+        ? Promise.resolve(executable)
+        : Promise.reject(new Error(`${bin} not found on PATH`));
+    }
     const touches = [...binAliases].some((n) =>
       new RegExp('(^|\\s|/)' + n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(\\s|$)').test(command),
     );
@@ -734,7 +822,10 @@ async function preflightBinaries(names: string[]): Promise<string | null> {
     return new Promise<string>((resolve, reject) => {
       exec(command, { timeout: timeoutMs, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
         const out = (stdout || stderr || '').trim();
-        if (err) { if (out) { resolve(out); return; } reject(err); return; }
+        if (err) {
+          reject(new Error(out || err.message));
+          return;
+        }
         resolve(out);
       });
     });
@@ -978,10 +1069,10 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
     signal: AbortSignal,
     progress: DocumentProgress,
   ): Promise<void> {
-    // pptxgenjs ESM default export has no construct signature in strict TypeScript
-    // but is constructable at runtime per official documentation.
-    // @ts-expect-error TS2351: upstream NodeNext default-export typing mismatch
-    const presentation = new pptxgen();
+    // The upstream NodeNext declaration exposes the constructor at runtime but
+    // not as a constructable default-export type, so narrow it to the API used here.
+    const PptxGenConstructor = pptxgen as unknown as new () => NativePptxPresentation;
+    const presentation = new PptxGenConstructor();
     presentation.layout = 'LAYOUT_WIDE';
     presentation.author = author;
     presentation.company = department;
@@ -1140,7 +1231,7 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
 
   /** Render a text slide with native pptxgenjs objects (editable, design-rich). */
   private renderNativeSlide(
-    pres: any, sec: ParsedSlideSection, index: number, total: number,
+    pres: NativePptxPresentation, sec: ParsedSlideSection, index: number, total: number,
     theme: SlideTheme, pgNum: string,
   ): void {
     const slide = pres.addSlide();
@@ -1183,7 +1274,7 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
       const headerText = isLight ? theme.text : '#FFFFFF';
       const rowCount = tb.rows.length;
       const hPerRow = Math.min(0.42, (5.8 - y) / Math.max(1, rowCount + 1));
-      const hrs = tb.headers.map((h: string) => ({
+      const hrs: NativePptxTableRow = tb.headers.map((h: string) => ({
         text: h,
         options: {
           bold: true, fontSize: 12, color: headerText.replace('#', ''),
@@ -1191,7 +1282,7 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
           fontFace: 'PingFang SC' as const,
         },
       }));
-      const drs = tb.rows.map((row: string[]) =>
+      const drs: NativePptxTableRow[] = tb.rows.map((row: string[]) =>
         row.map((cell: string) => ({
           text: cell,
           options: {
@@ -1201,9 +1292,9 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
           },
         })),
       );
-      slide.addTable([hrs, ...drs] as any, {
+      slide.addTable([hrs, ...drs], {
         x: 0.9, y, w: 11.4,
-        border: { type: 'solid', pt: 0.5, color: theme.surface.replace('#', '') } as any,
+        border: { type: 'solid', pt: 0.5, color: theme.surface.replace('#', '') },
         rowH: hPerRow,
       });
       y += (rowCount + 1) * hPerRow + 0.25;
@@ -1232,8 +1323,7 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
           : '#F0F4F8'
         : (blk.color || theme.text);
 
-      slide.addText(
-        blk.lines.map((ln: string) => ({
+      const textRuns: NativePptxTextRun[] = blk.lines.map((ln: string) => ({
           text: ln,
           options: {
             fontSize: blk.fontSize || 14,
@@ -1246,16 +1336,16 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
             } : undefined,
             breakType: 'none' as const,
           },
-        })),
-        {
+        }));
+      const textOptions: NativePptxTextOptions = {
           x: 0.9 + (blk.indent || 0) * 1.4,
           y,
           w: 11.4 - (blk.indent || 0) * 1.4,
           h: isHeading ? 0.48 : Math.min(4.5, blk.lines.length * 0.40),
-          valign: (isHeading ? 'middle' : 'top') as any,
+          valign: isHeading ? 'middle' : 'top',
           lineSpacingMultiple: isHeading ? 1.15 : 1.38,
-        } as any,
-      );
+        };
+      slide.addText(textRuns, textOptions);
 
       y += (isHeading ? 0.58 : Math.min(4.5, blk.lines.length * 0.40)) + 0.12;
     }
@@ -1282,12 +1372,15 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
 
   /** Parse slide body into native text blocks and PPT tables. */
   private parseNativeSlideBody(lines: string[], theme: SlideTheme): {
-    texts: Array<{ lines: string[]; fontSize: number; color?: string; bold?: boolean; isBullet?: boolean; indent?: number }>;
-    tables: Array<{ headers: string[]; rows: string[][] }>;
+    texts: NativeSlideTextBlock[];
+    tables: NativeSlideTable[];
   } {
-    const result = { texts: [] as any[], tables: [] as any[] };
+    const result: { texts: NativeSlideTextBlock[]; tables: NativeSlideTable[] } = {
+      texts: [],
+      tables: [],
+    };
 
-    let cur: any = null;
+    let cur: NativeSlideTextBlock | null = null;
     let inTable = false;
     let tblHeaders: string[] = [];
     let tblRows: string[][] = [];

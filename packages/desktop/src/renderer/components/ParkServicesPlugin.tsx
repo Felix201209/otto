@@ -54,6 +54,7 @@ interface ParkService {
 
 const DEFAULT_BRAND = '宏创园区服务';
 const DEFAULT_PARK = '宏创园区';
+const MEETING_SLOT_MINUTES = 30;
 const ACTIONABLE_STAFF_TICKET_STATUSES = new Set(['待派单', '待接单', '维修中', '处理中', '已转交']);
 const STAFF_HISTORY_TICKET_STATUSES = new Set(['待验收', '已完成']);
 
@@ -763,7 +764,9 @@ function ServiceRequestView({ service, onBack, onComplete, focusTicket }: {
 
   const chooseSlot = (slot: EnterpriseParkResources['meetingSlots'][number]): void => {
     if (slot.status !== 'available') return;
-    const slotEnd = meetingMinutesToTime(meetingTimeToMinutes(slot.slotKey) + 10);
+    const slotEnd = meetingMinutesToTime(
+      meetingTimeToMinutes(slot.slotKey) + MEETING_SLOT_MINUTES,
+    );
     setForm((current) => {
       if (
         current.startTime
@@ -789,7 +792,9 @@ function ServiceRequestView({ service, onBack, onComplete, focusTicket }: {
       const range = visibleSlots.filter((candidate) => (
         candidate.slotKey >= startTime && candidate.slotKey < endTime
       ));
-      const expected = (meetingTimeToMinutes(endTime) - meetingTimeToMinutes(startTime)) / 10;
+      const expected = (
+        meetingTimeToMinutes(endTime) - meetingTimeToMinutes(startTime)
+      ) / MEETING_SLOT_MINUTES;
       if (range.length !== expected || range.some((candidate) => candidate.status !== 'available')) {
         setError('所选时间内包含红色已预约或灰色未开放时段，请重新选择连续绿色时段');
         return current;
@@ -915,7 +920,9 @@ function ServiceRequestView({ service, onBack, onComplete, focusTicket }: {
       });
       replaceTicket(next);
       if (['respond', 'respond_and_transfer'].includes(actionName)) setResponse({ type: '', text: '' });
-      if (actionName === 'confirm') onComplete();
+      if (['respond', 'respond_and_transfer', 'complete', 'confirm'].includes(actionName)) {
+        onComplete(next);
+      }
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -954,8 +961,8 @@ function ServiceRequestView({ service, onBack, onComplete, focusTicket }: {
     {creatorHistoryMode && activeTicket?.isCreator ? <div className="otto-park-technician-form">
       <div className="otto-park-request-summary">
         <div><span>申请编号</span><strong>{ticketApplicationNumber(activeTicket)}</strong></div>
+        <div><span>服务类型</span><strong>{service.name}</strong></div>
         <div><span>状态</span><strong>{activeTicket.status}</strong></div>
-        <div className="is-wide"><span>{service.id === 'meeting-room' ? '会议内容' : '申请内容'}</span><strong>{activeTicket.description}</strong></div>
         <div><span>办理回复</span><strong>{activeTicket.responseType || '等待受理'}</strong></div>
         <div><span>回复内容补充</span><strong>{activeTicket.responseText || '暂无'}</strong></div>
       </div>
@@ -1197,6 +1204,149 @@ function ServiceDemo({ service, onBack, onComplete, focusTicket }: { service: Pa
   return <ServiceRequestView service={service} onBack={onBack} onComplete={onComplete} focusTicket={focusTicket} />;
 }
 
+interface ParkServiceWindowState {
+  id: string;
+  service: ParkService;
+  focusTicket: EnterpriseRepairTicket | null;
+  initialPosition: { x: number; y: number };
+}
+
+function ParkServiceWindow({
+  entry,
+  stackOrder,
+  dockIndex,
+  onActivate,
+  onBack,
+  onClose,
+  onComplete,
+}: {
+  entry: ParkServiceWindowState;
+  stackOrder: number;
+  dockIndex: number;
+  onActivate: (id: string) => void;
+  onBack: (id: string) => void;
+  onClose: (id: string) => void;
+  onComplete: (id: string, ticket?: EnterpriseRepairTicket) => void;
+}): React.JSX.Element {
+  const [mode, setMode] = useState<'normal' | 'minimized' | 'maximized'>('normal');
+  const [position, setPosition] = useState(entry.initialPosition);
+  const drag = useRef<{
+    pointerId: number;
+    originX: number;
+    originY: number;
+    startX: number;
+    startY: number;
+    minX: number;
+    maxX: number;
+    minY: number;
+    maxY: number;
+  } | null>(null);
+  const uid = useId();
+
+  const startDrag = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (mode !== 'normal' || event.button !== 0) return;
+    if ((event.target as HTMLElement).closest('button')) return;
+    const dialog = event.currentTarget.closest('.otto-park-dialog');
+    const bounds = dialog?.getBoundingClientRect();
+    drag.current = {
+      pointerId: event.pointerId,
+      originX: event.clientX,
+      originY: event.clientY,
+      startX: position.x,
+      startY: position.y,
+      minX: position.x - (bounds?.left ?? 0),
+      maxX: position.x + window.innerWidth - 160 - (bounds?.left ?? 0),
+      minY: position.y - (bounds?.top ?? 0),
+      maxY: position.y + window.innerHeight - 48 - (bounds?.top ?? 0),
+    };
+    onActivate(entry.id);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+  const move = (event: React.PointerEvent<HTMLDivElement>): void => {
+    const active = drag.current;
+    if (!active || active.pointerId !== event.pointerId) return;
+    setPosition({
+      x: Math.max(active.minX, Math.min(active.startX + event.clientX - active.originX, active.maxX)),
+      y: Math.max(active.minY, Math.min(active.startY + event.clientY - active.originY, active.maxY)),
+    });
+  };
+  const stopDrag = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (drag.current?.pointerId !== event.pointerId) return;
+    drag.current = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+  };
+
+  if (mode === 'minimized') {
+    return <button
+      type="button"
+      className="otto-park-window-minimized otto-park-window-minimized--stacked"
+      style={{ bottom: 18 + dockIndex * 50, zIndex: 121 + stackOrder }}
+      onClick={() => {
+        onActivate(entry.id);
+        setMode('normal');
+      }}
+      aria-label={`还原${entry.service.name}窗口`}
+    >
+      <IconBuilding size={17} />
+      <span>{entry.service.name}</span>
+    </button>;
+  }
+
+  return <div
+    className={`otto-park-overlay otto-park-overlay--service-window ${mode === 'maximized' ? 'is-maximized' : ''}`}
+    style={{ zIndex: 90 + stackOrder }}
+    onPointerDown={() => onActivate(entry.id)}
+  >
+    <div
+      className={`otto-park-dialog ${mode === 'maximized' ? 'is-maximized' : ''}`}
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby={`${uid}-title`}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          onClose(entry.id);
+        }
+      }}
+      style={mode === 'normal' && (position.x || position.y)
+        ? { transform: `translate(${position.x}px, ${position.y}px)` }
+        : undefined}
+    >
+      <div
+        className="otto-park-dialog__head"
+        onPointerDown={startDrag}
+        onPointerMove={move}
+        onPointerUp={stopDrag}
+        onPointerCancel={stopDrag}
+      >
+        <span className="otto-park-dialog__headicon" aria-hidden><IconBuilding size={19} /></span>
+        <div className="otto-park-dialog__headtext">
+          <h2 className="otto-park-dialog__title" id={`${uid}-title`}>{entry.service.name}</h2>
+          <div className="otto-park-dialog__subtitle">可与其他园区服务窗口同时办理，表单进度互不影响。</div>
+        </div>
+        <div className="otto-park-dialog__window-controls">
+          <button type="button" onClick={() => setMode('minimized')} aria-label={`最小化${entry.service.name}窗口`}>—</button>
+          <button
+            type="button"
+            onClick={() => {
+              setMode((current) => current === 'maximized' ? 'normal' : 'maximized');
+              drag.current = null;
+            }}
+            aria-label={mode === 'maximized' ? `还原${entry.service.name}窗口` : `最大化${entry.service.name}窗口`}
+          >{mode === 'maximized' ? '❐' : '□'}</button>
+          <button type="button" className="otto-park-dialog__close" onClick={() => onClose(entry.id)} aria-label={`关闭${entry.service.name}窗口`}><IconClose size={14} /></button>
+        </div>
+      </div>
+      <ServiceDemo
+        service={entry.service}
+        focusTicket={entry.focusTicket}
+        onBack={() => onBack(entry.id)}
+        onComplete={(ticket) => onComplete(entry.id, ticket)}
+      />
+    </div>
+  </div>;
+}
+
 export function ParkServicesPlugin(): React.JSX.Element {
   const [parkEnabled, setParkEnabled] = useState(() => typeof window.otto?.enterpriseParkView !== 'function');
   const [parkAdminOrganization, setParkAdminOrganization] = useState(false);
@@ -1207,6 +1357,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
   const [brand, setBrand] = useState(DEFAULT_BRAND);
   const [services, setServices] = useState<ParkService[]>(() => defaultServices(DEFAULT_PARK));
   const [selected, setSelected] = useState<ParkService | null>(null);
+  const [serviceWindows, setServiceWindows] = useState<ParkServiceWindowState[]>([]);
   const [backgroundTickets, setBackgroundTickets] = useState<EnterpriseRepairTicket[]>([]);
   const [backgroundTicketSummaryCount, setBackgroundTicketSummaryCount] = useState(0);
   const [backgroundPublication, setBackgroundPublication] = useState<EnterpriseParkPublication | null>(null);
@@ -1238,6 +1389,28 @@ export function ParkServicesPlugin(): React.JSX.Element {
   const notifiedPublicationKeys = useRef(new Set<string>());
   const uid = useId();
   const titleId = `${uid}-title`;
+
+  const openServiceWindow = useCallback((
+    service: ParkService,
+    ticket: EnterpriseRepairTicket | null = null,
+  ): void => {
+    const id = ticket ? `ticket:${ticket.id}` : `service:${service.id}`;
+    setServiceWindows((current) => {
+      const existing = current.find((entry) => entry.id === id);
+      const remaining = current.filter((entry) => entry.id !== id);
+      if (existing) {
+        return [...remaining, { ...existing, service, focusTicket: ticket ?? existing.focusTicket }];
+      }
+      const offset = Math.min(current.length, 5) * 26;
+      return [...current, {
+        id,
+        service,
+        focusTicket: ticket,
+        initialPosition: { x: offset, y: offset },
+      }];
+    });
+    setOpen(false);
+  }, []);
 
   const historyCategoryOptions = useMemo(() => {
     const configuredNames = new Map(services.map((service) => [service.id, service.name]));
@@ -1463,6 +1636,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
           setOwnHistory([]);
           setBackgroundTickets([]);
           setBackgroundTicketSummaryCount(0);
+          setServiceWindows([]);
           notifiedTicketKeys.current.clear();
           ticketPollIdentity.current = null;
           ticketPollInitialized.current = false;
@@ -1477,6 +1651,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
           setOwnHistory([]);
           setBackgroundTickets([]);
           setBackgroundTicketSummaryCount(0);
+          setServiceWindows([]);
         }
         const tickets = await window.otto.enterpriseTicketList();
         if (cancelled) return;
@@ -1611,6 +1786,32 @@ export function ParkServicesPlugin(): React.JSX.Element {
     }
     close();
   };
+  const closeServiceWindow = useCallback((id: string): void => {
+    setServiceWindows((current) => current.filter((entry) => entry.id !== id));
+  }, []);
+  const activateServiceWindow = useCallback((id: string): void => {
+    setServiceWindows((current) => {
+      const active = current.find((entry) => entry.id === id);
+      if (!active || current[current.length - 1]?.id === id) return current;
+      return [...current.filter((entry) => entry.id !== id), active];
+    });
+  }, []);
+  const returnFromServiceWindow = useCallback((id: string): void => {
+    closeServiceWindow(id);
+    setOpen(true);
+  }, [closeServiceWindow]);
+  const completeServiceWindow = useCallback((
+    id: string,
+    ticket?: EnterpriseRepairTicket,
+  ): void => {
+    if (ticket?.isCreator) {
+      setOwnHistory((current) => [
+        ticket,
+        ...current.filter((item) => item.id !== ticket.id),
+      ]);
+    }
+    closeServiceWindow(id);
+  }, [closeServiceWindow]);
   const startWindowDrag = (event: React.PointerEvent<HTMLDivElement>): void => {
     if (windowMode !== 'normal' || event.button !== 0) return;
     if ((event.target as HTMLElement).closest('button')) return;
@@ -1652,19 +1853,16 @@ export function ParkServicesPlugin(): React.JSX.Element {
       close();
       return;
     }
-    setFocusTicket(null);
-    setSelected(service);
+    openServiceWindow(service);
   };
 
   const openTicket = useCallback((ticket: EnterpriseRepairTicket): void => {
     const service = services.find((item) => item.id === (ticket.serviceId || 'repair'))
       ?? services.find((item) => item.id === 'repair');
     if (service) {
-      setFocusTicket(ticket);
-      setSelected(service);
-      setOpen(true);
+      openServiceWindow(service, ticket);
     }
-  }, [services]);
+  }, [openServiceWindow, services]);
 
   const openOwnHistoryTicket = useCallback((ticket: EnterpriseRepairTicket): void => {
     openTicket(ticket);
@@ -1677,6 +1875,9 @@ export function ParkServicesPlugin(): React.JSX.Element {
       setOwnHistory(applyUpdate);
       setBackgroundTickets(applyUpdate);
       setFocusTicket((current) => current?.id === viewed.id ? viewed : current);
+      setServiceWindows((current) => current.map((entry) => (
+        entry.focusTicket?.id === viewed.id ? { ...entry, focusTicket: viewed } : entry
+      )));
     }).catch(() => undefined);
   }, [openTicket]);
 
@@ -1701,6 +1902,10 @@ export function ParkServicesPlugin(): React.JSX.Element {
       setAssignedHistory(applyUpdates);
       setBackgroundTickets(applyUpdates);
       setFocusTicket((current) => current ? updates.get(current.id) ?? current : current);
+      setServiceWindows((current) => current.map((entry) => {
+        const updated = entry.focusTicket ? updates.get(entry.focusTicket.id) : undefined;
+        return updated ? { ...entry, focusTicket: updated } : entry;
+      }));
     });
   }, []);
 
@@ -1756,9 +1961,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
     const serviceId = backgroundPublication?.kind;
     const service = services.find((item) => item.id === serviceId);
     if (service) {
-      setFocusTicket(null);
-      setSelected(service);
-      setOpen(true);
+      openServiceWindow(service);
     }
     setBackgroundPublication(null);
   };
@@ -1968,6 +2171,18 @@ export function ParkServicesPlugin(): React.JSX.Element {
       </div>
     </div>
   ) : null}
+  {serviceWindows.map((entry, index) => (
+    <ParkServiceWindow
+      key={entry.id}
+      entry={entry}
+      stackOrder={index}
+      dockIndex={index}
+      onActivate={activateServiceWindow}
+      onBack={returnFromServiceWindow}
+      onClose={closeServiceWindow}
+      onComplete={completeServiceWindow}
+    />
+  ))}
   {(backgroundTicketSummaryCount || backgroundTickets.length || backgroundPublication) ? <div className="otto-park-toast-stack" aria-live="polite">
     {backgroundTicketSummaryCount ? (
       <button type="button" className="otto-park-toast otto-park-toast--result" onClick={openBackgroundTicketSummary} aria-label="打开园区待办汇总">

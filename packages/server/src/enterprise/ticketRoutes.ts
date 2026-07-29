@@ -226,7 +226,7 @@ export async function handleTicketRoute({
         (item) => item.key === formData.endTime,
       );
       if (!validStart || !validEnd || formData.startTime >= formData.endTime) {
-        sendJSON(res, 400, { error: '请在 09:00-23:00 之间按 10 分钟选择连续时段' });
+        sendJSON(res, 400, { error: `请在 09:00-23:00 之间按 ${db.PARK_MEETING_SLOT_MINUTES} 分钟选择连续时段` });
         return true;
       }
       formData.slotKey = formData.startTime;

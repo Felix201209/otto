@@ -1019,9 +1019,9 @@ describe('园区资源后台与用户端资源接口', () => {
     const daySlots = database.listParkMeetingSlots(
       park.adminOrganizationId, tomorrow, tomorrow,
     ).filter((slot) => slot.roomId === createdBody.meetingRoom.id);
-    expect(daySlots).toHaveLength(84);
+    expect(daySlots).toHaveLength(28);
     expect(daySlots[0]).toMatchObject({ slotKey: '09:00', status: 'available' });
-    expect(daySlots.at(-1)).toMatchObject({ slotKey: '22:50', status: 'available' });
+    expect(daySlots.at(-1)).toMatchObject({ slotKey: '22:30', status: 'available' });
 
     const member = database.createAccount({
       organizationId: tenantOrganization.id,
@@ -3310,7 +3310,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         formData: {
           ...meetingRequestBody.formData,
           startTime: '16:00',
-          endTime: '16:10',
+          endTime: '16:30',
         },
       }),
     });

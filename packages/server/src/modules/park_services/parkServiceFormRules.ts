@@ -2,6 +2,8 @@
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
+import { PARK_MEETING_SLOT_MINUTES } from './parkResourceTypes.js';
+
 const PARKING_APPLICATION_PRICES: Record<string, {
   label: string;
   amount: number;
@@ -122,10 +124,10 @@ function assertMeetingPeriod(startValue: string, endValue: string): {
     || startMinutes < 9 * 60
     || endMinutes > 23 * 60
     || startMinutes >= endMinutes
-    || startMinutes % 10 !== 0
-    || endMinutes % 10 !== 0
+    || startMinutes % PARK_MEETING_SLOT_MINUTES !== 0
+    || endMinutes % PARK_MEETING_SLOT_MINUTES !== 0
   ) {
-    throw new Error('会议时间必须在 09:00 到 23:00 之间，并按 10 分钟选择');
+    throw new Error(`会议时间必须在 09:00 到 23:00 之间，并按 ${PARK_MEETING_SLOT_MINUTES} 分钟选择`);
   }
   const format = (minutes: number): string => (
     `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`

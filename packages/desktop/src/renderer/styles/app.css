@@ -5509,6 +5509,13 @@ h6.otto-prose__h {
   justify-content: stretch;
   padding: 8px;
 }
+.otto-park-overlay--service-window {
+  background: transparent;
+  pointer-events: none;
+}
+.otto-park-overlay--service-window .otto-park-dialog {
+  pointer-events: auto;
+}
 .otto-park-dialog {
   width: min(1180px, calc(100vw - 48px));
   max-height: min(760px, calc(100vh - 48px));
@@ -5550,6 +5557,9 @@ h6.otto-prose__h {
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.otto-park-window-minimized--stacked {
+  max-width: min(300px, calc(100vw - 36px));
 }
 @keyframes otto-park-pop {
   from {
@@ -6441,8 +6451,8 @@ h6.otto-prose__h {
 .otto-park-technician-form,
 .otto-park-response-form { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--otto-border); border-radius: var(--otto-radius); background: var(--otto-surface); }
 .otto-park-form__guide { display: grid; gap: 3px; padding: 10px 11px; border-radius: var(--otto-radius-sm); background: color-mix(in srgb, var(--otto-accent-soft) 42%, var(--otto-surface)); }
-.otto-park-form__guide strong { color: var(--otto-text); font-size: 12px; }
-.otto-park-form__guide span { color: var(--otto-text-secondary); font-size: 11px; line-height: 1.45; }
+.otto-park-form__guide strong { color: var(--otto-text); font-size: 14px; }
+.otto-park-form__guide span { color: var(--otto-text-secondary); font-size: 12.5px; line-height: 1.55; }
 .otto-park-resource-note {
   display: grid;
   gap: 4px;
@@ -6526,8 +6536,8 @@ h6.otto-prose__h {
   border: 1px solid var(--otto-border);
   border-radius: var(--otto-radius-sm);
 }
-.otto-park-meeting-slots legend { padding: 0 5px; color: var(--otto-text-secondary); font-size: 11px; }
-.otto-park-meeting-slots > p { grid-column: 1 / -1; margin: 4px 0; color: var(--otto-text-tertiary); font-size: 11px; }
+.otto-park-meeting-slots legend { padding: 0 5px; color: var(--otto-text); font-size: 13px; font-weight: 650; }
+.otto-park-meeting-slots > p { grid-column: 1 / -1; margin: 4px 0; color: var(--otto-text-secondary); font-size: 12px; }
 .otto-park-meeting-timeline-scroll { min-width: 0; overflow-x: auto; padding-bottom: 4px; }
 .otto-park-meeting-timeline__hours {
   display: grid;
@@ -6539,7 +6549,7 @@ h6.otto-prose__h {
 .otto-park-meeting-timeline__hours span:last-child { text-align: right; }
 .otto-park-meeting-timeline {
   display: grid;
-  grid-template-columns: repeat(84, minmax(10px, 1fr));
+  grid-template-columns: repeat(28, minmax(30px, 1fr));
   min-width: 840px;
   height: 34px;
   overflow: hidden;
@@ -6548,7 +6558,7 @@ h6.otto-prose__h {
   background: var(--otto-bg);
 }
 .otto-park-meeting-timeline > button {
-  min-width: 10px;
+  min-width: 30px;
   height: 32px;
   padding: 0;
   border: 0;
@@ -6556,7 +6566,7 @@ h6.otto-prose__h {
   border-radius: 0;
   cursor: pointer;
 }
-.otto-park-meeting-timeline > button:nth-child(6n) { border-right-color: var(--otto-border-strong); }
+.otto-park-meeting-timeline > button:nth-child(2n) { border-right-color: var(--otto-border-strong); }
 .otto-park-meeting-timeline > button.is-available { background: #49a875; }
 .otto-park-meeting-timeline > button.is-available:hover { background: #2f8d60; }
 .otto-park-meeting-timeline > button.is-booked { background: #d65d56; opacity: 1; }
@@ -6599,13 +6609,13 @@ h6.otto-prose__h {
 .otto-park-meeting-success p { color: var(--otto-text-secondary); font-size: 11px; }
 .otto-park-form__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
 .otto-park-form__field.is-wide { grid-column: 1 / -1; }
-.otto-park-form__field { display: grid; gap: 5px; color: var(--otto-accent-hover); font-size: 13px; font-weight: 650; }
+.otto-park-form__field { display: grid; gap: 6px; color: var(--otto-accent-hover); font-size: 14px; font-weight: 700; }
 .otto-park-form__field input,
 .otto-park-form__field select,
-.otto-park-form__field textarea { width: 100%; border: 1px solid var(--otto-border); border-radius: var(--otto-radius-sm); background: var(--otto-bg); color: var(--otto-text); font: inherit; font-size: 13px; font-weight: 400; padding: 8px 9px; }
+.otto-park-form__field textarea { width: 100%; border: 1px solid var(--otto-border); border-radius: var(--otto-radius-sm); background: var(--otto-bg); color: var(--otto-text); font: inherit; font-size: 14px; font-weight: 400; padding: 10px 11px; }
 .otto-park-form__field textarea { resize: vertical; min-height: 74px; }
 .otto-park-form__field input:disabled { opacity: .7; }
-.otto-park-form__field small { color: var(--otto-text-tertiary); font-size: 9.5px; }
+.otto-park-form__field small { color: var(--otto-text-tertiary); font-size: 11px; }
 .otto-park-form__field small.is-error { color: #d7514a; }
 .otto-park-repair-actions { display: grid; gap: 10px; }
 .otto-park-repair-actions__modes {
@@ -6637,8 +6647,8 @@ h6.otto-prose__h {
 .otto-park-request-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .otto-park-request-summary .is-wide { grid-column: 1 / -1; }
 .otto-park-request-summary div { display: grid; gap: 3px; padding: 8px; border-radius: var(--otto-radius-sm); background: var(--otto-bg); }
-.otto-park-request-summary span { color: var(--otto-text-tertiary); font-size: 10px; }
-.otto-park-request-summary strong { overflow-wrap: anywhere; color: var(--otto-text); font-size: 11.5px; white-space: pre-wrap; }
+.otto-park-request-summary span { color: var(--otto-text-tertiary); font-size: 11.5px; }
+.otto-park-request-summary strong { overflow-wrap: anywhere; color: var(--otto-text); font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
 .otto-park-history-readonly {
   display: grid;
   gap: 3px;

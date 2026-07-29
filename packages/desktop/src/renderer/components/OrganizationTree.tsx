@@ -48,7 +48,7 @@ export function OrganizationTree({
   directChatOpenRequest?: EnterpriseDirectChatOpenRequest;
   onMessageRead?: (peerAccountId: string) => void;
 }): React.JSX.Element | null {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const [orgView, setOrgView] = useState<EnterpriseOrganizationView | null>(null);
   const [orgLoading, setOrgLoading] = useState(false);
   const [orgError, setOrgError] = useState<string | null>(null);
@@ -63,6 +63,9 @@ export function OrganizationTree({
   const organization = hasLocalEnterpriseWorkspace && !hasAuthenticatedOrganization
     ? workspace?.managerWorkspace?.organization
     : undefined;
+  const currentOrganizationDepartment = orgView?.members.find(
+    (member) => member.id === enterpriseAccount?.id && member.status === 'active',
+  )?.department || enterpriseAccount?.department || '未分配部门';
   const chatMemberByWorkspaceKey = useMemo(() => {
     const result = new Map<string, EnterpriseOrganizationView['members'][number]>();
     for (const member of orgView?.members ?? []) {
@@ -220,7 +223,11 @@ export function OrganizationTree({
                   deptMap.get(dept)!.push(member);
                 }
                 return [...deptMap.entries()].map(([dept, members]) => (
-                  <DepartmentSection key={dept} name={dept}>
+                  <DepartmentSection
+                    key={dept}
+                    name={dept}
+                    defaultExpanded={dept === currentOrganizationDepartment}
+                  >
                     {[...members].sort(compareEnterpriseMembers).map((member) => (
                       member.id === enterpriseAccount?.id ? (
                         <div
@@ -1192,12 +1199,14 @@ type Organization = NonNullable<
 
 function DepartmentSection({
   name,
+  defaultExpanded = false,
   children,
 }: {
   name: string;
+  defaultExpanded?: boolean;
   children: React.ReactNode;
 }): React.JSX.Element {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(defaultExpanded);
   return (
     <div className="otto-orgtree__department">
       <button
@@ -1297,7 +1306,11 @@ function CompanyBranch({
             (position) => position.departmentId === department.id,
           );
           return (
-            <DepartmentSection key={department.id} name={department.name}>
+            <DepartmentSection
+              key={department.id}
+              name={department.name}
+              defaultExpanded={department.id === workspace.context.departmentId}
+            >
               {members.map((member) => {
                 const chatMember = chatMemberByWorkspaceKey.get(normalizeChatKey(member.userId))
                   ?? chatMemberByWorkspaceKey.get(normalizeChatKey(member.displayName));
