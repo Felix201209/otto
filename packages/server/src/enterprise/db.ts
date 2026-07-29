@@ -98,14 +98,12 @@ import {
 import {
   backfillEnterpriseAccountEmployees,
   backfillLegacyOrganizationStructure,
-  createAccountDirectoryFacade,
+  createAccountAccessComposition,
   createAccountAuthSchemaContributor,
   createAccountLifecycleFacade,
   createAccountRegistrationFacade,
-  createAuthSessionFacade,
   createEnterpriseInviteSchemaContributor,
   createMemberSchemaContributor,
-  createSmsChallengeFacade,
   createOrganizationFeatureFacade,
   createOrganizationProvisioningFacade,
   createOrganizationWorkforceComposition,
@@ -673,17 +671,6 @@ export function toAccountView(row: AccountRow): AccountView {
   };
 }
 
-const accountDirectoryStore = {
-  db: getDB,
-  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
-  normalizeIdentifier: normalizeUsername,
-  normalizePhone,
-  passwordMatches,
-  isOrganizationActive: (organizationId: string) =>
-    getOrganization(organizationId)?.status === 'active',
-  toAccountView,
-};
-
 export const {
   getAccount,
   listAccounts,
@@ -691,7 +678,33 @@ export const {
   findAccountByPhone,
   findActiveAccountByPhone,
   listFeishuAccountBindings,
-} = createAccountDirectoryFacade<AccountView, AccountRow>(accountDirectoryStore);
+  createAuthSession,
+  getAccountBySession,
+  revokeAuthSession,
+  createSmsLoginChallenge,
+  discardSmsLoginChallenge,
+  verifySmsLoginChallenge,
+  createSmsRegistrationChallenge,
+  discardSmsRegistrationChallenge,
+  verifySmsRegistrationChallenge,
+} = createAccountAccessComposition<AccountView, AccountRow>({
+  db: getDB,
+  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+  now: Date.now,
+  normalizeIdentifier: normalizeUsername,
+  normalizePhone,
+  passwordMatches,
+  isOrganizationActive: (organizationId: string) =>
+    getOrganization(organizationId)?.status === 'active',
+  organizationExists: (organizationId: string) =>
+    Boolean(getOrganization(organizationId)),
+  toAccountView,
+  hashSecret: hashIdentitySecret,
+  secretMatches: identitySecretMatches,
+  createChallengeId: (kind: 'login' | 'registration') =>
+    `${kind === 'login' ? 'sms' : 'smsreg'}_${randomUUID()}`,
+  audit: logAudit,
+});
 
 const accountSync = createAccountSyncFacade({
   db: getDB,
@@ -875,53 +888,10 @@ const feishuAutoReply = createFeishuAutoReplyFacade({
 
 export const { isFeishuAutoReplyEnabledForOpenId } = feishuAutoReply;
 
-const authSessionStore = {
-  db: getDB,
-  now: Date.now,
-  getAccount,
-  isOrganizationActive: (organizationId: string) =>
-    getOrganization(organizationId)?.status === 'active',
-  toAccountView,
-};
-
-export const {
-  createAuthSession,
-  getAccountBySession,
-  revokeAuthSession,
-} = createAuthSessionFacade<AccountView, AccountRow>(authSessionStore);
-
-const smsChallengeStore = {
-  db: getDB,
-  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
-  getAccount,
-  organizationExists: (organizationId: string) =>
-    Boolean(getOrganization(organizationId)),
-  normalizePhone,
-  hashSecret: hashIdentitySecret,
-  secretMatches: identitySecretMatches,
-  createChallengeId: (kind: 'login' | 'registration') =>
-    `${kind === 'login' ? 'sms' : 'smsreg'}_${randomUUID()}`,
-  audit: (
-    event: string,
-    employeeId: string | null,
-    detail: string,
-    organizationId: string,
-  ) => logAudit(event, employeeId, detail, organizationId),
-};
-
 export type SmsChallengeIssueResult = IdentitySmsChallengeIssueResult;
 export type SmsRegistrationVerifyResult = IdentitySmsRegistrationVerifyResult;
 export type SmsChallengeVerifyResult =
   IdentitySmsChallengeVerifyResult<AccountView>;
-
-export const {
-  createSmsLoginChallenge,
-  discardSmsLoginChallenge,
-  verifySmsLoginChallenge,
-  createSmsRegistrationChallenge,
-  discardSmsRegistrationChallenge,
-  verifySmsRegistrationChallenge,
-} = createSmsChallengeFacade<AccountView>(smsChallengeStore);
 
 // ============================================================
 // Park tenants, organization membership and service specialists

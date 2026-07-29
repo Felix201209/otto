@@ -140,6 +140,9 @@ describe('identity_organization invitation kernel', () => {
     expect(identityOrganization.createAccountDirectoryFacade).toBeTypeOf(
       'function',
     );
+    expect(identityOrganization.createAccountAccessComposition).toBeTypeOf(
+      'function',
+    );
     expect(identityOrganization.createAccountLifecycleFacade).toBeTypeOf(
       'function',
     );
@@ -339,7 +342,8 @@ describe('identity_organization invitation kernel', () => {
       path.join(enterpriseDir, 'db.ts'),
       'utf8',
     );
-    expect(databaseFacade).toContain('createAuthSessionFacade');
+    expect(databaseFacade).toContain('createAccountAccessComposition');
+    expect(databaseFacade).not.toContain('createAuthSessionFacade');
     expect(databaseFacade).not.toMatch(
       /export function (?:createAuthSession|getAccountBySession|revokeAuthSession)/,
     );
@@ -414,11 +418,27 @@ describe('identity_organization invitation kernel', () => {
       path.join(enterpriseDir, 'db.ts'),
       'utf8',
     );
-    expect(databaseFacade).toContain('createAccountDirectoryFacade');
+    expect(databaseFacade).toContain('createAccountAccessComposition');
+    expect(databaseFacade).not.toContain('createAccountDirectoryFacade');
     expect(databaseFacade).not.toMatch(
       /export function (?:getAccount|listAccounts|authenticateAccount|findAccountByPhone|findActiveAccountByPhone)/,
     );
     expect(databaseFacade).not.toContain('WHERE feishu_open_id = ? AND status');
+  });
+
+  it('composes account access internals behind one module factory', () => {
+    const databaseFacade = fs.readFileSync(
+      path.join(enterpriseDir, 'db.ts'),
+      'utf8',
+    );
+    expect(databaseFacade).toContain('createAccountAccessComposition');
+    for (const factory of [
+      'createAccountDirectoryFacade',
+      'createAuthSessionFacade',
+      'createSmsChallengeFacade',
+    ]) {
+      expect(databaseFacade).not.toContain(factory);
+    }
   });
 
   it('keeps account lifecycle writes behind the identity module facade', () => {
@@ -540,7 +560,8 @@ describe('identity_organization invitation kernel', () => {
       path.join(enterpriseDir, 'db.ts'),
       'utf8',
     );
-    expect(databaseFacade).toContain('createSmsChallengeFacade');
+    expect(databaseFacade).toContain('createAccountAccessComposition');
+    expect(databaseFacade).not.toContain('createSmsChallengeFacade');
     expect(databaseFacade).toContain('hashIdentitySecret');
     expect(databaseFacade).not.toMatch(
       /export function (?:createSmsLoginChallenge|discardSmsLoginChallenge|verifySmsLoginChallenge|createSmsRegistrationChallenge|discardSmsRegistrationChallenge|verifySmsRegistrationChallenge)\s*\(/,
