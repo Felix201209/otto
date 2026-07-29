@@ -118,6 +118,16 @@ describe('data_platform storage kernel', () => {
     expect(databaseFacade).toContain('initializeSchema: initSchema');
     expect(databaseFacade).not.toMatch(/\blet db:\s*Database/);
     expect(databaseFacade).not.toContain('new Database(DB_PATH)');
+    expect(databaseFacade).not.toContain('.prepare(');
+    expect(databaseFacade).not.toContain('PRAGMA user_version');
+
+    const lifecycleSource = fs.readFileSync(
+      path.join(moduleDirectory, 'enterpriseDatabaseLifecycle.ts'),
+      'utf8',
+    );
+    expect(lifecycleSource).toContain(
+      'candidate.exec(`PRAGMA user_version = ${options.schemaVersion};`)',
+    );
   });
 
   it('aggregates backups without moving domain queries into data_platform', () => {

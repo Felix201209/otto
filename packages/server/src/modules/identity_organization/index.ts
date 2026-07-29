@@ -19,6 +19,7 @@ export * from './organizationFeatureRepository.js';
 export * from './organizationStructureFacade.js';
 export * from './enterpriseAccountEmployeeMigration.js';
 export * from './organizationStructureMigration.js';
+export * from './legacyEnterpriseTenantMigration.js';
 export * from './organizationStructureRepository.js';
 export * from './organizationStructureSchema.js';
 export * from './organizationProvisioningFacade.js';

@@ -118,6 +118,9 @@ describe('identity_organization invitation kernel', () => {
     expect(identityOrganization.backfillLegacyOrganizationStructure).toBeTypeOf(
       'function',
     );
+    expect(identityOrganization.migrateLegacyEnterpriseTenant).toBeTypeOf(
+      'function',
+    );
     expect(identityOrganization.backfillEnterpriseAccountEmployees).toBeTypeOf(
       'function',
     );
@@ -246,6 +249,11 @@ describe('identity_organization invitation kernel', () => {
     expect(databaseFacade).not.toContain(
       'CREATE TABLE IF NOT EXISTS organizations',
     );
+    expect(databaseFacade).not.toContain(
+      'INSERT OR IGNORE INTO organizations',
+    );
+    expect(databaseFacade).not.toContain('PRAGMA table_info(account_presence)');
+    expect(databaseFacade).toContain('migrateLegacyEnterpriseTenant(d, {');
     expect(databaseFacade).not.toContain(
       'CREATE TABLE IF NOT EXISTS organization_features',
     );

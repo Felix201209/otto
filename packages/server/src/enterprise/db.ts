@@ -121,6 +121,7 @@ import {
   listDepartmentInvitesForBackup,
   listEmployeesForBackup,
   listOrganizationAccountTagsInRepository,
+  migrateLegacyEnterpriseTenant,
   normalizeAccountTags,
   normalizeOrganizationSlug,
   replaceMigratedAccountTagsInRepository,
@@ -265,33 +266,14 @@ function initSchema(d: Database): void {
     }),
   ]);
 
-  d.prepare(
-    `INSERT OR IGNORE INTO organizations (id, name, slug, invite_secret)
-     VALUES (?, ?, ?, ?)`,
-  ).run(
-    DEFAULT_ORGANIZATION_ID,
-    process.env.OTTO_DEFAULT_ORGANIZATION_NAME?.trim() || '默认企业',
-    'default',
-    randomBytes(32).toString('hex'),
-  );
-
-  // B2B v2：旧库所有既有数据归入默认企业，密码、标签和会话继续有效。
-  const ensureOrganizationColumn = (table: string): void => {
-    const columns = d.prepare(`PRAGMA table_info(${table})`).all() as Array<{
-      name: string;
-    }>;
-    if (!columns.some((column) => column.name === 'organization_id')) {
-      d.exec(
-        `ALTER TABLE ${table} ADD COLUMN organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}'`,
-      );
-    }
-  };
-  ensureOrganizationColumn('account_presence');
+  migrateLegacyEnterpriseTenant(d, {
+    defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+    defaultOrganizationName:
+      process.env.OTTO_DEFAULT_ORGANIZATION_NAME?.trim() || '默认企业',
+    inviteSecret: randomBytes(32).toString('hex'),
+  });
   backfillEnterpriseAccountEmployees(d);
   backfillLegacyOrganizationStructure(d);
-  d.exec(`
-    PRAGMA user_version = ${ENTERPRISE_SCHEMA_VERSION};
-  `);
 }
 
 const databaseLifecycle = createEnterpriseDatabaseLifecycle({

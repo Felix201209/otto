@@ -66,7 +66,7 @@ describe('enterprise database lifecycle', () => {
           (database.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number })
             .foreign_keys,
         );
-        database.exec('CREATE TABLE current_record (value TEXT); PRAGMA user_version = 2;');
+        database.exec('CREATE TABLE current_record (value TEXT);');
       },
     });
     closeCallbacks.push(lifecycle.close);
@@ -97,9 +97,8 @@ describe('enterprise database lifecycle', () => {
     const lifecycle = createEnterpriseDatabaseLifecycle({
       ...paths,
       schemaVersion: 1,
-      initializeSchema(database) {
+      initializeSchema() {
         initializeCount += 1;
-        database.exec('PRAGMA user_version = 1;');
       },
       onClose() {
         closeCount += 1;
@@ -128,9 +127,7 @@ describe('enterprise database lifecycle', () => {
     const lifecycle = createEnterpriseDatabaseLifecycle({
       ...paths,
       schemaVersion: 2,
-      initializeSchema(database) {
-        database.exec('PRAGMA user_version = 2;');
-      },
+      initializeSchema() {},
     });
     closeCallbacks.push(lifecycle.close);
 
@@ -150,10 +147,9 @@ describe('enterprise database lifecycle', () => {
     const lifecycle = createEnterpriseDatabaseLifecycle({
       ...paths,
       schemaVersion: 1,
-      initializeSchema(database) {
+      initializeSchema() {
         attempts += 1;
         if (attempts === 1) throw new Error('migration interrupted');
-        database.exec('PRAGMA user_version = 1;');
       },
     });
     closeCallbacks.push(lifecycle.close);
@@ -163,7 +159,7 @@ describe('enterprise database lifecycle', () => {
     expect(attempts).toBe(2);
   });
 
-  it('rejects readiness when initialization leaves the schema unversioned', () => {
+  it('owns schema version stamping after successful initialization', () => {
     const paths = createPaths();
     const lifecycle = createEnterpriseDatabaseLifecycle({
       ...paths,
@@ -172,8 +168,6 @@ describe('enterprise database lifecycle', () => {
     });
     closeCallbacks.push(lifecycle.close);
 
-    expect(() => lifecycle.getReadiness()).toThrow(
-      'Enterprise database schema version is unavailable',
-    );
+    expect(lifecycle.getReadiness()).toEqual({ ready: true, schemaVersion: 1 });
   });
 });
