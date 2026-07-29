@@ -25,7 +25,7 @@ import {
 } from '../modules/enterprise_knowledge/index.js';
 import { createIntegrationAdaptersComposition } from '../modules/integration_adapters/index.js';
 import {
-  createModelUsageFacade,
+  createModelGatewayComposition,
   MODEL_GATEWAY_SCHEMA_CONTRIBUTOR,
 } from '../modules/model_gateway/index.js';
 import {
@@ -776,15 +776,15 @@ export type {
 // Provider-reported Token usage (client_reported, idempotent)
 // ============================================================
 
-const modelUsage = createModelUsageFacade({
+const modelGateway = createModelGatewayComposition({
   db: getDB,
   getAccount,
   getOrganization,
   listOrganizationAccounts: listAccounts,
-  createUsageId: () => `usage_${randomUUID()}`,
+  createId: randomUUID,
 });
 
-export const { getOrganizationUsageSummary, recordTokenUsage } = modelUsage;
+export const { getOrganizationUsageSummary, recordTokenUsage } = modelGateway;
 export type {
   AccountTokenUsageView,
   OrganizationUsageSummary,
