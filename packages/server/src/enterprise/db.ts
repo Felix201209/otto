@@ -16,8 +16,7 @@ import {
 import { createOrganizationFeatureAccessFacade } from '../modules/authorization/index.js';
 import {
   COLLABORATION_SCHEMA_CONTRIBUTOR,
-  createAccountPresenceFacade,
-  createDirectMessageFacade,
+  createCollaborationComposition,
   type AccountPresenceView as CollaborationAccountPresenceView,
 } from '../modules/collaboration/index.js';
 import {
@@ -783,20 +782,6 @@ export const {
   audit: logAudit,
 });
 
-const directMessageStore = {
-  db: getDB,
-  createId: randomUUID,
-  getActiveAccountInOrganization: (
-    accountId: string,
-    organizationId: string,
-  ) => {
-    const account = getAccount(accountId, organizationId);
-    return account?.status === 'active'
-      ? { id: account.id, name: account.name }
-      : null;
-  },
-};
-
 export const {
   getDirectMessageAttachment,
   listDirectMessages,
@@ -804,19 +789,16 @@ export const {
   listUnreadDirectMessageNotifications,
   markAtoaRequestReadFromResponse,
   sendDirectMessage,
-} = createDirectMessageFacade(directMessageStore);
-
-export type AccountPresenceView = CollaborationAccountPresenceView;
-
-const accountPresenceStore = {
+  touchAccountPresence,
+  listAccountPresence,
+} = createCollaborationComposition<AccountView>({
   db: getDB,
   now: Date.now,
-  isActiveAccountInOrganization: (accountId: string, organizationId: string) =>
-    getAccount(accountId, organizationId)?.status === 'active',
-};
+  createId: randomUUID,
+  getAccount,
+});
 
-export const { touchAccountPresence, listAccountPresence } =
-  createAccountPresenceFacade(accountPresenceStore);
+export type AccountPresenceView = CollaborationAccountPresenceView;
 
 const feishuAutoReply = createFeishuAutoReplyFacade({
   listAccountBindings: listFeishuAccountBindings,
