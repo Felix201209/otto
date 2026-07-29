@@ -59,6 +59,10 @@ describe('park services module boundary', () => {
       'function',
     );
     expect(parkServices.createParkTicketFacade).toBeTypeOf('function');
+    expect(parkServices.createParkTicketSchemaContributor).toBeTypeOf(
+      'function',
+    );
+    expect(parkServices.migrateLegacyParkTicketEvents).toBeTypeOf('function');
     expect(parkServices.createTicket).toBeTypeOf('function');
     expect(parkServices.updateTicket).toBeTypeOf('function');
     expect(parkServices.normalizeParkServiceFormData).toBeTypeOf('function');
@@ -190,6 +194,40 @@ describe('park services module boundary', () => {
     }
     expect(databaseFacade).toMatch(
       /PARK_STATISTICS_SCHEMA_CONTRIBUTOR,[\s\S]*?PARK_RESOURCE_SCHEMA_CONTRIBUTOR,[\s\S]*?createCreditsSchemaContributor\(\{/,
+    );
+  });
+
+  it('keeps park ticket schema and migrations in the park services module', () => {
+    const databaseFacade = fs.readFileSync(databaseFacadePath, 'utf8');
+    for (const table of [
+      'it_tickets',
+      'park_application_sequences',
+      'ticket_events',
+      'ticket_deliveries',
+      'ticket_notifications',
+    ]) {
+      expect(databaseFacade).not.toContain(
+        `CREATE TABLE IF NOT EXISTS ${table}`,
+      );
+    }
+    for (const index of [
+      'idx_ticket_deliveries_account',
+      'idx_ticket_notifications_ticket',
+      'idx_ticket_events_ticket_created',
+      'idx_it_tickets_park_org_service_created',
+      'idx_it_tickets_park_application_number',
+      'idx_ticket_notifications_recipient',
+    ]) {
+      expect(databaseFacade).not.toContain(index);
+    }
+    expect(databaseFacade).not.toContain('ALTER TABLE it_tickets');
+    expect(databaseFacade).not.toContain('backfillParkApplicationNumbers');
+    expect(databaseFacade).not.toContain('migrateLegacyTicketEvents');
+    expect(databaseFacade).toMatch(
+      /PARK_STATISTICS_SCHEMA_CONTRIBUTOR,[\s\S]*?createParkTicketSchemaContributor\(\{[\s\S]*?PARK_RESOURCE_SCHEMA_CONTRIBUTOR,/,
+    );
+    expect(databaseFacade).toContain(
+      'migrateLegacyParkTicketEvents(database)',
     );
   });
 

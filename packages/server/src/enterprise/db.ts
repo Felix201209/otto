@@ -47,6 +47,8 @@ import {
   createParkServiceConfigurationFacade,
   createParkStatisticsFacade,
   createParkTicketFacade,
+  createParkTicketSchemaContributor,
+  migrateLegacyParkTicketEvents,
   PARK_CORE_SCHEMA_CONTRIBUTOR,
   PARK_STATISTICS_SCHEMA_CONTRIBUTOR,
   type ParkInviteView,
@@ -213,222 +215,7 @@ const ORGANIZATION_INVITE_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
 const INVITE_CODE_RAW_LENGTH = 12;
 
-/** v11 adds the auditable property-repair transfer action without losing existing history. */
-function migrateLegacyTicketEvents(d: Database): void {
-  const table = d
-    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ticket_events'")
-    .get() as { sql?: string } | undefined;
-  if (!table?.sql || table.sql.includes("'transfer'")) return;
-
-  const columns = new Set((d.prepare('PRAGMA table_info(ticket_events)').all() as Array<{ name: string }>)
-    .map((column) => column.name));
-  const requiredColumns = [
-    'id', 'organization_id', 'ticket_id', 'actor_account_id', 'action', 'status_before',
-    'status_after', 'response_type', 'response_text', 'created_at',
-  ];
-  if (!requiredColumns.every((column) => columns.has(column))) return;
-
-  d.exec('PRAGMA foreign_keys = OFF');
-  d.exec('BEGIN IMMEDIATE');
-  try {
-    d.exec(`
-      ALTER TABLE ticket_events RENAME TO ticket_events_legacy_v10;
-      CREATE TABLE ticket_events (
-        id TEXT PRIMARY KEY,
-        organization_id TEXT NOT NULL,
-        ticket_id TEXT NOT NULL,
-        actor_account_id TEXT,
-        action TEXT NOT NULL CHECK(action IN ('created', 'accept', 'respond', 'complete', 'confirm', 'transfer')),
-        status_before TEXT,
-        status_after TEXT NOT NULL,
-        response_type TEXT,
-        response_text TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
-        FOREIGN KEY (ticket_id) REFERENCES it_tickets(id) ON DELETE CASCADE,
-        FOREIGN KEY (actor_account_id) REFERENCES accounts(id)
-      );
-      INSERT INTO ticket_events
-        (id, organization_id, ticket_id, actor_account_id, action, status_before,
-         status_after, response_type, response_text, created_at)
-      SELECT id, organization_id, ticket_id, actor_account_id, action, status_before,
-             status_after, response_type, response_text, created_at
-      FROM ticket_events_legacy_v10;
-      DROP TABLE ticket_events_legacy_v10;
-      COMMIT;
-    `);
-  } catch (error) {
-    try { d.exec('ROLLBACK'); } catch { /* preserve the migration error */ }
-    throw error;
-  } finally {
-    d.exec('PRAGMA foreign_keys = ON');
-  }
-}
-
-/**
- * v12 为既有园区申请补齐用户可见编号，并把北京时间业务日序列推进到已占用最大值。
- * SQLite 历史 created_at 是 UTC 文本，因此迁移时统一加八小时后取 YYYYMMDD。
- */
-function backfillParkApplicationNumbers(d: Database): void {
-  const rows = d.prepare(
-    `SELECT rowid AS ticket_order, id, park_id, application_number, created_at,
-            strftime('%Y%m%d', created_at, '+8 hours') AS business_date_key
-     FROM it_tickets
-     WHERE park_id IS NOT NULL
-     ORDER BY park_id, created_at, rowid`,
-  ).all() as Array<{
-    ticket_order: number;
-    id: string;
-    park_id: string;
-    application_number: string | null;
-    created_at: string;
-    business_date_key: string | null;
-  }>;
-  const lastSequenceByParkDate = new Map<string, number>();
-  for (const row of rows) {
-    if (!row.application_number) continue;
-    if (!/^\d{11}$/.test(row.application_number)) {
-      throw new Error(`Invalid park application number on ticket ${row.id}`);
-    }
-    const dateKey = row.application_number.slice(0, 8);
-    const sequence = Number(row.application_number.slice(8));
-    if (!Number.isInteger(sequence) || sequence < 1 || sequence > 999) {
-      throw new Error(`Invalid park application sequence on ticket ${row.id}`);
-    }
-    const key = `${row.park_id}:${dateKey}`;
-    lastSequenceByParkDate.set(
-      key,
-      Math.max(lastSequenceByParkDate.get(key) ?? 0, sequence),
-    );
-  }
-  const assign = d.prepare(
-    `UPDATE it_tickets SET application_number = ?
-     WHERE id = ? AND application_number IS NULL`,
-  );
-  for (const row of rows) {
-    if (row.application_number) continue;
-    const dateKey = row.business_date_key;
-    if (!dateKey || !/^\d{8}$/.test(dateKey)) {
-      throw new Error(`Invalid created_at on park ticket ${row.id}`);
-    }
-    const key = `${row.park_id}:${dateKey}`;
-    const sequence = (lastSequenceByParkDate.get(key) ?? 0) + 1;
-    if (sequence > 999) {
-      throw new Error(`Park ${row.park_id} exceeded 999 applications on ${dateKey}`);
-    }
-    assign.run(`${dateKey}${String(sequence).padStart(3, '0')}`, row.id);
-    lastSequenceByParkDate.set(key, sequence);
-  }
-  const seedCounter = d.prepare(
-    `INSERT INTO park_application_sequences
-       (park_id, date_key, last_sequence, updated_at)
-     VALUES (?, ?, ?, datetime('now'))
-     ON CONFLICT(park_id, date_key) DO UPDATE SET
-       last_sequence = MAX(park_application_sequences.last_sequence, excluded.last_sequence),
-       updated_at = datetime('now')`,
-  );
-  for (const [key, sequence] of lastSequenceByParkDate) {
-    const separator = key.lastIndexOf(':');
-    seedCounter.run(key.slice(0, separator), key.slice(separator + 1), sequence);
-  }
-}
-
 function initSchema(d: Database): void {
-  d.exec(`
-    CREATE TABLE IF NOT EXISTS it_tickets (
-      id TEXT PRIMARY KEY,
-      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
-      park_id TEXT,
-      application_number TEXT,
-      created_by_account_id TEXT NOT NULL,
-      service_id TEXT NOT NULL DEFAULT 'repair',
-      title TEXT NOT NULL,
-      description TEXT NOT NULL,
-      target_tags TEXT NOT NULL,
-      form_data TEXT,
-      category TEXT,
-      location TEXT,
-      urgency TEXT,
-      contact TEXT,
-      contact_phone TEXT,
-      response_type TEXT,
-      response_text TEXT,
-      response_at TEXT,
-      accepted_at TEXT,
-      completed_at TEXT,
-      closed_at TEXT,
-      creator_update_at TEXT,
-      creator_update_read_at TEXT,
-      status TEXT NOT NULL DEFAULT '待接单',
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (created_by_account_id) REFERENCES accounts(id),
-      FOREIGN KEY (organization_id) REFERENCES organizations(id),
-      FOREIGN KEY (park_id) REFERENCES parks(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS park_application_sequences (
-      park_id TEXT NOT NULL,
-      date_key TEXT NOT NULL CHECK(length(date_key) = 8),
-      last_sequence INTEGER NOT NULL CHECK(last_sequence BETWEEN 1 AND 999),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      PRIMARY KEY (park_id, date_key),
-      FOREIGN KEY (park_id) REFERENCES parks(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS ticket_events (
-      id TEXT PRIMARY KEY,
-      organization_id TEXT NOT NULL,
-      ticket_id TEXT NOT NULL,
-      actor_account_id TEXT,
-      action TEXT NOT NULL CHECK(action IN ('created', 'accept', 'respond', 'complete', 'confirm', 'transfer')),
-      status_before TEXT,
-      status_after TEXT NOT NULL,
-      response_type TEXT,
-      response_text TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
-      FOREIGN KEY (ticket_id) REFERENCES it_tickets(id) ON DELETE CASCADE,
-      FOREIGN KEY (actor_account_id) REFERENCES accounts(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS ticket_deliveries (
-      organization_id TEXT NOT NULL DEFAULT '${DEFAULT_ORGANIZATION_ID}',
-      ticket_id TEXT NOT NULL,
-      account_id TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'delivered',
-      delivered_at TEXT NOT NULL DEFAULT (datetime('now')),
-      read_at TEXT,
-      PRIMARY KEY (ticket_id, account_id),
-      FOREIGN KEY (ticket_id) REFERENCES it_tickets(id) ON DELETE CASCADE,
-      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
-      FOREIGN KEY (organization_id) REFERENCES organizations(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS ticket_notifications (
-      id TEXT PRIMARY KEY,
-      organization_id TEXT NOT NULL,
-      ticket_id TEXT NOT NULL,
-      recipient_account_id TEXT NOT NULL,
-      channel TEXT NOT NULL CHECK(channel IN ('otto', 'sms', 'feishu')),
-      event TEXT NOT NULL,
-      status TEXT NOT NULL CHECK(status IN ('sent', 'failed', 'skipped')),
-      detail TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (ticket_id) REFERENCES it_tickets(id) ON DELETE CASCADE,
-      FOREIGN KEY (recipient_account_id) REFERENCES accounts(id) ON DELETE CASCADE,
-      FOREIGN KEY (organization_id) REFERENCES organizations(id)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_ticket_deliveries_account ON ticket_deliveries(account_id, delivered_at);
-    CREATE INDEX IF NOT EXISTS idx_ticket_notifications_ticket
-      ON ticket_notifications(ticket_id, created_at);
-    CREATE INDEX IF NOT EXISTS idx_ticket_events_ticket_created
-      ON ticket_events(ticket_id, created_at);
-    CREATE INDEX IF NOT EXISTS idx_it_tickets_park_org_service_created
-      ON it_tickets(park_id, organization_id, service_id, created_at);
-  `);
-
   applyDatabaseSchemaContributors(d, [
     IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,
     createAccountAuthSchemaContributor({
@@ -442,6 +229,9 @@ function initSchema(d: Database): void {
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
     }),
     PARK_STATISTICS_SCHEMA_CONTRIBUTOR,
+    createParkTicketSchemaContributor({
+      defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+    }),
     PARK_RESOURCE_SCHEMA_CONTRIBUTOR,
     createCreditsSchemaContributor({
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
@@ -486,77 +276,10 @@ function initSchema(d: Database): void {
       );
     }
   };
-  for (const table of [
-    'it_tickets',
-    'ticket_deliveries',
-    'ticket_notifications',
-    'account_presence',
-  ])
-    ensureOrganizationColumn(table);
-
-  const ticketColumns = d
-    .prepare('PRAGMA table_info(it_tickets)')
-    .all() as Array<{ name: string }>;
-  const ensureTicketColumn = (name: string, definition = 'TEXT'): void => {
-    if (!ticketColumns.some((column) => column.name === name)) {
-      d.exec(`ALTER TABLE it_tickets ADD COLUMN ${name} ${definition}`);
-    }
-  };
-  const hadCreatorUpdateReadAt = ticketColumns.some(
-    (column) => column.name === 'creator_update_read_at',
-  );
-  for (const name of [
-    'service_id',
-    'form_data',
-    'category',
-    'location',
-    'urgency',
-    'contact',
-    'contact_phone',
-    'response_type',
-    'response_text',
-    'response_at',
-    'accepted_at',
-    'completed_at',
-    'closed_at',
-    'application_number',
-    'creator_update_at',
-    'creator_update_read_at',
-  ])
-    ensureTicketColumn(name);
-  if (!hadCreatorUpdateReadAt) {
-    d.exec(
-      `UPDATE it_tickets
-       SET creator_update_at = COALESCE(response_at, completed_at),
-           creator_update_read_at = COALESCE(updated_at, created_at)
-       WHERE creator_update_read_at IS NULL`,
-    );
-  }
-  d.exec(
-    "UPDATE it_tickets SET service_id = 'repair' WHERE service_id IS NULL OR service_id = ''",
-  );
-  d.exec("UPDATE it_tickets SET status = '待接单' WHERE status = 'open'");
-  backfillParkApplicationNumbers(d);
-  d.exec(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_it_tickets_park_application_number
-      ON it_tickets(park_id, application_number)
-      WHERE park_id IS NOT NULL AND application_number IS NOT NULL;
-  `);
-
-  const ensureTextColumn = (table: string, column: string): void => {
-    const columns = d.prepare(`PRAGMA table_info(${table})`).all() as Array<{
-      name: string;
-    }>;
-    if (!columns.some((item) => item.name === column)) {
-      d.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
-    }
-  };
-  ensureTextColumn('it_tickets', 'park_id');
+  ensureOrganizationColumn('account_presence');
   backfillEnterpriseAccountEmployees(d);
   backfillLegacyOrganizationStructure(d);
   d.exec(`
-    CREATE INDEX IF NOT EXISTS idx_ticket_notifications_recipient
-      ON ticket_notifications(recipient_account_id, created_at);
     PRAGMA user_version = ${ENTERPRISE_SCHEMA_VERSION};
   `);
 }
@@ -568,7 +291,7 @@ const databaseLifecycle = createEnterpriseDatabaseLifecycle({
   schemaVersion: ENTERPRISE_SCHEMA_VERSION,
   beforeForeignKeys(database) {
     migrateLegacyAuthSessions(database, DEFAULT_ORGANIZATION_ID);
-    migrateLegacyTicketEvents(database);
+    migrateLegacyParkTicketEvents(database);
   },
   initializeSchema: initSchema,
   onClose: () => accountSyncKeyProvider.clear(),
