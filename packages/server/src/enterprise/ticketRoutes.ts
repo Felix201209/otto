@@ -247,10 +247,8 @@ export async function handleTicketRoute({
     }
     let ticket: ReturnType<typeof db.createTicket>;
     try {
-      const database = db.getDB();
-      database.exec('BEGIN IMMEDIATE');
-      try {
-        ticket = db.createTicket({
+      ticket = db.createTicketWithMeetingReservation({
+        ticket: {
           createdByAccountId: account.id,
           serviceId,
           title,
@@ -262,21 +260,19 @@ export async function handleTicketRoute({
           urgency: typeof body.urgency === 'string' ? body.urgency : undefined,
           contact: typeof body.contact === 'string' ? body.contact : undefined,
           contactPhone: typeof body.contactPhone === 'string' ? body.contactPhone : undefined,
-        });
-        if (hasScheduledMeetingRoomBooking) {
-          db.reserveParkMeetingPeriod(meetingResourceOrganizationId, {
-            roomId: formData.roomId || '',
-            date: formData.date || '',
-            startTime: formData.startTime || '',
-            endTime: formData.endTime || '',
-            ticketId: ticket.id,
-          });
-        }
-        database.exec('COMMIT');
-      } catch (cause) {
-        database.exec('ROLLBACK');
-        throw cause;
-      }
+        },
+        meetingReservation: hasScheduledMeetingRoomBooking
+          ? {
+              organizationId: meetingResourceOrganizationId,
+              input: {
+                roomId: formData.roomId || '',
+                date: formData.date || '',
+                startTime: formData.startTime || '',
+                endTime: formData.endTime || '',
+              },
+            }
+          : undefined,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : '会议室预约失败';
       if (

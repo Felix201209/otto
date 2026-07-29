@@ -80,6 +80,25 @@ describe('identity organization workforce composition', () => {
         department: 'Engineering',
         position_title: 'Developer',
       });
+      expect(
+        workforce.updateEmployeeOnboardingProfile({
+          employeeId: 'employee-1',
+          organizationId: 'org-default',
+          role: 'Senior Developer',
+          personality: JSON.stringify({ help_focus: 'delivery' }),
+        }),
+      ).toMatchObject({
+        role: 'Senior Developer',
+        personality: JSON.stringify({ help_focus: 'delivery' }),
+      });
+      expect(
+        workforce.updateEmployeeOnboardingProfile({
+          employeeId: 'employee-1',
+          organizationId: 'org-other',
+          role: 'Unauthorized',
+          personality: '{}',
+        }),
+      ).toBeNull();
 
       const departmentInvite = workforce.createInviteCode(
         'Engineering',

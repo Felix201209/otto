@@ -101,11 +101,12 @@ export async function handleMemberWorkflowRoute({
       return true;
     }
 
-    db.getDB()
-      .prepare(
-        'UPDATE employees SET role = ?, personality = ? WHERE id = ? AND organization_id = ?',
-      )
-      .run((role as string) || emp.role, personalityJson, employee_id, emp.organization_id);
+    db.updateEmployeeOnboardingProfile({
+      employeeId: employee_id,
+      organizationId: emp.organization_id!,
+      role: (role as string) || emp.role || null,
+      personality: personalityJson,
+    });
 
     const knowledge = db.getOrganizationFeatures(memberAccount!.organizationId).knowledge
       ? db.getKnowledge(emp.department, undefined, emp.organization_id)

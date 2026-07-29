@@ -3177,6 +3177,11 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     expect(await conflict.json()).toEqual({
       error: expect.stringContaining('已被预约'),
     });
+    expect(
+      db
+        .listTicketsForAccount(user.id)
+        .filter((item) => item.serviceId === 'meeting-room'),
+    ).toHaveLength(1);
 
     db.setParkMeetingSlotAvailability(park.adminOrganizationId, {
       roomId: meetingRoom.id,
@@ -4077,6 +4082,12 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       inherited_knowledge: [],
       total_knowledge_items: 0,
     });
+    const onboardedEmployee = db.getEmployee(
+      member.employeeId!,
+      organization.id,
+    );
+    expect(onboardedEmployee?.role).toBeTruthy();
+    expect(String(onboardedEmployee?.personality)).toContain('onboarded_at');
 
     const recall = await fetch(
       `${base}/enterprise/recall?employee_id=${encodeURIComponent(member.employeeId!)}&task_type=${encodeURIComponent('部署')}`,

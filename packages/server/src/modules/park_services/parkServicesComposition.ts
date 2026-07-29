@@ -11,6 +11,7 @@ import {
 } from './parkMembershipRepository.js';
 import { createParkPublicationFacade } from './parkPublicationFacade.js';
 import { createParkResourceFacade } from './parkResourceFacade.js';
+import type { ParkMeetingPeriodReservationInput } from './parkResourceTypes.js';
 import {
   DEFAULT_PARK_SERVICES,
   isParkRequestServiceId,
@@ -19,7 +20,11 @@ import { createParkServiceConfigurationFacade } from './parkServiceConfiguration
 import { createParkStatisticsFacade } from './parkStatisticsFacade.js';
 import type { ParkStatisticsOrganization } from './parkStatisticsRepository.js';
 import { createParkTicketFacade } from './parkTicketFacade.js';
-import type { ParkTicketAccount } from './parkTicketTypes.js';
+import type {
+  CreateTicketInput,
+  ParkTicketAccount,
+  TicketView,
+} from './parkTicketTypes.js';
 
 export interface ParkServicesCompositionAccount extends ParkTicketAccount {
   department: string | null;
@@ -27,6 +32,14 @@ export interface ParkServicesCompositionAccount extends ParkTicketAccount {
 }
 
 export type ParkServicesCompositionOrganization = ParkStatisticsOrganization;
+
+export interface CreateTicketWithMeetingReservationInput {
+  ticket: CreateTicketInput;
+  meetingReservation?: {
+    organizationId: string;
+    input: Omit<ParkMeetingPeriodReservationInput, 'ticketId'>;
+  };
+}
 
 export interface ParkServicesCompositionOptions<
   TAccount extends ParkServicesCompositionAccount,
@@ -179,6 +192,31 @@ export function createParkServicesComposition<
     now,
   });
 
+  function createTicketWithMeetingReservation(
+    input: CreateTicketWithMeetingReservationInput,
+  ): TicketView {
+    const database = options.db();
+    const ownsTransaction = !database.inTransaction;
+    if (ownsTransaction) database.exec('BEGIN IMMEDIATE');
+    try {
+      const ticket = tickets.createTicket(input.ticket);
+      if (input.meetingReservation) {
+        resources.reserveParkMeetingPeriod(
+          input.meetingReservation.organizationId,
+          {
+            ...input.meetingReservation.input,
+            ticketId: ticket.id,
+          },
+        );
+      }
+      if (ownsTransaction) database.exec('COMMIT');
+      return ticket;
+    } catch (error) {
+      if (ownsTransaction && database.inTransaction) database.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
   return {
     getPark,
     getParkForOrganization,
@@ -195,6 +233,7 @@ export function createParkServicesComposition<
     updateParkTenantProfile: membership.updateTenantProfile,
     issueParkInvite: membership.issueInvite,
     joinOrganizationToPark: membership.joinOrganization,
+    createTicketWithMeetingReservation,
     ...publications,
     ...statistics,
     ...tickets,
