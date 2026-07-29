@@ -53,32 +53,10 @@ import path from 'path';
 import os from 'os';
 import { randomBytes, randomUUID } from 'node:crypto';
 import {
-  createAuditLogFacade,
   createAuditLogSchemaContributor,
-  createCreditsFacade,
+  createCommercialControlComposition,
   createCreditsSchemaContributor,
-  createDeploymentSettingsRepository,
-  exportDeploymentDiagnostics as exportDeploymentDiagnosticsFromRepository,
-  getDeploymentId as getDeploymentIdFromRepository,
-  getDeploymentLicense as getDeploymentLicenseFromRepository,
-  getMachineFingerprint as getMachineFingerprintFromRepository,
-  getModuleUpdateManifestFromStore,
-  getPrivateDeploymentStatus as getPrivateDeploymentStatusFromRepository,
-  getTelemetryQueueSummary as getTelemetryQueueSummaryFromRepository,
-  getTelemetrySettings as getTelemetrySettingsFromRepository,
-  importDeploymentLicense as importDeploymentLicenseIntoRepository,
-  isLicenseRestricted as isLicenseRestrictedInRepository,
-  isLicenseUsableForOrganizationFeature as isLicenseUsableForOrganizationFeatureInRepository,
   PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR,
-  recordTelemetryEvent as recordTelemetryEventInRepository,
-  updateModuleUpdateDescriptorInStore,
-  updateTelemetrySettings as updateTelemetrySettingsInRepository,
-  type ModuleUpdateDescriptor,
-  type ModuleUpdateManifest,
-  type ModuleUpdateRollout,
-  type DeploymentLicenseView,
-  type DeploymentTelemetrySettings,
-  type PrivateDeploymentStatus,
 } from '../modules/commercial_control/index.js';
 import {
   backfillEnterpriseAccountEmployees,
@@ -277,19 +255,9 @@ export const getDatabaseReadiness = databaseLifecycle.getReadiness;
 // Organizations and time-boxed registration invites
 // ============================================================
 
-const auditLog = createAuditLogFacade({
-  db: getDB,
-  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
-});
-
-export const { getAuditLogs, logAudit } = auditLog;
-
-const credits = createCreditsFacade({
-  db: getDB,
-  creditTokenRate: () => process.env.OTTO_CREDIT_TOKEN_RATE,
-});
-
 export const {
+  getAuditLogs,
+  logAudit,
   checkAndReserveCredits,
   createRedeemCodes,
   deductCredits,
@@ -299,7 +267,29 @@ export const {
   redeemCode,
   revokeRedeemCode,
   topUpCredits,
-} = credits;
+  getModuleUpdateManifest,
+  updateModuleUpdateDescriptor,
+  getDeploymentId,
+  getMachineFingerprint,
+  getDeploymentLicense,
+  importDeploymentLicense,
+  getTelemetrySettings,
+  updateTelemetrySettings,
+  recordTelemetryEvent,
+  getTelemetryQueueSummary,
+  getPrivateDeploymentStatus,
+  exportDeploymentDiagnostics,
+  isLicenseUsableForOrganizationFeature,
+  isLicenseRestricted,
+} = createCommercialControlComposition({
+  db: getDB,
+  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+  creditTokenRate: () => process.env.OTTO_CREDIT_TOKEN_RATE,
+  licenseEnforcementEnabled: () => process.env.OTTO_LICENSE_ENFORCE === 'true',
+  licenseSigningSecret: () => process.env.OTTO_LICENSE_SIGNING_SECRET || '',
+  telemetryEndpoint: () => process.env.OTTO_TELEMETRY_ENDPOINT || null,
+  databaseReadiness: getDatabaseReadiness,
+});
 
 export type OrganizationView = OrganizationDirectoryView;
 
@@ -354,129 +344,6 @@ const organizationFeatureConfiguration = createOrganizationFeatureFacade({
     organizationId: string,
   ) => logAudit(event, employeeId, detail, organizationId),
 });
-
-const deploymentSettings = createDeploymentSettingsRepository(getDB);
-
-const deploymentStore = {
-  db: getDB,
-  ...deploymentSettings,
-  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
-  licenseEnforcementEnabled: () => process.env.OTTO_LICENSE_ENFORCE === 'true',
-  licenseSigningSecret: () => process.env.OTTO_LICENSE_SIGNING_SECRET || '',
-  telemetryEndpoint: () => process.env.OTTO_TELEMETRY_ENDPOINT || null,
-  databaseReadiness: getDatabaseReadiness,
-  audit: (
-    event: string,
-    employeeId: string | null,
-    detail: string,
-    organizationId: string,
-  ) => logAudit(event, employeeId, detail, organizationId),
-};
-
-export function getModuleUpdateManifest(): ModuleUpdateManifest {
-  return getModuleUpdateManifestFromStore(moduleUpdateStore);
-}
-
-export function updateModuleUpdateDescriptor(input: {
-  module: string;
-  version?: string;
-  rollout?: ModuleUpdateRollout;
-  notes?: string | null;
-  minAppVersion?: string | null;
-  manifestUrl?: string | null;
-  sha256?: string | null;
-  publishedAt?: string | null;
-  actorAccountId?: string | null;
-  organizationId?: string;
-}): ModuleUpdateDescriptor {
-  return updateModuleUpdateDescriptorInStore(moduleUpdateStore, {
-    ...input,
-    organizationId: input.organizationId ?? DEFAULT_ORGANIZATION_ID,
-  });
-}
-
-const moduleUpdateStore = {
-  ...deploymentSettings,
-  deploymentId: getDeploymentId,
-  audit: (input: {
-    event: string;
-    employeeId: string | null;
-    message: string;
-    organizationId: string;
-  }) =>
-    logAudit(
-      input.event,
-      input.employeeId,
-      input.message,
-      input.organizationId,
-    ),
-};
-
-export function getDeploymentId(): string {
-  return getDeploymentIdFromRepository(deploymentStore);
-}
-
-export function getMachineFingerprint(): string {
-  return getMachineFingerprintFromRepository();
-}
-
-export function getDeploymentLicense(): DeploymentLicenseView {
-  return getDeploymentLicenseFromRepository(deploymentStore);
-}
-
-export function importDeploymentLicense(raw: unknown): DeploymentLicenseView {
-  return importDeploymentLicenseIntoRepository(deploymentStore, raw);
-}
-
-export function getTelemetrySettings(): DeploymentTelemetrySettings {
-  return getTelemetrySettingsFromRepository(deploymentStore);
-}
-
-export function updateTelemetrySettings(
-  patch: Partial<DeploymentTelemetrySettings>,
-): DeploymentTelemetrySettings {
-  return updateTelemetrySettingsInRepository(deploymentStore, patch);
-}
-
-export function recordTelemetryEvent(input: {
-  organizationId?: string | null;
-  eventType: string;
-  payload: Record<string, unknown>;
-}): void {
-  recordTelemetryEventInRepository(deploymentStore, input);
-}
-
-export function getTelemetryQueueSummary(): {
-  queued: number;
-  failed: number;
-  sent: number;
-  lastQueuedAt: string | null;
-} {
-  return getTelemetryQueueSummaryFromRepository(deploymentStore);
-}
-
-export function getPrivateDeploymentStatus(): PrivateDeploymentStatus {
-  return getPrivateDeploymentStatusFromRepository(deploymentStore);
-}
-
-export function exportDeploymentDiagnostics(
-  input: { includeRedactedSamples?: boolean } = {},
-): Record<string, unknown> {
-  return exportDeploymentDiagnosticsFromRepository(deploymentStore, input);
-}
-
-export function isLicenseUsableForOrganizationFeature(
-  feature: keyof OrganizationFeatures,
-): boolean {
-  return isLicenseUsableForOrganizationFeatureInRepository(
-    deploymentStore,
-    feature,
-  );
-}
-
-export function isLicenseRestricted(): boolean {
-  return isLicenseRestrictedInRepository(deploymentStore);
-}
 
 const organizationFeatureAccess = createOrganizationFeatureAccessFacade({
   configuration: organizationFeatureConfiguration,
