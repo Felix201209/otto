@@ -562,13 +562,16 @@ describe('identity_organization invitation kernel', () => {
     }
   });
 
-  it('keeps feature persistence and license access behind module facades', () => {
+  it('keeps feature persistence and license access behind authorization composition', () => {
     const databaseFacade = fs.readFileSync(
       path.join(enterpriseDir, 'db.ts'),
       'utf8',
     );
-    expect(databaseFacade).toContain('createOrganizationFeatureFacade');
-    expect(databaseFacade).toContain('createOrganizationFeatureAccessFacade');
+    expect(databaseFacade).toContain('createAuthorizationComposition');
+    expect(databaseFacade).not.toContain('createOrganizationFeatureFacade');
+    expect(databaseFacade).not.toContain(
+      'createOrganizationFeatureAccessFacade',
+    );
     expect(databaseFacade).not.toMatch(
       /export function (?:getOrganizationFeatures|updateOrganizationFeatures)\s*\(/,
     );

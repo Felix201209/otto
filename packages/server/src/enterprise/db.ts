@@ -13,7 +13,7 @@ import {
   createFileEncryptionKeyProvider,
   Database,
 } from '../modules/data_platform/index.js';
-import { createOrganizationFeatureAccessFacade } from '../modules/authorization/index.js';
+import { createAuthorizationComposition } from '../modules/authorization/index.js';
 import {
   COLLABORATION_SCHEMA_CONTRIBUTOR,
   createCollaborationComposition,
@@ -64,7 +64,6 @@ import {
   createAccountMutationComposition,
   createEnterpriseInviteSchemaContributor,
   createMemberSchemaContributor,
-  createOrganizationFeatureFacade,
   createOrganizationWorkforceComposition,
   IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,
   IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR,
@@ -333,27 +332,16 @@ export type OrganizationDepartmentView = IdentityOrganizationDepartmentView;
 
 export type OrganizationFeatures = IdentityOrganizationFeatures;
 
-const organizationFeatureConfiguration = createOrganizationFeatureFacade({
-  db: getDB,
-  audit: (
-    event: string,
-    employeeId: string | null,
-    detail: string,
-    organizationId: string,
-  ) => logAudit(event, employeeId, detail, organizationId),
-});
-
-const organizationFeatureAccess = createOrganizationFeatureAccessFacade({
-  configuration: organizationFeatureConfiguration,
-  isLicenseUsable: isLicenseUsableForOrganizationFeature,
-});
-
 export const {
   getOrganizationFeatures,
   updateOrganizationFeatures,
   isOrganizationFeatureEnabled,
   requireOrganizationFeature,
-} = organizationFeatureAccess;
+} = createAuthorizationComposition({
+  db: getDB,
+  audit: logAudit,
+  isLicenseUsable: isLicenseUsableForOrganizationFeature,
+});
 
 function normalizeOptionalText(
   value: string | null | undefined,

@@ -23,6 +23,21 @@ function productionTypeScriptFiles(directory: string): string[] {
 }
 
 describe('authorization module boundary', () => {
+  it('publishes one fail-closed authorization composition entrypoint', () => {
+    expect(authorization.createAuthorizationComposition).toBeTypeOf(
+      'function',
+    );
+    const databaseFacade = fs.readFileSync(
+      path.join(sourceRoot, 'enterprise', 'db.ts'),
+      'utf8',
+    );
+    expect(databaseFacade).toContain('createAuthorizationComposition');
+    expect(databaseFacade).not.toContain(
+      'createOrganizationFeatureAccessFacade',
+    );
+    expect(databaseFacade).not.toContain('createOrganizationFeatureFacade');
+  });
+
   it('keeps mandatory tool confirmations fail-closed in automatic mode', () => {
     expect(authorization.shouldRequestConfirmation('auto', { type: 'edit' })).toBe(false);
     expect(authorization.shouldRequestConfirmation('auto', {
