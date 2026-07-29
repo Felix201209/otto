@@ -41,6 +41,7 @@ import {
   createParkLifecycleFacade,
   createParkMembershipFacade,
   createParkPublicationFacade,
+  createParkPublicationSchemaContributor,
   createParkResourceFacade,
   createParkServiceConfigurationFacade,
   createParkStatisticsFacade,
@@ -389,31 +390,6 @@ function initSchema(d: Database): void {
       FOREIGN KEY (actor_account_id) REFERENCES accounts(id)
     );
 
-    CREATE TABLE IF NOT EXISTS park_publications (
-      id TEXT PRIMARY KEY,
-      organization_id TEXT NOT NULL,
-      kind TEXT NOT NULL CHECK(kind IN ('announcement', 'satisfaction')),
-      title TEXT NOT NULL,
-      body TEXT NOT NULL,
-      created_by_account_id TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
-      FOREIGN KEY (created_by_account_id) REFERENCES accounts(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS park_publication_recipients (
-      organization_id TEXT NOT NULL,
-      publication_id TEXT NOT NULL,
-      account_id TEXT NOT NULL,
-      read_at TEXT,
-      submitted_at TEXT,
-      response_data TEXT,
-      PRIMARY KEY (publication_id, account_id),
-      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
-      FOREIGN KEY (publication_id) REFERENCES park_publications(id) ON DELETE CASCADE,
-      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
-    );
-
     -- 园区数据统计：任务归园区所有，企业级分派与填报状态单独隔离。
     -- template_data 仅保存受限大小的原始模板，真正的字段定义保存在 fields_json，
     -- 这样既能保留管理员上传的 Excel，又不把企业填报数据混入公告/问卷表。
@@ -562,10 +538,6 @@ function initSchema(d: Database): void {
       ON it_tickets(park_id, organization_id, service_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_park_meeting_slots_booked_ticket
       ON park_meeting_slots(booked_ticket_id) WHERE booked_ticket_id IS NOT NULL;
-    CREATE INDEX IF NOT EXISTS idx_park_publications_org_created
-      ON park_publications(organization_id, created_at);
-    CREATE INDEX IF NOT EXISTS idx_park_publication_recipients_account
-      ON park_publication_recipients(account_id, publication_id);
     CREATE INDEX IF NOT EXISTS idx_park_statistics_tasks_park
       ON park_data_statistics_tasks(park_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_park_statistics_assignments_account
@@ -589,6 +561,9 @@ function initSchema(d: Database): void {
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
     }),
     PARK_CORE_SCHEMA_CONTRIBUTOR,
+    createParkPublicationSchemaContributor({
+      defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+    }),
     createCreditsSchemaContributor({
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
     }),
@@ -636,8 +611,6 @@ function initSchema(d: Database): void {
     'it_tickets',
     'ticket_deliveries',
     'ticket_notifications',
-    'park_publications',
-    'park_publication_recipients',
     'account_presence',
   ])
     ensureOrganizationColumn(table);

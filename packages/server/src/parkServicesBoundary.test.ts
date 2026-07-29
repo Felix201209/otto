@@ -34,6 +34,9 @@ describe('park services module boundary', () => {
       'function',
     );
     expect(parkServices.createParkPublicationFacade).toBeTypeOf('function');
+    expect(parkServices.createParkPublicationSchemaContributor).toBeTypeOf(
+      'function',
+    );
     expect(parkServices.createParkPublicationInRepository).toBeTypeOf(
       'function',
     );
@@ -110,6 +113,31 @@ describe('park services module boundary', () => {
     expect(databaseFacade).not.toContain('idx_park_invites_active');
     expect(databaseFacade).toMatch(
       /createEnterpriseInviteSchemaContributor\(\{[\s\S]*?PARK_CORE_SCHEMA_CONTRIBUTOR,[\s\S]*?createCreditsSchemaContributor\(\{/,
+    );
+  });
+
+  it('keeps park publication schema ownership in the park services module', () => {
+    const databaseFacade = fs.readFileSync(databaseFacadePath, 'utf8');
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS park_publications',
+    );
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS park_publication_recipients',
+    );
+    expect(databaseFacade).not.toContain(
+      'idx_park_publications_org_created',
+    );
+    expect(databaseFacade).not.toContain(
+      'idx_park_publication_recipients_account',
+    );
+    expect(databaseFacade).not.toMatch(
+      /^\s*['"]park_publications['"],\s*$/m,
+    );
+    expect(databaseFacade).not.toMatch(
+      /^\s*['"]park_publication_recipients['"],\s*$/m,
+    );
+    expect(databaseFacade).toMatch(
+      /PARK_CORE_SCHEMA_CONTRIBUTOR,[\s\S]*?createParkPublicationSchemaContributor\(\{[\s\S]*?createCreditsSchemaContributor\(\{/,
     );
   });
 

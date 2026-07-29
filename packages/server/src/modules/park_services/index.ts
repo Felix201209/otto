@@ -12,6 +12,7 @@ export * from './parkMembershipTypes.js';
 export * from './parkPublicationFacade.js';
 export * from './parkPublicationRepository.js';
 export * from './parkPublicationTypes.js';
+export * from './parkPublicationSchema.js';
 export * from './parkResourceFacade.js';
 export * from './parkResourceRepository.js';
 export * from './parkResourceTypes.js';
