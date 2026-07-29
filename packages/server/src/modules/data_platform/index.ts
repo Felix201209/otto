@@ -7,3 +7,4 @@ export * from './fileEncryptionKeyProvider.js';
 export * from './enterpriseDatabaseLifecycle.js';
 export * from './enterpriseBackupFacade.js';
 export * from './databaseSchemaContributor.js';
+export * from './dataPlatformComposition.js';

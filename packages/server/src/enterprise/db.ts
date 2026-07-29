@@ -8,9 +8,7 @@
 
 import {
   applyDatabaseSchemaContributors,
-  createEnterpriseBackupFacade,
-  createEnterpriseDatabaseLifecycle,
-  createFileEncryptionKeyProvider,
+  createDataPlatformComposition,
   Database,
 } from '../modules/data_platform/index.js';
 import { createAuthorizationComposition } from '../modules/authorization/index.js';
@@ -164,11 +162,6 @@ const DATA_DIR =
   path.join(os.homedir(), '.otto-enterprise');
 const DB_PATH = path.join(DATA_DIR, 'data.db');
 const ACCOUNT_SYNC_KEY_PATH = path.join(DATA_DIR, 'account-sync.key');
-const accountSyncKeyProvider = createFileEncryptionKeyProvider({
-  keyPath: ACCOUNT_SYNC_KEY_PATH,
-  keyBytes: 32,
-  invalidKeyMessage: 'account sync encryption key is invalid',
-});
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
 export const ENTERPRISE_SCHEMA_VERSION = 13;
@@ -227,26 +220,33 @@ function initSchema(d: Database): void {
   backfillLegacyOrganizationStructure(d);
 }
 
-const databaseLifecycle = createEnterpriseDatabaseLifecycle({
-  dataDirectory: DATA_DIR,
-  databasePath: DB_PATH,
-  legacyBackupPath: `${DB_PATH}.pre-b2b-v2.bak`,
-  schemaVersion: ENTERPRISE_SCHEMA_VERSION,
-  beforeForeignKeys(database) {
-    migrateLegacyAuthSessions(database, DEFAULT_ORGANIZATION_ID);
-    migrateLegacyParkTicketEvents(database);
+const dataPlatform = createDataPlatformComposition({
+  encryptionKey: {
+    keyPath: ACCOUNT_SYNC_KEY_PATH,
+    keyBytes: 32,
+    invalidKeyMessage: 'account sync encryption key is invalid',
   },
-  initializeSchema: initSchema,
-  onClose: () => accountSyncKeyProvider.clear(),
+  database: {
+    dataDirectory: DATA_DIR,
+    databasePath: DB_PATH,
+    legacyBackupPath: `${DB_PATH}.pre-b2b-v2.bak`,
+    schemaVersion: ENTERPRISE_SCHEMA_VERSION,
+    beforeForeignKeys(database) {
+      migrateLegacyAuthSessions(database, DEFAULT_ORGANIZATION_ID);
+      migrateLegacyParkTicketEvents(database);
+    },
+    initializeSchema: initSchema,
+  },
 });
+const accountSyncKeyProvider = dataPlatform.encryptionKeyProvider;
 
 /** 释放当前企业数据库连接；服务关闭或隔离测试清理时调用。 */
-export const closeEnterpriseDatabase = databaseLifecycle.close;
+export const closeEnterpriseDatabase = dataPlatform.closeDatabase;
 
-export const getDB = databaseLifecycle.getDatabase;
+export const getDB = dataPlatform.getDatabase;
 
 /** 执行真实读查询，供 HTTP readiness 判断数据库与 schema 是否可用。 */
-export const getDatabaseReadiness = databaseLifecycle.getReadiness;
+export const getDatabaseReadiness = dataPlatform.getReadiness;
 
 // ============================================================
 // Organizations and time-boxed registration invites
@@ -819,7 +819,7 @@ export const {
 // ============================================================
 const backupDatabaseStore = { db: getDB };
 
-const enterpriseBackup = createEnterpriseBackupFacade({
+const enterpriseBackup = dataPlatform.createBackup({
   defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
   listEmployees: (organizationId) =>
     listEmployeesForBackup(backupDatabaseStore, organizationId),
