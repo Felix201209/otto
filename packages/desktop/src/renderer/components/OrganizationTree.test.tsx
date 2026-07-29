@@ -1127,9 +1127,10 @@ describe('OrganizationTree', () => {
     expect(screen.getByRole('button', { name: '刷新企业组织在线状态' })).toBeTruthy();
     const bob = await screen.findByRole('button', { name: /Bob/ });
     const zara = await screen.findByRole('button', { name: /Zara/ });
-    expect(
-      bob.compareDocumentPosition(zara) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    expect(screen.getByText('Manager')).toBeTruthy();
+    expect(screen.getByText('Designer')).toBeTruthy();
+    expect(bob.closest('.otto-orgtree__position-group')?.textContent).toContain('Manager');
+    expect(zara.closest('.otto-orgtree__position-group')?.textContent).toContain('Designer');
 
     fireEvent.click(screen.getByRole('button', { name: '刷新企业组织在线状态' }));
     await waitFor(() => expect(calls).toBeGreaterThanOrEqual(2));

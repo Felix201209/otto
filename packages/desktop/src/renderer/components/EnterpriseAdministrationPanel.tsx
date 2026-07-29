@@ -54,9 +54,6 @@ export function EnterpriseAdministrationPanel({
   const [specialists, setSpecialists] = useState<EnterpriseParkSpecialist[]>([]);
   const [parkInvite, setParkInvite] = useState<EnterpriseParkInvite | null>(null);
   const [newDepartment, setNewDepartment] = useState('');
-  const [newPositionDepartment, setNewPositionDepartment] = useState('');
-  const [newPositionTitle, setNewPositionTitle] = useState('');
-  const [newPositionRole, setNewPositionRole] = useState<EnterprisePositionRoleMapping>('member');
   const [parkInviteCode, setParkInviteCode] = useState('');
   const [parkAddress, setParkAddress] = useState('');
   const [parkRoomNumber, setParkRoomNumber] = useState('');
@@ -75,7 +72,6 @@ export function EnterpriseAdministrationPanel({
         ? await window.otto.enterpriseOrganizationDepartments()
         : [];
       setDepartments(nextDepartments);
-      setNewPositionDepartment((current) => current || nextDepartments[0]?.id || '');
       if (nextFeatures.park_service) {
         const nextPark = await window.otto.enterpriseParkView();
         setPark(nextPark);
@@ -172,66 +168,139 @@ export function EnterpriseAdministrationPanel({
       {features?.enterprise_tree ? (
         <div className="otto-enterprise-config__card">
           <h3>组织结构</h3><p>用职位映射权限，避免单独给人手动加权导致权限漂移。</p>
-          <div className="otto-account-invite__controls">
-            <label>新部门<input value={newDepartment} onChange={(event) => setNewDepartment(event.target.value)} placeholder="例如：产业合作部" /></label>
-            <button type="button" disabled={busy || !newDepartment.trim()} onClick={() => {
+          <div className="otto-enterprise-config__department-create">
+            <label>
+              <span>新部门</span>
+              <input value={newDepartment} onChange={(event) => setNewDepartment(event.target.value)} placeholder="例如：产业合作部" />
+            </label>
+            <button className="is-primary" type="button" disabled={busy || !newDepartment.trim()} onClick={() => {
               void run(
                 () => window.otto.enterpriseOrganizationDepartmentCreate(newDepartment.trim()),
                 '部门已创建',
               ).then((saved) => { if (saved) setNewDepartment(''); });
             }}>新增部门</button>
           </div>
-          {departments.map((department) => (
-            <div key={department.id} className="otto-account-invite__result">
-              <div className="otto-account-invite__controls">
-                <label>部门名称<input defaultValue={department.name} id={`department-${department.id}`} /></label>
-                <button type="button" disabled={busy} onClick={() => {
+          <div className="otto-enterprise-config__department-list">
+            {departments.map((department, departmentIndex) => (
+              <section
+                key={department.id}
+                className="otto-enterprise-config__department"
+                aria-label={`${department.name}部门设置`}
+              >
+                <header className="otto-enterprise-config__department-head">
+                  <span className="otto-enterprise-config__department-index" aria-hidden="true">
+                    {String(departmentIndex + 1).padStart(2, '0')}
+                  </span>
+                  <div className="otto-enterprise-config__department-title">
+                    <label htmlFor={`department-${department.id}`}>部门名称</label>
+                    <input
+                      id={`department-${department.id}`}
+                      defaultValue={department.name}
+                    />
+                    <p>
+                      {department.memberCount} 名在职成员 · {department.positions.length} 个职位
+                    </p>
+                  </div>
+                  <div className="otto-enterprise-config__department-actions">
+                    <button type="button" disabled={busy} onClick={() => {
                   const input = document.getElementById(`department-${department.id}`) as HTMLInputElement | null;
                   void run(
                     () => window.otto.enterpriseOrganizationDepartmentUpdate(department.id, input?.value.trim() || ''),
                     '部门名称已更新',
                   );
-                }}>保存名称</button>
-                <button type="button" disabled={busy || department.memberCount > 0 || department.positions.length > 0} onClick={() => {
+                    }}>保存名称</button>
+                    <button
+                      type="button"
+                      className="is-danger"
+                      title={department.memberCount > 0 || department.positions.length > 0 ? '请先移走成员并删除职位' : '删除这个空部门'}
+                      disabled={busy || department.memberCount > 0 || department.positions.length > 0}
+                      onClick={() => {
                   void run(
                     () => window.otto.enterpriseOrganizationDepartmentDelete(department.id),
                     '空部门已删除',
                   );
-                }}>删除空部门</button>
-              </div>
-              <p>{department.memberCount} 名在职成员</p>
-              {department.positions.map((position) => (
-                <div key={position.id} className="otto-account-invite__controls">
-                  <input defaultValue={position.title} id={`position-${position.id}`} aria-label={`${department.name}职位名称`} />
-                  <select defaultValue={position.roleMapping} id={`position-role-${position.id}`} aria-label={`${position.title}权限映射`}>
-                    {Object.entries(ROLE_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                  </select>
-                  <button type="button" disabled={busy} onClick={() => {
-                    const title = (document.getElementById(`position-${position.id}`) as HTMLInputElement | null)?.value.trim();
-                    const roleMapping = (document.getElementById(`position-role-${position.id}`) as HTMLSelectElement | null)?.value as EnterprisePositionRoleMapping;
-                    void run(
-                      () => window.otto.enterpriseOrganizationPositionUpdate(position.id, { title, roleMapping }),
-                      '职位与权限映射已更新',
-                    );
-                  }}>保存职位</button>
-                  <button type="button" disabled={busy} onClick={() => {
-                    void run(() => window.otto.enterpriseOrganizationPositionDelete(position.id), '空职位已删除');
-                  }}>删除空职位</button>
+                      }}
+                    >删除空部门</button>
+                  </div>
+                </header>
+
+                <div className="otto-enterprise-config__positions">
+                  <div className="otto-enterprise-config__positions-head">
+                    <h4>部门职位</h4>
+                    <span>职位权限会同步到该职位的所有成员</span>
+                  </div>
+                  {department.positions.length > 0 ? (
+                    <div className="otto-enterprise-config__position-list">
+                      {department.positions.map((position, positionIndex) => (
+                        <div key={position.id} className="otto-enterprise-config__position">
+                          <span className="otto-enterprise-config__position-index" aria-hidden="true">
+                            {positionIndex + 1}
+                          </span>
+                          <label>
+                            <span>职位名称</span>
+                            <input defaultValue={position.title} id={`position-${position.id}`} aria-label={`${department.name}职位名称`} />
+                          </label>
+                          <label>
+                            <span>权限映射</span>
+                            <select defaultValue={position.roleMapping} id={`position-role-${position.id}`} aria-label={`${position.title}权限映射`}>
+                              {Object.entries(ROLE_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                            </select>
+                          </label>
+                          <div className="otto-enterprise-config__position-actions">
+                            <button type="button" disabled={busy} onClick={() => {
+                              const title = (document.getElementById(`position-${position.id}`) as HTMLInputElement | null)?.value.trim();
+                              const roleMapping = (document.getElementById(`position-role-${position.id}`) as HTMLSelectElement | null)?.value as EnterprisePositionRoleMapping;
+                              void run(
+                                () => window.otto.enterpriseOrganizationPositionUpdate(position.id, { title, roleMapping }),
+                                '职位与权限映射已更新',
+                              );
+                            }}>保存职位</button>
+                            <button className="is-danger" type="button" disabled={busy} title="仅空职位可以删除" onClick={() => {
+                              void run(() => window.otto.enterpriseOrganizationPositionDelete(position.id), '空职位已删除');
+                            }}>删除</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="otto-enterprise-config__positions-empty">这个部门还没有职位，请在下方创建第一个职位。</p>
+                  )}
+
+                  <form
+                    className="otto-enterprise-config__position-create"
+                    aria-label={`为${department.name}新增职位`}
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      const form = event.currentTarget;
+                      const data = new FormData(form);
+                      const title = String(data.get('title') ?? '').trim();
+                      const roleMapping = String(data.get('roleMapping') ?? 'member') as EnterprisePositionRoleMapping;
+                      if (!title) return;
+                      void run(() => window.otto.enterpriseOrganizationPositionCreate({
+                        departmentId: department.id,
+                        title,
+                        roleMapping,
+                      }), '职位已创建').then((saved) => { if (saved) form.reset(); });
+                    }}
+                  >
+                    <label>
+                      <span>新增职位</span>
+                      <input name="title" required placeholder="例如：产品经理" />
+                    </label>
+                    <label>
+                      <span>权限映射</span>
+                      <select name="roleMapping" defaultValue="member">
+                        {Object.entries(ROLE_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                      </select>
+                    </label>
+                    <button type="submit" disabled={busy}>添加到本部门</button>
+                  </form>
                 </div>
-              ))}
-            </div>
-          ))}
-          <div className="otto-account-invite__controls">
-            <label>所属部门<select value={newPositionDepartment} onChange={(event) => setNewPositionDepartment(event.target.value)}><option value="">请选择</option>{departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}</select></label>
-            <label>职位名称<input value={newPositionTitle} onChange={(event) => setNewPositionTitle(event.target.value)} placeholder="例如：产品经理" /></label>
-            <label>权限映射<select value={newPositionRole} onChange={(event) => setNewPositionRole(event.target.value as EnterprisePositionRoleMapping)}>{Object.entries(ROLE_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-            <button type="button" disabled={busy || !newPositionDepartment || !newPositionTitle.trim()} onClick={() => {
-              void run(() => window.otto.enterpriseOrganizationPositionCreate({
-                departmentId: newPositionDepartment,
-                title: newPositionTitle.trim(),
-                roleMapping: newPositionRole,
-              }), '职位已创建').then((saved) => { if (saved) setNewPositionTitle(''); });
-            }}>新增职位</button>
+              </section>
+            ))}
+            {departments.length === 0 ? (
+              <p className="otto-enterprise-config__positions-empty">暂时没有部门，请先创建一个部门。</p>
+            ) : null}
           </div>
         </div>
       ) : null}

@@ -27,6 +27,115 @@ export interface EnterpriseDirectChatOpenRequest {
   requestId: number;
 }
 
+type EnterpriseOrganizationMember = EnterpriseOrganizationView['members'][number];
+
+export interface OrganizationMemberPositionGroup {
+  key: string;
+  title: string;
+  members: EnterpriseOrganizationMember[];
+}
+
+export interface OrganizationMemberDepartmentGroup {
+  key: string;
+  name: string;
+  memberCount: number;
+  positions: OrganizationMemberPositionGroup[];
+}
+
+function enterpriseMemberPositionTitle(member: EnterpriseOrganizationMember): string {
+  return member.positionTitle?.trim()
+    || (member.isAdmin ? '管理员' : member.role?.trim() || '成员');
+}
+
+export function groupEnterpriseMembersForDisplay(
+  members: EnterpriseOrganizationView['members'],
+  structure: NonNullable<EnterpriseOrganizationView['structure']> = [],
+): OrganizationMemberDepartmentGroup[] {
+  const configuredDepartments = new Map<string, number>();
+  const configuredPositions = new Map<string, number>();
+  structure.forEach((department, departmentIndex) => {
+    configuredDepartments.set(department.id, departmentIndex);
+    configuredDepartments.set(department.name.trim(), departmentIndex);
+    department.positions.forEach((position, positionIndex) => {
+      configuredPositions.set(
+        `${department.name.trim()}\u0000${position.title.trim()}`,
+        positionIndex,
+      );
+    });
+  });
+
+  const departments = new Map<string, {
+    key: string;
+    name: string;
+    order: number;
+    positions: Map<string, {
+      key: string;
+      title: string;
+      order: number;
+      members: EnterpriseOrganizationMember[];
+    }>;
+  }>();
+
+  for (const member of members) {
+    if (member.status !== 'active') continue;
+    const configuredDepartment = member.departmentId
+      ? structure.find((department) => department.id === member.departmentId)
+      : undefined;
+    const departmentName = member.department?.trim()
+      || configuredDepartment?.name.trim()
+      || '未分配部门';
+    let department = departments.get(departmentName);
+    if (!department) {
+      department = {
+        key: member.departmentId || `department:${departmentName}`,
+        name: departmentName,
+        order: configuredDepartments.get(member.departmentId || '')
+          ?? configuredDepartments.get(departmentName)
+          ?? Number.MAX_SAFE_INTEGER,
+        positions: new Map(),
+      };
+      departments.set(departmentName, department);
+    }
+    const title = enterpriseMemberPositionTitle(member);
+    let position = department.positions.get(title);
+    if (!position) {
+      position = {
+        key: member.positionId || `position:${departmentName}:${title}`,
+        title,
+        order: configuredPositions.get(`${departmentName}\u0000${title}`)
+          ?? Number.MAX_SAFE_INTEGER,
+        members: [],
+      };
+      department.positions.set(title, position);
+    }
+    position.members.push(member);
+  }
+
+  return [...departments.values()]
+    .sort((left, right) => (
+      left.order - right.order
+      || left.name.localeCompare(right.name, 'zh-CN')
+    ))
+    .map((department) => ({
+      key: department.key,
+      name: department.name,
+      memberCount: [...department.positions.values()].reduce(
+        (count, position) => count + position.members.length,
+        0,
+      ),
+      positions: [...department.positions.values()]
+        .sort((left, right) => (
+          left.order - right.order
+          || left.title.localeCompare(right.title, 'zh-CN')
+        ))
+        .map((position) => ({
+          key: position.key,
+          title: position.title,
+          members: [...position.members].sort(compareEnterpriseMembers),
+        })),
+    }));
+}
+
 export function OrganizationTree({
   workspace,
   schedules = [],
@@ -213,60 +322,55 @@ export function OrganizationTree({
                 refreshing={orgLoading}
                 onRefresh={() => setManualRefreshRequest((value) => value + 1)}
               />
-              {/* Group members by department */}
-              {(() => {
-                const deptMap = new Map<string, EnterpriseOrganizationView['members']>();
-                for (const member of orgView.members) {
-                  if (member.status !== 'active') continue;
-                  const dept = member.department || '未分配部门';
-                  if (!deptMap.has(dept)) deptMap.set(dept, []);
-                  deptMap.get(dept)!.push(member);
-                }
-                return [...deptMap.entries()].map(([dept, members]) => (
+              {groupEnterpriseMembersForDisplay(
+                orgView.members,
+                orgView.structure,
+              ).map((department) => (
                   <DepartmentSection
-                    key={dept}
-                    name={dept}
-                    defaultExpanded={dept === currentOrganizationDepartment}
+                    key={department.key}
+                    name={department.name}
+                    memberCount={department.memberCount}
+                    defaultExpanded={department.name === currentOrganizationDepartment}
                   >
-                    {[...members].sort(compareEnterpriseMembers).map((member) => (
-                      member.id === enterpriseAccount?.id ? (
-                        <div
-                          key={member.id}
-                          className="otto-orgtree__member"
-                          aria-label={`${member.name}（我）`}
-                        >
-                          <span>{member.name}</span>
-                          <span>
-                            {member.positionTitle ||
-                              (member.isAdmin ? '管理员' : member.role || '成员')}
-                          </span>
-                          <small>我</small>
-                        </div>
-                      ) : (
-                        <button
-                          key={member.id}
-                          type="button"
-                          className="otto-orgtree__member otto-orgtree__member-button"
-                          onClick={() => {
-                            openDirectChat(member);
-                          }}
-                        >
-                          <span>{member.name}</span>
-                          <span>
-                            {member.positionTitle ||
-                              (member.isAdmin ? '管理员' : member.role || '成员')}
-                          </span>
-                          <PresenceBadge
-                            online={member.ottoOnline}
-                            lastSeenAt={member.ottoLastSeenAt}
-                          />
-                          <UnreadBadge count={unreadCounts[`enterprise:message:${member.id}`] ?? 0} />
-                        </button>
-                      )
+                    {department.positions.map((position) => (
+                      <OrganizationPositionGroup
+                        key={position.key}
+                        title={position.title}
+                        memberCount={position.members.length}
+                      >
+                        {position.members.map((member) => (
+                          member.id === enterpriseAccount?.id ? (
+                            <div
+                              key={member.id}
+                              className="otto-orgtree__member is-self"
+                              aria-label={`${member.name}（我）`}
+                            >
+                              <MemberIdentity member={member} />
+                              <span className="otto-orgtree__self-badge">我</span>
+                            </div>
+                          ) : (
+                            <button
+                              key={member.id}
+                              type="button"
+                              className="otto-orgtree__member otto-orgtree__member-button"
+                              aria-label={`与${member.name}对话，${position.title}`}
+                              onClick={() => {
+                                openDirectChat(member);
+                              }}
+                            >
+                              <MemberIdentity member={member} />
+                              <PresenceBadge
+                                online={member.ottoOnline}
+                                lastSeenAt={member.ottoLastSeenAt}
+                              />
+                              <UnreadBadge count={unreadCounts[`enterprise:message:${member.id}`] ?? 0} />
+                            </button>
+                          )
+                        ))}
+                      </OrganizationPositionGroup>
                     ))}
                   </DepartmentSection>
-                ));
-              })()}
+                ))}
             </div>
           ) : orgLoading ? (
             <div className="otto-orgtree__vacant">正在加载组织信息…</div>
@@ -1210,12 +1314,48 @@ type Organization = NonNullable<
   ProductWorkspaceSnapshot['managerWorkspace']
 >['organization'];
 
+function OrganizationPositionGroup({
+  title,
+  memberCount,
+  children,
+}: {
+  title: string;
+  memberCount: number;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <div className="otto-orgtree__position-group">
+      <div className="otto-orgtree__position-head">
+        <span>{title}</span>
+        <small>{memberCount} 人</small>
+      </div>
+      <div className="otto-orgtree__position-members">{children}</div>
+    </div>
+  );
+}
+
+function MemberIdentity({ member }: { member: EnterpriseOrganizationMember }): React.JSX.Element {
+  return (
+    <span className="otto-orgtree__member-identity">
+      <span className="otto-orgtree__member-avatar" aria-hidden="true">
+        {memberInitials(member.name)}
+      </span>
+      <span className="otto-orgtree__member-copy">
+        <strong>{member.name}</strong>
+        <small>@{member.username}</small>
+      </span>
+    </span>
+  );
+}
+
 function DepartmentSection({
   name,
+  memberCount,
   defaultExpanded = false,
   children,
 }: {
   name: string;
+  memberCount?: number;
   defaultExpanded?: boolean;
   children: React.ReactNode;
 }): React.JSX.Element {
@@ -1225,6 +1365,7 @@ function DepartmentSection({
       <button
         type="button"
         className="otto-orgtree__department-name otto-orgtree__department-toggle"
+        aria-label={name}
         aria-expanded={expanded}
         onClick={() => setExpanded((value) => !value)}
       >
@@ -1233,6 +1374,7 @@ function DepartmentSection({
           className={'otto-orgtree__chevron' + (expanded ? '' : ' is-collapsed')}
         />
         <span>{name}</span>
+        {memberCount !== undefined ? <small>{memberCount}</small> : null}
       </button>
       {expanded ? children : null}
     </div>
@@ -1322,6 +1464,7 @@ function CompanyBranch({
             <DepartmentSection
               key={department.id}
               name={department.name}
+              memberCount={members.length}
               defaultExpanded={department.id === workspace.context.departmentId}
             >
               {members.map((member) => {
