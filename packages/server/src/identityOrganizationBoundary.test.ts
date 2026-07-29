@@ -146,6 +146,9 @@ describe('identity_organization invitation kernel', () => {
     expect(identityOrganization.createAccountLifecycleFacade).toBeTypeOf(
       'function',
     );
+    expect(identityOrganization.createAccountMutationComposition).toBeTypeOf(
+      'function',
+    );
     expect(identityOrganization.createAccountRegistrationFacade).toBeTypeOf(
       'function',
     );
@@ -441,12 +444,28 @@ describe('identity_organization invitation kernel', () => {
     }
   });
 
+  it('composes account mutation internals behind one module factory', () => {
+    const databaseFacade = fs.readFileSync(
+      path.join(enterpriseDir, 'db.ts'),
+      'utf8',
+    );
+    expect(databaseFacade).toContain('createAccountMutationComposition');
+    for (const factory of [
+      'createAccountLifecycleFacade',
+      'createOrganizationProvisioningFacade',
+      'createAccountRegistrationFacade',
+    ]) {
+      expect(databaseFacade).not.toContain(factory);
+    }
+  });
+
   it('keeps account lifecycle writes behind the identity module facade', () => {
     const databaseFacade = fs.readFileSync(
       path.join(enterpriseDir, 'db.ts'),
       'utf8',
     );
-    expect(databaseFacade).toContain('createAccountLifecycleFacade');
+    expect(databaseFacade).toContain('createAccountMutationComposition');
+    expect(databaseFacade).not.toContain('createAccountLifecycleFacade');
     expect(databaseFacade).not.toMatch(
       /export function (?:createAccount|updateAccount|deleteAccount)/,
     );
@@ -457,7 +476,8 @@ describe('identity_organization invitation kernel', () => {
       path.join(enterpriseDir, 'db.ts'),
       'utf8',
     );
-    expect(databaseFacade).toContain('createAccountRegistrationFacade');
+    expect(databaseFacade).toContain('createAccountMutationComposition');
+    expect(databaseFacade).not.toContain('createAccountRegistrationFacade');
     expect(databaseFacade).not.toMatch(
       /export function (?:createSelfRegisteredAccount|createPersonalRegisteredAccount|joinOrganizationWithInvite)/,
     );
@@ -468,7 +488,10 @@ describe('identity_organization invitation kernel', () => {
       path.join(enterpriseDir, 'db.ts'),
       'utf8',
     );
-    expect(databaseFacade).toContain('createOrganizationProvisioningFacade');
+    expect(databaseFacade).toContain('createAccountMutationComposition');
+    expect(databaseFacade).not.toContain(
+      'createOrganizationProvisioningFacade',
+    );
     expect(databaseFacade).not.toMatch(
       /export function (?:createOrganization|provisionOrganization)\s*\(/,
     );

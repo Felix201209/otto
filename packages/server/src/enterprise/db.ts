@@ -100,12 +100,10 @@ import {
   backfillLegacyOrganizationStructure,
   createAccountAccessComposition,
   createAccountAuthSchemaContributor,
-  createAccountLifecycleFacade,
-  createAccountRegistrationFacade,
+  createAccountMutationComposition,
   createEnterpriseInviteSchemaContributor,
   createMemberSchemaContributor,
   createOrganizationFeatureFacade,
-  createOrganizationProvisioningFacade,
   createOrganizationWorkforceComposition,
   IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,
   IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR,
@@ -723,110 +721,58 @@ const accountSync = createAccountSyncFacade({
 
 export const { listAccountSyncSnapshots, putAccountSyncSnapshot } = accountSync;
 
-const accountLifecycleStore = {
+/** 企业、首位管理员和首个 7 天邀请要么全部成功，要么全部回滚。 */
+export const {
+  createAccount,
+  updateAccount,
+  deleteAccount,
+  createOrganization,
+  provisionOrganization,
+  createSelfRegisteredAccount,
+  createPersonalRegisteredAccount,
+  joinOrganizationWithInvite,
+} = createAccountMutationComposition<
+  AccountView,
+  OrganizationView,
+  OrganizationInviteView
+>({
   db: getDB,
   defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+  now: Date.now,
   organizationExists: (organizationId: string) =>
     Boolean(getOrganization(organizationId)),
   normalizeUsername,
+  normalizePhone,
   normalizeOptionalPhone,
   normalizeOptionalFeishuOpenId,
   normalizeOptionalAvatarUrl,
   assertPassword: assertAccountPassword,
   hashPassword: passwordHash,
-  createId: (prefix: 'acc' | 'emp') => `${prefix}_${randomUUID()}`,
+  createAccountEntityId: (prefix: 'acc' | 'emp') =>
+    `${prefix}_${randomUUID()}`,
   createDeletionPasswordHash: () =>
     passwordHash(randomBytes(32).toString('base64url')),
-  resolveAssignment(
-    database: Database,
-    organizationId: string,
-    input: {
-      department?: string | null;
-      departmentId?: string | null;
-      positionId?: string | null;
-      positionTitle?: string | null;
-    },
-  ) {
-    const assignment = resolveAssignmentIdentity(
-      database,
-      organizationId,
-      input,
-    );
-    return {
-      ...assignment,
-      roleMapping: assignment.positionId
-        ? getOrganizationPositionRoleMappingFromRepository(
-            database,
-            organizationId,
-            assignment.positionId,
-          )
-        : null,
-    };
-  },
-  createEmployee,
-  getAccount,
-  logAudit,
-};
-
-export const { createAccount, updateAccount, deleteAccount } =
-  createAccountLifecycleFacade<AccountView>(accountLifecycleStore);
-
-const organizationProvisioningStore = {
-  db: getDB,
-  now: Date.now,
   createOrganizationId: () => `org_${randomUUID()}`,
   createInviteSecret: () => randomBytes(32).toString('hex'),
   createDefaultSlugSuffix: () => randomBytes(5).toString('hex'),
-  getOrganization,
-  createAccount,
-  issueOrganizationInvite,
-  logAudit,
-};
-
-/** 企业、首位管理员和首个 7 天邀请要么全部成功，要么全部回滚。 */
-export const { createOrganization, provisionOrganization } =
-  createOrganizationProvisioningFacade<
-    OrganizationView,
-    AccountView,
-    OrganizationInviteView
-  >(organizationProvisioningStore);
-
-const accountRegistrationStore = {
-  db: getDB,
-  now: Date.now,
-  normalizePhone,
-  findAccountByPhone,
-  createId: (_prefix: 'emp') => `emp_${randomUUID()}`,
   createUsernameSuffix: () => randomBytes(4).toString('hex'),
   createPersonalSlugSuffix: () => randomBytes(8).toString('hex'),
   resolveAssignmentIdentity,
-  createEmployee(input: {
-    id: string;
-    organizationId: string;
-    name: string;
-    role?: string;
-    department?: string;
-    departmentId?: string;
-    positionId?: string;
-    positionTitle?: string;
-    inviteCode?: string;
-  }) {
+  getPositionRoleMapping: getOrganizationPositionRoleMappingFromRepository,
+  createEmployee(input) {
     const { inviteCode, ...employee } = input;
     return createEmployee({
       ...employee,
       invite_code: inviteCode,
     });
   },
-  createAccount,
-  createOrganization,
   getAccount,
+  findAccountByPhone,
+  getOrganization,
+  issueOrganizationInvite,
   resolveOrganizationInviteWithDefaults,
   normalizeOrganizationInviteCode,
-  replaceMigratedAccountTags(
-    accountId: string,
-    organizationId: string,
-    tags: string[],
-  ) {
+  replaceMigratedAccountTags(accountId, organizationId, tags) {
     replaceMigratedAccountTagsInRepository(
       accountTagStore,
       accountId,
@@ -834,16 +780,8 @@ const accountRegistrationStore = {
       tags,
     );
   },
-  logAudit,
-};
-
-export const {
-  createSelfRegisteredAccount,
-  createPersonalRegisteredAccount,
-  joinOrganizationWithInvite,
-} = createAccountRegistrationFacade<AccountView, OrganizationView>(
-  accountRegistrationStore,
-);
+  audit: logAudit,
+});
 
 const directMessageStore = {
   db: getDB,

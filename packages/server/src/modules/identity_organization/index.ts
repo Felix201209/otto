@@ -29,6 +29,7 @@ export * from './organizationSchema.js';
 export * from './accountDirectoryFacade.js';
 export * from './accountDirectoryRepository.js';
 export * from './accountAccessComposition.js';
+export * from './accountMutationComposition.js';
 export * from './accountTagRepository.js';
 export * from './accountLifecycleFacade.js';
 export * from './accountLifecycleRepository.js';
