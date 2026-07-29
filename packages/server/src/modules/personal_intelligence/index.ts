@@ -14,3 +14,4 @@ export * from './accountSyncRepository.js';
 export * from './personalIntelligenceSchema.js';
 export * from './accountSyncTypes.js';
 export * from './accountSyncValidation.js';
+export * from './personalIntelligenceComposition.js';

@@ -29,11 +29,9 @@ import {
   MODEL_GATEWAY_SCHEMA_CONTRIBUTOR,
 } from '../modules/model_gateway/index.js';
 import {
-  createAccountSyncFacade,
+  createPersonalIntelligenceComposition,
   createWorklogSchemaContributor,
-  createWorklogFacade,
   ESTIMATE,
-  listWorklogsForBackup,
   normalizeCostCNY,
   normalizeTokens,
   PERSONAL_INTELLIGENCE_SCHEMA_CONTRIBUTOR,
@@ -556,22 +554,29 @@ export const {
   audit: logAudit,
 });
 
-const accountSync = createAccountSyncFacade({
+const personalIntelligence = createPersonalIntelligenceComposition<
+  AccountView,
+  EmployeeRecord,
+  OrganizationView
+>({
   db: getDB,
+  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
   keyProvider: accountSyncKeyProvider,
-  resolveActiveIdentity(accountId: string) {
-    const account = getAccount(accountId);
-    if (account?.status !== 'active') return null;
-    const organization = getOrganization(account.organizationId);
-    if (organization?.status !== 'active') return null;
-    return {
-      accountId: account.id,
-      organizationId: account.organizationId,
-    };
-  },
+  getAccount,
+  getOrganization,
+  getEmployee,
+  listActiveEmployees: listEmployees,
+  audit: logAudit,
 });
 
-export const { listAccountSyncSnapshots, putAccountSyncSnapshot } = accountSync;
+export const {
+  listAccountSyncSnapshots,
+  putAccountSyncSnapshot,
+  getReport,
+  getTaskHistory,
+  logTask,
+} = personalIntelligence;
+const listWorklogsForBackup = personalIntelligence.listWorklogsForBackup;
 
 /** 企业、首位管理员和首个 7 天邀请要么全部成功，要么全部回滚。 */
 export const {
@@ -798,19 +803,6 @@ export type {
   OrganizationUsageSummary,
 } from '../modules/model_gateway/index.js';
 
-// ============================================================
-// Task logging and reports
-// ============================================================
-const worklogs = createWorklogFacade<EmployeeRecord, OrganizationView>({
-  db: getDB,
-  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
-  getOrganization,
-  getEmployee,
-  listActiveEmployees: listEmployees,
-  audit: logAudit,
-});
-
-export const { getReport, getTaskHistory, logTask } = worklogs;
 export { ESTIMATE, normalizeCostCNY, normalizeTokens };
 export type {
   LogWorkTaskInput,
@@ -848,7 +840,7 @@ const enterpriseBackup = createEnterpriseBackupFacade({
   listEmployees: (organizationId) =>
     listEmployeesForBackup(backupDatabaseStore, organizationId),
   listTaskLogs: (organizationId) =>
-    listWorklogsForBackup(backupDatabaseStore, organizationId),
+    listWorklogsForBackup(organizationId),
   listKnowledge: (organizationId) =>
     getKnowledge(undefined, undefined, organizationId),
   listInviteCodes: (organizationId) =>

@@ -14,6 +14,9 @@ const databaseFacadePath = path.join(sourceRoot, 'enterprise', 'db.ts');
 
 describe('personal intelligence module boundary', () => {
   it('publishes worklogs and account restoration from one entrypoint', () => {
+    expect(
+      personalIntelligence.createPersonalIntelligenceComposition,
+    ).toBeTypeOf('function');
     expect(personalIntelligence.createWorklogFacade).toBeTypeOf('function');
     expect(personalIntelligence.logWorkTaskInRepository).toBeTypeOf('function');
     expect(personalIntelligence.buildWorklogReport).toBeTypeOf('function');
@@ -69,8 +72,11 @@ describe('personal intelligence module boundary', () => {
       ),
     ).toBe(false);
     const databaseFacade = fs.readFileSync(databaseFacadePath, 'utf8');
-    expect(databaseFacade).toContain('createWorklogFacade');
-    expect(databaseFacade).toContain('createAccountSyncFacade');
+    expect(databaseFacade).toContain(
+      'createPersonalIntelligenceComposition',
+    );
+    expect(databaseFacade).not.toContain('createWorklogFacade');
+    expect(databaseFacade).not.toContain('createAccountSyncFacade');
     expect(databaseFacade).toContain(
       '../modules/personal_intelligence/index.js',
     );
