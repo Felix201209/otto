@@ -4,12 +4,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { WebFetchTool } from './web-fetch.js';
 import { Config, ApprovalMode } from '../config/config.js';
 import { ToolConfirmationOutcome } from './tools.js';
 
 describe('WebFetchTool', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
   const mockConfig = {
     getApprovalMode: vi.fn(),
     setApprovalMode: vi.fn(),
@@ -151,7 +156,7 @@ describe('WebFetchTool', () => {
       expect(result.llmContent).toBe('Response from custom gemini flash');
     });
 
-    it('returns tool unavailable when custom models are used but no custom Gemini Flash is found', async () => {
+    it('custom model without Gemini Flash directly receives fetched page content', async () => {
       const getModelMock = vi.fn().mockReturnValue('custom:openai:gpt-4o@hash');
       const getCustomModelsMock = vi.fn().mockReturnValue([
         {
@@ -172,11 +177,23 @@ describe('WebFetchTool', () => {
 
       const tool = new WebFetchTool(testConfig);
       const params = { prompt: 'fetch https://example.com' };
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          new Response(
+            '<html><body><h1>Example page</h1><p>DeepSeek can read this.</p></body></html>',
+            { status: 200 },
+          ),
+        ),
+      );
 
       const result = await tool.execute(params, new AbortController().signal);
 
-      expect(result.llmContent).toContain('is currently unavailable because you are using custom models');
-      expect(result.returnDisplay).toBe('Tool unavailable: Gemini Flash required');
+      expect(result.llmContent).toContain('Web content fetched successfully');
+      expect(String(result.llmContent).toLowerCase()).toContain('example page');
+      expect(result.llmContent).toContain('DeepSeek can read this.');
+      expect(result.returnDisplay).toContain('https://example.com');
+      expect(createTemporaryChatMock).not.toHaveBeenCalled();
     });
   });
 });

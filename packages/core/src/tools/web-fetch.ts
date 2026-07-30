@@ -20,7 +20,6 @@ import { fetchWithTimeout, isPrivateIp } from '../utils/fetch.js';
 import { SceneType } from '../core/sceneManager.js';
 import { convert } from 'html-to-text';
 import { ProxyAgent, setGlobalDispatcher } from 'undici';
-import { proxyAuthManager } from '../core/proxyAuth.js';
 import { isCustomModel, generateCustomModelId } from '../types/customModel.js';
 
 const URL_FETCH_TIMEOUT_MS = 10000;
@@ -131,6 +130,27 @@ export class WebFetchTool extends BaseTool<WebFetchToolParams, ToolResult> {
           { selector: 'img', format: 'skip' },
         ],
       }).substring(0, MAX_CONTENT_LENGTH);
+
+      // 自定义模型（DeepSeek、豆包、Qwen 等）不需要额外安装 Gemini
+      // 才能读取网页。把提取后的正文直接作为工具结果交回当前主模型，
+      // 主模型会依据原始 prompt 完成总结或字段提取。
+      const currentModel =
+        typeof this.config.getModel === 'function'
+          ? this.config.getModel()
+          : undefined;
+      if (!resolvedModel && currentModel && isCustomModel(currentModel)) {
+        return {
+          llmContent: `Web content fetched successfully for the current model.
+
+Original request: ${params.prompt}
+Source URL: ${url}
+
+--- BEGIN FETCHED CONTENT ---
+${textContent}
+--- END FETCHED CONTENT ---`,
+          returnDisplay: `已读取网页内容：${url}`,
+        };
+      }
 
       // 使用统一的 generateContent 接口进行 fallback 处理
       const geminiClient = this.config.getOttoClient();
@@ -278,10 +298,7 @@ ${textContent}
       });
 
       if (!geminiFlashModel) {
-        return {
-          llmContent: `This tool (${WebFetchTool.Name}) is currently unavailable because you are using custom models, but no custom Gemini Flash model (e.g., gemini-2.5-flash) was found in your custom models list to execute this tool. Please configure a custom Gemini Flash model to use this feature.`,
-          returnDisplay: `Tool unavailable: Gemini Flash required`
-        };
+        return this.executeFallback(params, signal);
       }
       resolvedModel = generateCustomModelId(geminiFlashModel);
     }
@@ -348,9 +365,13 @@ ${textContent}
         urlContextMeta.urlMetadata.length > 0
       ) {
         const allStatuses = urlContextMeta.urlMetadata.map(
-          (m: any) => m.urlRetrievalStatus,
+          (m: { urlRetrievalStatus?: string }) => m.urlRetrievalStatus,
         );
-        if (allStatuses.every((s: string) => s !== 'URL_RETRIEVAL_STATUS_SUCCESS')) {
+        if (
+          allStatuses.every(
+            (status) => status !== 'URL_RETRIEVAL_STATUS_SUCCESS',
+          )
+        ) {
           processingError = true;
         }
       } else if (!responseText.trim() && !sources?.length) {
