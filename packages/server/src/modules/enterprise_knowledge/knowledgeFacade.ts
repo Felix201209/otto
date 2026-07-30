@@ -18,11 +18,18 @@ import {
   type ReviseEnterpriseKnowledgeInput,
   type EnterpriseKnowledgeRepositoryStore,
 } from './knowledgeRepository.js';
+import {
+  observeEnterpriseKnowledgeInRepository,
+  type ObserveEnterpriseKnowledgeInput,
+} from './knowledgeRetentionRepository.js';
 
 export function createEnterpriseKnowledgeFacade(
   store: EnterpriseKnowledgeRepositoryStore,
 ) {
   return {
+    observeKnowledge(input: ObserveEnterpriseKnowledgeInput) {
+      return observeEnterpriseKnowledgeInRepository(store, input);
+    },
     addKnowledge(input: AddEnterpriseKnowledgeInput) {
       return addEnterpriseKnowledgeInRepository(store, input);
     },

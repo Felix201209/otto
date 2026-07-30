@@ -3660,8 +3660,9 @@ export class OttoServer {
 
         const result = await capture.ingestCandidates(candidates);
 
-        // 广播 knowledge_activity 帧通知桌面端
-        if (result.written > 0) {
+        // 广播知识观察。重复项不再写入个人库，但仍要进入企业证据池，
+        // 才能判断它是否在不同会话和时间跨度中反复出现。
+        if (result.observations.length > 0) {
           const entries = await this.knowledgeStore.list(5);
           this.broadcastAll({
             type: 'knowledge_activity',
@@ -3673,6 +3674,7 @@ export class OttoServer {
               skippedSanitized: result.skippedSanitized,
               skippedLowConfidence: result.skippedLowConfidence,
               captured: result.entries,
+              observations: result.observations,
               recent: entries,
             },
           });

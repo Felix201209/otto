@@ -38,6 +38,91 @@ function createStore(database: Database): EnterpriseKnowledgeRepositoryStore {
 }
 
 describe('enterprise knowledge kernel', () => {
+  it('incubates ordinary conversation evidence and only promotes repeated or high-impact knowledge', () => {
+    const database = createDatabase();
+    const knowledge = createEnterpriseKnowledgeFacade(createStore(database));
+
+    try {
+      const ordinary = {
+        organizationId: 'org-a',
+        department: '客服部',
+        category: 'research',
+        content: '客户验收前需要先核对交付清单。',
+        tags: ['acceptance'],
+        contributor: '张三',
+        contributorAccountId: 'account-1',
+        sourceId: 'capture-1',
+        sourceSessionId: 'session-1',
+        sourceFingerprint: 'acceptance-checklist',
+        confidence: 0.82,
+        verified: false,
+      };
+      expect(knowledge.observeKnowledge(ordinary)).toMatchObject({
+        outcome: 'observed',
+        promoted: false,
+        reason: 'incubating',
+        evidenceCount: 1,
+      });
+      expect(knowledge.observeKnowledge(ordinary)).toMatchObject({
+        outcome: 'duplicate',
+        promoted: false,
+        evidenceCount: 1,
+      });
+      expect(knowledge.getKnowledgeForAdministration('', undefined, 'org-a')).toEqual([]);
+
+      expect(knowledge.observeKnowledge({
+        ...ordinary,
+        contributor: '李四',
+        contributorAccountId: 'account-2',
+        sourceId: 'capture-2',
+        sourceSessionId: 'session-2',
+        confidence: 0.9,
+      })).toMatchObject({ promoted: false, evidenceCount: 2 });
+      const promoted = knowledge.observeKnowledge({
+        ...ordinary,
+        sourceId: 'capture-3',
+        sourceSessionId: 'session-3',
+      });
+      expect(promoted).toMatchObject({
+        outcome: 'promoted',
+        promoted: true,
+        reason: 'cross_member_corroboration',
+        evidenceCount: 3,
+        distinctSessionCount: 3,
+        distinctContributorCount: 2,
+        knowledge: expect.objectContaining({
+          status: 'pending_review',
+          contributor: '李四',
+          contributor_account_id: 'account-2',
+        }),
+      });
+      expect(promoted.knowledge?.content).toBe('客户验收前需要先核对交付清单。');
+
+      const deep = knowledge.observeKnowledge({
+        organizationId: 'org-a',
+        department: '研发部',
+        category: 'solution',
+        content: '重大生产事故的根因是租户缓存未隔离，加入企业编号后验证通过。',
+        contributor: '王工',
+        contributorAccountId: 'account-3',
+        sourceId: 'incident-1',
+        sourceSessionId: 'incident-session-1',
+        confidence: 0.93,
+        verified: true,
+      });
+      expect(deep).toMatchObject({
+        outcome: 'promoted',
+        reason: 'high_impact_verified',
+        evidenceCount: 1,
+        knowledge: expect.objectContaining({ status: 'pending_review' }),
+      });
+      expect(JSON.stringify(knowledge.getKnowledgeForAdministration('', undefined, 'org-b')))
+        .not.toContain('租户缓存');
+    } finally {
+      database.close();
+    }
+  });
+
   it('isolates source-id deduplication by organization and rejects missing tenants', () => {
     const database = createDatabase();
     const knowledge = createEnterpriseKnowledgeFacade(createStore(database));

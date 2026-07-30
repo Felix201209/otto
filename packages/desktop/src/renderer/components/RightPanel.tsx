@@ -810,7 +810,7 @@ export function RightPanel({
             <div className="otto-worklog-panel__head">
               <div>
                 <strong>企业知识</strong>
-                <span>经过确认、可追溯、可持续修订</span>
+                <span>长期复现或高影响结论，经审核后保留</span>
               </div>
               <div className="otto-enterprise-memory-head-actions">
                 {enterpriseRole === 'company_admin' ? (
@@ -923,7 +923,7 @@ export function RightPanel({
               <div className="otto-right-panel__empty">正在加载企业记忆…</div>
             ) : knowledgeItems.length === 0 ? (
               <div className="otto-right-panel__empty">
-                暂无企业记忆。Otto 会在企业会话中把已确认、已去重的工作知识同步到这里。
+                暂无达到保留标准的企业知识。普通对话不会直接进入企业知识库。
               </div>
             ) : (
               <div className="otto-enterprise-memory-list">

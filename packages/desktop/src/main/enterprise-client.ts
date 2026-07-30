@@ -109,6 +109,30 @@ export interface EnterpriseKnowledgeRecordInput {
   confidence: number;
   sourceType?: 'manual' | 'auto_capture' | 'work_result' | 'task_log' | 'document' | 'offboarding';
   sourceLabel?: string;
+  sourceSessionId?: string;
+  sourceFingerprint?: string;
+  tags?: string[];
+  verified?: boolean;
+  impactScore?: number;
+  significanceSignals?: string[];
+  observedAt?: string;
+}
+
+export interface EnterpriseKnowledgeRecordResult {
+  status: 'added' | 'exists' | 'observed' | 'duplicate' | 'promoted';
+  added: boolean;
+  outcome?: 'added' | 'updated' | 'unchanged' | 'observed' | 'duplicate' | 'promoted';
+  reviewStatus?: EnterpriseKnowledgeItem['status'];
+  knowledgeId?: number;
+  retention?: {
+    promoted: boolean;
+    reason: 'incubating' | 'long_term_recurrence' | 'cross_member_corroboration' | 'high_impact_verified';
+    evidenceCount: number;
+    distinctSessionCount: number;
+    distinctContributorCount: number;
+    spanDays: number;
+    impactScore: number;
+  };
 }
 
 export interface EnterpriseKnowledgeItem {
@@ -1266,13 +1290,7 @@ export class EnterpriseClient {
     });
   }
 
-  async recordKnowledge(input: EnterpriseKnowledgeRecordInput): Promise<{
-    status: 'added' | 'exists';
-    added: boolean;
-    outcome?: 'added' | 'updated' | 'unchanged';
-    reviewStatus?: EnterpriseKnowledgeItem['status'];
-    knowledgeId?: number;
-  }> {
+  async recordKnowledge(input: EnterpriseKnowledgeRecordInput): Promise<EnterpriseKnowledgeRecordResult> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     return this.request('/enterprise/knowledge', {
       method: 'POST',

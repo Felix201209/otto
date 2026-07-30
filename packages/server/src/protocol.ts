@@ -753,6 +753,20 @@ export interface KnowledgeItem {
   confidence?: number;
 }
 
+/** 一次有效但尚未必晋级的知识观察，企业侧据此进行长期证据聚合。 */
+export interface KnowledgeObservationItem {
+  category: string;
+  content: string;
+  tags: string[];
+  sourceSessionId: string;
+  confidence: number;
+  fingerprint: string;
+  verified: boolean;
+  impactScore: number;
+  significanceSignals: string[];
+  observedAt: string;
+}
+
 /** 知识库列表 / 检索结果（S→C）。 */
 export type KnowledgeDataMsg = Envelope<
   'knowledge_data',
@@ -788,6 +802,8 @@ export type KnowledgeActivityMsg = Envelope<
     recent?: KnowledgeItem[];
     /** 本次真正新增的条目；组织知识库同步必须只消费它，避免重复上传 recent。 */
     captured?: KnowledgeItem[];
+    /** 本轮有效知识原子；即使个人库已去重，也要供企业侧累计长期证据。 */
+    observations?: KnowledgeObservationItem[];
   }
 >;
 

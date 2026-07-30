@@ -853,20 +853,43 @@ export function useOttoStore(
         }
       }
       if (frame.type === 'knowledge_activity' && frame.payload.action === 'auto_capture') {
-        const captured = frame.payload.captured ?? [];
+        const sourceSessionId = frame.payload.sessionId?.trim() || 'unknown-session';
+        const observations = frame.payload.observations?.length
+          ? frame.payload.observations
+          : (frame.payload.captured ?? []).map((entry) => ({
+              category: entry.category,
+              content: entry.content,
+              tags: entry.tags,
+              sourceSessionId,
+              confidence: entry.confidence ?? 0.8,
+              fingerprint: entry.id,
+              verified: false,
+              impactScore: 0.5,
+              significanceSignals: [] as string[],
+              observedAt: entry.createdAt,
+            }));
         const organizationId = enterpriseOrganizationIdRef.current;
-        if (organizationId && captured.length > 0) {
+        if (organizationId && observations.length > 0) {
           // 写前强制刷新中心组织功能开关：knowledge=false 时客户端不发起任何组织知识写入。
           // 获取失败也 fail closed，但 reducer 已保留 core 的个人本地捕获结果。
           void getEnterpriseOrganizationFeatures(organizationId, { force: true })
             .then((features) => {
               if (!features.knowledge) return;
-              for (const entry of captured) {
+              for (const entry of observations) {
                 void window.otto.enterpriseKnowledgeRecord({
-                  sourceId: entry.id,
+                  sourceId: `auto:${sourceSessionId}:${entry.fingerprint}`.slice(0, 180),
+                  sourceSessionId: entry.sourceSessionId || sourceSessionId,
+                  sourceFingerprint: entry.fingerprint,
                   category: entry.category,
                   content: entry.content,
                   confidence: entry.confidence ?? 0.8,
+                  sourceType: 'auto_capture',
+                  sourceLabel: 'Otto 对话知识观察',
+                  tags: entry.tags,
+                  verified: entry.verified,
+                  impactScore: entry.impactScore,
+                  significanceSignals: entry.significanceSignals,
+                  observedAt: entry.observedAt,
                 }).catch(() => undefined);
               }
             })

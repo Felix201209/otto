@@ -381,7 +381,26 @@ function scrubAccountData(
       );
       for (const ticket of ticketRows) updateTicket.run(retainedTicketFormData(ticket.form_data), ticket.id);
     }
-    runIfTable(database, 'knowledge', 'UPDATE knowledge SET contributor = NULL WHERE organization_id = ? AND contributor IN (?, ?, ?)', organizationId, accountId, account.username, account.name);
+    runIfTable(
+      database,
+      'knowledge',
+      `UPDATE knowledge SET contributor = NULL, contributor_account_id = NULL
+       WHERE organization_id = ?
+         AND (contributor_account_id = ? OR contributor IN (?, ?, ?))`,
+      organizationId,
+      accountId,
+      accountId,
+      account.username,
+      account.name,
+    );
+    runIfTable(
+      database,
+      'knowledge_retention_evidence',
+      `DELETE FROM knowledge_retention_evidence
+       WHERE organization_id = ? AND contributor_account_id = ?`,
+      organizationId,
+      accountId,
+    );
     runIfTable(database, 'credit_transactions', "UPDATE credit_transactions SET description = '已匿名化账号交易记录' WHERE account_id = ?", accountId);
     runIfTable(database, 'audit_logs', "UPDATE audit_logs SET employee_id = NULL, detail = '已按账号注销要求脱敏的安全审计记录' WHERE employee_id = ?", account.employee_id);
     runIfTable(database, 'account_tags', 'DELETE FROM account_tags WHERE account_id = ?', accountId);

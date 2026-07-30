@@ -356,6 +356,30 @@ export interface EnterpriseKnowledgeRecordInput {
   confidence: number;
   sourceType?: 'manual' | 'auto_capture' | 'work_result' | 'task_log' | 'document' | 'offboarding';
   sourceLabel?: string;
+  sourceSessionId?: string;
+  sourceFingerprint?: string;
+  tags?: string[];
+  verified?: boolean;
+  impactScore?: number;
+  significanceSignals?: string[];
+  observedAt?: string;
+}
+
+export interface EnterpriseKnowledgeRecordResult {
+  status: 'added' | 'exists' | 'observed' | 'duplicate' | 'promoted';
+  added: boolean;
+  outcome?: 'added' | 'updated' | 'unchanged' | 'observed' | 'duplicate' | 'promoted';
+  reviewStatus?: EnterpriseKnowledgeItem['status'];
+  knowledgeId?: number;
+  retention?: {
+    promoted: boolean;
+    reason: 'incubating' | 'long_term_recurrence' | 'cross_member_corroboration' | 'high_impact_verified';
+    evidenceCount: number;
+    distinctSessionCount: number;
+    distinctContributorCount: number;
+    spanDays: number;
+    impactScore: number;
+  };
 }
 
 export interface EnterpriseKnowledgeItem {
@@ -1243,13 +1267,7 @@ export interface OttoBridge {
     recorded: boolean;
     source: 'client_reported';
   }>;
-  enterpriseKnowledgeRecord(input: EnterpriseKnowledgeRecordInput): Promise<{
-    status: 'added' | 'exists';
-    added: boolean;
-    outcome?: 'added' | 'updated' | 'unchanged';
-    reviewStatus?: EnterpriseKnowledgeItem['status'];
-    knowledgeId?: number;
-  }>;
+  enterpriseKnowledgeRecord(input: EnterpriseKnowledgeRecordInput): Promise<EnterpriseKnowledgeRecordResult>;
   enterpriseKnowledgeList(input?: {
     query?: string;
     department?: string;
@@ -2102,20 +2120,11 @@ const bridge: OttoBridge = {
       source: 'client_reported';
     }>;
   },
-  enterpriseKnowledgeRecord(input: EnterpriseKnowledgeRecordInput): Promise<{
-    status: 'added' | 'exists';
-    added: boolean;
-    outcome?: 'added' | 'updated' | 'unchanged';
-    reviewStatus?: EnterpriseKnowledgeItem['status'];
-    knowledgeId?: number;
-  }> {
-    return ipcRenderer.invoke(IPC.enterpriseKnowledgeRecord, input) as Promise<{
-      status: 'added' | 'exists';
-      added: boolean;
-      outcome?: 'added' | 'updated' | 'unchanged';
-      reviewStatus?: EnterpriseKnowledgeItem['status'];
-      knowledgeId?: number;
-    }>;
+  enterpriseKnowledgeRecord(input: EnterpriseKnowledgeRecordInput): Promise<EnterpriseKnowledgeRecordResult> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseKnowledgeRecord,
+      input,
+    ) as Promise<EnterpriseKnowledgeRecordResult>;
   },
   enterpriseKnowledgeList(input?: {
     query?: string;

@@ -213,7 +213,7 @@ const PRIVACY_DELETION_LEDGER_KEY_PATH = path.join(
 );
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
-export const ENTERPRISE_SCHEMA_VERSION = 17;
+export const ENTERPRISE_SCHEMA_VERSION = 18;
 export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
@@ -950,6 +950,7 @@ export type {
 // Knowledge operations
 // ============================================================
 export const {
+  observeKnowledge,
   addKnowledge,
   getKnowledge,
   getKnowledgeForAdministration,

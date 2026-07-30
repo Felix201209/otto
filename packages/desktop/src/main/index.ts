@@ -2110,6 +2110,21 @@ function registerIpc(): void {
         ? body.sourceType
         : undefined,
       sourceLabel: typeof body.sourceLabel === 'string' ? body.sourceLabel : undefined,
+      sourceSessionId: typeof body.sourceSessionId === 'string' ? body.sourceSessionId : undefined,
+      sourceFingerprint: typeof body.sourceFingerprint === 'string' ? body.sourceFingerprint : undefined,
+      tags: Array.isArray(body.tags)
+        ? body.tags.filter((tag): tag is string => typeof tag === 'string').slice(0, 8)
+        : undefined,
+      verified: body.verified === true,
+      impactScore: typeof body.impactScore === 'number' && Number.isFinite(body.impactScore)
+        ? Math.min(1, Math.max(0, body.impactScore))
+        : undefined,
+      significanceSignals: Array.isArray(body.significanceSignals)
+        ? body.significanceSignals
+          .filter((signal): signal is string => typeof signal === 'string')
+          .slice(0, 8)
+        : undefined,
+      observedAt: typeof body.observedAt === 'string' ? body.observedAt : undefined,
     };
     return enterpriseClient.recordKnowledge(record);
   });

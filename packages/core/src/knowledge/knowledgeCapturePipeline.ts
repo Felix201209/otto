@@ -16,7 +16,11 @@
  *   - 统计可观测：通过 status() 能看到知识库是否真的在工作
  */
 
-import { KnowledgeCapture, type SimpleMessage } from './knowledgeCapture.js';
+import {
+  KnowledgeCapture,
+  type KnowledgeObservation,
+  type SimpleMessage,
+} from './knowledgeCapture.js';
 import { LocalKnowledgeStore, type KnowledgeEntry } from './localKnowledgeStore.js';
 import { getWorkLogger, type WorkLogEntry } from '../orchestration/workLog.js';
 
@@ -54,7 +58,22 @@ export interface PipelineRunResult {
   skippedLowConfidence: number;
   /** 是否捕获了任何内容 */
   captured: boolean;
+  /** 本次新增到个人知识库的条目。 */
+  entries: KnowledgeEntry[];
+  /** 可继续进入企业证据池的原子化观察，包括个人库中的重复项。 */
+  observations: KnowledgeObservation[];
 }
+
+const emptyPipelineResult = (): PipelineRunResult => ({
+  candidatesFound: 0,
+  written: 0,
+  skippedDuplicate: 0,
+  skippedSanitized: 0,
+  skippedLowConfidence: 0,
+  captured: false,
+  entries: [],
+  observations: [],
+});
 
 // ---------------------------------------------------------------------------
 // KnowledgeCapturePipeline
@@ -93,28 +112,14 @@ export class KnowledgeCapturePipeline {
       const entries = await worklogger.readDay(today);
 
       if (entries.length === 0) {
-        return {
-          candidatesFound: 0,
-          written: 0,
-          skippedDuplicate: 0,
-          skippedSanitized: 0,
-          skippedLowConfidence: 0,
-          captured: false,
-        };
+        return emptyPipelineResult();
       }
 
       // 从 worklog entries 构造 SimpleMessage 用于分析
       const messages = this.worklogToSimpleMessages(entries);
       return this.runFromMessages(messages, sessionId);
     } catch {
-      return {
-        candidatesFound: 0,
-        written: 0,
-        skippedDuplicate: 0,
-        skippedSanitized: 0,
-        skippedLowConfidence: 0,
-        captured: false,
-      };
+      return emptyPipelineResult();
     }
   }
 
@@ -129,28 +134,14 @@ export class KnowledgeCapturePipeline {
   ): Promise<PipelineRunResult> {
     try {
       if (!this.capture.shouldCapture(messages)) {
-        return {
-          candidatesFound: 0,
-          written: 0,
-          skippedDuplicate: 0,
-          skippedSanitized: 0,
-          skippedLowConfidence: 0,
-          captured: false,
-        };
+        return emptyPipelineResult();
       }
 
       const candidates = this.capture.extractCandidates(messages, sessionId);
       const candidatesFound = candidates.length;
 
       if (candidatesFound === 0) {
-        return {
-          candidatesFound: 0,
-          written: 0,
-          skippedDuplicate: 0,
-          skippedSanitized: 0,
-          skippedLowConfidence: 0,
-          captured: false,
-        };
+        return emptyPipelineResult();
       }
 
       const result = await this.capture.ingestCandidates(candidates);
@@ -170,14 +161,7 @@ export class KnowledgeCapturePipeline {
         captured: result.written > 0,
       };
     } catch {
-      return {
-        candidatesFound: 0,
-        written: 0,
-        skippedDuplicate: 0,
-        skippedSanitized: 0,
-        skippedLowConfidence: 0,
-        captured: false,
-      };
+      return emptyPipelineResult();
     }
   }
 

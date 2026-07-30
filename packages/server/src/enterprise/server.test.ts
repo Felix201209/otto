@@ -606,7 +606,7 @@ describe('受保护 vs 公开路由边界', () => {
     await expect(backup.json()).resolves.toMatchObject({
       lastError: null,
       backupCount: 1,
-      latestSchemaVersion: 17,
+      latestSchemaVersion: 18,
     });
 
     const telemetry = await fetch(`${base}/enterprise/deployment/telemetry`, {
@@ -4037,6 +4037,9 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
 
     const autoKnowledgeBody = {
       sourceId: 'kb_auto_1',
+      sourceType: 'auto_capture',
+      sourceSessionId: 'alpha-session-1',
+      sourceFingerprint: 'deployment-health-check',
       category: 'solution',
       content: '部署完成后先检查健康端点。',
       confidence: 0.9,
@@ -4053,16 +4056,14 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       status: string;
       added: boolean;
       outcome: string;
-      reviewStatus: string;
-      knowledgeId: number;
+      retention: { promoted: boolean; evidenceCount: number };
     };
     expect(firstCapturePayload).toMatchObject({
-      status: 'added',
-      added: true,
-      outcome: 'added',
-      reviewStatus: 'pending_review',
+      status: 'observed',
+      added: false,
+      outcome: 'observed',
+      retention: { promoted: false, evidenceCount: 1 },
     });
-    expect(firstCapturePayload.knowledgeId).toBeGreaterThan(0);
 
     const duplicateCapture = await fetch(`${base}/enterprise/knowledge`, {
       method: 'POST',
@@ -4070,32 +4071,66 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       body: JSON.stringify(autoKnowledgeBody),
     });
     expect(await duplicateCapture.json()).toMatchObject({
-      status: 'exists',
+      status: 'duplicate',
       added: false,
-      outcome: 'unchanged',
-      reviewStatus: 'pending_review',
+      outcome: 'duplicate',
+      retention: { promoted: false, evidenceCount: 1 },
     });
 
     expect(JSON.stringify(db.getKnowledge('研发部', 'solution', alpha.id)))
       .not.toContain(autoKnowledgeBody.content);
-    const captured = db.getKnowledgeForAdministration(
+    const incubating = db.getKnowledgeForAdministration(
       '',
       '研发部',
       alpha.id,
       'pending_review',
     )
       .filter((item: { content: string }) => item.content === autoKnowledgeBody.content);
+    expect(incubating).toHaveLength(0);
+
+    const highImpactBody = {
+      ...autoKnowledgeBody,
+      sourceId: 'kb_auto_incident_1',
+      sourceSessionId: 'alpha-incident-session-1',
+      sourceFingerprint: 'production-health-incident',
+      content: '重大生产事故的根因是缺少健康检查，加入健康端点校验后验证通过。',
+      confidence: 0.95,
+      verified: true,
+    };
+    const highImpactCapture = await fetch(`${base}/enterprise/knowledge`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${alphaToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify(highImpactBody),
+    });
+    expect(highImpactCapture.status).toBe(200);
+    const highImpactPayload = await highImpactCapture.json() as { knowledgeId: number };
+    expect(highImpactPayload).toMatchObject({
+      status: 'promoted',
+      added: true,
+      outcome: 'promoted',
+      reviewStatus: 'pending_review',
+      retention: { promoted: true, reason: 'high_impact_verified' },
+    });
+    expect(highImpactPayload.knowledgeId).toBeGreaterThan(0);
+    const captured = db.getKnowledgeForAdministration(
+      '',
+      '研发部',
+      alpha.id,
+      'pending_review',
+    ).filter((item: { content: string }) => item.content === highImpactBody.content);
     expect(captured).toHaveLength(1);
     expect(captured[0]).toMatchObject({
       department: '研发部',
       contributor: 'Alpha 员工',
-      confidence: 0.9,
+      confidence: 0.95,
     });
 
     const ownReviewQueue = await fetch(`${base}/enterprise/knowledge?includeReview=true`, {
       headers: { authorization: `Bearer ${alphaToken}` },
     });
-    expect(JSON.stringify(await ownReviewQueue.json())).toContain(autoKnowledgeBody.content);
+    const ownReviewPayload = JSON.stringify(await ownReviewQueue.json());
+    expect(ownReviewPayload).toContain(highImpactBody.content);
+    expect(ownReviewPayload).not.toContain(autoKnowledgeBody.content);
   });
 
   it('普通成员只能读取全局知识和本人部门知识，department query 不能跨部门越权', async () => {

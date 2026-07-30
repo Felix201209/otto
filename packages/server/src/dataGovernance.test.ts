@@ -83,7 +83,12 @@ function createFixture() {
       response_type TEXT, response_text TEXT, status TEXT DEFAULT '待接单',
       created_at TEXT DEFAULT (datetime('now')), updated_at TEXT
     );
-    CREATE TABLE knowledge (organization_id TEXT, contributor TEXT);
+    CREATE TABLE knowledge (
+      organization_id TEXT, contributor TEXT, contributor_account_id TEXT
+    );
+    CREATE TABLE knowledge_retention_evidence (
+      organization_id TEXT, contributor_account_id TEXT, content TEXT
+    );
     CREATE TABLE credit_transactions (account_id TEXT, description TEXT);
     CREATE TABLE audit_logs (employee_id TEXT, detail TEXT);
     INSERT INTO organizations VALUES ('org-a');
@@ -113,7 +118,8 @@ function createFixture() {
       '{"companyName":"星河科技","contact":"王小明","phone":"13800138000","amountCny":"260","date":"2026-07-29"}',
       '停车','A-101','普通','王小明','13800138000','现场','已联系王小明','待接单',datetime('now'),datetime('now')
     );
-    INSERT INTO knowledge VALUES ('org-a','王小明');
+    INSERT INTO knowledge VALUES ('org-a','王小明','acc-a');
+    INSERT INTO knowledge_retention_evidence VALUES ('org-a','acc-a','尚未晋升的个人观察');
     INSERT INTO credit_transactions VALUES ('acc-a','王小明充值');
     INSERT INTO audit_logs VALUES ('emp-a','Account xiaoming logged in');
   `);
@@ -159,6 +165,10 @@ describe('data_governance consent, export and deletion', () => {
     expect(account).toMatchObject({ username: 'deleted_acc-a', phone: null, name: '已删除账号', status: 'disabled' });
     expect(fixture.database.prepare('SELECT COUNT(*) AS count FROM direct_messages').get()).toEqual({ count: 0 });
     expect(fixture.database.prepare('SELECT COUNT(*) AS count FROM account_sync_snapshots').get()).toEqual({ count: 0 });
+    expect(fixture.database.prepare('SELECT contributor, contributor_account_id FROM knowledge').get())
+      .toEqual({ contributor: null, contributor_account_id: null });
+    expect(fixture.database.prepare('SELECT COUNT(*) AS count FROM knowledge_retention_evidence').get())
+      .toEqual({ count: 0 });
     const ticket = fixture.database.prepare('SELECT * FROM it_tickets WHERE id = ?').get('ticket-a') as { form_data: string; contact: string | null };
     expect(ticket.contact).toBeNull();
     expect(JSON.parse(ticket.form_data)).toEqual({ amountCny: '260', date: '2026-07-29', privacyScrubbed: true });

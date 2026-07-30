@@ -50,6 +50,8 @@ describe('enterprise knowledge schema contributor', () => {
         { name: 'idx_knowledge_contributor' },
         { name: 'idx_knowledge_dept' },
         { name: 'idx_knowledge_organization' },
+        { name: 'idx_knowledge_retention_contributor' },
+        { name: 'idx_knowledge_retention_topic' },
         { name: 'idx_knowledge_review_queue' },
         { name: 'idx_knowledge_revision_entry' },
         { name: 'idx_knowledge_source_unique' },

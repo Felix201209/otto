@@ -66,6 +66,32 @@ export function createEnterpriseKnowledgeSchemaContributor(input: {
           FOREIGN KEY (organization_id) REFERENCES organizations(id),
           UNIQUE(knowledge_id, version)
         );
+
+        CREATE TABLE IF NOT EXISTS knowledge_retention_evidence (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          organization_id TEXT NOT NULL,
+          topic_id TEXT NOT NULL,
+          evidence_key TEXT NOT NULL,
+          source_id TEXT NOT NULL,
+          source_session_id TEXT NOT NULL,
+          source_fingerprint TEXT NOT NULL,
+          department TEXT,
+          category TEXT NOT NULL,
+          content TEXT NOT NULL,
+          tags_json TEXT NOT NULL DEFAULT '[]',
+          contributor TEXT,
+          contributor_account_id TEXT NOT NULL,
+          confidence REAL NOT NULL,
+          verified INTEGER NOT NULL DEFAULT 0,
+          impact_score REAL NOT NULL DEFAULT 0,
+          impact_reasons_json TEXT NOT NULL DEFAULT '[]',
+          observed_at TEXT NOT NULL,
+          promoted_knowledge_id INTEGER,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY (organization_id) REFERENCES organizations(id),
+          FOREIGN KEY (promoted_knowledge_id) REFERENCES knowledge(id) ON DELETE SET NULL,
+          UNIQUE(organization_id, evidence_key)
+        );
       `);
 
       const columns = database.prepare('PRAGMA table_info(knowledge)').all() as Array<{
@@ -133,6 +159,14 @@ export function createEnterpriseKnowledgeSchemaContributor(input: {
           ON knowledge(organization_id, contributor_account_id, status);
         CREATE INDEX IF NOT EXISTS idx_knowledge_revision_entry
           ON knowledge_revisions(organization_id, knowledge_id, version DESC);
+        CREATE INDEX IF NOT EXISTS idx_knowledge_retention_topic
+          ON knowledge_retention_evidence(
+            organization_id, department, category, topic_id, observed_at DESC
+          );
+        CREATE INDEX IF NOT EXISTS idx_knowledge_retention_contributor
+          ON knowledge_retention_evidence(
+            organization_id, contributor_account_id, observed_at DESC
+          );
       `);
     },
   };

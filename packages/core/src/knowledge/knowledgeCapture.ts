@@ -35,6 +35,26 @@ export interface KnowledgeCandidate {
   confidence: number;
   /** 内容指纹（sha256 前 16 hex，供去重） */
   fingerprint: string;
+  /** 是否有真实工具结果或明确验收结果作为支撑。 */
+  verified?: boolean;
+  /** 对后续工作的影响强度，由捕获层给出提示，服务端会重新判定。 */
+  impactScore?: number;
+  /** 可解释的价值信号，不包含对话原文。 */
+  significanceSignals?: string[];
+}
+
+/** 一次经过脱敏和原子化的知识观察，可供企业证据池长期聚合。 */
+export interface KnowledgeObservation {
+  category: KnowledgeCandidate['category'];
+  content: string;
+  tags: string[];
+  sourceSessionId: string;
+  confidence: number;
+  fingerprint: string;
+  verified: boolean;
+  impactScore: number;
+  significanceSignals: string[];
+  observedAt: string;
 }
 
 /** ingestCandidates 返回值 */
@@ -49,6 +69,8 @@ export interface IngestResult {
   skippedLowConfidence: number;
   /** 本次实际新增的脱敏条目；供组织知识库等下游精确同步，不能用 recent 猜测。 */
   entries: KnowledgeEntry[];
+  /** 本轮有效观察，包括本地已存在的重复项；企业侧用它判断长期复现。 */
+  observations: KnowledgeObservation[];
 }
 
 /** 精简版消息记录（用于 shouldCapture / extractCandidates 分析） */
@@ -125,6 +147,17 @@ const LOW_VALUE_SIGNALS = [
   '暂时', '临时的', 'temporary', '测试一下', '试试',
 ];
 
+const VERIFIED_RESULT_SIGNALS = [
+  '已修复', '已解决', '验证通过', '测试通过', '验收通过', '已恢复', '已上线',
+  '生效', '结果为', '确认有效', 'fixed', 'resolved', 'verified', 'tests passed',
+];
+
+const HIGH_IMPACT_SIGNALS = [
+  '最终决定', '正式采用', '统一规定', '必须', '禁止', '制度', '标准流程',
+  '重大', '宕机', '事故', '数据丢失', '安全', '合规', '法律', '合同', '客户投诉',
+  '金额', '成本', '收入', '损失', 'sla', '生产环境',
+];
+
 // ---------------------------------------------------------------------------
 // KnowledgeCapture 类
 // ---------------------------------------------------------------------------
@@ -161,7 +194,14 @@ export class KnowledgeCapture {
 
     // 短对话只在有真实成功工具结果且用户、助手都给出实质内容时沉淀。
     if (messages.length <= 3) {
-      return successfulTools >= 1 && substantive.length >= 2;
+      const shortText = messages.map((message) => message.text).join('\n').toLowerCase();
+      const hasVerifiedConclusion = VERIFIED_RESULT_SIGNALS.some((signal) =>
+        shortText.includes(signal.toLowerCase()));
+      const hasHighImpactConclusion = HIGH_IMPACT_SIGNALS.some((signal) =>
+        shortText.includes(signal.toLowerCase()));
+      return substantive.length >= 2 && (
+        successfulTools >= 1 || (hasVerifiedConclusion && hasHighImpactConclusion)
+      );
     }
 
     if (substantive.length < 3 && successfulTools === 0) return false;
@@ -232,9 +272,26 @@ export class KnowledgeCapture {
       const text = block.text;
       const extracted = this.tryExtract(text, sessionId, hasSuccessfulTool);
       for (const entry of extracted) {
-        candidates.push(hasSuccessfulTool
-          ? { ...entry, confidence: Math.max(entry.confidence, 0.85) }
-          : entry);
+        const verifiedByLanguage = VERIFIED_RESULT_SIGNALS.some((signal) =>
+          text.toLowerCase().includes(signal.toLowerCase()));
+        const highImpactHits = HIGH_IMPACT_SIGNALS.filter((signal) =>
+          text.toLowerCase().includes(signal.toLowerCase()));
+        const verified = hasSuccessfulTool || verifiedByLanguage;
+        const impactScore = Math.min(
+          1,
+          0.45 + (verified ? 0.2 : 0) + Math.min(0.3, highImpactHits.length * 0.1),
+        );
+        candidates.push({
+          ...entry,
+          confidence: verified ? Math.max(entry.confidence, 0.85) : entry.confidence,
+          verified,
+          impactScore,
+          significanceSignals: [
+            ...(hasSuccessfulTool ? ['successful_tool_result'] : []),
+            ...(verifiedByLanguage ? ['verified_result'] : []),
+            ...highImpactHits.slice(0, 4).map((signal) => `impact:${signal}`),
+          ],
+        });
       }
     }
 
@@ -256,13 +313,24 @@ export class KnowledgeCapture {
     corroboratedByTool = false,
   ): KnowledgeCandidate[] {
     const results: KnowledgeCandidate[] = [];
+    const lowerText = text.toLowerCase();
+    const isVerifiedHighImpact = VERIFIED_RESULT_SIGNALS.some((signal) =>
+      lowerText.includes(signal.toLowerCase()))
+      && HIGH_IMPACT_SIGNALS.some((signal) => lowerText.includes(signal.toLowerCase()));
 
     // 检测解决方案模式："问题是" / "解决" / "root cause" / 步骤列表
     if (
-      /问题|原因|root cause|排查|debug/i.test(text) &&
-      (text.length > 80 || /\d\.\s/.test(text) || (corroboratedByTool && text.length > 30))
+      /问题|原因|根因|root cause|排查|debug/i.test(text) &&
+      (text.length > 80
+        || /\d\.\s/.test(text)
+        || (corroboratedByTool && text.length > 30)
+        || isVerifiedHighImpact)
     ) {
-      const content = this.sanitizeSecrets(text.slice(0, 800));
+      const content = this.buildKnowledgeAtom(text, [
+        /问题|原因|根因|root cause|排查|debug/i,
+        /解决|修复|调整|改为|fix|resolve/i,
+        /验证|测试|验收|恢复|生效|通过|verified|passed/i,
+      ]);
       if (content.length >= 20) {
         results.push({
           category: 'solution',
@@ -285,7 +353,10 @@ export class KnowledgeCapture {
           s.length > 20 &&
           /建议|推荐|应该|should|recommend|最好|最佳/i.test(s)
         ) {
-          const content = this.sanitizeSecrets(s);
+          const content = this.buildKnowledgeAtom(s, [
+            /决定|建议|推荐|应该|should|recommend|最好|最佳/i,
+            /适用|条件|前提|仅当|除非/i,
+          ]);
           if (content.length >= 15) {
             results.push({
               category: 'decision',
@@ -307,7 +378,9 @@ export class KnowledgeCapture {
       const sentences = this.splitSentences(text);
       for (const s of sentences) {
         if (s.length > 15 && /发现|根据|按照|文档|官方|规范/i.test(s)) {
-          const content = this.sanitizeSecrets(s);
+          const content = this.buildKnowledgeAtom(s, [
+            /发现|根据|按照|文档|官方|规范/i,
+          ]);
           if (content.length >= 15) {
             results.push({
               category: 'research',
@@ -325,6 +398,32 @@ export class KnowledgeCapture {
     }
 
     return results;
+  }
+
+  /**
+   * 把回答压缩为可复用的知识原子，而不是保存整段会话。
+   * 最多保留结论、条件、验证结果三类句子，并移除大段代码和说话人标记。
+   */
+  private buildKnowledgeAtom(text: string, priorities: RegExp[]): string {
+    const withoutCodeBlocks = text.replace(/```[\s\S]*?```/gu, ' [代码细节已省略] ');
+    const segments = withoutCodeBlocks
+      .split(/\r?\n+|(?<=[。！？!?；;])/u)
+      .map((segment) => segment
+        .replace(/^\s*(?:用户|助手|assistant|user)\s*[:：]\s*/iu, '')
+        .replace(/^\s*[#>*-]+\s*/u, '')
+        .replace(/\s+/gu, ' ')
+        .trim())
+      .filter((segment) => segment.length >= 12);
+    const selected: string[] = [];
+    for (const priority of priorities) {
+      const match = segments.find((segment) => priority.test(segment));
+      if (match && !selected.includes(match)) selected.push(match);
+    }
+    for (const segment of segments) {
+      if (selected.length >= 3) break;
+      if (!selected.includes(segment)) selected.push(segment);
+    }
+    return this.sanitizeSecrets(selected.join('\n').slice(0, 700));
   }
 
   /** 从 user 消息提取偏好 */
@@ -442,6 +541,7 @@ export class KnowledgeCapture {
       skippedSanitized: 0,
       skippedLowConfidence: 0,
       entries: [],
+      observations: [],
     };
 
     for (const candidate of candidates) {
@@ -457,8 +557,21 @@ export class KnowledgeCapture {
         continue;
       }
 
-      // 去重
       const fp = this.fingerprint(sanitizedContent);
+      result.observations.push({
+        category: candidate.category,
+        content: sanitizedContent,
+        tags: candidate.tags.slice(0, 8),
+        sourceSessionId: candidate.sourceSessionId,
+        confidence: candidate.confidence,
+        fingerprint: fp,
+        verified: candidate.verified === true,
+        impactScore: Math.min(1, Math.max(0, candidate.impactScore ?? 0.5)),
+        significanceSignals: (candidate.significanceSignals ?? []).slice(0, 8),
+        observedAt: new Date().toISOString(),
+      });
+
+      // 去重
       try {
         const existing = await this.store.findByFingerprint(fp);
         if (existing) {

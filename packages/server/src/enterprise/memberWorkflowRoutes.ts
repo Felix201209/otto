@@ -350,6 +350,53 @@ export async function handleMemberWorkflowRoute({
     const scopedSourceId = sourceId && !memberAccount!.isAdmin
       ? `account:${memberAccount!.id}:${sourceId}`.slice(0, 200)
       : sourceId;
+    if (sourceType === 'auto_capture') {
+      const sourceSessionId = typeof body.sourceSessionId === 'string'
+        ? body.sourceSessionId.trim().slice(0, 200)
+        : '';
+      if (!sourceSessionId || !scopedSourceId) {
+        sendJSON(res, 400, { error: '自动知识观察缺少来源会话或来源编号' });
+        return true;
+      }
+      const observed = db.observeKnowledge({
+        organizationId,
+        department: memberAccount!.department,
+        category: (body.category as string) || 'general',
+        content,
+        tags: Array.isArray(body.tags) ? body.tags as string[] : undefined,
+        contributor: memberAccount!.name,
+        contributorAccountId: memberAccount!.id,
+        sourceId: scopedSourceId,
+        sourceSessionId,
+        sourceFingerprint: typeof body.sourceFingerprint === 'string'
+          ? body.sourceFingerprint
+          : undefined,
+        confidence,
+        verified: body.verified === true,
+        impactScore: typeof body.impactScore === 'number' ? body.impactScore : undefined,
+        significanceSignals: Array.isArray(body.significanceSignals)
+          ? body.significanceSignals as string[]
+          : undefined,
+        observedAt: typeof body.observedAt === 'string' ? body.observedAt : undefined,
+      });
+      sendJSON(res, 200, {
+        status: observed.outcome,
+        added: observed.promoted,
+        outcome: observed.outcome,
+        reviewStatus: observed.knowledge?.status,
+        knowledgeId: observed.knowledge?.id,
+        retention: {
+          promoted: observed.promoted,
+          reason: observed.reason,
+          evidenceCount: observed.evidenceCount,
+          distinctSessionCount: observed.distinctSessionCount,
+          distinctContributorCount: observed.distinctContributorCount,
+          spanDays: observed.spanDays,
+          impactScore: observed.impactScore,
+        },
+      });
+      return true;
+    }
     const saved = db.saveKnowledge({
       organizationId,
       sourceId: scopedSourceId || undefined,
