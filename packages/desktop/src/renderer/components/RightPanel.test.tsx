@@ -682,6 +682,10 @@ describe('RightPanel fixed Agent catalog', () => {
           detectedPattern: '整理数据 → 生成报告',
           occurrenceCount: 3,
           reason: '连续三天重复',
+          qualityScore: 86,
+          confidence: 0.82,
+          evidence: ['跨 3 天观察到 3 次同类流程'],
+          failureLessons: ['导出前先确认统计周期'],
         }]}
         onConfirmAutoSkill={confirm}
         onRejectAutoSkill={reject}
@@ -689,6 +693,10 @@ describe('RightPanel fixed Agent catalog', () => {
     );
 
     expect(screen.getByText('重复报告流程')).toBeTruthy();
+    expect(screen.getByText('质量 86/100')).toBeTruthy();
+    expect(screen.getByText(/可信度 82%/)).toBeTruthy();
+    expect(screen.getByText('跨 3 天观察到 3 次同类流程')).toBeTruthy();
+    expect(screen.getByText(/导出前先确认统计周期/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '确认生成' }));
     fireEvent.click(screen.getByRole('button', { name: '不再建议' }));
     expect(confirm).toHaveBeenCalledWith('candidate-1');

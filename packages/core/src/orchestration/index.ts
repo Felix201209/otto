@@ -122,6 +122,7 @@ export type { AutoSkillProfileData } from './autoSkillProfile.js';
 export {
   AutoSkillRealtimeWatcher,
   recordSkillUsage,
+  flushSkillUsageWrites,
   getSkillStats,
   getSkillRankings,
   optimizeExistingSkill,

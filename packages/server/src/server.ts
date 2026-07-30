@@ -188,6 +188,10 @@ function publicAutoSkillCandidate(
     detectedPattern: candidate.detectedPattern,
     occurrenceCount: candidate.occurrenceCount,
     reason: candidate.reason,
+    qualityScore: candidate.qualityScore,
+    confidence: candidate.confidence,
+    evidence: candidate.evidence,
+    failureLessons: candidate.failureLessons,
   };
 }
 

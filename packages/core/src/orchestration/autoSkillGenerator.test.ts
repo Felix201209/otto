@@ -116,6 +116,23 @@ describe('AutoSkillGenerator 个人 Skill 候选闭环', () => {
     expect(candidate?.skillContent).toContain('已观察到的典型需求');
   });
 
+  it('把同类成果的真实失败吸收到边界说明，而不是伪造百分百成功', async () => {
+    const logs = repeatedWorkResultLogs();
+    logs['2026-07-10'].push({
+      ...workResult('品牌营销方案', 10, '生成品牌营销方案'),
+      success: false,
+      details: '缺少品牌色导致交付返工',
+    });
+    workLogMock.readDateRange.mockResolvedValueOnce(logs);
+
+    const candidates = await generateSkillCandidates(fakeConfig);
+
+    const candidate = candidates.find((item) => item.name === 'auto-copywriting');
+    expect(candidate?.failureLessons).toContain('缺少品牌色导致交付返工');
+    expect(candidate?.skillContent).toContain('缺少品牌色导致交付返工');
+    expect(candidate?.evidence?.join('\n')).toContain('成功率 75%');
+  });
+
   it('扫描只暂存候选，用户明确确认后才写 SKILL.md', async () => {
     const staged = await scanAndStageSkillCandidates(fakeConfig, () => 'user-1');
 

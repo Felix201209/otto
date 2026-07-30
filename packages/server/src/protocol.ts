@@ -616,6 +616,10 @@ export interface AutoSkillCandidateInfo {
   detectedPattern: string;
   occurrenceCount: number;
   reason: string;
+  qualityScore?: number;
+  confidence?: number;
+  evidence?: string[];
+  failureLessons?: string[];
 }
 export type GetPendingAutoSkillsMsg = Envelope<
   'get_pending_auto_skills',

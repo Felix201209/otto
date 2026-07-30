@@ -541,9 +541,29 @@ export function RightPanel({
                 <div className="otto-auto-skill__empty">暂无候选。点击“立即分析”会扫描最近工作成果和操作日志；同类成果多次出现后会进入这里。</div>
               ) : autoSkillCandidates.map((candidate) => (
                 <article key={candidate.id} className="otto-auto-skill__candidate">
-                  <strong>{candidate.name}</strong>
+                  <header>
+                    <strong>{candidate.name}</strong>
+                    {typeof candidate.qualityScore === 'number' ? (
+                      <em>质量 {candidate.qualityScore}/100</em>
+                    ) : null}
+                  </header>
                   <span>{candidate.description}</span>
-                  <small>{candidate.detectedPattern} · {candidate.occurrenceCount} 天重复</small>
+                  <small>
+                    {candidate.detectedPattern} · {candidate.occurrenceCount} 次重复
+                    {typeof candidate.confidence === 'number'
+                      ? ` · 可信度 ${Math.round(candidate.confidence * 100)}%`
+                      : ''}
+                  </small>
+                  {candidate.evidence?.length ? (
+                    <ul>
+                      {candidate.evidence.slice(0, 3).map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {candidate.failureLessons?.length ? (
+                    <p>已吸收修正：{candidate.failureLessons.slice(0, 2).join('；')}</p>
+                  ) : null}
                   <div>
                     <button type="button" onClick={() => onConfirmAutoSkill(candidate.id)}>确认生成</button>
                     <button type="button" onClick={() => onRejectAutoSkill(candidate.id)}>不再建议</button>

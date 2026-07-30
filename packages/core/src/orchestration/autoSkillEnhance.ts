@@ -123,9 +123,14 @@ function extractActionCore(action: string): string {
 
 // ─── 2. Skill 效果追踪 ──────────────────────────────────────────
 
+import * as fs from 'node:fs/promises';
+import * as fsSync from 'node:fs';
+import * as path from 'node:path';
+import { homedir, tmpdir } from 'node:os';
 import type { Config } from '../config/config.js';
 import { SceneType, SceneManager } from '../core/sceneManager.js';
 import { getResponseText } from '../utils/partUtils.js';
+import { redactSensitiveText } from '../utils/redaction.js';
 
 /** 单次 Skill 使用记录 */
 export interface SkillUsageRecord {
@@ -141,13 +146,108 @@ export interface SkillUsageRecord {
 
 let usageHistory: SkillUsageRecord[] = [];
 const MAX_USAGE_HISTORY = 500;
+let loadedUsagePath = '';
+let usagePersistQueue: Promise<void> = Promise.resolve();
+
+function resolveSkillUsagePath(): string {
+  const configured = process.env['OTTO_USER_DIR']?.trim();
+  const userDir = configured
+    || (process.env['NODE_ENV'] === 'test' || process.env['VITEST']
+      ? path.join(tmpdir(), 'otto-auto-skill-tests', String(process.pid))
+      : path.join(homedir(), '.otto-user'));
+  return path.join(userDir, 'memory', 'worklog', 'skill_usage.jsonl');
+}
+
+function isSkillUsageRecord(value: unknown): value is SkillUsageRecord {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Partial<SkillUsageRecord>;
+  return typeof item.skillName === 'string'
+    && typeof item.timestamp === 'string'
+    && typeof item.success === 'boolean'
+    && typeof item.durationMs === 'number'
+    && typeof item.toolCalls === 'number'
+    && (item.userFeedback === undefined
+      || item.userFeedback === 'good'
+      || item.userFeedback === 'bad'
+      || item.userFeedback === 'skipped')
+    && (item.errorMessage === undefined || typeof item.errorMessage === 'string')
+    && (item.projectDir === undefined || typeof item.projectDir === 'string');
+}
+
+function ensureUsageHistoryLoaded(): void {
+  const usagePath = resolveSkillUsagePath();
+  if (loadedUsagePath === usagePath) return;
+
+  loadedUsagePath = usagePath;
+  usageHistory = [];
+  try {
+    const records = fsSync.readFileSync(usagePath, 'utf8')
+      .split(/\r?\n/u)
+      .filter(Boolean)
+      .flatMap((line) => {
+        try {
+          const parsed = JSON.parse(line) as unknown;
+          return isSkillUsageRecord(parsed) ? [parsed] : [];
+        } catch {
+          return [];
+        }
+      });
+    usageHistory = records.slice(-MAX_USAGE_HISTORY);
+  } catch {
+    // First use and temporarily unavailable files must not block Skill execution.
+  }
+}
+
+function sanitizeSkillUsageRecord(record: SkillUsageRecord): SkillUsageRecord {
+  return {
+    ...record,
+    skillName: record.skillName.trim().slice(0, 160),
+    durationMs: Math.max(0, Math.round(record.durationMs)),
+    toolCalls: Math.max(0, Math.round(record.toolCalls)),
+    errorMessage: record.errorMessage
+      ? redactSensitiveText(record.errorMessage).slice(0, 500)
+      : undefined,
+    projectDir: record.projectDir ? path.basename(record.projectDir) : undefined,
+  };
+}
 
 /** 记录一次 Skill 调用。 */
 export function recordSkillUsage(record: SkillUsageRecord): void {
-  usageHistory.push(record);
+  ensureUsageHistoryLoaded();
+  const safeRecord = sanitizeSkillUsageRecord(record);
+  if (!safeRecord.skillName) return;
+
+  usageHistory.push(safeRecord);
+  const shouldCompact = usageHistory.length > MAX_USAGE_HISTORY;
   if (usageHistory.length > MAX_USAGE_HISTORY) {
     usageHistory = usageHistory.slice(-MAX_USAGE_HISTORY);
   }
+
+  const usagePath = resolveSkillUsagePath();
+  const retainedRecords = [...usageHistory];
+  usagePersistQueue = usagePersistQueue
+    .catch(() => undefined)
+    .then(async () => {
+      await fs.mkdir(path.dirname(usagePath), { recursive: true, mode: 0o700 });
+      if (shouldCompact) {
+        await fs.writeFile(
+          usagePath,
+          `${retainedRecords.map((item) => JSON.stringify(item)).join('\n')}\n`,
+          { encoding: 'utf8', mode: 0o600 },
+        );
+      } else {
+        await fs.appendFile(usagePath, `${JSON.stringify(safeRecord)}\n`, {
+          encoding: 'utf8',
+          mode: 0o600,
+        });
+      }
+    })
+    .catch(() => undefined);
+}
+
+/** Wait for best-effort usage writes during shutdown and tests. */
+export async function flushSkillUsageWrites(): Promise<void> {
+  await usagePersistQueue;
 }
 
 /** 获取某个 Skill 的使用统计。 */
@@ -160,6 +260,7 @@ export function getSkillStats(skillName: string): {
   trend: 'increasing' | 'stable' | 'declining';
   topErrors: string[];
 } {
+  ensureUsageHistoryLoaded();
   const records = usageHistory.filter((r) => r.skillName === skillName);
   if (records.length === 0) {
     return {
@@ -198,6 +299,7 @@ export function getSkillStats(skillName: string): {
 
 /** 获取所有 Skill 的统计排行（按使用次数降序）。 */
 export function getSkillRankings(): Array<{ skillName: string; stats: ReturnType<typeof getSkillStats> }> {
+  ensureUsageHistoryLoaded();
   const names = [...new Set(usageHistory.map((r) => r.skillName))];
   return names
     .map((name) => ({ skillName: name, stats: getSkillStats(name) }))
@@ -288,7 +390,8 @@ export async function optimizeExistingSkill(
     try {
       parsed = JSON.parse(text);
     } catch {
-      const fb = text.indexOf('{'), lb = text.lastIndexOf('}');
+      const fb = text.indexOf('{');
+      const lb = text.lastIndexOf('}');
       parsed = JSON.parse(text.slice(fb, lb + 1));
     }
 
@@ -310,7 +413,7 @@ export async function optimizeAllSkills(
   onOptimized?: (skillName: string, result: Awaited<ReturnType<typeof optimizeExistingSkill>>) => void,
 ): Promise<void> {
   const rankings = getSkillRankings().filter((r) => r.stats.totalUses >= 3);
-  for (const { skillName, stats } of rankings) {
+  for (const { skillName } of rankings) {
     const content = await getSkillContent(skillName);
     if (!content) continue;
     const records = usageHistory.filter((r) => r.skillName === skillName);
