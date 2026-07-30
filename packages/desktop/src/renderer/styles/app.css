@@ -8129,9 +8129,9 @@ h6.otto-prose__h {
 
 .otto-agenda-page, .otto-skillzone { flex: 1; min-width: 0; height: 100%; overflow-y: auto; padding: 34px clamp(24px, 5vw, 68px); background: var(--otto-bg); color: var(--otto-text); }
 .otto-agenda__head, .otto-skillzone__head { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; max-width: 920px; margin: 0 auto 26px; }
-.otto-agenda__head h1, .otto-skillzone__head h1 { margin: 5px 0 7px; font-size: 26px; letter-spacing: -.03em; }
+.otto-agenda__head h1, .otto-skillzone__head h1 { margin: 5px 0 7px; font-size: 26px; letter-spacing: 0; }
 .otto-agenda__head p, .otto-skillzone__head p { margin: 0; color: var(--otto-text-secondary); font-size: 12px; }
-.otto-agenda__eyebrow, .otto-skillzone__eyebrow { color: var(--otto-accent); font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .12em; }
+.otto-agenda__eyebrow, .otto-skillzone__eyebrow { color: var(--otto-accent); font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0; }
 .otto-agenda__actions { display: flex; gap: 7px; white-space: nowrap; }
 .otto-agenda__results { max-width: 920px; margin: 0 auto 24px; padding: 18px; border: 1px solid color-mix(in srgb, var(--otto-accent) 25%, var(--otto-border)); border-radius: 16px; background: linear-gradient(145deg, color-mix(in srgb, var(--otto-accent) 8%, var(--otto-surface)), var(--otto-surface)); }
 .otto-agenda__results-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
@@ -8164,13 +8164,78 @@ h6.otto-prose__h {
 .otto-agenda__delete { margin-top: 9px; border: 0; background: transparent; color: var(--otto-danger, #ef4444); font-size: 9px; cursor: pointer; padding: 0; }
 .otto-agenda__empty { padding: 70px 20px; border: 1px dashed var(--otto-border-strong); border-radius: 16px; display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--otto-text-secondary); }
 
-.otto-skillzone__primary-tabs, .otto-skillzone__scope-tabs { max-width: 920px; margin: 0 auto 10px; display: flex; gap: 7px; }
-.otto-skillzone__primary-tabs button, .otto-skillzone__scope-tabs button { border: 1px solid var(--otto-border); border-radius: 9px; padding: 8px 14px; background: var(--otto-surface); color: var(--otto-text-secondary); cursor: pointer; }
-.otto-skillzone__primary-tabs button.is-active, .otto-skillzone__scope-tabs button.is-active { background: var(--otto-accent); border-color: var(--otto-accent); color: white; }
-.otto-skillzone__scope-tabs button { padding: 5px 11px; font-size: 10px; }
-.otto-skillzone__content { max-width: 920px; min-height: 340px; margin: 18px auto 0; padding: 22px; border: 1px solid var(--otto-border); border-radius: 16px; background: var(--otto-surface); }
-.otto-skillzone__content pre { margin: 0; white-space: pre-wrap; color: var(--otto-text); font: 12px/1.65 var(--otto-font-mono); }
-.otto-skillzone__truthnote { max-width: 920px; margin: 10px auto; color: var(--otto-text-tertiary); font-size: 10px; }
+.otto-skillzone__primary-tabs { max-width: 1120px; margin: 0 auto; display: flex; gap: 4px; border-bottom: 1px solid var(--otto-border); }
+.otto-skillzone__primary-tabs button { border: 0; border-bottom: 2px solid transparent; padding: 9px 14px; background: transparent; color: var(--otto-text-secondary); font-weight: 650; cursor: pointer; }
+.otto-skillzone__primary-tabs button.is-active { border-bottom-color: var(--otto-accent); color: var(--otto-text); }
+.otto-skillzone__content { max-width: 1120px; min-height: 340px; margin: 16px auto 0; }
+.otto-skillzone__toolbar { display: grid; grid-template-columns: auto minmax(180px, 1fr) auto auto 34px; gap: 8px; align-items: center; margin-bottom: 14px; }
+.otto-skillzone__toolbar--ranking { display: flex; justify-content: space-between; }
+.otto-skillzone__segmented { display: inline-flex; padding: 2px; border: 1px solid var(--otto-border); border-radius: 6px; background: var(--otto-surface); }
+.otto-skillzone__segmented button { min-height: 30px; border: 0; border-radius: 4px; padding: 0 11px; background: transparent; color: var(--otto-text-secondary); cursor: pointer; }
+.otto-skillzone__segmented button.is-active { background: color-mix(in srgb, var(--otto-accent) 14%, var(--otto-surface)); color: var(--otto-text); }
+.otto-skillzone__search input, .otto-skillzone__toolbar select, .otto-skillzone__rating select, .otto-skillzone__submit-controls select { width: 100%; min-height: 36px; border: 1px solid var(--otto-border); border-radius: 6px; padding: 0 10px; background: var(--otto-surface); color: var(--otto-text); }
+.otto-skillzone__command, .otto-skillzone__icon-btn, .otto-skillzone__card-actions button, .otto-skillzone__submit-controls button, .otto-skillzone__review-actions button { min-height: 34px; border: 1px solid var(--otto-border); border-radius: 6px; padding: 0 12px; background: var(--otto-surface); color: var(--otto-text); font-weight: 650; cursor: pointer; }
+.otto-skillzone__command, .otto-skillzone__card-actions > button, .otto-skillzone__submit-controls button, .otto-skillzone__review-actions button:not(.is-danger) { border-color: color-mix(in srgb, var(--otto-accent) 55%, var(--otto-border)); background: var(--otto-accent); color: white; }
+.otto-skillzone__icon-btn { display: grid; width: 34px; padding: 0; place-items: center; }
+.otto-skillzone button:disabled { cursor: default; opacity: .55; }
+.otto-skillzone__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.otto-skillzone__card { min-width: 0; border: 1px solid var(--otto-border); border-radius: 8px; padding: 16px; background: var(--otto-surface); }
+.otto-skillzone__card-head { display: flex; justify-content: space-between; gap: 14px; align-items: flex-start; }
+.otto-skillzone__card h2, .otto-skillzone__review-list h2 { margin: 0 0 3px; font-size: 15px; letter-spacing: 0; overflow-wrap: anywhere; }
+.otto-skillzone__byline, .otto-skillzone__review-list article > div > span { color: var(--otto-text-tertiary); font-size: 10px; }
+.otto-skillzone__scope, .otto-skillzone__status { flex: none; border: 1px solid var(--otto-border); border-radius: 999px; padding: 3px 7px; color: var(--otto-text-secondary); font-size: 9px; }
+.otto-skillzone__card > p, .otto-skillzone__local-row p, .otto-skillzone__review-list p { margin: 12px 0; color: var(--otto-text-secondary); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.otto-skillzone__facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 13px 0; border-top: 1px solid var(--otto-border); border-bottom: 1px solid var(--otto-border); }
+.otto-skillzone__facts > div { padding: 9px 5px; }
+.otto-skillzone__facts dt { color: var(--otto-text-tertiary); font-size: 9px; }
+.otto-skillzone__facts dd { margin: 3px 0 0; font-size: 11px; font-weight: 700; }
+.otto-skillzone__card-actions, .otto-skillzone__rating, .otto-skillzone__submit-controls, .otto-skillzone__review-actions { display: flex; gap: 7px; align-items: center; }
+.otto-skillzone__card-actions { justify-content: space-between; }
+.otto-skillzone__card-actions button { display: inline-flex; gap: 6px; align-items: center; }
+.otto-skillzone__rating select { width: 76px; }
+.otto-skillzone__rating button { background: var(--otto-surface); color: var(--otto-text); }
+.otto-skillzone__empty { min-height: 180px; display: grid; place-items: center; border: 1px dashed var(--otto-border-strong); border-radius: 8px; color: var(--otto-text-tertiary); font-size: 12px; }
+.otto-skillzone__message { margin-bottom: 10px; border: 1px solid; border-radius: 6px; padding: 9px 11px; font-size: 11px; }
+.otto-skillzone__message.is-error { border-color: color-mix(in srgb, var(--otto-danger, #c23b3b) 45%, var(--otto-border)); background: color-mix(in srgb, var(--otto-danger, #c23b3b) 8%, var(--otto-surface)); color: var(--otto-danger, #c23b3b); }
+.otto-skillzone__message.is-success { border-color: color-mix(in srgb, #168466 42%, var(--otto-border)); background: color-mix(in srgb, #168466 8%, var(--otto-surface)); color: #168466; }
+.otto-skillzone__mine-layout { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(260px, .65fr); gap: 14px; }
+.otto-skillzone__panel { min-width: 0; }
+.otto-skillzone__panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.otto-skillzone__panel-head h2 { margin: 0; font-size: 13px; }
+.otto-skillzone__panel-head > span { color: var(--otto-text-tertiary); font-size: 10px; }
+.otto-skillzone__rows { border: 1px solid var(--otto-border); border-radius: 8px; background: var(--otto-surface); overflow: hidden; }
+.otto-skillzone__local-row, .otto-skillzone__shared-row { display: flex; justify-content: space-between; gap: 14px; padding: 12px; border-bottom: 1px solid var(--otto-border); }
+.otto-skillzone__local-row:last-child, .otto-skillzone__shared-row:last-child { border-bottom: 0; }
+.otto-skillzone__local-row > div:first-child { min-width: 0; }
+.otto-skillzone__local-row strong, .otto-skillzone__shared-row strong { display: inline-block; margin-right: 7px; font-size: 12px; overflow-wrap: anywhere; }
+.otto-skillzone__local-row span, .otto-skillzone__shared-row div span { color: var(--otto-text-tertiary); font-size: 9px; }
+.otto-skillzone__local-row p { margin: 5px 0 0; }
+.otto-skillzone__submit-controls { flex: 0 0 210px; }
+.otto-skillzone__submit-controls select { min-width: 90px; }
+.otto-skillzone__status.is-active { border-color: color-mix(in srgb, #168466 40%, var(--otto-border)); color: #168466; }
+.otto-skillzone__status.is-pending_review { border-color: color-mix(in srgb, #a86c00 45%, var(--otto-border)); color: #a86c00; }
+.otto-skillzone__leaderboard { margin: 0; padding: 0; list-style: none; border: 1px solid var(--otto-border); border-radius: 8px; background: var(--otto-surface); overflow: hidden; }
+.otto-skillzone__leaderboard li { display: grid; grid-template-columns: 42px minmax(180px, 1fr) repeat(4, minmax(60px, .25fr)); gap: 10px; align-items: center; min-height: 62px; padding: 8px 13px; border-bottom: 1px solid var(--otto-border); }
+.otto-skillzone__leaderboard li:last-child { border-bottom: 0; }
+.otto-skillzone__leaderboard li > div:not(.otto-skillzone__rank-main) { text-align: right; }
+.otto-skillzone__leaderboard strong { display: block; font-size: 12px; }
+.otto-skillzone__leaderboard span { display: block; margin-top: 2px; color: var(--otto-text-tertiary); font-size: 9px; }
+.otto-skillzone__rank { width: 28px; height: 28px; display: grid !important; place-items: center; border: 1px solid var(--otto-border); border-radius: 50%; color: var(--otto-text) !important; font-weight: 800; }
+.otto-skillzone__rank-main { min-width: 0; }
+.otto-skillzone__rank-main strong { overflow-wrap: anywhere; }
+.otto-skillzone__review-list { display: grid; gap: 8px; }
+.otto-skillzone__review-list article { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: center; border: 1px solid var(--otto-border); border-radius: 8px; padding: 14px; background: var(--otto-surface); }
+.otto-skillzone__review-list p { margin-bottom: 0; }
+.otto-skillzone__review-actions .is-danger { border-color: color-mix(in srgb, var(--otto-danger, #c23b3b) 45%, var(--otto-border)); color: var(--otto-danger, #c23b3b); }
+@media (max-width: 760px) {
+  .otto-skillzone__toolbar { grid-template-columns: 1fr auto; }
+  .otto-skillzone__segmented, .otto-skillzone__search { grid-column: 1 / -1; }
+  .otto-skillzone__grid, .otto-skillzone__mine-layout { grid-template-columns: 1fr; }
+  .otto-skillzone__local-row, .otto-skillzone__review-list article { align-items: stretch; grid-template-columns: 1fr; flex-direction: column; }
+  .otto-skillzone__submit-controls { flex-basis: auto; }
+  .otto-skillzone__leaderboard li { grid-template-columns: 34px minmax(120px, 1fr) repeat(2, minmax(50px, auto)); }
+  .otto-skillzone__leaderboard li > div:nth-last-child(-n+2) { display: none; }
+}
 
 .otto-product-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
 .otto-product-choice > button { border: 1px solid var(--otto-border); border-radius: 13px; padding: 14px; background: var(--otto-surface); color: var(--otto-text); text-align: left; display: flex; flex-direction: column; gap: 5px; cursor: pointer; }

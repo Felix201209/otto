@@ -240,6 +240,41 @@ export function exportAccountDataFromRepository(
       ? rows<Record<string, unknown>>(database, 'task_logs', 'SELECT task_type, context, result, duration_min, tokens_used, cost_cny, created_at FROM task_logs WHERE employee_id = ? ORDER BY created_at', account.employeeId)
       : [],
     modelUsage: rows<Record<string, unknown>>(database, 'account_token_usage', 'SELECT session_id, message_id, model, input_tokens, output_tokens, total_tokens, created_at FROM account_token_usage WHERE account_id = ? ORDER BY created_at', account.id),
+    sharedSkills: rows<Record<string, unknown>>(
+      database,
+      'enterprise_skills',
+      `SELECT id, name, description, department, visibility, status, version,
+              install_count, usage_count, success_count, failure_count,
+              rating_count, created_at, updated_at
+       FROM enterprise_skills WHERE organization_id = ? AND author_account_id = ?
+       ORDER BY created_at`,
+      account.organizationId,
+      account.id,
+    ),
+    skillInstalls: rows<Record<string, unknown>>(
+      database,
+      'enterprise_skill_installs',
+      `SELECT skill_id, installed_version, installed_at, updated_at
+       FROM enterprise_skill_installs WHERE organization_id = ? AND account_id = ?`,
+      account.organizationId,
+      account.id,
+    ),
+    skillRatings: rows<Record<string, unknown>>(
+      database,
+      'enterprise_skill_ratings',
+      `SELECT skill_id, score, created_at, updated_at
+       FROM enterprise_skill_ratings WHERE organization_id = ? AND account_id = ?`,
+      account.organizationId,
+      account.id,
+    ),
+    skillUsageEvidence: rows<Record<string, unknown>>(
+      database,
+      'enterprise_skill_usage_events',
+      `SELECT skill_id, success, created_at FROM enterprise_skill_usage_events
+       WHERE organization_id = ? AND account_id = ? ORDER BY created_at`,
+      account.organizationId,
+      account.id,
+    ),
     messages: exportedDirectMessages(store, account),
     messageAttachments: rows<Record<string, unknown>>(
       database, 'direct_message_attachments',
@@ -316,6 +351,21 @@ function scrubAccountData(
     if (account.employee_id) runIfTable(database, 'task_logs', 'DELETE FROM task_logs WHERE employee_id = ?', account.employee_id);
     runIfTable(database, 'account_token_usage', 'DELETE FROM account_token_usage WHERE account_id = ?', accountId);
     runIfTable(database, 'account_presence', 'DELETE FROM account_presence WHERE account_id = ?', accountId);
+    runIfTable(database, 'enterprise_skill_ratings', 'DELETE FROM enterprise_skill_ratings WHERE account_id = ?', accountId);
+    runIfTable(database, 'enterprise_skill_installs', 'DELETE FROM enterprise_skill_installs WHERE account_id = ?', accountId);
+    runIfTable(database, 'enterprise_skill_versions', 'UPDATE enterprise_skill_versions SET created_by = NULL WHERE created_by = ?', accountId);
+    runIfTable(database, 'enterprise_skill_usage_events', 'UPDATE enterprise_skill_usage_events SET account_id = NULL WHERE account_id = ?', accountId);
+    runIfTable(database, 'enterprise_skills', "UPDATE enterprise_skills SET author_account_id = NULL, author_name = '已删除成员' WHERE organization_id = ? AND author_account_id = ?", organizationId, accountId);
+    runIfTable(
+      database,
+      'enterprise_skills',
+      `UPDATE enterprise_skills SET
+         install_count = (SELECT COUNT(*) FROM enterprise_skill_installs i WHERE i.skill_id = enterprise_skills.id),
+         rating_total = (SELECT COALESCE(SUM(score), 0) FROM enterprise_skill_ratings r WHERE r.skill_id = enterprise_skills.id),
+         rating_count = (SELECT COUNT(*) FROM enterprise_skill_ratings r WHERE r.skill_id = enterprise_skills.id)
+       WHERE organization_id = ?`,
+      organizationId,
+    );
     runIfTable(database, 'direct_messages', 'DELETE FROM direct_messages WHERE organization_id = ? AND (sender_account_id = ? OR recipient_account_id = ?)', organizationId, accountId, accountId);
     runIfTable(database, 'park_publication_recipients', 'DELETE FROM park_publication_recipients WHERE account_id = ?', accountId);
     runIfTable(database, 'park_service_specialists', 'DELETE FROM park_service_specialists WHERE account_id = ?', accountId);
@@ -358,8 +408,8 @@ function scrubAccountData(
       accountId,
       organizationId,
       completedAt: new Date(now).toISOString(),
-      deleted: ['会话与验证码', '账号标签', '个人记忆同步快照', '工作日志', 'Token 明细', '在线状态', '本人私聊及附件', '园区消息接收与专员分派'],
-      anonymized: ['账号与员工档案', '园区服务工单', '企业知识贡献者', '积分交易说明', '安全审计详情'],
+      deleted: ['会话与验证码', '账号标签', '个人记忆同步快照', '工作日志', 'Token 明细', '在线状态', '本人私聊及附件', '园区消息接收与专员分派', 'Skill 安装及评分身份记录'],
+      anonymized: ['账号与员工档案', '园区服务工单', '企业知识贡献者', '企业 Skill 作者', '积分交易说明', '安全审计详情'],
       retained: [
         { category: '园区服务统计', reason: '企业年度服务、金额和履约统计', restriction: '仅保留服务类型、时间、状态、数量和金额，不保留联系人及表单原文' },
         { category: '积分与财务记录', reason: '交易对账和法定义务', restriction: '账号仅以不可登录的匿名标识关联' },

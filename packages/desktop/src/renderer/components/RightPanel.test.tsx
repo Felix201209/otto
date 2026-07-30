@@ -40,6 +40,7 @@ interface TestWorkLogDay {
 function installBridge(
   recent: TestWorkLogDay[] | (() => Promise<TestWorkLogDay[]>) = [],
   knowledgeEnabled = false,
+  skillMarketEnabled = true,
 ) {
   const openPath = vi.fn(async () => undefined);
   const saveTextFile = vi.fn(async () => '/tmp/edited-worklog.md');
@@ -83,6 +84,7 @@ function installBridge(
     direct_messages: true,
     atoa: true,
     knowledge: knowledgeEnabled,
+    skill_market: skillMarketEnabled,
   }));
   const workLogReport = vi.fn(async () => ({
     ok: true,
@@ -586,6 +588,20 @@ describe('RightPanel fixed Agent catalog', () => {
     fireEvent.click(toggle);
     expect(screen.getByText('宏创 AI')).toBeTruthy();
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('hides Skill Zone when the organization feature is disabled', async () => {
+    const bridge = installBridge([], false, false);
+    render(
+      <RightPanel
+        busy={false}
+        mode="enterprise"
+        workspace={enterpriseWorkspace()}
+      />,
+    );
+
+    await waitFor(() => expect(bridge.enterpriseOrganizationFeaturesGet).toHaveBeenCalledOnce());
+    expect(screen.queryByRole('button', { name: 'Skill 专区' })).toBeNull();
   });
 
   it('loads and displays real enterprise memory entries', async () => {

@@ -27,6 +27,7 @@ import { handleGeneralizedParkRoute } from './generalizedParkRoutes.js';
 import { handleHealthRoute } from './healthRoutes.js';
 import { handleLocalAgentRoute } from './localAgentRoutes.js';
 import { handleMemberWorkflowRoute } from './memberWorkflowRoutes.js';
+import { handleSkillMarketplaceRoute } from './skillMarketplaceRoutes.js';
 import { handleParkResourceRoute } from './parkResourceRoutes.js';
 import { handleParkServicePublicationRoute } from './parkServicePublicationRoutes.js';
 import { handleParkStatisticsRoute } from './parkStatisticsRoutes.js';
@@ -345,6 +346,21 @@ export async function dispatchEnterpriseRoute({
       req,
       res,
       url,
+      memberAccount,
+      readBody,
+      sendJSON,
+    })
+  ) {
+    return true;
+  }
+
+  if (
+    await handleSkillMarketplaceRoute({
+      path,
+      method,
+      url,
+      req,
+      res,
       memberAccount,
       readBody,
       sendJSON,

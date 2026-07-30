@@ -391,6 +391,57 @@ export interface EnterpriseKnowledgeRevision {
   createdAt: string;
 }
 
+export type EnterpriseSkillVisibility = 'department' | 'company';
+export type EnterpriseSkillStatus = 'pending_review' | 'active' | 'archived';
+export type EnterpriseSkillScope = 'department' | 'company' | 'mine' | 'review';
+export type EnterpriseSkillSort = 'recommended' | 'rating' | 'installs' | 'usage' | 'newest';
+
+export interface LocalSkillShareCandidate {
+  name: string;
+  description: string;
+  kind: 'auto' | 'personal';
+}
+
+export interface EnterpriseSkillMarketItem {
+  id: string;
+  organizationId: string;
+  slug: string;
+  name: string;
+  description: string;
+  department: string | null;
+  visibility: EnterpriseSkillVisibility;
+  status: EnterpriseSkillStatus;
+  authorAccountId: string | null;
+  authorName: string;
+  contentHash: string;
+  version: number;
+  installCount: number;
+  usageCount: number;
+  successCount: number;
+  failureCount: number;
+  rating: number;
+  ratingCount: number;
+  installedVersion: number | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EnterpriseSkillLeaderboard {
+  skills: Array<EnterpriseSkillMarketItem & { rank: number; score: number; successRate: number }>;
+  contributors: Array<{
+    rank: number;
+    accountId: string | null;
+    name: string;
+    skillCount: number;
+    installCount: number;
+    usageCount: number;
+    score: number;
+  }>;
+  generatedAt: string;
+}
+
 export interface EnterpriseOrganizationInvite {
   id: string;
   organizationId: string;
@@ -421,6 +472,7 @@ export interface EnterpriseOrganizationFeatures {
   direct_messages: boolean;
   atoa: boolean;
   knowledge: boolean;
+  skill_market: boolean;
 }
 
 export type EnterprisePositionRoleMapping = 'member' | 'department_admin' | 'enterprise_admin';
@@ -880,6 +932,13 @@ const IPC = {
   workLogReport: 'otto:worklog-report',
   skillShareList: 'otto:skill-share-list',
   skillMarketplace: 'otto:skill-marketplace',
+  enterpriseSkillLocalList: 'otto:enterprise-skill-local-list',
+  enterpriseSkillList: 'otto:enterprise-skill-list',
+  enterpriseSkillSubmit: 'otto:enterprise-skill-submit',
+  enterpriseSkillReview: 'otto:enterprise-skill-review',
+  enterpriseSkillInstall: 'otto:enterprise-skill-install',
+  enterpriseSkillRate: 'otto:enterprise-skill-rate',
+  enterpriseSkillLeaderboard: 'otto:enterprise-skill-leaderboard',
   parkNativeNotify: 'otto:park-native-notify',
   writeClipboard: 'otto:write-clipboard',
 } as const;
@@ -1052,6 +1111,27 @@ export interface OttoBridge {
   skillShareList(teamId?: string): Promise<{ text: string }>;
   /** 公司 Skill 市场。 */
   skillMarketplace(): Promise<{ text: string }>;
+  enterpriseSkillLocalList(): Promise<LocalSkillShareCandidate[]>;
+  enterpriseSkillList(input?: {
+    scope?: EnterpriseSkillScope;
+    query?: string;
+    sort?: EnterpriseSkillSort;
+  }): Promise<EnterpriseSkillMarketItem[]>;
+  enterpriseSkillSubmit(input: {
+    localSkillName: string;
+    visibility: EnterpriseSkillVisibility;
+  }): Promise<{ outcome: 'submitted' | 'exists'; skill: EnterpriseSkillMarketItem }>;
+  enterpriseSkillReview(
+    id: string,
+    action: 'approve' | 'archive',
+    visibility?: EnterpriseSkillVisibility,
+  ): Promise<EnterpriseSkillMarketItem>;
+  enterpriseSkillInstall(id: string): Promise<{
+    skill: EnterpriseSkillMarketItem;
+    installedPath: string;
+  }>;
+  enterpriseSkillRate(id: string, score: number): Promise<EnterpriseSkillMarketItem>;
+  enterpriseSkillLeaderboard(): Promise<EnterpriseSkillLeaderboard>;
   /**
    * 本地测试模式：把 customProxyServerUrl 设为指定地址（不空）或清除（空字符串）。
    * main 进程需要把该 URL 注入到 server manager（如设置 OTTO_SERVER_URL env）。
@@ -1778,6 +1858,31 @@ const bridge: OttoBridge = {
   },
   skillMarketplace(): Promise<{ text: string }> {
     return ipcRenderer.invoke('otto:skill-marketplace') as Promise<{ text: string }>;
+  },
+  enterpriseSkillLocalList() {
+    return ipcRenderer.invoke(IPC.enterpriseSkillLocalList) as Promise<LocalSkillShareCandidate[]>;
+  },
+  enterpriseSkillList(input = {}) {
+    return ipcRenderer.invoke(IPC.enterpriseSkillList, input) as Promise<EnterpriseSkillMarketItem[]>;
+  },
+  enterpriseSkillSubmit(input) {
+    return ipcRenderer.invoke(IPC.enterpriseSkillSubmit, input) as Promise<{
+      outcome: 'submitted' | 'exists'; skill: EnterpriseSkillMarketItem;
+    }>;
+  },
+  enterpriseSkillReview(id, action, visibility) {
+    return ipcRenderer.invoke(IPC.enterpriseSkillReview, { id, action, visibility }) as Promise<EnterpriseSkillMarketItem>;
+  },
+  enterpriseSkillInstall(id) {
+    return ipcRenderer.invoke(IPC.enterpriseSkillInstall, { id }) as Promise<{
+      skill: EnterpriseSkillMarketItem; installedPath: string;
+    }>;
+  },
+  enterpriseSkillRate(id, score) {
+    return ipcRenderer.invoke(IPC.enterpriseSkillRate, { id, score }) as Promise<EnterpriseSkillMarketItem>;
+  },
+  enterpriseSkillLeaderboard() {
+    return ipcRenderer.invoke(IPC.enterpriseSkillLeaderboard) as Promise<EnterpriseSkillLeaderboard>;
   },
   setLocalTestUrl(url: string): Promise<void> {
     return ipcRenderer.invoke(IPC.setLocalTestUrl, url) as Promise<void>;

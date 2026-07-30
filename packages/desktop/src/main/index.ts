@@ -188,6 +188,7 @@ function normalizeEnterpriseMessageAttachments(
 }
 
 import { AccountDataSyncService } from './account-data-sync.js';
+import { EnterpriseSkillUsageReporter } from './enterprise-skill-usage-reporter.js';
 import {
   authenticateAndSyncEnterpriseAccount,
   clearInvalidatedEnterpriseIdentity,
@@ -234,6 +235,76 @@ function worklogRootDir(): string {
   const userDir = process.env['OTTO_USER_DIR']?.trim();
   if (userDir) return path.join(userDir, 'memory', 'worklog');
   return path.join(os.homedir(), '.otto-user', 'memory', 'worklog');
+}
+
+function userSkillsRootDir(): string {
+  const userDir = process.env['OTTO_USER_DIR']?.trim();
+  return path.join(userDir || path.join(os.homedir(), '.otto-user'), 'skills');
+}
+
+function localSkillDescription(content: string): string {
+  const frontmatter = content.match(/^---\s*[\r\n]+[\s\S]*?^description:\s*["']?([^\r\n"']+)/mu);
+  if (frontmatter?.[1]?.trim()) return frontmatter[1].trim().slice(0, 1_000);
+  const paragraph = content
+    .split(/\r?\n/u)
+    .map((line) => line.replace(/^\s*[#>*-]+\s*/u, '').trim())
+    .find((line) => line && !line.startsWith('---') && !/^name:/iu.test(line));
+  return (paragraph || '本地 Skill').slice(0, 1_000);
+}
+
+function safeLocalSkillName(value: unknown): string {
+  if (typeof value !== 'string') throw new Error('Skill 名称格式不正确');
+  const name = value.trim();
+  if (!name || name.length > 160 || name === '.' || name === '..' || /[/\\\0]/u.test(name)) {
+    throw new Error('Skill 名称格式不正确');
+  }
+  return name;
+}
+
+async function localSkillFilePath(name: string): Promise<string> {
+  const directory = path.join(userSkillsRootDir(), name);
+  const filePath = path.join(directory, 'SKILL.md');
+  const [directoryStat, fileStat] = await Promise.all([
+    fs.promises.lstat(directory).catch(() => null),
+    fs.promises.lstat(filePath).catch(() => null),
+  ]);
+  if (!directoryStat?.isDirectory() || directoryStat.isSymbolicLink()
+    || !fileStat?.isFile() || fileStat.isSymbolicLink()) {
+    throw new Error('本地 Skill 不存在或路径不安全，请刷新后重试');
+  }
+  return filePath;
+}
+
+async function replaceFileFromTemp(tempPath: string, targetPath: string): Promise<void> {
+  try {
+    await fs.promises.rename(tempPath, targetPath);
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error
+      ? String((error as { code?: unknown }).code)
+      : '';
+    if (code !== 'EEXIST' && code !== 'EPERM') throw error;
+    await fs.promises.rm(targetPath, { force: true });
+    await fs.promises.rename(tempPath, targetPath);
+  }
+}
+
+async function localMarketplaceInstallVersions(): Promise<Map<string, number>> {
+  const versions = new Map<string, number>();
+  const entries = await fs.promises.readdir(userSkillsRootDir(), { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith('market-')) continue;
+    try {
+      const metadataPath = path.join(userSkillsRootDir(), entry.name, '.otto-market.json');
+      const metadata = JSON.parse(await fs.promises.readFile(metadataPath, 'utf8')) as Record<string, unknown>;
+      if (typeof metadata.skillId === 'string' && typeof metadata.version === 'number'
+        && Number.isInteger(metadata.version) && metadata.version > 0) {
+        versions.set(metadata.skillId, metadata.version);
+      }
+    } catch {
+      // Invalid local provenance is treated as not installed on this device.
+    }
+  }
+  return versions;
 }
 
 /** 部门 Skill 共享记录（.otto/org/skill-shares.json 条目；krx 企业面板数据）。 */
@@ -332,6 +403,13 @@ const IPC = {
   createDiagnosticBundle: 'otto:create-diagnostic-bundle',
   skillShareList: 'otto:skill-share-list',
   skillMarketplace: 'otto:skill-marketplace',
+  enterpriseSkillLocalList: 'otto:enterprise-skill-local-list',
+  enterpriseSkillList: 'otto:enterprise-skill-list',
+  enterpriseSkillSubmit: 'otto:enterprise-skill-submit',
+  enterpriseSkillReview: 'otto:enterprise-skill-review',
+  enterpriseSkillInstall: 'otto:enterprise-skill-install',
+  enterpriseSkillRate: 'otto:enterprise-skill-rate',
+  enterpriseSkillLeaderboard: 'otto:enterprise-skill-leaderboard',
   setLocalTestUrl: 'otto:set-local-test-url',
   appVersion: 'otto:app-version',
   updateCheck: 'otto:update-check',
@@ -500,6 +578,7 @@ async function synchronizeAuthenticatedEnterpriseAccount(
     // Authentication stays available; the periodic identity refresh retries sync.
     logAccountDataSyncFailure(error);
   }
+  void enterpriseSkillUsageReporter.poll();
 }
 const enterpriseClient = new EnterpriseClient(enterpriseFetch, () => {
   resetEnterpriseModuleUpdateState();
@@ -517,6 +596,21 @@ const enterpriseClient = new EnterpriseClient(enterpriseFetch, () => {
     mainWindow.webContents.send(IPC.enterpriseSessionInvalidated);
   }
 });
+const enterpriseSkillUsageReporter = new EnterpriseSkillUsageReporter({
+  skillsRoot: userSkillsRootDir,
+  usageFile: () => path.join(worklogRootDir(), 'skill_usage.jsonl'),
+  stateFile: () => path.join(app.getPath('userData'), 'enterprise-skill-usage-state.json'),
+  identity: () => {
+    const account = enterpriseClient.authenticatedAccountSnapshot();
+    const session = enterpriseClient.snapshot();
+    return account && session.token
+      ? { serverUrl: session.serverUrl, accountId: account.id }
+      : null;
+  },
+  report: async (skillId, success, eventId) => {
+    await enterpriseClient.recordEnterpriseSkillUsage(skillId, success, eventId);
+  },
+});
 const enterpriseRegistrationIntents = new EnterpriseRegistrationIntentStore();
 let enterpriseSessionLoaded = false;
 let enterpriseIntentRendererReady = false;
@@ -526,6 +620,23 @@ let enterpriseModuleUpdateTimer: ReturnType<typeof setInterval> | undefined;
 let enterpriseModuleUpdateFingerprint = '';
 let enterpriseModuleUpdatePolling = false;
 const ENTERPRISE_MODULE_UPDATE_POLL_INTERVAL_MS = 2 * 60_000;
+let enterpriseSkillUsageTimer: ReturnType<typeof setInterval> | undefined;
+const ENTERPRISE_SKILL_USAGE_POLL_INTERVAL_MS = 30_000;
+
+function startEnterpriseSkillUsageReporting(): void {
+  if (enterpriseSkillUsageTimer) return;
+  enterpriseSkillUsageTimer = setInterval(() => {
+    if (!isQuitting) void enterpriseSkillUsageReporter.poll();
+  }, ENTERPRISE_SKILL_USAGE_POLL_INTERVAL_MS);
+  enterpriseSkillUsageTimer.unref?.();
+  void enterpriseSkillUsageReporter.poll();
+}
+
+function stopEnterpriseSkillUsageReporting(): void {
+  if (!enterpriseSkillUsageTimer) return;
+  clearInterval(enterpriseSkillUsageTimer);
+  enterpriseSkillUsageTimer = undefined;
+}
 
 function acceptEnterpriseRegistrationUrl(input: string): boolean {
   if (!enterpriseRegistrationIntents.acceptUrl(input)) return false;
@@ -2078,7 +2189,7 @@ function registerIpc(): void {
     }
     const allowed = new Set([
       'enterprise_tree', 'park_service', 'feishu_auto_reply',
-      'direct_messages', 'atoa', 'knowledge',
+      'direct_messages', 'atoa', 'knowledge', 'skill_market',
     ]);
     const patch = Object.fromEntries(Object.entries(input).filter(
       (entry): entry is [keyof EnterpriseOrganizationFeatures, boolean] => (
@@ -2742,6 +2853,142 @@ function registerIpc(): void {
     }
   });
 
+  ipcMain.handle(IPC.enterpriseSkillLocalList, async () => {
+    const root = userSkillsRootDir();
+    const entries = await fs.promises.readdir(root, { withFileTypes: true }).catch(() => []);
+    const result: Array<{ name: string; description: string; kind: 'auto' | 'personal' }> = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name === 'cache' || entry.name === 'backups'
+        || entry.name.startsWith('market-')) continue;
+      const filePath = path.join(root, entry.name, 'SKILL.md');
+      try {
+        const stat = await fs.promises.stat(filePath);
+        if (!stat.isFile() || stat.size > 200_000) continue;
+        const content = await fs.promises.readFile(filePath, 'utf8');
+        result.push({
+          name: entry.name,
+          description: localSkillDescription(content),
+          kind: entry.name.startsWith('auto-') ? 'auto' : 'personal',
+        });
+      } catch {
+        // A partially written or removed Skill is skipped and can be retried on refresh.
+      }
+    }
+    return result.sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'));
+  });
+
+  ipcMain.handle(IPC.enterpriseSkillList, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    const body = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    const scope = body.scope === 'company' || body.scope === 'mine' || body.scope === 'review'
+      ? body.scope
+      : 'department';
+    const sort = body.sort === 'rating' || body.sort === 'installs' || body.sort === 'usage' || body.sort === 'newest'
+      ? body.sort
+      : 'recommended';
+    const [skills, localVersions] = await Promise.all([
+      enterpriseClient.listEnterpriseSkills({
+        scope,
+        sort,
+        query: typeof body.query === 'string' ? body.query : undefined,
+      }),
+      localMarketplaceInstallVersions(),
+    ]);
+    return skills.map((skill) => ({
+      ...skill,
+      installedVersion: localVersions.get(skill.id) ?? null,
+    }));
+  });
+
+  ipcMain.handle(IPC.enterpriseSkillSubmit, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('Skill 投稿参数不正确');
+    const body = input as Record<string, unknown>;
+    const localSkillName = safeLocalSkillName(body.localSkillName);
+    const skillPath = await localSkillFilePath(localSkillName);
+    const stat = await fs.promises.stat(skillPath);
+    if (stat.size > 200_000) throw new Error('Skill 内容不能超过 200000 个字符');
+    const content = await fs.promises.readFile(skillPath, 'utf8');
+    return enterpriseClient.submitEnterpriseSkill({
+      name: localSkillName,
+      description: localSkillDescription(content),
+      content,
+      visibility: body.visibility === 'company' ? 'company' : 'department',
+    });
+  });
+
+  ipcMain.handle(IPC.enterpriseSkillReview, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('Skill 审核参数不正确');
+    const body = input as Record<string, unknown>;
+    if (typeof body.id !== 'string' || !/^[A-Za-z0-9_-]{1,120}$/u.test(body.id)
+      || (body.action !== 'approve' && body.action !== 'archive')) {
+      throw new Error('Skill 审核参数不正确');
+    }
+    return enterpriseClient.reviewEnterpriseSkill(
+      body.id,
+      body.action,
+      body.visibility === 'company' || body.visibility === 'department'
+        ? body.visibility
+        : undefined,
+    );
+  });
+
+  ipcMain.handle(IPC.enterpriseSkillInstall, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    const body = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    if (typeof body.id !== 'string' || !/^[A-Za-z0-9_-]{1,120}$/u.test(body.id)) {
+      throw new Error('Skill 安装参数不正确');
+    }
+    const skill = await enterpriseClient.installEnterpriseSkill(body.id);
+    const targetDir = path.join(userSkillsRootDir(), `market-${body.id}`);
+    const targetPath = path.join(targetDir, 'SKILL.md');
+    const tempPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
+    const metadataPath = path.join(targetDir, '.otto-market.json');
+    const metadataTempPath = `${metadataPath}.${process.pid}.${Date.now()}.tmp`;
+    const targetDirectoryStat = await fs.promises.lstat(targetDir).catch(() => null);
+    if (targetDirectoryStat?.isSymbolicLink() || (targetDirectoryStat && !targetDirectoryStat.isDirectory())) {
+      throw new Error('Skill 安装目录不安全，请移除对应目录后重试');
+    }
+    await fs.promises.mkdir(targetDir, { recursive: true, mode: 0o700 });
+    try {
+      await fs.promises.writeFile(tempPath, skill.content, { encoding: 'utf8', mode: 0o600 });
+      await replaceFileFromTemp(tempPath, targetPath);
+      await fs.promises.writeFile(
+        metadataTempPath,
+        `${JSON.stringify({
+          skillId: skill.id,
+          skillName: skill.name,
+          version: skill.version,
+          contentHash: skill.contentHash,
+          installedAt: new Date().toISOString(),
+        }, null, 2)}\n`,
+        { encoding: 'utf8', mode: 0o600 },
+      );
+      await replaceFileFromTemp(metadataTempPath, metadataPath);
+    } finally {
+      await fs.promises.rm(tempPath, { force: true }).catch(() => undefined);
+      await fs.promises.rm(metadataTempPath, { force: true }).catch(() => undefined);
+    }
+    const { content: _content, ...view } = skill;
+    return { skill: view, installedPath: targetPath };
+  });
+
+  ipcMain.handle(IPC.enterpriseSkillRate, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    const body = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    if (typeof body.id !== 'string' || !/^[A-Za-z0-9_-]{1,120}$/u.test(body.id)
+      || !Number.isInteger(body.score) || Number(body.score) < 1 || Number(body.score) > 5) {
+      throw new Error('Skill 评分参数不正确');
+    }
+    return enterpriseClient.rateEnterpriseSkill(body.id, Number(body.score));
+  });
+
+  ipcMain.handle(IPC.enterpriseSkillLeaderboard, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.getEnterpriseSkillLeaderboard();
+  });
+
   ipcMain.handle(IPC.parkConfig, async () => {
     try {
       const p = path.join(os.homedir(), '.otto-user', 'park-services.json');
@@ -3090,6 +3337,7 @@ if (!gotLock) {
     await ensureEndpoint();
     startEnterpriseIdentityRefresh();
     startEnterpriseModuleUpdatePolling();
+    startEnterpriseSkillUsageReporting();
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
@@ -3117,6 +3365,7 @@ if (!gotLock) {
     }
     stopEnterpriseIdentityRefresh();
     stopEnterpriseModuleUpdatePolling();
+    stopEnterpriseSkillUsageReporting();
     if (quitCleanupFinished) return;
     event.preventDefault();
     if (quitCleanupStarted) return;

@@ -48,6 +48,7 @@ const MEMBER_ROUTES = new Set([
   '/enterprise/task',
   '/enterprise/recall',
   '/enterprise/knowledge',
+  '/enterprise/skills',
   '/enterprise/credits/balance',
   '/enterprise/credits/redeem',
   '/enterprise/credits/redeem-codes',
@@ -86,6 +87,7 @@ export function isAdminRoute(path: string): boolean {
 export function isMemberRoute(path: string): boolean {
   return (
     MEMBER_ROUTES.has(path) ||
+    path.startsWith('/enterprise/skills/') ||
     path.startsWith('/enterprise/knowledge/') ||
     path === '/enterprise/atoa/inbox' ||
     path.startsWith('/enterprise/messages/') ||

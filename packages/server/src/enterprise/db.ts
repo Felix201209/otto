@@ -29,6 +29,10 @@ import {
   createEnterpriseKnowledgeComposition,
   createEnterpriseKnowledgeSchemaContributor,
 } from '../modules/enterprise_knowledge/index.js';
+import {
+  createEnterpriseSkillMarketplaceComposition,
+  ENTERPRISE_SKILL_MARKET_SCHEMA_CONTRIBUTOR,
+} from '../modules/enterprise_skill_market/index.js';
 import { createIntegrationAdaptersComposition } from '../modules/integration_adapters/index.js';
 import {
   createModelGatewayComposition,
@@ -139,6 +143,14 @@ export type {
   AddEnterpriseKnowledgeInput,
   EnterpriseKnowledgeEntryView,
 } from '../modules/enterprise_knowledge/index.js';
+export type {
+  EnterpriseSkillActor,
+  EnterpriseSkillInstallView,
+  EnterpriseSkillLeaderboard,
+  EnterpriseSkillStatus,
+  EnterpriseSkillView,
+  EnterpriseSkillVisibility,
+} from '../modules/enterprise_skill_market/index.js';
 export {
   ACCOUNT_SYNC_SCOPES,
   AccountSyncConflictError,
@@ -201,7 +213,7 @@ const PRIVACY_DELETION_LEDGER_KEY_PATH = path.join(
 );
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
-export const ENTERPRISE_SCHEMA_VERSION = 16;
+export const ENTERPRISE_SCHEMA_VERSION = 17;
 export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
@@ -233,6 +245,7 @@ function initSchema(d: Database): void {
     createEnterpriseKnowledgeSchemaContributor({
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
     }),
+    ENTERPRISE_SKILL_MARKET_SCHEMA_CONTRIBUTOR,
     IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR,
     createMemberSchemaContributor({
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
@@ -456,6 +469,21 @@ export const {
   db: getDB,
   audit: logAudit,
   isLicenseUsable: isLicenseUsableForOrganizationFeature,
+});
+
+export const {
+  getEnterpriseSkillLeaderboard,
+  installEnterpriseSkill,
+  listEnterpriseSkills,
+  rateEnterpriseSkill,
+  recordEnterpriseSkillUsage,
+  reviewEnterpriseSkill,
+  submitEnterpriseSkill,
+} = createEnterpriseSkillMarketplaceComposition({
+  db: getDB,
+  fieldCipher,
+  createId: randomUUID,
+  organizationExists: (organizationId) => Boolean(getOrganization(organizationId)),
 });
 
 function normalizeOptionalText(

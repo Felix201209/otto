@@ -144,6 +144,55 @@ export interface EnterpriseKnowledgeRevision {
   createdAt: string;
 }
 
+export type EnterpriseSkillVisibility = 'department' | 'company';
+export type EnterpriseSkillStatus = 'pending_review' | 'active' | 'archived';
+export type EnterpriseSkillScope = 'department' | 'company' | 'mine' | 'review';
+export type EnterpriseSkillSort = 'recommended' | 'rating' | 'installs' | 'usage' | 'newest';
+
+export interface EnterpriseSkillMarketItem {
+  id: string;
+  organizationId: string;
+  slug: string;
+  name: string;
+  description: string;
+  department: string | null;
+  visibility: EnterpriseSkillVisibility;
+  status: EnterpriseSkillStatus;
+  authorAccountId: string | null;
+  authorName: string;
+  contentHash: string;
+  version: number;
+  installCount: number;
+  usageCount: number;
+  successCount: number;
+  failureCount: number;
+  rating: number;
+  ratingCount: number;
+  installedVersion: number | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EnterpriseSkillLeaderboard {
+  skills: Array<EnterpriseSkillMarketItem & {
+    rank: number;
+    score: number;
+    successRate: number;
+  }>;
+  contributors: Array<{
+    rank: number;
+    accountId: string | null;
+    name: string;
+    skillCount: number;
+    installCount: number;
+    usageCount: number;
+    score: number;
+  }>;
+  generatedAt: string;
+}
+
 interface EnterpriseKnowledgeRow {
   id: string | number;
   organization_id?: string;
@@ -241,6 +290,7 @@ export interface EnterpriseOrganizationFeatures {
   direct_messages: boolean;
   atoa: boolean;
   knowledge: boolean;
+  skill_market: boolean;
 }
 
 export type EnterpriseModuleUpdateRollout = 'off' | 'canary' | 'stable' | 'required';
@@ -1297,6 +1347,91 @@ export class EnterpriseClient {
       changeNote: item.changeNote ?? item.change_note ?? null,
       createdAt: item.createdAt || item.created_at || '',
     }));
+  }
+
+  async listEnterpriseSkills(input: {
+    scope?: EnterpriseSkillScope;
+    query?: string;
+    sort?: EnterpriseSkillSort;
+  } = {}): Promise<EnterpriseSkillMarketItem[]> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['enterprise_skill_market_v1']);
+    const params = new URLSearchParams();
+    if (input.scope) params.set('scope', input.scope);
+    if (input.query?.trim()) params.set('q', input.query.trim());
+    if (input.sort) params.set('sort', input.sort);
+    const response = await this.request<{ skills: EnterpriseSkillMarketItem[] }>(
+      `/enterprise/skills${params.size > 0 ? `?${params}` : ''}`,
+    );
+    return response.skills;
+  }
+
+  async submitEnterpriseSkill(input: {
+    name: string;
+    description: string;
+    content: string;
+    visibility: EnterpriseSkillVisibility;
+  }): Promise<{ outcome: 'submitted' | 'exists'; skill: EnterpriseSkillMarketItem }> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['enterprise_skill_market_v1']);
+    return this.request('/enterprise/skills', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  }
+
+  async reviewEnterpriseSkill(
+    id: string,
+    action: 'approve' | 'archive',
+    visibility?: EnterpriseSkillVisibility,
+  ): Promise<EnterpriseSkillMarketItem> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['enterprise_skill_market_v1']);
+    const response = await this.request<{ skill: EnterpriseSkillMarketItem }>(
+      `/enterprise/skills/${encodeURIComponent(id)}/review`,
+      { method: 'POST', body: JSON.stringify({ action, visibility }) },
+    );
+    return response.skill;
+  }
+
+  async installEnterpriseSkill(id: string): Promise<EnterpriseSkillMarketItem & { content: string }> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['enterprise_skill_market_v1']);
+    const response = await this.request<{ skill: EnterpriseSkillMarketItem & { content: string } }>(
+      `/enterprise/skills/${encodeURIComponent(id)}/install`,
+      { method: 'POST', body: '{}' },
+    );
+    return response.skill;
+  }
+
+  async rateEnterpriseSkill(id: string, score: number): Promise<EnterpriseSkillMarketItem> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['enterprise_skill_market_v1']);
+    const response = await this.request<{ skill: EnterpriseSkillMarketItem }>(
+      `/enterprise/skills/${encodeURIComponent(id)}/rating`,
+      { method: 'POST', body: JSON.stringify({ score }) },
+    );
+    return response.skill;
+  }
+
+  async recordEnterpriseSkillUsage(
+    id: string,
+    success: boolean,
+    eventId: string,
+  ): Promise<EnterpriseSkillMarketItem> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['enterprise_skill_market_v1']);
+    const response = await this.request<{ skill: EnterpriseSkillMarketItem }>(
+      `/enterprise/skills/${encodeURIComponent(id)}/usage`,
+      { method: 'POST', body: JSON.stringify({ success, eventId }) },
+    );
+    return response.skill;
+  }
+
+  async getEnterpriseSkillLeaderboard(): Promise<EnterpriseSkillLeaderboard> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['enterprise_skill_market_v1']);
+    return this.request('/enterprise/skills/leaderboard');
   }
 
   async listAccountSyncSnapshots(): Promise<EnterpriseAccountSyncSnapshot[]> {

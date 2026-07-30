@@ -554,6 +554,7 @@ describe('受保护 vs 公开路由边界', () => {
       'park_services_v2',
       'organization_structure_v1',
       'organization_feature_switches_v1',
+      'enterprise_skill_market_v1',
       'park_membership_v1',
       'park_specialist_routing_v1',
       'unread_message_notifications_v1',
@@ -605,7 +606,7 @@ describe('受保护 vs 公开路由边界', () => {
     await expect(backup.json()).resolves.toMatchObject({
       lastError: null,
       backupCount: 1,
-      latestSchemaVersion: 16,
+      latestSchemaVersion: 17,
     });
 
     const telemetry = await fetch(`${base}/enterprise/deployment/telemetry`, {
@@ -4998,5 +4999,109 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
         expect.objectContaining({ id: platformTenantProvisioned.organization.id }),
       ]),
     );
+  }, 30_000);
+});
+
+describe('企业 Skill 市场 HTTP 闭环', () => {
+  async function login(base: string, identifier: string, password: string): Promise<string> {
+    const response = await fetch(`${base}/enterprise/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ identifier, password }),
+    });
+    expect(response.status).toBe(200);
+    return (await response.json()).token;
+  }
+
+  it('由成员投稿、管理员审核，同部门成员安装和评价', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const database = await import('./db.js');
+    const author = database.createAccount({
+      username: 'skill.author', password: 'skill-author-password', name: '分享者', department: '财务部',
+    });
+    const buyer = database.createAccount({
+      username: 'skill.buyer', password: 'skill-buyer-password', name: '使用者', department: '财务部',
+    });
+    const outsider = database.createAccount({
+      username: 'skill.outsider', password: 'skill-outsider-password', name: '其他部门', department: '研发部',
+    });
+    const admin = database.createAccount({
+      username: 'skill.admin', password: 'skill-admin-password', name: '审核员', department: '管理层', isAdmin: true,
+    });
+    const authorToken = await login(base, author.username, 'skill-author-password');
+    const buyerToken = await login(base, buyer.username, 'skill-buyer-password');
+    const outsiderToken = await login(base, outsider.username, 'skill-outsider-password');
+    const adminToken = await login(base, admin.username, 'skill-admin-password');
+    const auth = (token: string) => ({
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    });
+
+    const submitted = await fetch(`${base}/enterprise/skills`, {
+      method: 'POST',
+      headers: auth(authorToken),
+      body: JSON.stringify({
+        name: '月报整理',
+        description: '根据工作日志生成月报。',
+        content: '# 月报整理\n\n先核对事实，再生成月报。',
+        visibility: 'department',
+      }),
+    });
+    expect(submitted.status).toBe(201);
+    const submittedBody = await submitted.json();
+    expect(submittedBody.skill).toMatchObject({ status: 'pending_review', department: '财务部' });
+    const skillId = submittedBody.skill.id as string;
+
+    const memberReview = await fetch(`${base}/enterprise/skills?scope=review`, { headers: auth(buyerToken) });
+    expect(memberReview.status).toBe(403);
+    const beforeReview = await fetch(`${base}/enterprise/skills`, { headers: auth(buyerToken) });
+    expect((await beforeReview.json()).skills).toEqual([]);
+
+    const reviewed = await fetch(`${base}/enterprise/skills/${skillId}/review`, {
+      method: 'POST',
+      headers: auth(adminToken),
+      body: JSON.stringify({ action: 'approve', visibility: 'department' }),
+    });
+    expect(reviewed.status).toBe(200);
+    const buyerMarket = await fetch(`${base}/enterprise/skills`, { headers: auth(buyerToken) });
+    expect((await buyerMarket.json()).skills).toHaveLength(1);
+    const outsiderMarket = await fetch(`${base}/enterprise/skills`, { headers: auth(outsiderToken) });
+    expect((await outsiderMarket.json()).skills).toEqual([]);
+
+    const install = await fetch(`${base}/enterprise/skills/${skillId}/install`, {
+      method: 'POST', headers: auth(buyerToken), body: '{}',
+    });
+    expect(install.status).toBe(200);
+    expect((await install.json()).skill).toMatchObject({
+      content: expect.stringContaining('先核对事实'),
+      installedVersion: 1,
+    });
+    const rated = await fetch(`${base}/enterprise/skills/${skillId}/rating`, {
+      method: 'POST', headers: auth(buyerToken), body: JSON.stringify({ score: 5 }),
+    });
+    expect(rated.status).toBe(200);
+    expect((await rated.json()).skill).toMatchObject({ rating: 5, ratingCount: 1 });
+
+    const usageEvent = 'b'.repeat(64);
+    for (const success of [true, true]) {
+      const usage = await fetch(`${base}/enterprise/skills/${skillId}/usage`, {
+        method: 'POST', headers: auth(buyerToken), body: JSON.stringify({ success, eventId: usageEvent }),
+      });
+      expect(usage.status).toBe(200);
+    }
+    const invalidUsage = await fetch(`${base}/enterprise/skills/${skillId}/usage`, {
+      method: 'POST', headers: auth(buyerToken), body: '{}',
+    });
+    expect(invalidUsage.status).toBe(400);
+
+    const leaderboard = await fetch(`${base}/enterprise/skills/leaderboard`, { headers: auth(buyerToken) });
+    expect(leaderboard.status).toBe(200);
+    expect((await leaderboard.json()).skills[0]).toMatchObject({
+      id: skillId, rank: 1, usageCount: 1, successCount: 1,
+    });
+
+    database.updateOrganizationFeatures(database.DEFAULT_ORGANIZATION_ID, { skill_market: false });
+    const disabledMarket = await fetch(`${base}/enterprise/skills`, { headers: auth(buyerToken) });
+    expect(disabledMarket.status).toBe(403);
   }, 30_000);
 });

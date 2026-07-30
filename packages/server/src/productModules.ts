@@ -12,6 +12,7 @@ export const ORGANIZATION_FEATURE_KEYS = [
   'direct_messages',
   'atoa',
   'knowledge',
+  'skill_market',
 ] as const;
 
 export type OrganizationFeatureKey = (typeof ORGANIZATION_FEATURE_KEYS)[number];
@@ -73,7 +74,7 @@ export const PRODUCT_MODULES = [
     nameZh: '个人智能中心',
     description: 'Owns personal memory, worklogs, habit learning and account-scoped restoration.',
     layer: 'business',
-    runtimeSurfaces: ['core', 'server', 'desktop'],
+    runtimeSurfaces: ['server', 'desktop'],
     dependencies: ['agent_runtime', 'identity_organization', 'data_platform'],
     dataOwnership: ['personal memory', 'worklogs', 'auto skills', 'account sync snapshots'],
     licenseCapabilities: [],
@@ -138,6 +139,19 @@ export const PRODUCT_MODULES = [
       { id: 'knowledge', features: ['knowledge'], legacyIds: ['enterprise_memory'] },
     ],
     updateComponents: ['enterprise_knowledge'],
+  },
+  {
+    id: 'enterprise_skill_market',
+    nameZh: '企业技能市场',
+    description: 'Owns governed skill sharing, review, installation, feedback and evidence-based rankings.',
+    layer: 'business',
+    runtimeSurfaces: ['core', 'server', 'desktop'],
+    dependencies: ['tool_skill_platform', 'identity_organization', 'authorization', 'data_platform'],
+    dataOwnership: ['shared skill manifests', 'skill versions', 'install records', 'ratings', 'usage evidence'],
+    licenseCapabilities: [
+      { id: 'skill_market', features: ['skill_market'] },
+    ],
+    updateComponents: ['enterprise_skill_market'],
   },
   {
     id: 'park_services',

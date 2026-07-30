@@ -917,7 +917,11 @@ function OttoWorkspaceApp({
               onBack={() => setMainView('chat')}
             />
           ) : mainView === 'skillzone' && edition === 'enterprise' ? (
-            <SkillZonePage onBack={() => setMainView('chat')} />
+            <SkillZonePage
+              accountId={account.id}
+              isAdmin={account.isAdmin}
+              onBack={() => setMainView('chat')}
+            />
           ) : (
             <ChatView
               session={activeSession}

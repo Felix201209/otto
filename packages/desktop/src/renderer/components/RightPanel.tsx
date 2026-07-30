@@ -161,6 +161,7 @@ export function RightPanel({
       || null
     : null;
   const [enterpriseKnowledgeEnabled, setEnterpriseKnowledgeEnabled] = useState(false);
+  const [enterpriseSkillMarketEnabled, setEnterpriseSkillMarketEnabled] = useState(false);
   const tabs = useMemo<TabType[]>(
     () => mode === 'enterprise'
       ? enterpriseKnowledgeEnabled
@@ -225,6 +226,7 @@ export function RightPanel({
   useEffect(() => {
     let cancelled = false;
     setEnterpriseKnowledgeEnabled(false);
+    setEnterpriseSkillMarketEnabled(false);
     setKnowledgeItems([]);
     setKnowledgeError('');
     setKnowledgeEditor(null);
@@ -232,10 +234,16 @@ export function RightPanel({
     if (!enterpriseOrganizationId) return () => { cancelled = true; };
     void getEnterpriseOrganizationFeatures(enterpriseOrganizationId, { force: true })
       .then((features) => {
-        if (!cancelled) setEnterpriseKnowledgeEnabled(features.knowledge);
+        if (!cancelled) {
+          setEnterpriseKnowledgeEnabled(features.knowledge);
+          setEnterpriseSkillMarketEnabled(features.skill_market);
+        }
       })
       .catch(() => {
-        if (!cancelled) setEnterpriseKnowledgeEnabled(false);
+        if (!cancelled) {
+          setEnterpriseKnowledgeEnabled(false);
+          setEnterpriseSkillMarketEnabled(false);
+        }
       });
     return () => { cancelled = true; };
   }, [enterpriseOrganizationId]);
@@ -1106,7 +1114,9 @@ export function RightPanel({
 
       {mode === 'enterprise' ? (
         <div className="otto-right-panel__bottom-actions">
-          <button type="button" className="otto-right-panel__skillzone" onClick={onOpenSkillZone}>Skill 专区</button>
+          {enterpriseSkillMarketEnabled ? (
+            <button type="button" className="otto-right-panel__skillzone" onClick={onOpenSkillZone}>Skill 专区</button>
+          ) : null}
           <button type="button" className="otto-right-panel__collab-toggle" onClick={() => setCollabOpen((value) => !value)} aria-expanded={collabOpen}>
             企业与好友 <IconChevronDown size={13} className={collabOpen ? '' : 'is-collapsed'} />
           </button>

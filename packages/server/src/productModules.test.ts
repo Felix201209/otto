@@ -46,6 +46,7 @@ describe('product module registry', () => {
       'direct_messages',
       'atoa',
       'knowledge',
+      'skill_market',
       'park_service',
       'feishu_auto_reply',
     ]);

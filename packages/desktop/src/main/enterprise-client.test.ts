@@ -1331,4 +1331,63 @@ describe('EnterpriseClient', () => {
       token: null,
     }]);
   });
+
+  it('通过受版本保护的企业 Skill 市场协议查询、投稿、安装、评分和读取榜单', async () => {
+    const marketHealth = {
+      ...API_V2_HEALTH,
+      capabilities: [...API_V2_HEALTH.capabilities, 'enterprise_skill_market_v1'],
+    };
+    const skill = {
+      id: 'skill-1', organizationId: 'org_acme', slug: 'monthly-report', name: '月报整理',
+      description: '整理月报', department: '财务部', visibility: 'department', status: 'active',
+      authorAccountId: 'author-1', authorName: '张悦', contentHash: 'hash', version: 1,
+      installCount: 1, usageCount: 2, successCount: 2, failureCount: 0,
+      rating: 5, ratingCount: 1, installedVersion: null,
+      reviewedBy: '管理员', reviewedAt: '2026-07-30', createdAt: '2026-07-30', updatedAt: '2026-07-30',
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, marketHealth))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT, token: 'session-token', expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, { skills: [skill] }))
+      .mockResolvedValueOnce(jsonResponse(201, { outcome: 'submitted', skill }))
+      .mockResolvedValueOnce(jsonResponse(200, { skill: { ...skill, content: '# 月报整理' } }))
+      .mockResolvedValueOnce(jsonResponse(200, { skill: { ...skill, rating: 4 } }))
+      .mockResolvedValueOnce(jsonResponse(200, { skill: { ...skill, usageCount: 3 } }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        skills: [{ ...skill, rank: 1, score: 90, successRate: 1 }], contributors: [], generatedAt: '2026-07-30',
+      }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
+
+    await expect(client.listEnterpriseSkills({ scope: 'department', query: '月报', sort: 'rating' }))
+      .resolves.toEqual([skill]);
+    await client.submitEnterpriseSkill({
+      name: '月报整理', description: '整理月报', content: '# 月报整理', visibility: 'department',
+    });
+    await client.installEnterpriseSkill('skill-1');
+    await client.rateEnterpriseSkill('skill-1', 4);
+    await client.recordEnterpriseSkillUsage('skill-1', true, 'a'.repeat(64));
+    await expect(client.getEnterpriseSkillLeaderboard()).resolves.toMatchObject({
+      skills: [expect.objectContaining({ id: 'skill-1', rank: 1 })],
+    });
+
+    expect(fetchMock.mock.calls.slice(2).map(([url]) => url)).toEqual([
+      'https://enterprise.otto.test/enterprise/skills?scope=department&q=%E6%9C%88%E6%8A%A5&sort=rating',
+      'https://enterprise.otto.test/enterprise/skills',
+      'https://enterprise.otto.test/enterprise/skills/skill-1/install',
+      'https://enterprise.otto.test/enterprise/skills/skill-1/rating',
+      'https://enterprise.otto.test/enterprise/skills/skill-1/usage',
+      'https://enterprise.otto.test/enterprise/skills/leaderboard',
+    ]);
+    expect(JSON.parse((fetchMock.mock.calls[3]?.[1] as RequestInit).body as string)).toMatchObject({
+      name: '月报整理', visibility: 'department',
+    });
+    expect(JSON.parse((fetchMock.mock.calls[5]?.[1] as RequestInit).body as string)).toEqual({ score: 4 });
+    expect(JSON.parse((fetchMock.mock.calls[6]?.[1] as RequestInit).body as string)).toEqual({
+      success: true,
+      eventId: 'a'.repeat(64),
+    });
+  });
 });

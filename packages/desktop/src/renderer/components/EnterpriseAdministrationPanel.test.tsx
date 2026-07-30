@@ -41,6 +41,7 @@ const features: EnterpriseOrganizationFeatures = {
   direct_messages: false,
   atoa: false,
   knowledge: false,
+  skill_market: false,
 };
 
 const park: EnterprisePark = {

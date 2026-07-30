@@ -24,6 +24,7 @@ const FEATURE_LABELS: Array<[keyof EnterpriseOrganizationFeatures, string]> = [
   ['direct_messages', '企业内部消息'],
   ['atoa', 'Otto 间协作'],
   ['knowledge', '企业知识库'],
+  ['skill_market', '企业 Skill 市场'],
 ];
 
 const ROLE_LABEL: Record<EnterprisePositionRoleMapping, string> = {
