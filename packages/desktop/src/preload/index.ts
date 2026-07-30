@@ -742,6 +742,8 @@ const IPC = {
   endpointChanged: 'otto:endpoint-changed',
   openExternal: 'otto:open-external',
   openPath: 'otto:open-path',
+  inspectLocalPath: 'otto:inspect-local-path',
+  activateLocalPath: 'otto:activate-local-path',
   selectFiles: 'otto:select-files',
   grantBrowserFile: 'otto:grant-browser-file',
   authorizeMessageFiles: 'otto:authorize-message-files',
@@ -895,6 +897,17 @@ export interface OttoBridge {
   openExternal(url: string): Promise<void>;
   /** host-only 命令：用系统默认程序打开本地路径。 */
   openPath(path: string): Promise<void>;
+  /** 检查回答中出现的本地绝对路径；主进程仅返回当前用户目录内的真实文件。 */
+  inspectLocalPath(path: string): Promise<{
+    exists: boolean;
+    kind: 'file' | 'directory' | 'missing';
+    canOpen: boolean;
+  }>;
+  /** 安全打开回答里的输出文件，或在系统文件管理器中定位。 */
+  activateLocalPath(
+    path: string,
+    action: 'open' | 'reveal',
+  ): Promise<{ ok: boolean; error?: string }>;
   /**
    * 原生文件选择器：打开系统文件对话框，返回完整路径数组。
    * 用户主动授权选择，不受浏览器沙箱限制。
@@ -1493,6 +1506,28 @@ const bridge: OttoBridge = {
 
   openPath(path: string): Promise<void> {
     return ipcRenderer.invoke(IPC.openPath, path) as Promise<void>;
+  },
+
+  inspectLocalPath(path: string): Promise<{
+    exists: boolean;
+    kind: 'file' | 'directory' | 'missing';
+    canOpen: boolean;
+  }> {
+    return ipcRenderer.invoke(IPC.inspectLocalPath, path) as Promise<{
+      exists: boolean;
+      kind: 'file' | 'directory' | 'missing';
+      canOpen: boolean;
+    }>;
+  },
+
+  activateLocalPath(
+    path: string,
+    action: 'open' | 'reveal',
+  ): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke(IPC.activateLocalPath, path, action) as Promise<{
+      ok: boolean;
+      error?: string;
+    }>;
   },
 
   selectFiles(): Promise<string[]> {

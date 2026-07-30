@@ -1049,6 +1049,52 @@ h6.otto-prose__h {
   padding: 1px 5px;
   border-radius: 5px;
 }
+.otto-local-path {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  max-width: 100%;
+  gap: 4px;
+  vertical-align: middle;
+}
+.otto-local-path > code {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.otto-local-path__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.otto-local-path__button {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--otto-border);
+  border-radius: 6px;
+  color: var(--otto-text-secondary);
+  background: var(--otto-surface);
+  cursor: pointer;
+}
+.otto-local-path__button:hover:not(:disabled) {
+  color: var(--otto-accent);
+  border-color: color-mix(in srgb, var(--otto-accent) 55%, var(--otto-border));
+  background: var(--otto-surface-raised);
+}
+.otto-local-path__button:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+.otto-local-path__button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+.otto-local-path__error {
+  color: var(--otto-danger);
+  font-size: 10px;
+}
 /* —— 正文行内链接（[文本](url) / 裸 URL）：amber 强调 + 下划线，点击走系统浏览器 —— */
 .otto-prose__link {
   color: var(--otto-accent);

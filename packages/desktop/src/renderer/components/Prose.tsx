@@ -19,7 +19,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import type { MessageContentPart } from 'otto-server';
-import { IconCopy, IconCheck } from './icons.js';
+import { IconCopy, IconCheck, IconExternalLink, IconFolder } from './icons.js';
 
 /** 把内容片段折叠为纯文本（非 text 片段给出可读占位）。 */
 export function contentToText(content: MessageContentPart[]): string {
@@ -251,6 +251,102 @@ function parseBlocks(value: string): Block[] {
 const INLINE =
   /(`[^`\n]+`)|\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>()[\]，。！？；：、）】》「」""'']+)|(\*\*[^*\n]+\*\*)|(\*[^*\n]+\*)|(\b_[^_\n]+_\b)/g;
 
+/** 只把明确的本机绝对路径识别为输出文件，避免把命令和普通代码变成按钮。 */
+export function normalizeLocalOutputPath(value: string): string | null {
+  let candidate = value.trim();
+  if (
+    candidate.length >= 2 &&
+    ((candidate.startsWith('"') && candidate.endsWith('"')) ||
+      (candidate.startsWith("'") && candidate.endsWith("'")))
+  ) {
+    candidate = candidate.slice(1, -1).trim();
+  }
+  if (/^[a-zA-Z]:[\\/][^\r\n]+$/u.test(candidate)) return candidate;
+  if (/^\\\\[^\\/\s]+[\\/][^\r\n]+$/u.test(candidate)) return candidate;
+  if (/^\/(?:Users|home|tmp|var\/tmp|Volumes)\/[^\r\n]+$/u.test(candidate)) return candidate;
+  return null;
+}
+
+function LocalOutputPath({ value }: { value: string }): React.JSX.Element {
+  const [info, setInfo] = useState<{
+    exists: boolean;
+    kind: 'file' | 'directory' | 'missing';
+    canOpen: boolean;
+  } | null>(null);
+  const [busy, setBusy] = useState<'open' | 'reveal' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const inspect = window.otto?.inspectLocalPath;
+    if (!inspect) {
+      return () => {
+        active = false;
+      };
+    }
+    void inspect(value)
+      .then((result) => {
+        if (active) setInfo(result);
+      })
+      .catch(() => {
+        if (active) setInfo(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [value]);
+
+  const activate = async (action: 'open' | 'reveal'): Promise<void> => {
+    setBusy(action);
+    setError(null);
+    try {
+      const result = await window.otto.activateLocalPath(value, action);
+      if (!result.ok) setError(result.error ?? '无法打开该路径');
+    } catch {
+      setError('无法打开该路径');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (!info?.exists) return <code>{value}</code>;
+  const targetName = info.kind === 'directory' ? '文件夹' : '文件';
+  return (
+    <span className="otto-local-path">
+      <code title={value}>{value}</code>
+      <span className="otto-local-path__actions">
+        {info.canOpen ? (
+          <button
+            type="button"
+            className="otto-local-path__button"
+            title={`打开${targetName}`}
+            aria-label={`打开${targetName}`}
+            disabled={busy !== null}
+            onClick={() => void activate('open')}
+          >
+            <IconExternalLink size={13} />
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="otto-local-path__button"
+          title="在文件夹中显示"
+          aria-label="在文件夹中显示"
+          disabled={busy !== null}
+          onClick={() => void activate('reveal')}
+        >
+          <IconFolder size={13} />
+        </button>
+      </span>
+      {error ? (
+        <span className="otto-local-path__error" role="status" title={error}>
+          打开失败
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 /** 外链点击：阻止 app 内导航，改用系统浏览器打开（openExternal 已由 preload 暴露）。 */
 function onExternalLink(
   e: React.MouseEvent<HTMLAnchorElement>,
@@ -261,6 +357,10 @@ function onExternalLink(
 }
 
 function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
+  const wholeLocalPath = normalizeLocalOutputPath(text);
+  if (wholeLocalPath) {
+    return [<LocalOutputPath key={`${keyPrefix}-path`} value={wholeLocalPath} />];
+  }
   const nodes: React.ReactNode[] = [];
   let last = 0;
   let m: RegExpExecArray | null;
@@ -269,8 +369,14 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
   while ((m = INLINE.exec(text)) !== null) {
     if (m.index > last) nodes.push(text.slice(last, m.index));
     if (m[1]) {
+      const value = m[1].slice(1, -1);
+      const localPath = normalizeLocalOutputPath(value);
       nodes.push(
-        <code key={`${keyPrefix}-c-${key++}`}>{m[1].slice(1, -1)}</code>,
+        localPath ? (
+          <LocalOutputPath key={`${keyPrefix}-p-${key++}`} value={localPath} />
+        ) : (
+          <code key={`${keyPrefix}-c-${key++}`}>{value}</code>
+        ),
       );
     } else if (m[2] !== undefined && m[3] !== undefined) {
       // [文本](url)：显示文本、跳目标 url。

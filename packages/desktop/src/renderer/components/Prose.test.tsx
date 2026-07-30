@@ -7,8 +7,8 @@
 /** Prose 轻量 Markdown 渲染单测：围栏代码块 / 行内代码 / 加粗 / 流式未闭合。 */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, fireEvent } from '@testing-library/react';
-import { Prose, contentToText } from './Prose.js';
+import { render, fireEvent, waitFor } from '@testing-library/react';
+import { Prose, contentToText, normalizeLocalOutputPath } from './Prose.js';
 
 describe('Prose 轻量 Markdown', () => {
   it('围栏代码块 → <pre> + 语言标签 + 复制按钮，前后正文分离', () => {
@@ -30,6 +30,77 @@ describe('Prose 轻量 Markdown', () => {
     // 无代码块时的 <code> 即行内代码
     expect(container.querySelector('code')?.textContent).toBe('npm i');
     expect(container.querySelector('strong')?.textContent).toBe('重要');
+  });
+
+  it('识别 Windows、macOS 和 Linux 的绝对输出路径，不误判普通命令', () => {
+    expect(normalizeLocalOutputPath('C:\\Users\\wg\\Desktop\\报告.docx')).toBe(
+      'C:\\Users\\wg\\Desktop\\报告.docx',
+    );
+    expect(normalizeLocalOutputPath('/Users/otto/Desktop/report.pdf')).toBe(
+      '/Users/otto/Desktop/report.pdf',
+    );
+    expect(normalizeLocalOutputPath('/home/otto/report.xlsx')).toBe(
+      '/home/otto/report.xlsx',
+    );
+    expect(normalizeLocalOutputPath('npm install')).toBeNull();
+    expect(normalizeLocalOutputPath('energy-manager-plugin.js')).toBeNull();
+  });
+
+  it('存在的输出文件提供直接打开与文件夹定位操作', async () => {
+    const inspectLocalPath = vi.fn(async () => ({
+      exists: true,
+      kind: 'file' as const,
+      canOpen: true,
+    }));
+    const activateLocalPath = vi.fn(async () => ({ ok: true }));
+    (window as unknown as { otto: unknown }).otto = {
+      inspectLocalPath,
+      activateLocalPath,
+    };
+    const outputPath = 'C:\\Users\\wg\\Desktop\\报告.docx';
+    const { getByRole } = render(<Prose text={`已保存到 \`${outputPath}\``} />);
+
+    await waitFor(() => expect(getByRole('button', { name: '打开文件' })).toBeTruthy());
+    fireEvent.click(getByRole('button', { name: '打开文件' }));
+    await waitFor(() => expect(activateLocalPath).toHaveBeenCalledWith(outputPath, 'open'));
+    fireEvent.click(getByRole('button', { name: '在文件夹中显示' }));
+    await waitFor(() => expect(activateLocalPath).toHaveBeenCalledWith(outputPath, 'reveal'));
+  });
+
+  it('危险扩展名只允许定位，不显示直接打开按钮', async () => {
+    const inspectLocalPath = vi.fn(async () => ({
+      exists: true,
+      kind: 'file' as const,
+      canOpen: false,
+    }));
+    (window as unknown as { otto: unknown }).otto = {
+      inspectLocalPath,
+      activateLocalPath: vi.fn(async () => ({ ok: true })),
+    };
+    const { queryByRole, getByRole } = render(
+      <Prose text={'`C:\\Users\\wg\\Desktop\\unknown.exe`'} />,
+    );
+
+    await waitFor(() => expect(getByRole('button', { name: '在文件夹中显示' })).toBeTruthy());
+    expect(queryByRole('button', { name: '打开文件' })).toBeNull();
+  });
+
+  it('表格单元格直接写绝对路径时也提供直达操作', async () => {
+    const inspectLocalPath = vi.fn(async () => ({
+      exists: true,
+      kind: 'file' as const,
+      canOpen: true,
+    }));
+    (window as unknown as { otto: unknown }).otto = {
+      inspectLocalPath,
+      activateLocalPath: vi.fn(async () => ({ ok: true })),
+    };
+    const path = 'C:\\Users\\wg\\Desktop\\使用文档.md';
+    const markdown = `| 项目 | 位置 |\n| --- | --- |\n| 使用文档 | ${path} |`;
+    const { getByRole } = render(<Prose text={markdown} />);
+
+    await waitFor(() => expect(getByRole('button', { name: '打开文件' })).toBeTruthy());
+    expect(inspectLocalPath).toHaveBeenCalledWith(path);
   });
 
   it('GFM 表格 → <table> + thead/tbody + 列对齐', () => {

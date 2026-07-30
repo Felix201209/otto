@@ -103,6 +103,15 @@ export function IconFile({ size, className }: IconProps): React.JSX.Element {
   );
 }
 
+/** 文件夹：用于在系统文件管理器中定位输出文件。 */
+export function IconFolder({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M3 6.5A2.5 2.5 0 0 1 5.5 4H9l2 2h7.5A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5Z" />
+    </svg>
+  );
+}
+
 /** 终端运行卡。 */
 export function IconTerminal({ size, className }: IconProps): React.JSX.Element {
   return (

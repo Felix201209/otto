@@ -305,6 +305,8 @@ const IPC = {
   endpointChanged: 'otto:endpoint-changed',
   openExternal: 'otto:open-external',
   openPath: 'otto:open-path',
+  inspectLocalPath: 'otto:inspect-local-path',
+  activateLocalPath: 'otto:activate-local-path',
   selectFiles: 'otto:select-files',
   grantBrowserFile: 'otto:grant-browser-file',
   authorizeMessageFiles: 'otto:authorize-message-files',
@@ -2757,24 +2759,69 @@ function registerIpc(): void {
     return incrementalUpdateService.applyUpdate(input.kind, input.id);
   });
 
-  ipcMain.handle(IPC.openPath, (_e, p: unknown) => {
-    // 仅允许打开用户 home 目录内的绝对路径（防越界打开 /etc/passwd 等敏感文件，code review LOW）。
-    // realpath 解析符号链接后再比较前缀，防 home 内 symlink 指向外部绕过；
-    // 目标不存在（realpath 抛 ENOENT）时直接拒绝。
-    if (typeof p === 'string' && p.length > 0 && path.isAbsolute(p)) {
-      let home: string;
-      let resolved: string;
-      try {
-        home = fs.realpathSync(app.getPath('home'));
-        resolved = fs.realpathSync(path.resolve(p));
-      } catch {
-        return Promise.resolve('');
-      }
-      if (resolved === home || resolved.startsWith(home + path.sep)) {
-        return shell.openPath(resolved);
-      }
+  const resolveUserLocalPath = (candidate: unknown): string | null => {
+    // 仅允许当前用户 home 内已存在的绝对路径。realpath 同时阻止符号链接越界。
+    if (typeof candidate !== 'string' || candidate.length === 0 || !path.isAbsolute(candidate)) {
+      return null;
     }
-    return Promise.resolve('');
+    try {
+      const home = fs.realpathSync(app.getPath('home'));
+      const resolved = fs.realpathSync(path.resolve(candidate));
+      return resolved === home || resolved.startsWith(home + path.sep) ? resolved : null;
+    } catch {
+      return null;
+    }
+  };
+  const unsafeOutputExtensions = new Set([
+    '.app', '.bat', '.cjs', '.cmd', '.com', '.command', '.desktop', '.exe', '.hta',
+    '.jar', '.js', '.jse', '.lnk', '.mjs', '.msi', '.ps1', '.reg', '.scr', '.sh',
+    '.url', '.vbe', '.vbs', '.wsf', '.wsh',
+  ]);
+  const inspectUserLocalPath = (candidate: unknown): {
+    resolved: string | null;
+    exists: boolean;
+    kind: 'file' | 'directory' | 'missing';
+    canOpen: boolean;
+  } => {
+    const resolved = resolveUserLocalPath(candidate);
+    if (!resolved) {
+      return { resolved: null, exists: false, kind: 'missing', canOpen: false };
+    }
+    try {
+      const stat = fs.statSync(resolved);
+      const kind = stat.isDirectory() ? 'directory' : stat.isFile() ? 'file' : 'missing';
+      const exists = kind !== 'missing';
+      const extension = path.extname(resolved).toLowerCase();
+      const canOpen = exists && (kind === 'directory' || !unsafeOutputExtensions.has(extension));
+      return { resolved, exists, kind, canOpen };
+    } catch {
+      return { resolved: null, exists: false, kind: 'missing', canOpen: false };
+    }
+  };
+
+  ipcMain.handle(IPC.openPath, (_e, p: unknown) => {
+    const resolved = resolveUserLocalPath(p);
+    return resolved ? shell.openPath(resolved) : Promise.resolve('');
+  });
+  ipcMain.handle(IPC.inspectLocalPath, (_e, p: unknown) => {
+    const { exists, kind, canOpen } = inspectUserLocalPath(p);
+    return { exists, kind, canOpen };
+  });
+  ipcMain.handle(IPC.activateLocalPath, async (_e, p: unknown, action: unknown) => {
+    const inspected = inspectUserLocalPath(p);
+    if (!inspected.resolved || !inspected.exists) {
+      return { ok: false, error: '文件不存在，或不在当前用户目录内。' };
+    }
+    if (action === 'reveal') {
+      shell.showItemInFolder(inspected.resolved);
+      return { ok: true };
+    }
+    if (action !== 'open') return { ok: false, error: '不支持的文件操作。' };
+    if (!inspected.canOpen) {
+      return { ok: false, error: '为安全起见，可执行文件只能在文件夹中定位。' };
+    }
+    const error = await shell.openPath(inspected.resolved);
+    return error ? { ok: false, error } : { ok: true };
   });
 
   // 导出会话（对齐 CLI /export）：原生保存对话框 + 写文件。取消返回 null，
