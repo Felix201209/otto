@@ -924,7 +924,13 @@ export type {
 export const {
   addKnowledge,
   getKnowledge,
+  getKnowledgeForAdministration,
+  getKnowledgeForBackup,
+  getKnowledgeRevisions,
   getMemberKnowledge,
+  reviewKnowledge,
+  reviseKnowledge,
+  saveKnowledge,
   searchKnowledge,
 } = createEnterpriseKnowledgeComposition({
   db: getDB,
@@ -947,7 +953,7 @@ const enterpriseBackup = dataPlatform.createBackup({
   listTaskLogs: (organizationId) =>
     listWorklogsForBackup(organizationId),
   listKnowledge: (organizationId) =>
-    getKnowledge(undefined, undefined, organizationId),
+    getKnowledgeForBackup(organizationId),
   listInviteCodes: (organizationId) =>
     listDepartmentInvitesForBackup(backupDatabaseStore, organizationId),
   listAuditLogs: (organizationId) => getAuditLogs(200, organizationId),

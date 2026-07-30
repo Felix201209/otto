@@ -8061,13 +8061,51 @@ h6.otto-prose__h {
 .otto-worklog-panel__head strong { font-size: 11px; color: var(--otto-text); }
 .otto-worklog-panel__head span { font-size: 8.5px; color: var(--otto-text-tertiary); }
 .otto-worklog-panel__head button { border: 0; background: transparent; color: var(--otto-accent); font-size: 9px; cursor: pointer; }
+.otto-enterprise-memory-head-actions { display: flex; align-items: center; gap: 6px; }
 .otto-enterprise-memory-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 .otto-enterprise-memory-card { border: 1px solid var(--otto-border); border-radius: var(--otto-radius-sm); background: var(--otto-surface); padding: 10px; }
 .otto-enterprise-memory-card__meta,
 .otto-enterprise-memory-card__foot { display: flex; flex-wrap: wrap; gap: 6px; color: var(--otto-text-tertiary); font-size: 9px; }
-.otto-enterprise-memory-card__meta span { border: 1px solid var(--otto-border); border-radius: 999px; padding: 2px 6px; background: var(--otto-bg); }
+.otto-enterprise-memory-card__meta span { border: 1px solid var(--otto-border); border-radius: 4px; padding: 2px 6px; background: var(--otto-bg); }
+.otto-enterprise-memory-card__title { display: block; margin-top: 8px; color: var(--otto-text); font-size: 11px; line-height: 1.4; }
 .otto-enterprise-memory-card p { margin: 8px 0; color: var(--otto-text); font-size: 11px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.otto-enterprise-memory-card__source { margin: -2px 0 8px; color: var(--otto-text-tertiary); font-size: 8.5px; line-height: 1.4; overflow-wrap: anywhere; }
 .otto-enterprise-memory-card__foot { justify-content: space-between; }
+.otto-enterprise-memory-search { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; margin-top: 10px; }
+.otto-enterprise-memory-search input { min-width: 0; height: 30px; border: 1px solid var(--otto-border); border-radius: 6px; background: var(--otto-bg); color: var(--otto-text); padding: 0 9px; font: inherit; font-size: 10px; outline: none; }
+.otto-enterprise-memory-search input:focus { border-color: var(--otto-accent); }
+.otto-enterprise-memory-editor { display: grid; gap: 7px; margin-top: 8px; border: 1px solid var(--otto-border); border-radius: 6px; background: var(--otto-surface); padding: 9px; }
+.otto-enterprise-memory-editor input,
+.otto-enterprise-memory-editor textarea { width: 100%; min-width: 0; box-sizing: border-box; border: 1px solid var(--otto-border); border-radius: 5px; background: var(--otto-bg); color: var(--otto-text); padding: 7px 8px; font: inherit; font-size: 10px; line-height: 1.45; outline: none; resize: vertical; }
+.otto-enterprise-memory-editor input:focus,
+.otto-enterprise-memory-editor textarea:focus { border-color: var(--otto-accent); }
+.otto-enterprise-memory-editor > div { display: flex; justify-content: flex-end; gap: 6px; }
+.otto-enterprise-memory-editor button { min-height: 28px; border: 1px solid var(--otto-border); border-radius: 6px; background: var(--otto-surface); color: var(--otto-text); padding: 0 9px; font-size: 9px; cursor: pointer; }
+.otto-enterprise-memory-editor button[type='submit'] { border-color: var(--otto-accent); background: var(--otto-accent); color: #06202a; }
+.otto-enterprise-memory-search button,
+.otto-enterprise-memory-card__actions button,
+.otto-enterprise-memory-candidate button { min-height: 28px; border: 1px solid var(--otto-border); border-radius: 6px; background: var(--otto-surface); color: var(--otto-text); padding: 0 9px; font-size: 9px; cursor: pointer; }
+.otto-enterprise-memory-search button:hover,
+.otto-enterprise-memory-card__actions button:hover,
+.otto-enterprise-memory-candidate button:hover { border-color: var(--otto-accent); color: var(--otto-accent); }
+.otto-enterprise-memory-search button:disabled,
+.otto-enterprise-memory-card__actions button:disabled,
+.otto-enterprise-memory-candidate button:disabled { cursor: default; opacity: .55; }
+.otto-enterprise-memory-notice { margin-top: 8px; border-left: 3px solid var(--otto-accent); background: color-mix(in srgb, var(--otto-accent) 9%, var(--otto-surface)); color: var(--otto-text-secondary); padding: 7px 8px; font-size: 9px; line-height: 1.45; }
+.otto-enterprise-memory-candidates { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; border-top: 1px solid var(--otto-border); border-bottom: 1px solid var(--otto-border); padding: 9px 0; }
+.otto-enterprise-memory-candidates > div:first-child { display: flex; flex-direction: column; gap: 2px; }
+.otto-enterprise-memory-candidates > div:first-child strong { color: var(--otto-text); font-size: 10px; }
+.otto-enterprise-memory-candidates > div:first-child span { color: var(--otto-text-tertiary); font-size: 8.5px; line-height: 1.4; }
+.otto-enterprise-memory-candidate { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.otto-enterprise-memory-candidate > span { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
+.otto-enterprise-memory-candidate strong { overflow: hidden; color: var(--otto-text); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+.otto-enterprise-memory-candidate small { color: var(--otto-text-tertiary); font-size: 8px; }
+.otto-enterprise-memory-card__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--otto-border); }
+.otto-enterprise-memory-revisions { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; border-top: 1px solid var(--otto-border); padding-top: 8px; }
+.otto-enterprise-memory-revisions > div { border-left: 2px solid var(--otto-border-strong); padding-left: 7px; }
+.otto-enterprise-memory-revisions span { display: block; color: var(--otto-text-tertiary); font-size: 8px; }
+.otto-enterprise-memory-revisions strong { display: block; margin-top: 2px; color: var(--otto-text-secondary); font-size: 9px; }
+.otto-enterprise-memory-revisions p { display: -webkit-box; margin: 3px 0 0; overflow: hidden; color: var(--otto-text-secondary); font-size: 9px; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .otto-worklog-panel__hero { padding: 12px; border-radius: 12px; background: linear-gradient(145deg, color-mix(in srgb, var(--otto-accent) 16%, var(--otto-surface)), var(--otto-surface)); border: 1px solid color-mix(in srgb, var(--otto-accent) 28%, var(--otto-border)); }
 .otto-worklog-panel__hero > div { display: flex; align-items: baseline; gap: 5px; }
 .otto-worklog-panel__hero strong { color: var(--otto-accent); font-size: 26px; line-height: 1; }

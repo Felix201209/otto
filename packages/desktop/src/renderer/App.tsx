@@ -73,6 +73,7 @@ import type {
 } from './enterpriseAtoaCoordinator.js';
 import { processEnterpriseAtoaRequest } from './enterpriseAtoaCoordinator.js';
 import { collectAuthorizedAtoaContext } from './a2aContext.js';
+import { buildEnterpriseKnowledgePromptContext } from './enterpriseKnowledgePromptContext.js';
 import { AtoaConsultDialog } from './components/AtoaConsultDialog.js';
 import { executeEnterpriseCollaborationRelay } from './enterpriseCollaborationRelay.js';
 import {
@@ -682,7 +683,24 @@ function OttoWorkspaceApp({
     source: MessageSource,
     attachments?: Attachment[],
   ): void => {
-    actions.sendMessage(text, source, attachments);
+    const sendWithEnterpriseKnowledge = async (): Promise<void> => {
+      let authorizedContext = '';
+      if (edition === 'enterprise' && text.trim()) {
+        try {
+          const knowledge = await Promise.race([
+            window.otto.enterpriseKnowledgeList({ query: text.trim() }),
+            new Promise<never>((_, reject) => {
+              window.setTimeout(() => reject(new Error('enterprise knowledge lookup timeout')), 1_200);
+            }),
+          ]);
+          authorizedContext = buildEnterpriseKnowledgePromptContext(knowledge);
+        } catch {
+          // Knowledge retrieval must improve the answer without blocking the conversation.
+        }
+      }
+      actions.sendMessage(text, source, attachments, undefined, authorizedContext);
+    };
+    void sendWithEnterpriseKnowledge();
   };
 
   // 新建对话：若已存在一个「无消息的空会话」，直接复用（选中它）而非再建一个，

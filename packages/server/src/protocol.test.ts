@@ -70,6 +70,42 @@ describe('validateClientPayload 形状校验（第二道闸）', () => {
     ).toBeNull();
   });
 
+  it('accepts bounded authorized enterprise context and rejects forged oversized payloads', () => {
+    expect(
+      validateClientPayload({
+        type: 'send_user_message',
+        payload: {
+          sessionId: 's1',
+          content: [{ type: 'text', value: 'hi' }],
+          source: 'local',
+          authorizedContext: '[企业知识#1] 已审核流程',
+        },
+      }),
+    ).toBeNull();
+    expect(
+      validateClientPayload({
+        type: 'send_user_message',
+        payload: {
+          sessionId: 's1',
+          content: [{ type: 'text', value: 'hi' }],
+          source: 'local',
+          authorizedContext: 'x'.repeat(12_001),
+        },
+      }),
+    ).toContain('authorizedContext');
+    expect(
+      validateClientPayload({
+        type: 'send_user_message',
+        payload: {
+          sessionId: 's1',
+          content: [{ type: 'text', value: 'hi' }],
+          source: 'local',
+          authorizedContext: { content: 'not a string' },
+        },
+      }),
+    ).toContain('authorizedContext');
+  });
+
   it('客户端不得伪造 feishu 来源（飞书消息只允许由服务端适配器注入）', () => {
     expect(
       validateClientPayload({

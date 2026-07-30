@@ -490,18 +490,88 @@ describe('EnterpriseClient', () => {
       id: 'k1',
       organizationId: 'org_acme',
       sourceId: 'kb_123',
+      title: 'solution',
       department: '研发部',
       category: 'solution',
       content: '合同审查先核对违约条款。',
       contributor: '员工一号',
       confidence: 0.9,
+      sourceType: 'manual',
+      sourceLabel: null,
+      status: 'active',
+      version: 1,
+      reviewedBy: null,
+      reviewedAt: null,
       createdAt: '2026-07-20T04:00:00.000Z',
+      updatedAt: '2026-07-20T04:00:00.000Z',
     }]);
 
     expect(fetchMock.mock.calls[2]?.[0]).toBe('https://enterprise.otto.test/enterprise/knowledge?q=%E5%90%88%E5%90%8C&department=%E7%A0%94%E5%8F%91%E9%83%A8');
     const init = fetchMock.mock.calls[2]?.[1] as RequestInit;
     expect(init.method).toBe('GET');
     expect(init.headers).toMatchObject({ authorization: 'Bearer session-token' });
+  });
+
+  it('企业管理员可修订知识并读取版本历史', async () => {
+    const knowledgeRow = {
+      id: 12,
+      organization_id: 'org_acme',
+      source_id: 'manual-12',
+      title: '交付检查',
+      department: null,
+      category: '流程',
+      content: '检查备份、监控和回滚。',
+      contributor: '管理员',
+      confidence: 0.95,
+      source_type: 'manual',
+      status: 'active',
+      version: 3,
+      created_at: '2026-07-20T04:00:00.000Z',
+      updated_at: '2026-07-21T04:00:00.000Z',
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT, token: 'session-token', expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, { knowledge: knowledgeRow }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        revisions: [{
+          id: 31,
+          knowledge_id: 12,
+          version: 2,
+          title: '交付检查',
+          category: '流程',
+          content: '检查备份和监控。',
+          status: 'active',
+          changed_by: '管理员',
+          change_note: '补充监控',
+          created_at: '2026-07-20T05:00:00.000Z',
+        }],
+      }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
+
+    await expect(client.reviseKnowledge('12', {
+      title: '交付检查',
+      category: '流程',
+      content: '检查备份、监控和回滚。',
+      changeNote: '补充回滚',
+    })).resolves.toMatchObject({ id: '12', version: 3, content: knowledgeRow.content });
+    expect(fetchMock.mock.calls[2]?.[0])
+      .toBe('https://enterprise.otto.test/enterprise/knowledge/12');
+    expect(fetchMock.mock.calls[2]?.[1]).toMatchObject({ method: 'PATCH' });
+
+    await expect(client.listKnowledgeRevisions('12')).resolves.toEqual([
+      expect.objectContaining({
+        id: '31',
+        knowledgeId: '12',
+        version: 2,
+        changeNote: '补充监控',
+      }),
+    ]);
+    expect(fetchMock.mock.calls[3]?.[0])
+      .toBe('https://enterprise.otto.test/enterprise/knowledge/12/revisions');
   });
 
   it('登录成员通过 main 内的会话令牌读取完整组织架构', async () => {

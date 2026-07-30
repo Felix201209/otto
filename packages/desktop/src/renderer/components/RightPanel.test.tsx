@@ -66,7 +66,16 @@ function installBridge(
     format: 'docx' as const,
     message: '已保存编辑稿：enterprise-summary.edited.docx',
   }));
-  const enterpriseKnowledgeList = vi.fn(async () => []);
+  const enterpriseKnowledgeList = vi.fn(async (): Promise<unknown[]> => []);
+  const enterpriseKnowledgeRecord = vi.fn(async () => ({
+    status: 'added' as const,
+    added: true,
+    reviewStatus: 'active' as const,
+    knowledgeId: 1,
+  }));
+  const enterpriseKnowledgeReview = vi.fn(async () => ({}));
+  const enterpriseKnowledgeRevise = vi.fn(async () => ({}));
+  const enterpriseKnowledgeRevisions = vi.fn(async (): Promise<unknown[]> => []);
   const enterpriseOrganizationFeaturesGet = vi.fn(async () => ({
     enterprise_tree: true,
     park_service: true,
@@ -93,6 +102,10 @@ function installBridge(
       workResults: 0,
     }),
     enterpriseKnowledgeList,
+    enterpriseKnowledgeRecord,
+    enterpriseKnowledgeReview,
+    enterpriseKnowledgeRevise,
+    enterpriseKnowledgeRevisions,
     enterpriseOrganizationFeaturesGet,
     workLogReport,
     openPath,
@@ -111,6 +124,10 @@ function installBridge(
     exportEditedDocument,
     workLogReport,
     enterpriseKnowledgeList,
+    enterpriseKnowledgeRecord,
+    enterpriseKnowledgeReview,
+    enterpriseKnowledgeRevise,
+    enterpriseKnowledgeRevisions,
     enterpriseOrganizationFeaturesGet,
   };
 }
@@ -602,6 +619,95 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(screen.getByText('solution')).toBeTruthy();
     expect(screen.getByText('86%')).toBeTruthy();
     expect(screen.getByText('Felix')).toBeTruthy();
+  });
+
+  it('lets enterprise admins publish a curated knowledge entry from the panel', async () => {
+    const bridge = installBridge([], true);
+    render(
+      <RightPanel
+        busy={false}
+        mode="enterprise"
+        enterpriseRole="company_admin"
+        workspace={enterpriseWorkspace()}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('tab', { name: '企业记忆' }));
+    fireEvent.click(await screen.findByRole('button', { name: '新增' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '知识标题' }), {
+      target: { value: '客户交付检查' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: '知识分类' }), {
+      target: { value: '交付流程' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: '知识内容' }), {
+      target: { value: '上线前检查备份、监控和回滚方案。' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发布知识' }));
+
+    await waitFor(() => expect(bridge.enterpriseKnowledgeRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: '客户交付检查',
+        category: '交付流程',
+        content: '上线前检查备份、监控和回滚方案。',
+        sourceType: 'manual',
+      }),
+    ));
+    expect(await screen.findByText('企业知识已发布。')).toBeTruthy();
+  });
+
+  it('lets enterprise admins revise knowledge and inspect its audit history', async () => {
+    const bridge = installBridge([], true);
+    bridge.enterpriseKnowledgeList.mockResolvedValue([{
+      id: '12',
+      organizationId: 'org-1',
+      sourceId: 'manual-12',
+      title: '旧流程',
+      department: null,
+      category: '制度',
+      content: '旧内容',
+      contributor: '管理员',
+      confidence: 0.9,
+      status: 'active',
+      version: 2,
+      createdAt: '2026-07-20T04:00:00.000Z',
+    }]);
+    bridge.enterpriseKnowledgeRevisions.mockResolvedValue([{
+      id: 'revision-1',
+      knowledgeId: '12',
+      version: 1,
+      title: '旧流程',
+      category: '制度',
+      content: '第一版内容',
+      status: 'active',
+      changedBy: '管理员',
+      changeNote: '首次发布',
+      createdAt: '2026-07-20T04:00:00.000Z',
+    }]);
+    render(
+      <RightPanel
+        busy={false}
+        mode="enterprise"
+        enterpriseRole="company_admin"
+        workspace={enterpriseWorkspace()}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('tab', { name: '企业记忆' }));
+    expect(await screen.findByText('旧内容')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '修订' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '知识内容' }), {
+      target: { value: '新内容' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存修订' }));
+    await waitFor(() => expect(bridge.enterpriseKnowledgeRevise).toHaveBeenCalledWith(
+      '12',
+      expect.objectContaining({ content: '新内容' }),
+    ));
+
+    fireEvent.click(await screen.findByRole('button', { name: '版本' }));
+    expect(await screen.findByText('首次发布')).toBeTruthy();
+    expect(bridge.enterpriseKnowledgeRevisions).toHaveBeenCalledWith('12');
   });
 
   it('组织未启用知识功能时隐藏企业记忆且不调用 list', async () => {

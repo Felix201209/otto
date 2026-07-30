@@ -103,36 +103,112 @@ export interface TokenUsageRecordInput {
 
 export interface EnterpriseKnowledgeRecordInput {
   sourceId: string;
+  title?: string;
   category: string;
   content: string;
   confidence: number;
+  sourceType?: 'manual' | 'auto_capture' | 'work_result' | 'task_log' | 'document' | 'offboarding';
+  sourceLabel?: string;
 }
 
 export interface EnterpriseKnowledgeItem {
   id: string;
   organizationId: string;
   sourceId: string | null;
+  title: string;
   department: string | null;
   category: string;
   content: string;
   contributor: string | null;
   confidence: number;
+  sourceType: 'manual' | 'auto_capture' | 'work_result' | 'task_log' | 'document' | 'offboarding';
+  sourceLabel: string | null;
+  status: 'pending_review' | 'active' | 'archived';
+  version: number;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EnterpriseKnowledgeRevision {
+  id: string;
+  knowledgeId: string;
+  version: number;
+  title: string;
+  category: string;
+  content: string;
+  status: EnterpriseKnowledgeItem['status'];
+  changedBy: string | null;
+  changeNote: string | null;
   createdAt: string;
 }
 
 interface EnterpriseKnowledgeRow {
-  id: string;
+  id: string | number;
   organization_id?: string;
   organizationId?: string;
   source_id?: string | null;
   sourceId?: string | null;
+  title?: string;
   department?: string | null;
   category: string;
   content: string;
   contributor?: string | null;
   confidence?: number;
+  source_type?: EnterpriseKnowledgeItem['sourceType'];
+  sourceType?: EnterpriseKnowledgeItem['sourceType'];
+  source_label?: string | null;
+  sourceLabel?: string | null;
+  status?: EnterpriseKnowledgeItem['status'];
+  version?: number;
+  reviewed_by?: string | null;
+  reviewedBy?: string | null;
+  reviewed_at?: string | null;
+  reviewedAt?: string | null;
   created_at?: string;
   createdAt?: string;
+  updated_at?: string;
+  updatedAt?: string;
+}
+
+interface EnterpriseKnowledgeRevisionRow {
+  id: string | number;
+  knowledge_id?: string | number;
+  knowledgeId?: string | number;
+  version?: number;
+  title?: string;
+  category: string;
+  content: string;
+  status?: EnterpriseKnowledgeItem['status'];
+  changed_by?: string | null;
+  changedBy?: string | null;
+  change_note?: string | null;
+  changeNote?: string | null;
+  created_at?: string;
+  createdAt?: string;
+}
+
+function mapEnterpriseKnowledgeItem(item: EnterpriseKnowledgeRow): EnterpriseKnowledgeItem {
+  return {
+    id: String(item.id),
+    organizationId: item.organizationId || item.organization_id || '',
+    sourceId: item.sourceId ?? item.source_id ?? null,
+    title: item.title?.trim() || item.category,
+    department: item.department ?? null,
+    category: item.category,
+    content: item.content,
+    contributor: item.contributor ?? null,
+    confidence: typeof item.confidence === 'number' ? item.confidence : 0.5,
+    sourceType: item.sourceType || item.source_type || 'manual',
+    sourceLabel: item.sourceLabel ?? item.source_label ?? null,
+    status: item.status || 'active',
+    version: typeof item.version === 'number' ? item.version : 1,
+    reviewedBy: item.reviewedBy ?? item.reviewed_by ?? null,
+    reviewedAt: item.reviewedAt ?? item.reviewed_at ?? null,
+    createdAt: item.createdAt || item.created_at || '',
+    updatedAt: item.updatedAt || item.updated_at || item.createdAt || item.created_at || '',
+  };
 }
 
 export interface EnterpriseOrganizationInvite {
@@ -1143,6 +1219,9 @@ export class EnterpriseClient {
   async recordKnowledge(input: EnterpriseKnowledgeRecordInput): Promise<{
     status: 'added' | 'exists';
     added: boolean;
+    outcome?: 'added' | 'updated' | 'unchanged';
+    reviewStatus?: EnterpriseKnowledgeItem['status'];
+    knowledgeId?: number;
   }> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     return this.request('/enterprise/knowledge', {
@@ -1154,24 +1233,68 @@ export class EnterpriseClient {
   async listKnowledge(input: {
     query?: string;
     department?: string;
+    includeReview?: boolean;
+    status?: EnterpriseKnowledgeItem['status'];
   } = {}): Promise<EnterpriseKnowledgeItem[]> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     const params = new URLSearchParams();
     if (input.query?.trim()) params.set('q', input.query.trim());
     if (input.department?.trim()) params.set('department', input.department.trim());
+    if (input.includeReview) params.set('includeReview', 'true');
+    if (input.status) params.set('status', input.status);
     const suffix = params.toString() ? `?${params}` : '';
     const response = await this.request<{ knowledge: EnterpriseKnowledgeRow[] }>(
       `/enterprise/knowledge${suffix}`,
     );
-    return response.knowledge.map((item) => ({
-      id: item.id,
-      organizationId: item.organizationId || item.organization_id || '',
-      sourceId: item.sourceId ?? item.source_id ?? null,
-      department: item.department ?? null,
+    return response.knowledge.map(mapEnterpriseKnowledgeItem);
+  }
+
+  async reviewKnowledge(
+    id: string,
+    action: 'approve' | 'archive',
+    note?: string,
+  ): Promise<EnterpriseKnowledgeItem> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    const response = await this.request<{ knowledge: EnterpriseKnowledgeRow }>(
+      `/enterprise/knowledge/${encodeURIComponent(id)}/review`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ action, ...(note?.trim() ? { note: note.trim() } : {}) }),
+      },
+    );
+    return mapEnterpriseKnowledgeItem(response.knowledge);
+  }
+
+  async reviseKnowledge(id: string, input: {
+    title: string;
+    category: string;
+    content: string;
+    confidence?: number;
+    changeNote?: string;
+  }): Promise<EnterpriseKnowledgeItem> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    const response = await this.request<{ knowledge: EnterpriseKnowledgeRow }>(
+      `/enterprise/knowledge/${encodeURIComponent(id)}`,
+      { method: 'PATCH', body: JSON.stringify(input) },
+    );
+    return mapEnterpriseKnowledgeItem(response.knowledge);
+  }
+
+  async listKnowledgeRevisions(id: string): Promise<EnterpriseKnowledgeRevision[]> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    const response = await this.request<{ revisions: EnterpriseKnowledgeRevisionRow[] }>(
+      `/enterprise/knowledge/${encodeURIComponent(id)}/revisions`,
+    );
+    return response.revisions.map((item) => ({
+      id: String(item.id),
+      knowledgeId: String(item.knowledgeId ?? item.knowledge_id ?? id),
+      version: typeof item.version === 'number' ? item.version : 1,
+      title: item.title?.trim() || item.category,
       category: item.category,
       content: item.content,
-      contributor: item.contributor ?? null,
-      confidence: typeof item.confidence === 'number' ? item.confidence : 0.5,
+      status: item.status || 'active',
+      changedBy: item.changedBy ?? item.changed_by ?? null,
+      changeNote: item.changeNote ?? item.change_note ?? null,
       createdAt: item.createdAt || item.created_at || '',
     }));
   }

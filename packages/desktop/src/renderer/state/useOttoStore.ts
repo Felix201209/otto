@@ -756,6 +756,7 @@ export interface OttoActions {
     source?: MessageSource,
     attachments?: Attachment[],
     queueAction?: 'merge' | 'next_turn' | 'new_session',
+    authorizedContext?: string,
   ): void;
   setModel(model: string): void;
   cancel(): void;
@@ -1127,6 +1128,7 @@ export function useOttoStore(
       source: MessageSource = 'local',
       attachments: Attachment[] = [],
       queueAction?: 'merge' | 'next_turn' | 'new_session',
+      authorizedContext?: string,
     ) => {
       const sessionId = activeRef.current;
       const trimmed = text.trim();
@@ -1158,7 +1160,16 @@ export function useOttoStore(
       });
       transport.send({
         type: 'send_user_message',
-        payload: { sessionId, content, source, clientMessageId, ...(queueAction ? { queueAction } : {}) },
+        payload: {
+          sessionId,
+          content,
+          source,
+          clientMessageId,
+          ...(queueAction ? { queueAction } : {}),
+          ...(authorizedContext?.trim()
+            ? { authorizedContext: authorizedContext.trim().slice(0, 12_000) }
+            : {}),
+        },
       });
     },
     [],

@@ -350,20 +350,44 @@ export interface EnterpriseTokenUsageInput {
 
 export interface EnterpriseKnowledgeRecordInput {
   sourceId: string;
+  title?: string;
   category: string;
   content: string;
   confidence: number;
+  sourceType?: 'manual' | 'auto_capture' | 'work_result' | 'task_log' | 'document' | 'offboarding';
+  sourceLabel?: string;
 }
 
 export interface EnterpriseKnowledgeItem {
   id: string;
   organizationId: string;
   sourceId: string | null;
+  title?: string;
   department: string | null;
   category: string;
   content: string;
   contributor: string | null;
   confidence: number;
+  sourceType?: 'manual' | 'auto_capture' | 'work_result' | 'task_log' | 'document' | 'offboarding';
+  sourceLabel?: string | null;
+  status?: 'pending_review' | 'active' | 'archived';
+  version?: number;
+  reviewedBy?: string | null;
+  reviewedAt?: string | null;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface EnterpriseKnowledgeRevision {
+  id: string;
+  knowledgeId: string;
+  version: number;
+  title: string;
+  category: string;
+  content: string;
+  status: NonNullable<EnterpriseKnowledgeItem['status']>;
+  changedBy: string | null;
+  changeNote: string | null;
   createdAt: string;
 }
 
@@ -796,6 +820,9 @@ const IPC = {
   enterpriseUsageRecord: 'otto:enterprise-usage-record',
   enterpriseKnowledgeRecord: 'otto:enterprise-knowledge-record',
   enterpriseKnowledgeList: 'otto:enterprise-knowledge-list',
+  enterpriseKnowledgeReview: 'otto:enterprise-knowledge-review',
+  enterpriseKnowledgeRevise: 'otto:enterprise-knowledge-revise',
+  enterpriseKnowledgeRevisions: 'otto:enterprise-knowledge-revisions',
   enterpriseOrganizationView: 'otto:enterprise-organization-view',
   enterprisePresenceHeartbeat: 'otto:enterprise-presence-heartbeat',
   enterpriseOrganizationFeaturesGet: 'otto:enterprise-organization-features-get',
@@ -1139,11 +1166,29 @@ export interface OttoBridge {
   enterpriseKnowledgeRecord(input: EnterpriseKnowledgeRecordInput): Promise<{
     status: 'added' | 'exists';
     added: boolean;
+    outcome?: 'added' | 'updated' | 'unchanged';
+    reviewStatus?: EnterpriseKnowledgeItem['status'];
+    knowledgeId?: number;
   }>;
   enterpriseKnowledgeList(input?: {
     query?: string;
     department?: string;
+    includeReview?: boolean;
+    status?: EnterpriseKnowledgeItem['status'];
   }): Promise<EnterpriseKnowledgeItem[]>;
+  enterpriseKnowledgeReview(
+    id: string,
+    action: 'approve' | 'archive',
+    note?: string,
+  ): Promise<EnterpriseKnowledgeItem>;
+  enterpriseKnowledgeRevise(id: string, input: {
+    title: string;
+    category: string;
+    content: string;
+    confidence?: number;
+    changeNote?: string;
+  }): Promise<EnterpriseKnowledgeItem>;
+  enterpriseKnowledgeRevisions(id: string): Promise<EnterpriseKnowledgeRevision[]>;
   enterpriseOrganizationView(): Promise<EnterpriseOrganizationView>;
   enterprisePresenceHeartbeat(): Promise<void>;
   enterpriseOrganizationFeaturesGet(): Promise<EnterpriseOrganizationFeatures>;
@@ -1955,17 +2000,38 @@ const bridge: OttoBridge = {
   enterpriseKnowledgeRecord(input: EnterpriseKnowledgeRecordInput): Promise<{
     status: 'added' | 'exists';
     added: boolean;
+    outcome?: 'added' | 'updated' | 'unchanged';
+    reviewStatus?: EnterpriseKnowledgeItem['status'];
+    knowledgeId?: number;
   }> {
     return ipcRenderer.invoke(IPC.enterpriseKnowledgeRecord, input) as Promise<{
       status: 'added' | 'exists';
       added: boolean;
+      outcome?: 'added' | 'updated' | 'unchanged';
+      reviewStatus?: EnterpriseKnowledgeItem['status'];
+      knowledgeId?: number;
     }>;
   },
   enterpriseKnowledgeList(input?: {
     query?: string;
     department?: string;
+    includeReview?: boolean;
+    status?: EnterpriseKnowledgeItem['status'];
   }): Promise<EnterpriseKnowledgeItem[]> {
     return ipcRenderer.invoke(IPC.enterpriseKnowledgeList, input ?? {}) as Promise<EnterpriseKnowledgeItem[]>;
+  },
+  enterpriseKnowledgeReview(
+    id: string,
+    action: 'approve' | 'archive',
+    note?: string,
+  ): Promise<EnterpriseKnowledgeItem> {
+    return ipcRenderer.invoke(IPC.enterpriseKnowledgeReview, { id, action, note }) as Promise<EnterpriseKnowledgeItem>;
+  },
+  enterpriseKnowledgeRevise(id, input) {
+    return ipcRenderer.invoke(IPC.enterpriseKnowledgeRevise, { id, input }) as Promise<EnterpriseKnowledgeItem>;
+  },
+  enterpriseKnowledgeRevisions(id) {
+    return ipcRenderer.invoke(IPC.enterpriseKnowledgeRevisions, { id }) as Promise<EnterpriseKnowledgeRevision[]>;
   },
   enterpriseOrganizationView(): Promise<EnterpriseOrganizationView> {
     return ipcRenderer.invoke(IPC.enterpriseOrganizationView) as Promise<

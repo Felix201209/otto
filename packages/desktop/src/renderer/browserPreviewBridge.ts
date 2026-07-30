@@ -418,7 +418,7 @@ if (!previewWindow.otto) {
       const ticket = previewTickets.find((item) => item.id === ticketId) ?? null;
       return ticket ? Promise.resolve(ticket) : Promise.reject(new Error('申请单不存在'));
     },
-    enterpriseUsageRecord: () => Promise.resolve({ recorded: false }), enterpriseKnowledgeRecord: () => Promise.resolve({ added: false }), enterpriseKnowledgeList: () => Promise.resolve([]),
+    enterpriseUsageRecord: () => Promise.resolve({ recorded: false }), enterpriseKnowledgeRecord: () => Promise.resolve({ status: 'exists', added: false }), enterpriseKnowledgeList: () => Promise.resolve([]), enterpriseKnowledgeReview: () => Promise.reject(new Error('预览模式不支持知识审核')), enterpriseKnowledgeRevise: () => Promise.reject(new Error('预览模式不支持知识修订')), enterpriseKnowledgeRevisions: () => Promise.resolve([]),
   };
 
   previewWindow.otto = new Proxy(bridge, {

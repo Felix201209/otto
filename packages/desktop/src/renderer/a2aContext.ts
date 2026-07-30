@@ -84,13 +84,16 @@ function formatMessages(
 
 function formatKnowledge(items: EnterpriseKnowledgeItem[]): string {
   const rows = [...items]
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .filter((item) => !item.status || item.status === 'active')
+    .sort((a, b) => (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt))
     .slice(0, 20)
     .map((item) => {
       const meta = [text(item.department, 80), text(item.category, 80)]
         .filter(Boolean)
         .join(' / ');
-      return `- ${meta || '知识'}: ${text(item.content, 500)}`;
+      const source = text(item.sourceLabel || item.sourceId, 120);
+      const citation = `[企业知识#${text(item.id, 40)} v${item.version || 1}]`;
+      return `- ${citation} ${text(item.title, 160) || meta || '知识'}${meta ? ` (${meta})` : ''}${source ? `；来源：${source}` : ''}: ${text(item.content, 500)}`;
     });
   return rows.length > 0 ? rows.join('\n') : '（没有可用企业知识）';
 }

@@ -4048,16 +4048,41 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       body: JSON.stringify(autoKnowledgeBody),
     });
     expect(firstCapture.status).toBe(200);
-    expect(await firstCapture.json()).toEqual({ status: 'added', added: true });
+    const firstCapturePayload = await firstCapture.json() as {
+      status: string;
+      added: boolean;
+      outcome: string;
+      reviewStatus: string;
+      knowledgeId: number;
+    };
+    expect(firstCapturePayload).toMatchObject({
+      status: 'added',
+      added: true,
+      outcome: 'added',
+      reviewStatus: 'pending_review',
+    });
+    expect(firstCapturePayload.knowledgeId).toBeGreaterThan(0);
 
     const duplicateCapture = await fetch(`${base}/enterprise/knowledge`, {
       method: 'POST',
       headers: { authorization: `Bearer ${alphaToken}`, 'content-type': 'application/json' },
       body: JSON.stringify(autoKnowledgeBody),
     });
-    expect(await duplicateCapture.json()).toEqual({ status: 'exists', added: false });
+    expect(await duplicateCapture.json()).toMatchObject({
+      status: 'exists',
+      added: false,
+      outcome: 'unchanged',
+      reviewStatus: 'pending_review',
+    });
 
-    const captured = db.getKnowledge('研发部', 'solution', alpha.id)
+    expect(JSON.stringify(db.getKnowledge('研发部', 'solution', alpha.id)))
+      .not.toContain(autoKnowledgeBody.content);
+    const captured = db.getKnowledgeForAdministration(
+      '',
+      '研发部',
+      alpha.id,
+      'pending_review',
+    )
       .filter((item: { content: string }) => item.content === autoKnowledgeBody.content);
     expect(captured).toHaveLength(1);
     expect(captured[0]).toMatchObject({
@@ -4065,6 +4090,11 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       contributor: 'Alpha 员工',
       confidence: 0.9,
     });
+
+    const ownReviewQueue = await fetch(`${base}/enterprise/knowledge?includeReview=true`, {
+      headers: { authorization: `Bearer ${alphaToken}` },
+    });
+    expect(JSON.stringify(await ownReviewQueue.json())).toContain(autoKnowledgeBody.content);
   });
 
   it('普通成员只能读取全局知识和本人部门知识，department query 不能跨部门越权', async () => {
@@ -4136,6 +4166,81 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     expect(adminPayload).toContain('全员可见制度');
     expect(adminPayload).toContain('法务部合同底线');
     expect(adminPayload).toContain('销售部客户名单');
+
+    const pendingCapture = await fetch(`${base}/enterprise/knowledge`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${legalToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sourceId: 'legal-checklist-1',
+        title: '合同复核清单',
+        category: 'legal',
+        content: '签署前必须核对主体、金额和违约责任。',
+        sourceType: 'work_result',
+      }),
+    });
+    const pendingPayload = await pendingCapture.json() as {
+      knowledgeId: number;
+      reviewStatus: string;
+    };
+    expect(pendingPayload.reviewStatus).toBe('pending_review');
+
+    const memberReviewAttempt = await fetch(
+      `${base}/enterprise/knowledge/${pendingPayload.knowledgeId}/review`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${legalToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'approve' }),
+      },
+    );
+    expect(memberReviewAttempt.status).toBe(403);
+
+    const review = await fetch(
+      `${base}/enterprise/knowledge/${pendingPayload.knowledgeId}/review`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'approve', note: '已核验' }),
+      },
+    );
+    expect(review.status).toBe(200);
+    await expect(review.json()).resolves.toMatchObject({
+      knowledge: { status: 'active', reviewed_by: '企业管理员' },
+    });
+
+    const revision = await fetch(
+      `${base}/enterprise/knowledge/${pendingPayload.knowledgeId}`,
+      {
+        method: 'PATCH',
+        headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          title: '合同复核清单',
+          category: 'legal',
+          content: '签署前必须核对主体、金额、违约责任和授权文件。',
+          changeNote: '补充授权文件',
+        }),
+      },
+    );
+    expect(revision.status).toBe(200);
+    await expect(revision.json()).resolves.toMatchObject({ knowledge: { version: 3 } });
+
+    const history = await fetch(
+      `${base}/enterprise/knowledge/${pendingPayload.knowledgeId}/revisions`,
+      { headers: { authorization: `Bearer ${adminToken}` } },
+    );
+    expect(history.status).toBe(200);
+    expect(JSON.stringify(await history.json())).toContain('补充授权文件');
+    const memberHistory = await fetch(
+      `${base}/enterprise/knowledge/${pendingPayload.knowledgeId}/revisions`,
+      { headers: { authorization: `Bearer ${legalToken}` } },
+    );
+    expect(memberHistory.status).toBe(403);
+
+    const memberAfterReview = await fetch(
+      `${base}/enterprise/knowledge?q=${encodeURIComponent('合同复核')}`,
+      { headers: { authorization: `Bearer ${legalToken}` } },
+    );
+    expect(JSON.stringify(await memberAfterReview.json()))
+      .toContain('签署前必须核对主体、金额、违约责任和授权文件。');
   }, 30_000);
 
   it('关闭企业知识功能后禁止知识读写，入职与召回也不泄露知识但保留任务历史', async () => {

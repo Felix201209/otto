@@ -295,6 +295,8 @@ export type SendUserMessageMsg = Envelope<
     source: MessageSource;
     /** 客户端临时 id，用于乐观渲染对账。 */
     clientMessageId?: string;
+    /** 经企业服务器按当前账号权限检索的只读知识上下文；不会写入聊天历史。 */
+    authorizedContext?: string;
     /**
      * 会话 busy 时消息的排队策略：
      * - 'merge'：注入到当前轮（安全边界如工具结果返回后合并）
@@ -1730,6 +1732,11 @@ export function validateClientPayload(msg: {
         typeof p['clientMessageId'] !== 'string'
       )
         return 'clientMessageId 必须是字符串';
+      if (
+        p['authorizedContext'] !== undefined
+        && (typeof p['authorizedContext'] !== 'string'
+          || p['authorizedContext'].length > 12_000)
+      ) return 'authorizedContext 必须是不超过 12000 字符的字符串';
       return null;
     }
     case 'tool_confirmation_response': {

@@ -86,6 +86,7 @@ export function isAdminRoute(path: string): boolean {
 export function isMemberRoute(path: string): boolean {
   return (
     MEMBER_ROUTES.has(path) ||
+    path.startsWith('/enterprise/knowledge/') ||
     path === '/enterprise/atoa/inbox' ||
     path.startsWith('/enterprise/messages/') ||
     path.startsWith('/enterprise/message-attachments/') ||

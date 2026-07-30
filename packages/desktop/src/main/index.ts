@@ -369,6 +369,9 @@ const IPC = {
   enterpriseUsageRecord: 'otto:enterprise-usage-record',
   enterpriseKnowledgeRecord: 'otto:enterprise-knowledge-record',
   enterpriseKnowledgeList: 'otto:enterprise-knowledge-list',
+  enterpriseKnowledgeReview: 'otto:enterprise-knowledge-review',
+  enterpriseKnowledgeRevise: 'otto:enterprise-knowledge-revise',
+  enterpriseKnowledgeRevisions: 'otto:enterprise-knowledge-revisions',
   enterpriseOrganizationView: 'otto:enterprise-organization-view',
   enterprisePresenceHeartbeat: 'otto:enterprise-presence-heartbeat',
   enterpriseOrganizationFeaturesGet: 'otto:enterprise-organization-features-get',
@@ -1983,9 +1986,19 @@ function registerIpc(): void {
     }
     const record: EnterpriseKnowledgeRecordInput = {
       sourceId: body.sourceId,
+      title: typeof body.title === 'string' ? body.title : undefined,
       category: body.category,
       content: body.content,
       confidence: Math.min(1, Math.max(0, body.confidence)),
+      sourceType: body.sourceType === 'manual'
+        || body.sourceType === 'auto_capture'
+        || body.sourceType === 'work_result'
+        || body.sourceType === 'task_log'
+        || body.sourceType === 'document'
+        || body.sourceType === 'offboarding'
+        ? body.sourceType
+        : undefined,
+      sourceLabel: typeof body.sourceLabel === 'string' ? body.sourceLabel : undefined,
     };
     return enterpriseClient.recordKnowledge(record);
   });
@@ -1995,7 +2008,56 @@ function registerIpc(): void {
     return enterpriseClient.listKnowledge({
       query: typeof body.query === 'string' ? body.query : undefined,
       department: typeof body.department === 'string' ? body.department : undefined,
+      includeReview: body.includeReview === true,
+      status: body.status === 'pending_review'
+        || body.status === 'active'
+        || body.status === 'archived'
+        ? body.status
+        : undefined,
     });
+  });
+  ipcMain.handle(IPC.enterpriseKnowledgeReview, async (_e, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('知识审核格式不正确');
+    const body = input as Record<string, unknown>;
+    if (typeof body.id !== 'string' || !/^\d+$/u.test(body.id)
+      || (body.action !== 'approve' && body.action !== 'archive')) {
+      throw new Error('知识审核字段不完整');
+    }
+    return enterpriseClient.reviewKnowledge(
+      body.id,
+      body.action,
+      typeof body.note === 'string' ? body.note : undefined,
+    );
+  });
+  ipcMain.handle(IPC.enterpriseKnowledgeRevise, async (_e, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('知识修订格式不正确');
+    const body = input as Record<string, unknown>;
+    const revision = body.input && typeof body.input === 'object'
+      ? body.input as Record<string, unknown>
+      : {};
+    if (typeof body.id !== 'string' || !/^\d+$/u.test(body.id)
+      || typeof revision.title !== 'string' || !revision.title.trim()
+      || typeof revision.category !== 'string' || !revision.category.trim()
+      || typeof revision.content !== 'string' || !revision.content.trim()) {
+      throw new Error('知识修订字段不完整');
+    }
+    return enterpriseClient.reviseKnowledge(body.id, {
+      title: revision.title,
+      category: revision.category,
+      content: revision.content,
+      confidence: typeof revision.confidence === 'number' ? revision.confidence : undefined,
+      changeNote: typeof revision.changeNote === 'string' ? revision.changeNote : undefined,
+    });
+  });
+  ipcMain.handle(IPC.enterpriseKnowledgeRevisions, async (_e, input: unknown) => {
+    loadEnterpriseSession();
+    const body = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    if (typeof body.id !== 'string' || !/^\d+$/u.test(body.id)) {
+      throw new Error('知识版本参数不正确');
+    }
+    return enterpriseClient.listKnowledgeRevisions(body.id);
   });
   ipcMain.handle(IPC.enterpriseOrganizationView, async () => {
     loadEnterpriseSession();

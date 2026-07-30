@@ -5,34 +5,22 @@
 import { describe, expect, it } from 'vitest';
 import {
   createEnterpriseKnowledgeFacade,
+  createEnterpriseKnowledgeSchemaContributor,
   ENTERPRISE_KNOWLEDGE_MAX_SOURCE_ID_LENGTH,
   type EnterpriseKnowledgeRepositoryStore,
 } from './modules/enterprise_knowledge/index.js';
-import { Database } from './modules/data_platform/index.js';
+import {
+  applyDatabaseSchemaContributors,
+  Database,
+} from './modules/data_platform/index.js';
 
 function createDatabase(): Database {
   const database = new Database(':memory:');
-  database.exec(`
-    CREATE TABLE organizations (
-      id TEXT PRIMARY KEY
-    );
-    CREATE TABLE knowledge (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      organization_id TEXT NOT NULL,
-      source_id TEXT,
-      department TEXT,
-      category TEXT,
-      content TEXT NOT NULL,
-      contributor TEXT,
-      confidence REAL DEFAULT 0.5,
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (organization_id) REFERENCES organizations(id)
-    );
-    CREATE UNIQUE INDEX idx_knowledge_source_unique
-      ON knowledge(organization_id, source_id) WHERE source_id IS NOT NULL;
-    INSERT INTO organizations (id) VALUES ('org-a'), ('org-b');
-  `);
+  database.exec('CREATE TABLE organizations (id TEXT PRIMARY KEY);');
+  applyDatabaseSchemaContributors(database, [
+    createEnterpriseKnowledgeSchemaContributor({ defaultOrganizationId: 'org-a' }),
+  ]);
+  database.exec("INSERT INTO organizations (id) VALUES ('org-a'), ('org-b');");
   return database;
 }
 
@@ -215,6 +203,143 @@ describe('enterprise knowledge kernel', () => {
           sourceId: 'x'.repeat(ENTERPRISE_KNOWLEDGE_MAX_SOURCE_ID_LENGTH + 1),
         }),
       ).toThrow('knowledge source id is too long');
+    } finally {
+      database.close();
+    }
+  });
+
+  it('keeps member submissions out of retrieval until approval and preserves revisions', () => {
+    const database = createDatabase();
+    const knowledge = createEnterpriseKnowledgeFacade(createStore(database));
+
+    try {
+      const saved = knowledge.saveKnowledge({
+        organizationId: 'org-a',
+        sourceId: 'work-result-1',
+        title: '客户验收流程',
+        category: 'process',
+        content: '提交验收单后由项目负责人复核。',
+        contributor: '张三',
+        contributorAccountId: 'account-1',
+        status: 'pending_review',
+        sourceType: 'work_result',
+      });
+      expect(saved.entry.status).toBe('pending_review');
+      expect(knowledge.searchKnowledge('验收', undefined, 'org-a')).toEqual([]);
+      expect(knowledge.getMemberKnowledge('研发部', '验收', 'org-a')).toEqual([]);
+      expect(
+        knowledge.getMemberKnowledge('研发部', '验收', 'org-a', {
+          includeOwnPending: true,
+          contributorAccountId: 'account-1',
+        }),
+      ).toEqual([expect.objectContaining({ id: saved.entry.id })]);
+
+      const approved = knowledge.reviewKnowledge({
+        id: saved.entry.id,
+        organizationId: 'org-a',
+        action: 'approve',
+        reviewer: '管理员',
+      });
+      expect(approved).toEqual(expect.objectContaining({ status: 'active', version: 2 }));
+      expect(knowledge.searchKnowledge('验收', undefined, 'org-a')).toHaveLength(1);
+
+      const revised = knowledge.reviseKnowledge({
+        id: saved.entry.id,
+        organizationId: 'org-a',
+        content: '提交验收单后由项目负责人和客户共同复核。',
+        changedBy: '管理员',
+        changeNote: '补充客户确认环节',
+      });
+      expect(revised).toEqual(expect.objectContaining({ version: 3 }));
+      expect(knowledge.getKnowledgeRevisions(saved.entry.id, 'org-a'))
+        .toEqual(expect.arrayContaining([
+          expect.objectContaining({ version: 1, status: 'pending_review' }),
+          expect.objectContaining({ version: 2, status: 'active' }),
+          expect.objectContaining({ version: 3, change_note: '补充客户确认环节' }),
+        ]));
+
+      knowledge.reviewKnowledge({
+        id: saved.entry.id,
+        organizationId: 'org-a',
+        action: 'archive',
+        reviewer: '管理员',
+      });
+      expect(knowledge.searchKnowledge('验收', undefined, 'org-a')).toEqual([]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('promotes the selected successor safely when several revisions await review', () => {
+    const database = createDatabase();
+    const knowledge = createEnterpriseKnowledgeFacade(createStore(database));
+
+    try {
+      const original = knowledge.saveKnowledge({
+        organizationId: 'org-a',
+        sourceId: 'policy-1',
+        category: 'policy',
+        content: '报销上限为 1000 元。',
+        status: 'active',
+      }).entry;
+      const firstRevision = knowledge.saveKnowledge({
+        organizationId: 'org-a',
+        sourceId: 'policy-1',
+        category: 'policy',
+        content: '报销上限为 1500 元。',
+        status: 'pending_review',
+      }).entry;
+      const secondRevision = knowledge.saveKnowledge({
+        organizationId: 'org-a',
+        sourceId: 'policy-1',
+        category: 'policy',
+        content: '报销上限为 2000 元。',
+        status: 'pending_review',
+      }).entry;
+
+      knowledge.reviewKnowledge({
+        id: firstRevision.id,
+        organizationId: 'org-a',
+        action: 'approve',
+        reviewer: '管理员',
+      });
+      expect(knowledge.getKnowledge(undefined, 'policy', 'org-a'))
+        .toEqual([expect.objectContaining({ id: firstRevision.id })]);
+
+      expect(() => knowledge.reviewKnowledge({
+        id: secondRevision.id,
+        organizationId: 'org-a',
+        action: 'approve',
+        reviewer: '管理员',
+      })).not.toThrow();
+      expect(knowledge.getKnowledge(undefined, 'policy', 'org-a'))
+        .toEqual([expect.objectContaining({ id: secondRevision.id })]);
+      expect(knowledge.getKnowledgeForAdministration('', undefined, 'org-a', 'archived'))
+        .toEqual(expect.arrayContaining([
+          expect.objectContaining({ id: original.id }),
+          expect.objectContaining({ id: firstRevision.id }),
+        ]));
+    } finally {
+      database.close();
+    }
+  });
+
+  it('exports every lifecycle record instead of truncating backups to the admin view limit', () => {
+    const database = createDatabase();
+    const knowledge = createEnterpriseKnowledgeFacade(createStore(database));
+
+    try {
+      for (let index = 0; index < 125; index += 1) {
+        knowledge.saveKnowledge({
+          organizationId: 'org-a',
+          sourceId: `backup-${index}`,
+          category: 'backup',
+          content: `知识记录 ${index}`,
+          status: index % 2 === 0 ? 'active' : 'pending_review',
+        });
+      }
+      expect(knowledge.getKnowledgeForAdministration('', undefined, 'org-a')).toHaveLength(100);
+      expect(knowledge.getKnowledgeForBackup('org-a')).toHaveLength(125);
     } finally {
       database.close();
     }
