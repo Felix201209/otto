@@ -23,7 +23,7 @@ const MAX_CONTENT_LENGTH = 10000;
 
 // bing/bocha 的 HTTP 搜索超时（15秒）；gemini grounding 保留原有 30 秒
 const HTTP_SEARCH_TIMEOUT_MS = 15000;
-const BING_ROUTE_TIMEOUTS_MS = [9000, 6000] as const;
+const BING_ROUTE_TIMEOUTS_MS = [7000, 4000, 4000] as const;
 
 // 两条免 key 内置线路。优先国内站；被限流、验证或结构异常时自动换全球站。
 // 对用户统一表现为“内置搜索”，不要求理解 provider 或排查 API Key。
@@ -31,6 +31,19 @@ const BING_SEARCH_ENDPOINTS = [
   'https://cn.bing.com/search',
   'https://www.bing.com/search',
 ] as const;
+
+type BingSearchRoute = {
+  endpoint: (typeof BING_SEARCH_ENDPOINTS)[number];
+  format: 'html' | 'rss';
+};
+
+// Bing 的普通结果页在部分企业网络会返回验证码页面。RSS 是 Bing 官方的
+// 结构化结果接口，不依赖 b_algo 页面结构，作为免 key 的稳定后备线路。
+const BING_SEARCH_ROUTES: readonly BingSearchRoute[] = [
+  { endpoint: BING_SEARCH_ENDPOINTS[0], format: 'html' },
+  { endpoint: BING_SEARCH_ENDPOINTS[0], format: 'rss' },
+  { endpoint: BING_SEARCH_ENDPOINTS[1], format: 'rss' },
+];
 
 // 博查 Web Search API（需 key，可选 provider）
 const BOCHA_SEARCH_ENDPOINT = 'https://api.bochaai.com/v1/web-search';
@@ -102,6 +115,7 @@ function decodeHtmlEntities(text: string): string {
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
     .replace(/&#39;|&#x27;/g, "'")
     .replace(/&nbsp;/g, ' ')
     .replace(/&#(\d+);/g, (_m, code) => {
@@ -110,6 +124,10 @@ function decodeHtmlEntities(text: string): string {
         ? String.fromCodePoint(n)
         : _m;
     });
+}
+
+function unwrapCdata(text: string): string {
+  return text.replace(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/, '$1');
 }
 
 /** 去 HTML 标签 + 解实体 + 压空白，得到纯文本 */
@@ -165,6 +183,49 @@ export function parseBingResults(html: string): WebSearchResultItem[] {
   }
 
   return items;
+}
+
+/** 解析 Bing 官方 RSS 搜索结果，供 HTML 验证页场景自动降级使用。 */
+export function parseBingRssResults(xml: string): WebSearchResultItem[] {
+  const items: WebSearchResultItem[] = [];
+  const itemRegex = /<item\b[^>]*>([\s\S]*?)<\/item>/gi;
+  let itemMatch: RegExpExecArray | null;
+
+  while ((itemMatch = itemRegex.exec(xml)) !== null) {
+    const block = itemMatch[1];
+    const readTag = (tag: string): string => {
+      const match = block.match(
+        new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i'),
+      );
+      return match ? unwrapCdata(match[1]).trim() : '';
+    };
+
+    const title = cleanHtmlText(readTag('title'));
+    const url = decodeHtmlEntities(readTag('link')).trim();
+    const snippet = cleanHtmlText(readTag('description'));
+    if (title && /^https?:\/\//.test(url)) {
+      items.push({ title, url, snippet });
+    }
+  }
+
+  return items;
+}
+
+function describeSearchError(error: unknown): string {
+  const message = getErrorMessage(error);
+  if (!error || typeof error !== 'object' || !('cause' in error)) return message;
+
+  const cause = (error as { cause?: unknown }).cause;
+  if (!cause) return message;
+  const causeMessage = getErrorMessage(cause);
+  const causeCode =
+    typeof cause === 'object' && cause !== null && 'code' in cause
+      ? String((cause as { code?: unknown }).code ?? '')
+      : '';
+  const detail = [causeCode && `[${causeCode}]`, causeMessage]
+    .filter(Boolean)
+    .join(' ');
+  return detail && !message.includes(detail) ? `${message}: ${detail}` : message;
 }
 
 /**
@@ -314,7 +375,7 @@ export class WebSearchTool extends BaseTool<
     console.error(`[WebSearchTool] ${message}`);
     return {
       llmContent: `Error: ${message}`,
-      returnDisplay: t('websearch.error.performing'),
+      returnDisplay: `网络搜索暂时不可用：${message.slice(0, 600)}`,
     };
   }
 
@@ -360,9 +421,14 @@ export class WebSearchTool extends BaseTool<
     signal: AbortSignal,
   ): Promise<WebSearchToolResult> {
     const failures: string[] = [];
-    for (const [routeIndex, endpoint] of BING_SEARCH_ENDPOINTS.entries()) {
+    for (const [routeIndex, route] of BING_SEARCH_ROUTES.entries()) {
       if (signal.aborted) break;
-      const url = `${endpoint}?q=${encodeURIComponent(params.query)}&count=10`;
+      const { endpoint, format } = route;
+      const query = encodeURIComponent(params.query);
+      const url =
+        format === 'rss'
+          ? `${endpoint}?format=rss&q=${query}&count=10`
+          : `${endpoint}?q=${query}&count=10`;
       try {
         const response = await this.fetchWithSearchTimeout(
           url,
@@ -370,7 +436,9 @@ export class WebSearchTool extends BaseTool<
             headers: {
               'User-Agent': DESKTOP_USER_AGENT,
               Accept:
-                'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                format === 'rss'
+                  ? 'application/rss+xml,application/xml,text/xml;q=0.9,*/*;q=0.8'
+                  : 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
               'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
             },
           },
@@ -378,22 +446,29 @@ export class WebSearchTool extends BaseTool<
           BING_ROUTE_TIMEOUTS_MS[routeIndex] ?? HTTP_SEARCH_TIMEOUT_MS,
         );
         if (!response.ok) {
-          failures.push(`${new URL(endpoint).hostname}: HTTP ${response.status} ${response.statusText}`);
+          failures.push(`${new URL(endpoint).hostname} ${format}: HTTP ${response.status} ${response.statusText}`);
           continue;
         }
-        const html = await response.text();
-        if (!html.includes('b_algo')) {
-          failures.push(`${new URL(endpoint).hostname}: unrecognized page structure or verification page`);
-          continue;
-        }
-        const items = parseBingResults(html);
+        const body = await response.text();
+        const items =
+          format === 'rss'
+            ? parseBingRssResults(body)
+            : parseBingResults(body);
         if (items.length === 0) {
-          failures.push(`${new URL(endpoint).hostname}: result blocks could not be parsed`);
+          failures.push(
+            `${new URL(endpoint).hostname} ${format}: ${
+              format === 'html'
+                ? 'unrecognized page structure or verification page'
+                : 'RSS response contained no parseable results'
+            }`,
+          );
           continue;
         }
         return this.formatResults('bing', params.query, items);
       } catch (error) {
-        failures.push(`${new URL(endpoint).hostname}: ${getErrorMessage(error)}`);
+        failures.push(
+          `${new URL(endpoint).hostname} ${format}: ${describeSearchError(error)}`,
+        );
       }
     }
 
