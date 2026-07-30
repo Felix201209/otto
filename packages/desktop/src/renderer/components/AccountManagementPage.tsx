@@ -217,7 +217,7 @@ export function AccountManagementPage({
   const [now, setNow] = useState(() => Date.now());
   const dialogRef = useRef<HTMLElement>(null);
   const initialFocusRef = useRef<HTMLInputElement>(null);
-  const assignmentFocusRef = useRef<HTMLSelectElement>(null);
+  const assignmentFocusRef = useRef<HTMLInputElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const invite = inviteContext?.invite;
@@ -968,31 +968,33 @@ export function AccountManagementPage({
                 <label><span>{editing === 'new' ? '初始密码' : '重设密码（留空不变）'}</span><input aria-label={editing === 'new' ? '初始密码' : '重设密码（留空不变）'} type="password" minLength={8} maxLength={128} value={draft.password} onChange={(e) => setDraft((v) => ({ ...v, password: e.target.value }))} required={editing === 'new'} placeholder="至少 8 位，不能是纯数字或纯字母" /><small>不能使用常见密码、纯数字、纯字母或连续重复字符。</small></label>
               </> : null}
               {editorMode === 'assignment' ? <>
-                <label><span>所属部门</span><select ref={assignmentFocusRef} aria-label="安排职位部门" value={draft.departmentId} onChange={(event) => {
-                  const department = organizationDepartments.find((item) => item.id === event.target.value);
+                <label><span>所属部门</span><input ref={assignmentFocusRef} aria-label="安排职位部门" list="otto-assignment-departments" value={draft.department} placeholder="选择或输入部门" onChange={(event) => {
+                  const nextName = event.target.value;
+                  const department = organizationDepartments.find((item) => item.name.trim().toLocaleLowerCase() === nextName.trim().toLocaleLowerCase());
                   setDraft((value) => ({
                     ...value,
                     departmentId: department?.id ?? '',
-                    department: department?.name ?? '',
+                    department: nextName,
                     positionId: '',
                     positionTitle: '',
                     role: '',
                     isAdmin: false,
                   }));
-                }} required><option value="">请选择真实部门</option>{organizationDepartments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}</select></label>
-                <label><span>职位 / 岗位</span><select aria-label="安排真实职位" value={draft.positionId} disabled={!assignmentDepartment} onChange={(event) => {
-                  const position = assignmentDepartment?.positions.find((item) => item.id === event.target.value);
+                }} required /><datalist id="otto-assignment-departments">{organizationDepartments.map((department) => <option key={department.id} value={department.name} />)}</datalist></label>
+                <label><span>职位 / 岗位</span><input aria-label="安排真实职位" list="otto-assignment-positions" value={draft.positionTitle} placeholder="选择或输入自定义职位" onChange={(event) => {
+                  const nextTitle = event.target.value;
+                  const position = assignmentDepartment?.positions.find((item) => item.title.trim().toLocaleLowerCase() === nextTitle.trim().toLocaleLowerCase());
                   setDraft((value) => ({
                     ...value,
                     positionId: position?.id ?? '',
-                    positionTitle: position?.title ?? '',
+                    positionTitle: nextTitle,
                     role: position?.roleMapping === 'enterprise_admin'
                       ? '企业管理员'
-                      : position?.roleMapping === 'department_admin' ? '部门管理员' : '成员',
+                      : position?.roleMapping === 'department_admin' ? '部门管理员' : nextTitle.trim() ? '成员' : '',
                     isAdmin: position?.roleMapping === 'enterprise_admin',
                   }));
-                }} required><option value="">请选择真实职位</option>{(assignmentDepartment?.positions ?? []).map((position) => <option key={position.id} value={position.id}>{position.title}</option>)}</select></label>
-                <label><span>权限映射</span><input aria-label="职位权限映射" value={assignmentPosition ? (assignmentPosition.roleMapping === 'enterprise_admin' ? '企业管理员' : assignmentPosition.roleMapping === 'department_admin' ? '部门管理员' : '成员') : ''} readOnly placeholder="由职位目录决定" /></label>
+                }} required /><datalist id="otto-assignment-positions">{(assignmentDepartment?.positions ?? []).map((position) => <option key={position.id} value={position.title} />)}</datalist></label>
+                <label><span>权限映射</span><input aria-label="职位权限映射" value={assignmentPosition ? (assignmentPosition.roleMapping === 'enterprise_admin' ? '企业管理员' : assignmentPosition.roleMapping === 'department_admin' ? '部门管理员' : '成员') : draft.positionTitle.trim() ? '成员（自定义职位）' : ''} readOnly placeholder="自定义职位默认普通成员" /></label>
                 {organizationDepartments.length === 0 ? <div className="otto-account-page__error" role="alert">企业树未启用或尚未建立部门职位，请先在上方“部门与职位管理”中创建。</div> : null}
               </> : <>
                 <label><span>职位 / 岗位</span><input aria-label="职位 / 岗位" value={draft.positionTitle} onChange={(e) => setDraft((v) => ({ ...v, positionTitle: e.target.value, positionId: '' }))} placeholder="例如：品牌运营" /></label>
@@ -1020,7 +1022,7 @@ export function AccountManagementPage({
                 </button>
               ) : null}
               <button type="button" onClick={closeEditor} disabled={saving}>取消</button>
-              <button type="button" className="is-primary" onClick={() => void save()} disabled={editorMode === 'assignment' ? saving || !draft.departmentId || !draft.positionId : saving || !draft.username.trim() || !draft.name.trim() || (editing === 'new' && !isAcceptableAccountPassword(draft.password)) || (editing !== 'new' && Boolean(draft.password) && !isAcceptableAccountPassword(draft.password))}>{saving ? '正在保存…' : editorMode === 'assignment' ? '保存职位' : '保存身份'}</button>
+              <button type="button" className="is-primary" onClick={() => void save()} disabled={editorMode === 'assignment' ? saving || !draft.department.trim() || !draft.positionTitle.trim() : saving || !draft.username.trim() || !draft.name.trim() || (editing === 'new' && !isAcceptableAccountPassword(draft.password)) || (editing !== 'new' && Boolean(draft.password) && !isAcceptableAccountPassword(draft.password))}>{saving ? '正在保存…' : editorMode === 'assignment' ? '保存职位' : '保存身份'}</button>
             </footer>
             {editorMode === 'identity' && editing !== 'new' && editing.id === currentAccount.id ? <p className="otto-account-editor__self">这是你当前登录的账号；停用或降权将在会话重新校验后生效。</p> : null}
           </section>

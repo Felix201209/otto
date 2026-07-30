@@ -478,10 +478,10 @@ describe('企业账号目录', () => {
     fireEvent.click(await screen.findByRole('button', { name: '安排职位 新成员' }));
     expect(screen.getByRole('dialog', { name: '安排员工职位' })).toBeTruthy();
     fireEvent.change(screen.getByRole('combobox', { name: '安排职位部门' }), {
-      target: { value: 'dept_product' },
+      target: { value: '产品部' },
     });
     fireEvent.change(screen.getByRole('combobox', { name: '安排真实职位' }), {
-      target: { value: 'pos_product_manager' },
+      target: { value: '产品经理' },
     });
     expect((screen.getByRole('textbox', { name: '职位权限映射' }) as HTMLInputElement).value)
       .toBe('部门管理员');
@@ -496,6 +496,46 @@ describe('企业账号目录', () => {
     expect(await screen.findByText('产品经理')).toBeTruthy();
     expect(screen.getByText('产品部 · 角色：部门管理员')).toBeTruthy();
     expect(onOrganizationChanged).toHaveBeenCalledOnce();
+  });
+
+  it('CEO 可以输入目录外的自定义部门和职位，且默认只映射普通成员权限', async () => {
+    const employee = {
+      ...CREATED_ACCOUNT,
+      department: null,
+      departmentId: null,
+      positionTitle: null,
+      positionId: null,
+      role: '成员',
+    };
+    const update = vi.fn(async (_id, input) => ({
+      ...employee,
+      ...input,
+      role: '成员',
+      isAdmin: false,
+    }));
+    Object.assign(window.otto, {
+      enterpriseAccounts: vi.fn(async () => [ADMIN, employee]),
+      enterpriseAccountUpdate: update,
+    });
+    render(<AccountManagementPage currentAccount={ADMIN} onBack={() => undefined} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '安排职位 新成员' }));
+    fireEvent.change(screen.getByRole('combobox', { name: '安排职位部门' }), {
+      target: { value: '海外事业部' },
+    });
+    fireEvent.change(screen.getByRole('combobox', { name: '安排真实职位' }), {
+      target: { value: '东南亚渠道经理' },
+    });
+    expect((screen.getByRole('textbox', { name: '职位权限映射' }) as HTMLInputElement).value)
+      .toBe('成员（自定义职位）');
+    fireEvent.click(screen.getByRole('button', { name: '保存职位' }));
+
+    await waitFor(() => expect(update).toHaveBeenCalledWith('acc_new', {
+      department: '海外事业部',
+      departmentId: null,
+      positionTitle: '东南亚渠道经理',
+      positionId: null,
+    }));
   });
 
   it('CEO 管理中心二次确认后删除其他账号，并立即从成员目录移除', async () => {
