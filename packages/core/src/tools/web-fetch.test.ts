@@ -9,6 +9,13 @@ import { WebFetchTool } from './web-fetch.js';
 import { Config, ApprovalMode } from '../config/config.js';
 import { ToolConfirmationOutcome } from './tools.js';
 
+const securityMocks = vi.hoisted(() => ({
+  assertPublicWebUrl: vi.fn().mockResolvedValue(new URL('https://example.com')),
+  safeFetchPublicUrl: vi.fn(),
+}));
+
+vi.mock('./web-fetch-security.js', () => securityMocks);
+
 describe('WebFetchTool', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -177,13 +184,10 @@ describe('WebFetchTool', () => {
 
       const tool = new WebFetchTool(testConfig);
       const params = { prompt: 'fetch https://example.com' };
-      vi.stubGlobal(
-        'fetch',
-        vi.fn().mockResolvedValue(
-          new Response(
-            '<html><body><h1>Example page</h1><p>DeepSeek can read this.</p></body></html>',
-            { status: 200 },
-          ),
+      securityMocks.safeFetchPublicUrl.mockResolvedValueOnce(
+        new Response(
+          '<html><body><h1>Example page</h1><p>DeepSeek can read this.</p></body></html>',
+          { status: 200 },
         ),
       );
 
@@ -194,6 +198,25 @@ describe('WebFetchTool', () => {
       expect(result.llmContent).toContain('DeepSeek can read this.');
       expect(result.returnDisplay).toContain('https://example.com');
       expect(createTemporaryChatMock).not.toHaveBeenCalled();
+    });
+
+    it('blocks private destinations before any model or fetch is called', async () => {
+      securityMocks.assertPublicWebUrl.mockRejectedValueOnce(
+        new Error('web_fetch blocked non-public address: 127.0.0.1'),
+      );
+      const testConfig = {
+        ...baseMockConfig,
+        getModel: vi.fn().mockReturnValue('gemini-2.5-flash'),
+      } as unknown as Config;
+
+      const result = await new WebFetchTool(testConfig).execute(
+        { prompt: 'fetch http://127.0.0.1/admin' },
+        new AbortController().signal,
+      );
+
+      expect(String(result.llmContent)).toContain('blocked non-public address');
+      expect(createTemporaryChatMock).not.toHaveBeenCalled();
+      expect(securityMocks.safeFetchPublicUrl).not.toHaveBeenCalled();
     });
   });
 });

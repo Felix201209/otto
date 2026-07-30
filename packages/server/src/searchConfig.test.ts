@@ -41,6 +41,10 @@ describe('搜索 API 配置持久化', () => {
       apiUrl: 'https://ark.cn-beijing.volces.com/api/v3/responses',
       model: 'doubao-seed-2-0-lite-260215',
       hasApiKey: true,
+      costPerRequestCny: undefined,
+      configuredProviders: ['bing', 'volcengine', 'gemini'],
+      monthlyRequestQuota: undefined,
+      monthlyBudgetCny: undefined,
     });
     expect(view).not.toHaveProperty('apiKey');
     expect(loadSearchRuntimeConfig(home).apiKey).toBe('ark-secret-key');

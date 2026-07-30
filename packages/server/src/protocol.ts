@@ -440,6 +440,9 @@ export type SaveSearchConfigMsg = Envelope<
     model?: string;
     apiKey?: string;
     clearApiKey?: boolean;
+    costPerRequestCny?: number;
+    monthlyRequestQuota?: number;
+    monthlyBudgetCny?: number;
   }
 >;
 
@@ -1023,6 +1026,43 @@ export interface SearchConfigSnapshot {
   apiUrl: string;
   model: string;
   hasApiKey: boolean;
+  costPerRequestCny?: number;
+  configuredProviders: SearchProvider[];
+  monthlyRequestQuota?: number;
+  monthlyBudgetCny?: number;
+  diagnostics: {
+    tenantId: string;
+    cacheEntries: number;
+    cacheHits: number;
+    totalAttempts: number;
+    totalSuccesses: number;
+    estimatedCostCny: number;
+    updatedAt: number;
+    quota?: {
+      periodStart: number;
+      periodEnd: number;
+      requestLimit?: number;
+      requestsUsed: number;
+      budgetLimitCny?: number;
+      budgetUsedCny: number;
+      blocked: boolean;
+      blockedReason?: string;
+    };
+    providers: Array<{
+      provider: SearchProvider;
+      status: 'untested' | 'healthy' | 'degraded' | 'open';
+      attempts: number;
+      successes: number;
+      failures: number;
+      consecutiveFailures: number;
+      averageLatencyMs: number;
+      lastAttemptAt?: number;
+      lastSuccessAt?: number;
+      lastErrorCode?: string;
+      openUntil?: number;
+      estimatedCostCny: number;
+    }>;
+  };
 }
 
 export type SearchConfigMsg = Envelope<'search_config', SearchConfigSnapshot>;
@@ -1946,6 +1986,24 @@ export function validateClientPayload(msg: {
         typeof p['clearApiKey'] !== 'boolean'
       ) {
         return 'clearApiKey 必须是布尔';
+      }
+      for (const key of ['costPerRequestCny', 'monthlyBudgetCny'] as const) {
+        const value = p[key];
+        if (
+          value !== undefined &&
+          (typeof value !== 'number' || !Number.isFinite(value) || value < 0)
+        ) {
+          return `${key} 必须是非负数`;
+        }
+      }
+      const monthlyRequestQuota = p['monthlyRequestQuota'];
+      if (
+        monthlyRequestQuota !== undefined &&
+        (typeof monthlyRequestQuota !== 'number' ||
+          !Number.isSafeInteger(monthlyRequestQuota) ||
+          monthlyRequestQuota < 0)
+      ) {
+        return 'monthlyRequestQuota 必须是非负整数';
       }
       return null;
     }

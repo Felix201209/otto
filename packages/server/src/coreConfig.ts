@@ -31,6 +31,10 @@ import {
   loadSearchRuntimeConfig,
   type SearchRuntimeConfig,
 } from './searchConfig.js';
+import {
+  checkSearchQuota,
+  recordSearchTelemetryEvent,
+} from './searchObservability.js';
 
 export interface CreateCoreConfigOptions {
   sessionId: string;
@@ -56,6 +60,8 @@ export interface CreateCoreConfigOptions {
   disableTools?: boolean;
   /** 覆盖搜索 API 配置（测试用）；缺省从 ~/.otto-user 读取脱敏配置与 secret。 */
   searchConfig?: SearchRuntimeConfig;
+  /** 搜索用量按企业组织隔离；个人会话可传账号 ID。 */
+  searchTenantId?: string;
 }
 
 /**
@@ -132,6 +138,11 @@ export function createCoreConfig(opts: CreateCoreConfigOptions): Config {
     searchApiKey: searchConfig.apiKey,
     searchApiUrl: searchConfig.apiUrl,
     searchModel: searchConfig.model,
+    searchProviderConfigs: searchConfig.providerConfigs,
+    searchTenantId: opts.searchTenantId,
+    searchTelemetrySink: recordSearchTelemetryEvent,
+    searchQuotaGuard: ({ tenantId, estimatedCostCny }) =>
+      checkSearchQuota(tenantId, estimatedCostCny),
     // 关闭遥测与使用统计（与 CLI 一致的隐私基线）。
     telemetry: { enabled: false, logPrompts: false },
     usageStatisticsEnabled: false,

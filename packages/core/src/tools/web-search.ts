@@ -17,6 +17,15 @@ import { t } from '../utils/simpleI18n.js';
 import { isOttoQuotaError } from '../utils/quotaErrorDetection.js';
 import { isCustomModel, generateCustomModelId } from '../types/customModel.js';
 import { ProxyAgent, setGlobalDispatcher } from 'undici';
+import {
+  cacheWebSearchResult,
+  canAttemptSearchProvider,
+  classifySearchError,
+  getCachedWebSearchResult,
+  recordSearchCacheHit,
+  recordSearchProviderAttempt,
+  searchCircuitSkipEvent,
+} from './web-search-runtime.js';
 
 // 最大内容长度限制（10K字符），防止token爆炸
 const MAX_CONTENT_LENGTH = 10000;
@@ -83,6 +92,121 @@ interface WebSearchResultItem {
   title: string;
   url: string;
   snippet: string;
+}
+
+const TRACKING_QUERY_KEYS = new Set([
+  'fbclid',
+  'gclid',
+  'spm',
+  'from',
+  'source',
+]);
+const LOW_SIGNAL_HOSTS = [
+  'baijiahao.baidu.com',
+  'blog.csdn.net',
+  'zhuanlan.zhihu.com',
+  'toutiao.com',
+];
+const ADVERTISEMENT_PATTERN = /(?:^|[\s【[])(?:广告|推广|赞助)(?:[\s】\]]|$)/i;
+
+function canonicalizeSearchUrl(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl);
+    url.hash = '';
+    for (const key of [...url.searchParams.keys()]) {
+      if (
+        key.toLowerCase().startsWith('utm_') ||
+        TRACKING_QUERY_KEYS.has(key.toLowerCase())
+      ) {
+        url.searchParams.delete(key);
+      }
+    }
+    url.hostname = url.hostname.toLowerCase();
+    if (url.pathname !== '/') url.pathname = url.pathname.replace(/\/+$/, '');
+    return url.toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
+function searchResultQualityScore(item: WebSearchResultItem): number {
+  try {
+    const url = new URL(item.url);
+    const hostname = url.hostname.toLowerCase();
+    let score = url.protocol === 'https:' ? 5 : 0;
+    if (hostname.endsWith('.gov.cn') || hostname === 'gov.cn') score += 100;
+    else if (hostname.endsWith('.gov')) score += 90;
+    else if (hostname.endsWith('.edu.cn') || hostname.endsWith('.edu'))
+      score += 70;
+    else if (hostname.endsWith('.org.cn')) score += 30;
+    if (/官网|官方|公告|公示|白皮书|报告/.test(`${item.title} ${item.snippet}`))
+      score += 25;
+    if (
+      LOW_SIGNAL_HOSTS.some(
+        (host) => hostname === host || hostname.endsWith(`.${host}`),
+      )
+    ) {
+      score -= 35;
+    }
+    return score;
+  } catch {
+    return -100;
+  }
+}
+
+function isValidSearchResultUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+/** 去重、清理跟踪参数、优先官方来源，并限制同一域名最多两条。 */
+export function rankWebSearchResults(
+  items: WebSearchResultItem[],
+): WebSearchResultItem[] {
+  const seenUrls = new Set<string>();
+  const seenTitles = new Set<string>();
+  const hostCounts = new Map<string, number>();
+  const sorted = items
+    .map((item, index) => ({
+      item: { ...item, url: canonicalizeSearchUrl(item.url) },
+      index,
+    }))
+    .filter(({ item }) => {
+      const titleKey = item.title.trim().toLocaleLowerCase();
+      if (!item.title || !isValidSearchResultUrl(item.url)) return false;
+      if (ADVERTISEMENT_PATTERN.test(`${item.title} ${item.snippet}`))
+        return false;
+      if (seenUrls.has(item.url) || seenTitles.has(titleKey)) return false;
+      seenUrls.add(item.url);
+      seenTitles.add(titleKey);
+      return true;
+    })
+    .sort((left, right) => {
+      const quality =
+        searchResultQualityScore(right.item) -
+        searchResultQualityScore(left.item);
+      return quality || left.index - right.index;
+    });
+  const hasHighQualitySource = sorted.some(
+    ({ item }) => searchResultQualityScore(item) >= 25,
+  );
+  return sorted
+    .filter(
+      ({ item }) =>
+        !hasHighQualitySource || searchResultQualityScore(item) > -20,
+    )
+    .filter(({ item }) => {
+      const hostname = new URL(item.url).hostname;
+      const count = hostCounts.get(hostname) ?? 0;
+      if (count >= 2) return false;
+      hostCounts.set(hostname, count + 1);
+      return true;
+    })
+    .map(({ item }) => item);
 }
 
 /**
@@ -339,7 +463,8 @@ export class WebSearchTool extends BaseTool<
     query: string,
     items: WebSearchResultItem[],
   ): WebSearchToolResult {
-    const lines = items.map((item, index) => {
+    const rankedItems = rankWebSearchResults(items);
+    const lines = rankedItems.map((item, index) => {
       const parts = [`${index + 1}. ${item.title}`, `   ${item.url}`];
       if (item.snippet) {
         parts.push(`   ${item.snippet}`);
@@ -364,7 +489,7 @@ export class WebSearchTool extends BaseTool<
         query,
         truncated: isTruncated ? t('websearch.results.truncated') : '',
       }),
-      sources: items.map((item) => ({
+      sources: rankedItems.map((item) => ({
         web: { uri: item.url, title: item.title },
       })),
     };
@@ -487,7 +612,7 @@ export class WebSearchTool extends BaseTool<
   ): Promise<WebSearchToolResult> {
     const apiKey =
       typeof this.config.getSearchApiKey === 'function'
-        ? this.config.getSearchApiKey()
+        ? this.config.getSearchApiKey('bocha')
         : undefined;
     if (!apiKey) {
       return this.errorResult(
@@ -573,7 +698,7 @@ export class WebSearchTool extends BaseTool<
   ): Promise<WebSearchToolResult> {
     const apiKey =
       typeof this.config.getSearchApiKey === 'function'
-        ? this.config.getSearchApiKey()
+        ? this.config.getSearchApiKey('volcengine')
         : undefined;
     if (!apiKey) {
       return this.errorResult(
@@ -583,7 +708,7 @@ export class WebSearchTool extends BaseTool<
 
     const model =
       typeof this.config.getSearchModel === 'function'
-        ? this.config.getSearchModel()?.trim()
+        ? this.config.getSearchModel('volcengine')?.trim()
         : undefined;
     if (!model) {
       return this.errorResult(
@@ -593,7 +718,7 @@ export class WebSearchTool extends BaseTool<
 
     const apiUrl =
       (typeof this.config.getSearchApiUrl === 'function'
-        ? this.config.getSearchApiUrl()?.trim()
+        ? this.config.getSearchApiUrl('volcengine')?.trim()
         : undefined) || VOLCENGINE_SEARCH_ENDPOINT;
 
     let data: unknown;
@@ -679,7 +804,22 @@ export class WebSearchTool extends BaseTool<
       );
     }
 
-    const sourceLines = citations.map(
+    const rankedCitations = rankWebSearchResults(
+      citations.flatMap((source) =>
+        source.web?.uri
+          ? [
+              {
+                title: source.web.title ?? source.web.uri,
+                url: source.web.uri,
+                snippet: '',
+              },
+            ]
+          : [],
+      ),
+    ).map((item): GroundingChunkItem => ({
+      web: { uri: item.url, title: item.title },
+    }));
+    const sourceLines = rankedCitations.map(
       (source, index) =>
         `[${index + 1}] ${source.web?.title ?? 'Untitled'} (${source.web?.uri ?? ''})`,
     );
@@ -695,7 +835,7 @@ export class WebSearchTool extends BaseTool<
         query: params.query,
         truncated: '',
       }),
-      sources: citations,
+      sources: rankedCitations,
     };
   }
 
@@ -911,36 +1051,105 @@ export class WebSearchTool extends BaseTool<
       };
     }
 
-    // 自定义线路是增强项，不是可用性的单点：失败时自动回到免 key 内置搜索。
-    const provider = this.getProvider();
-    let primary: WebSearchToolResult;
-    switch (provider) {
-      case 'bocha':
-        primary = await this.executeBochaSearch(params, signal);
-        break;
-      case 'volcengine':
-        primary = await this.executeVolcengineSearch(params, signal);
-        break;
-      case 'gemini':
-        primary = await this.executeGeminiSearch(params, signal);
-        break;
-      case 'bing':
-      default:
-        return this.executeBingSearch(params, signal);
+    const tenantId =
+      typeof this.config.getSearchTenantId === 'function'
+        ? this.config.getSearchTenantId()
+        : 'local';
+    const emit = (event: ReturnType<typeof recordSearchCacheHit>): void => {
+      if (typeof this.config.emitSearchTelemetry === 'function') {
+        this.config.emitSearchTelemetry(event);
+      }
+    };
+    const cached = getCachedWebSearchResult(params.query, Date.now(), tenantId);
+    if (cached) {
+      emit(recordSearchCacheHit(tenantId));
+      return {
+        ...cached,
+        returnDisplay: `已使用近期搜索缓存：${params.query}`,
+      } as WebSearchToolResult;
     }
 
-    const primaryText = String(primary.llmContent ?? '');
-    const unavailable =
-      primaryText.startsWith('Error:') ||
-      /(?:currently unavailable|tool unavailable|authentication failure|insufficient credits)/i.test(
-        primaryText,
-      );
-    if (!unavailable || signal.aborted) return primary;
+    const primary = this.getProvider();
+    const hasKey = (provider: WebSearchProvider): boolean =>
+      typeof this.config.getSearchApiKey === 'function' &&
+      Boolean(this.config.getSearchApiKey(provider));
+    const hasVolcengine =
+      hasKey('volcengine') &&
+      typeof this.config.getSearchModel === 'function' &&
+      Boolean(this.config.getSearchModel('volcengine')?.trim());
+    const order: WebSearchProvider[] = [primary];
+    if (primary !== 'bocha' && hasKey('bocha')) order.push('bocha');
+    if (primary !== 'volcengine' && hasVolcengine) order.push('volcengine');
+    if (primary !== 'bing') order.push('bing');
+    const providerOrder = [...new Set(order)];
+    const failures: string[] = [];
 
-    const fallback = await this.executeBingSearch(params, signal);
-    if (!String(fallback.llmContent ?? '').startsWith('Error:')) return fallback;
+    for (const provider of providerOrder) {
+      if (signal.aborted) break;
+      const estimatedCostCny =
+        typeof this.config.getSearchProviderCostCny === 'function'
+          ? (this.config.getSearchProviderCostCny(provider) ?? 0)
+          : 0;
+      const quota =
+        typeof this.config.checkSearchQuota === 'function'
+          ? this.config.checkSearchQuota(estimatedCostCny)
+          : { allowed: true };
+      if (!quota.allowed) {
+        failures.push(
+          `${provider}: ${quota.reason ?? 'search quota exhausted'}`,
+        );
+        continue;
+      }
+      const circuit = canAttemptSearchProvider(provider, Date.now(), tenantId);
+      if (!circuit.allowed) {
+        emit(searchCircuitSkipEvent(tenantId, provider));
+        failures.push(
+          `${provider}: circuit open until ${new Date(circuit.retryAt ?? Date.now()).toISOString()}`,
+        );
+        continue;
+      }
+
+      const startedAt = Date.now();
+      let result: WebSearchToolResult;
+      switch (provider) {
+        case 'bocha':
+          result = await this.executeBochaSearch(params, signal);
+          break;
+        case 'volcengine':
+          result = await this.executeVolcengineSearch(params, signal);
+          break;
+        case 'gemini':
+          result = await this.executeGeminiSearch(params, signal);
+          break;
+        case 'bing':
+        default:
+          result = await this.executeBingSearch(params, signal);
+          break;
+      }
+      const text = String(result.llmContent ?? '');
+      const failed =
+        text.startsWith('Error:') ||
+        /(?:currently unavailable|tool unavailable|authentication failure|insufficient credits)/i.test(
+          text,
+        );
+      const event = recordSearchProviderAttempt({
+        tenantId,
+        provider,
+        success: !failed,
+        latencyMs: Date.now() - startedAt,
+        errorCode: failed ? classifySearchError(text) : undefined,
+        estimatedCostCny,
+      });
+      emit(event);
+      if (!failed) {
+        cacheWebSearchResult(params.query, result, Date.now(), tenantId);
+        return result;
+      }
+      failures.push(`${provider}: ${text.slice(0, 500)}`);
+    }
+
     return this.errorResult(
-      `Both the configured ${provider} search route and Otto built-in search routes failed. Configured route: ${primaryText.slice(0, 500)} Built-in route: ${String(fallback.llmContent).slice(0, 500)}`,
+      `All configured search providers failed for query "${params.query}". ${failures.join(' | ')}`,
     );
   }
 }

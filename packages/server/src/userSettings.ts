@@ -39,6 +39,12 @@ export interface UserSettingsSubset {
   searchProvider?: WebSearchProvider;
   searchApiUrl?: string;
   searchModel?: string;
+  /** 管理员为各付费搜索线路填写的单次调用估算费用（人民币）。 */
+  searchProviderCostsCny?: Partial<Record<WebSearchProvider, number>>;
+  /** 每个企业自然月最多发起的供应商请求数；未设置表示不限。 */
+  searchMonthlyRequestQuota?: number;
+  /** 每个企业自然月的预估搜索成本上限（人民币）；未设置表示不限。 */
+  searchMonthlyBudgetCny?: number;
   /** 仅用于读取历史 CLI 明文配置；桌面端新保存的密钥不会写入这里。 */
   searchApiKey?: string;
 }
@@ -72,38 +78,68 @@ function readRaw(homeDir = os.homedir()): Record<string, unknown> {
 }
 
 /** 读取本文件关心的字段子集（缺省安全值：healthyUse 默认 true，与 CLI 一致）。 */
-export function loadUserSettingsSubset(homeDir = os.homedir()): UserSettingsSubset {
+export function loadUserSettingsSubset(
+  homeDir = os.homedir(),
+): UserSettingsSubset {
   const raw = readRaw(homeDir);
-  const searchProvider = raw["searchProvider"];
+  const searchProvider = raw['searchProvider'];
+  const rawCosts =
+    raw['searchProviderCostsCny'] &&
+    typeof raw['searchProviderCostsCny'] === 'object'
+      ? (raw['searchProviderCostsCny'] as Record<string, unknown>)
+      : {};
+  const searchProviderCostsCny: Partial<Record<WebSearchProvider, number>> = {};
+  for (const provider of ['bing', 'bocha', 'gemini', 'volcengine'] as const) {
+    const value = rawCosts[provider];
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      searchProviderCostsCny[provider] = value;
+    }
+  }
   return {
-    healthyUse: typeof raw["healthyUse"] === "boolean" ? raw["healthyUse"] as boolean : true,
+    healthyUse:
+      typeof raw['healthyUse'] === 'boolean'
+        ? (raw['healthyUse'] as boolean)
+        : true,
     preferredLanguage:
-      typeof raw["preferredLanguage"] === "string"
-        ? (raw["preferredLanguage"] as string)
+      typeof raw['preferredLanguage'] === 'string'
+        ? (raw['preferredLanguage'] as string)
         : undefined,
     mcpServers:
-      raw["mcpServers"] && typeof raw["mcpServers"] === "object"
-        ? (raw["mcpServers"] as Record<string, MCPServerConfig>)
+      raw['mcpServers'] && typeof raw['mcpServers'] === 'object'
+        ? (raw['mcpServers'] as Record<string, MCPServerConfig>)
         : undefined,
-    authorizationMode: raw["authorizationMode"] === "auto" ? "auto" : "manual",
+    authorizationMode: raw['authorizationMode'] === 'auto' ? 'auto' : 'manual',
     searchProvider:
-      searchProvider === "bing" ||
-      searchProvider === "bocha" ||
-      searchProvider === "gemini" ||
-      searchProvider === "volcengine"
+      searchProvider === 'bing' ||
+      searchProvider === 'bocha' ||
+      searchProvider === 'gemini' ||
+      searchProvider === 'volcengine'
         ? searchProvider
         : undefined,
     searchApiUrl:
-      typeof raw["searchApiUrl"] === "string"
-        ? raw["searchApiUrl"] as string
+      typeof raw['searchApiUrl'] === 'string'
+        ? (raw['searchApiUrl'] as string)
         : undefined,
     searchModel:
-      typeof raw["searchModel"] === "string"
-        ? raw["searchModel"] as string
+      typeof raw['searchModel'] === 'string'
+        ? (raw['searchModel'] as string)
+        : undefined,
+    searchProviderCostsCny,
+    searchMonthlyRequestQuota:
+      typeof raw['searchMonthlyRequestQuota'] === 'number' &&
+      Number.isFinite(raw['searchMonthlyRequestQuota']) &&
+      (raw['searchMonthlyRequestQuota'] as number) >= 0
+        ? (raw['searchMonthlyRequestQuota'] as number)
+        : undefined,
+    searchMonthlyBudgetCny:
+      typeof raw['searchMonthlyBudgetCny'] === 'number' &&
+      Number.isFinite(raw['searchMonthlyBudgetCny']) &&
+      (raw['searchMonthlyBudgetCny'] as number) >= 0
+        ? (raw['searchMonthlyBudgetCny'] as number)
         : undefined,
     searchApiKey:
-      typeof raw["searchApiKey"] === "string"
-        ? raw["searchApiKey"] as string
+      typeof raw['searchApiKey'] === 'string'
+        ? (raw['searchApiKey'] as string)
         : undefined,
   };
 }

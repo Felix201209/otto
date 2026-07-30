@@ -118,6 +118,7 @@ import {
   loadSearchRuntimeConfig,
   saveSearchConfig,
 } from './searchConfig.js';
+import { mergePersistedSearchDiagnostics } from './searchObservability.js';
 import { cacheChatFiles } from './chatFileCache.js';
 import {
   ProjectSettingsManager,
@@ -161,6 +162,7 @@ import {
   getSessionManager,
   getAutoMemoryEngine,
   loadBuiltinSkillInstructions,
+  getWebSearchDiagnostics,
 } from 'otto-core';
 import type { CustomModelConfig } from 'otto-core';
 
@@ -241,6 +243,10 @@ const defaultRuntimeFactory: RuntimeFactory = async (
     feishuMode: Boolean(summary?.feishuChatId),
     ...(userRules ? { userRules } : {}),
     documentIdentity,
+    searchTenantId:
+      summary?.enterpriseOrganizationId ??
+      summary?.enterpriseAccountId ??
+      'local',
     disableMcpDiscovery: profile?.toolFree === true,
     disableEnvironmentContext: profile?.toolFree === true,
     disableTools: profile?.toolFree === true,
@@ -1360,7 +1366,15 @@ export class OttoServer {
   }
 
   private searchConfigSnapshot(): SearchConfigSnapshot {
-    return loadSearchConfigView();
+    const identity = this.productWorkspace.enterpriseIdentityState();
+    const tenantId =
+      identity.account?.organizationId ?? identity.account?.id ?? 'local';
+    return {
+      ...loadSearchConfigView(),
+      diagnostics: mergePersistedSearchDiagnostics(
+        getWebSearchDiagnostics(tenantId),
+      ),
+    };
   }
 
   /** 保存搜索 API 配置、热更新存活会话，并仅广播脱敏视图。 */
@@ -1369,12 +1383,15 @@ export class OttoServer {
     msg: Extract<ClientToServer, { type: 'save_search_config' }>,
   ): void {
     try {
-      const view = saveSearchConfig(msg.payload);
+      saveSearchConfig(msg.payload);
       const runtimeConfig = loadSearchRuntimeConfig();
       for (const cfg of this.liveConfigs()) {
         cfg.setSearchConfig(runtimeConfig);
       }
-      this.broadcastAll({ type: 'search_config', payload: view });
+      this.broadcastAll({
+        type: 'search_config',
+        payload: this.searchConfigSnapshot(),
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.send(conn.socket, {

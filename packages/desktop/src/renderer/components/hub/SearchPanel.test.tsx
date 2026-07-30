@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 /**
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
@@ -11,6 +13,7 @@ afterEach(cleanup);
 
 function searchData(provider: 'bing' | 'volcengine' = 'volcengine') {
   const saveSearchConfig = vi.fn();
+  const refreshSearchConfig = vi.fn();
   const value = {
     state: {
       searchConfig: {
@@ -21,11 +24,34 @@ function searchData(provider: 'bing' | 'volcengine' = 'volcengine') {
             : '',
         model: provider === 'volcengine' ? 'doubao-old-model' : '',
         hasApiKey: provider === 'volcengine',
+        configuredProviders:
+          provider === 'volcengine'
+            ? ['bing', 'volcengine', 'gemini']
+            : ['bing', 'gemini'],
+        diagnostics: {
+          tenantId: 'org-a',
+          cacheEntries: 2,
+          cacheHits: 3,
+          totalAttempts: 10,
+          totalSuccesses: 8,
+          estimatedCostCny: 0.12,
+          updatedAt: 1_000,
+          providers: ['bing', 'bocha', 'volcengine', 'gemini'].map((item) => ({
+            provider: item,
+            status: item === provider ? 'healthy' : 'untested',
+            attempts: item === provider ? 10 : 0,
+            successes: item === provider ? 8 : 0,
+            failures: item === provider ? 2 : 0,
+            consecutiveFailures: 0,
+            averageLatencyMs: item === provider ? 320 : 0,
+            estimatedCostCny: item === provider ? 0.12 : 0,
+          })),
+        },
       },
     },
-    actions: { saveSearchConfig },
+    actions: { saveSearchConfig, refreshSearchConfig },
   } as unknown as UseSettingsData;
-  return { value, saveSearchConfig };
+  return { value, saveSearchConfig, refreshSearchConfig };
 }
 
 describe('SearchPanel 联网搜索配置', () => {
@@ -36,6 +62,15 @@ describe('SearchPanel 联网搜索配置', () => {
     expect(screen.getByText('Otto 可以随时联网搜索')).toBeTruthy();
     expect(screen.getByText('无需配置')).toBeTruthy();
     expect(screen.queryByRole('button', { name: '火山方舟' })).toBeNull();
+    expect(screen.getByText('80%')).toBeTruthy();
+    expect(screen.getAllByText('¥0.1200')).toHaveLength(2);
+  });
+
+  it('管理员可刷新线路诊断状态', () => {
+    const { value, refreshSearchConfig } = searchData('bing');
+    render(<SearchPanel data={value} />);
+    fireEvent.click(screen.getByRole('button', { name: '刷新状态' }));
+    expect(refreshSearchConfig).toHaveBeenCalledTimes(1);
   });
 
   it('火山方舟密钥仅显示已保存状态，保存时发送完整配置但不回显旧密钥', () => {

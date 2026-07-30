@@ -2380,11 +2380,16 @@ describe('OttoServer 搜索 API 配置接口', () => {
     });
     const saved = await client.waitFor((f) => f.type === 'search_config');
     if (saved.type !== 'search_config') throw new Error('unreachable');
-    expect(saved.payload).toEqual({
+    expect(saved.payload).toMatchObject({
       provider: 'volcengine',
       apiUrl: 'https://ark.cn-beijing.volces.com/api/v3/responses',
       model: 'doubao-seed-2-0-lite-260215',
       hasApiKey: true,
+      configuredProviders: expect.arrayContaining(['bing', 'volcengine']),
+      diagnostics: expect.objectContaining({
+        totalAttempts: expect.any(Number),
+        providers: expect.any(Array),
+      }),
     });
     expect(JSON.stringify(saved)).not.toContain('ark-secret');
 

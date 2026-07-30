@@ -372,6 +372,9 @@ describe('validateClientPayload：斜杠命令帧（P3）', () => {
           apiUrl: 'https://ark.cn-beijing.volces.com/api/v3/responses',
           model: 'doubao-seed-2-0-lite-260215',
           apiKey: 'secret',
+          costPerRequestCny: 0.01,
+          monthlyRequestQuota: 1000,
+          monthlyBudgetCny: 50,
         },
       }),
     ).toBeNull();
@@ -387,6 +390,12 @@ describe('validateClientPayload：斜杠命令帧（P3）', () => {
         payload: { provider: 'volcengine', apiUrl: 'http://insecure.example.com' },
       }),
     ).toContain('HTTPS');
+    expect(
+      validateClientPayload({
+        type: 'save_search_config',
+        payload: { provider: 'bing', monthlyRequestQuota: -1 },
+      }),
+    ).toContain('monthlyRequestQuota');
   });
   });
 

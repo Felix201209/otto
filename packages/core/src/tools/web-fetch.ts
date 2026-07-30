@@ -16,11 +16,14 @@ import { Type } from '@google/genai';
 import { getErrorMessage } from '../utils/errors.js';
 import { Config, ApprovalMode } from '../config/config.js';
 import { getResponseText } from '../utils/generateContentResponseUtilities.js';
-import { fetchWithTimeout, isPrivateIp } from '../utils/fetch.js';
 import { SceneType } from '../core/sceneManager.js';
 import { convert } from 'html-to-text';
 import { ProxyAgent, setGlobalDispatcher } from 'undici';
 import { isCustomModel, generateCustomModelId } from '../types/customModel.js';
+import {
+  assertPublicWebUrl,
+  safeFetchPublicUrl,
+} from './web-fetch-security.js';
 
 const URL_FETCH_TIMEOUT_MS = 10000;
 // 最大内容长度限制（10K字符），防止token爆炸
@@ -73,7 +76,7 @@ export class WebFetchTool extends BaseTool<WebFetchToolParams, ToolResult> {
     super(
       WebFetchTool.Name,
       'WebFetch',
-      "Processes content from URL(s), including local and private network addresses (e.g., localhost), embedded in a prompt. Include up to 20 URLs and instructions (e.g., summarize, extract specific data) directly in the 'prompt' parameter.",
+      "Processes content from public HTTP/HTTPS URL(s) embedded in a prompt. Private, local and cloud metadata addresses are blocked. Include up to 20 URLs and instructions directly in the 'prompt' parameter.",
       Icon.Globe,
       {
         properties: {
@@ -116,7 +119,10 @@ export class WebFetchTool extends BaseTool<WebFetchToolParams, ToolResult> {
     }
 
     try {
-      const response = await fetchWithTimeout(url, URL_FETCH_TIMEOUT_MS);
+      const response = await safeFetchPublicUrl(url, {
+        signal,
+        timeoutMs: URL_FETCH_TIMEOUT_MS,
+      });
       if (!response.ok) {
         throw new Error(
           `Request failed with status code ${response.status} ${response.statusText}`,
@@ -282,6 +288,23 @@ ${textContent}
       };
     }
 
+    const requestedUrls = extractUrls(params.prompt);
+    if (requestedUrls.length > 20) {
+      return {
+        llmContent: 'Error: web_fetch accepts at most 20 URLs per request.',
+        returnDisplay: '一次最多读取 20 个网页。',
+      };
+    }
+    try {
+      await Promise.all(requestedUrls.map((url) => assertPublicWebUrl(url)));
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return {
+        llmContent: `Error: ${message}`,
+        returnDisplay: `网页访问已被安全策略拦截：${message}`,
+      };
+    }
+
     // Check if using a custom model
     const currentModel = typeof this.config.getModel === 'function' ? this.config.getModel() : undefined;
     const isUsingCustomModel = currentModel ? isCustomModel(currentModel) : false;
@@ -304,13 +327,6 @@ ${textContent}
     }
 
     const userPrompt = params.prompt;
-    const urls = extractUrls(userPrompt);
-    const url = urls[0];
-    const isPrivate = isPrivateIp(url);
-
-    if (isPrivate) {
-      return this.executeFallback(params, signal, resolvedModel);
-    }
 
     try {
       // 使用临时Chat获得完整的API监控和错误处理

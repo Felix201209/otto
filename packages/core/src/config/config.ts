@@ -31,6 +31,7 @@ import {
   OTTO_CONFIG_DIR as OTTO_DIR,
 } from '../tools/memoryTool.js';
 import { WebSearchTool } from '../tools/web-search.js';
+import type { SearchTelemetryEvent } from '../tools/web-search-runtime.js';
 import { ImageReaderTool } from '../tools/image-reader.js';
 import { TodoWriteTool } from '../tools/todo-write.js';
 import { ReadLintsTool } from '../tools/read-lints.js';
@@ -70,7 +71,6 @@ import {
   DEFAULT_TELEMETRY_TARGET,
   DEFAULT_OTLP_ENDPOINT,
   TelemetryTarget,
-  StartSessionEvent,
 } from '../telemetry/index.js';
 import {
   DEFAULT_GEMINI_EMBEDDING_MODEL,
@@ -138,6 +138,7 @@ export interface GeminiCLIExtension {
   version: string;
   isActive: boolean;
   hooks?: { [K in HookEventName]?: HookDefinition[] };
+  mcpServers?: Record<string, unknown>;
 }
 export interface FileFilteringOptions {
   respectGitIgnore: boolean;
@@ -206,6 +207,19 @@ export type FlashFallbackHandler = (
  */
 export type WebSearchProvider = 'bing' | 'bocha' | 'gemini' | 'volcengine';
 
+export interface SearchProviderRuntimeConfig {
+  apiKey?: string;
+  apiUrl?: string;
+  model?: string;
+  /** 管理员配置的单次调用估算费用；不配置时只统计次数，不猜测价格。 */
+  costPerRequestCny?: number;
+}
+
+export interface SearchQuotaDecision {
+  allowed: boolean;
+  reason?: string;
+}
+
 export interface ConfigParameters {
   sessionId: string;
   embeddingModel?: string;
@@ -256,6 +270,19 @@ export interface ConfigParameters {
   searchApiUrl?: string;
   /** 负责执行搜索的模型 ID / 推理接入点 ID（火山方舟必填）。 */
   searchModel?: string;
+  /** 已保存的备用搜索线路；用于主线路熔断后的自动切换。 */
+  searchProviderConfigs?: Partial<
+    Record<WebSearchProvider, SearchProviderRuntimeConfig>
+  >;
+  /** 搜索统计租户键。企业会话传 organizationId，个人会话传 accountId/local。 */
+  searchTenantId?: string;
+  /** 外壳可把脱敏搜索事件持久化；事件不含查询词、网页正文或 API Key。 */
+  searchTelemetrySink?: (event: SearchTelemetryEvent) => void;
+  /** 在发起供应商请求前执行企业月度额度校验。 */
+  searchQuotaGuard?: (input: {
+    tenantId: string;
+    estimatedCostCny: number;
+  }) => SearchQuotaDecision;
   cwd: string;
   fileDiscoveryService?: FileDiscoveryService;
   bugCommand?: BugCommandSettings;
@@ -345,6 +372,18 @@ export class Config {
   private searchApiKey: string | undefined;
   private searchApiUrl: string | undefined;
   private searchModel: string | undefined;
+  private searchProviderConfigs: Partial<
+    Record<WebSearchProvider, SearchProviderRuntimeConfig>
+  >;
+  private searchTenantId: string;
+  private searchTelemetrySink:
+    ((event: SearchTelemetryEvent) => void) | undefined;
+  private searchQuotaGuard:
+    | ((input: {
+        tenantId: string;
+        estimatedCostCny: number;
+      }) => SearchQuotaDecision)
+    | undefined;
   private readonly cwd: string;
   private readonly bugCommand: BugCommandSettings | undefined;
   //private readonly model: string;
@@ -450,6 +489,10 @@ export class Config {
     this.searchApiKey = params.searchApiKey;
     this.searchApiUrl = params.searchApiUrl;
     this.searchModel = params.searchModel;
+    this.searchProviderConfigs = params.searchProviderConfigs ?? {};
+    this.searchTenantId = params.searchTenantId?.trim() || 'local';
+    this.searchTelemetrySink = params.searchTelemetrySink;
+    this.searchQuotaGuard = params.searchQuotaGuard;
     this.fileDiscoveryService = params.fileDiscoveryService ?? null;
     this.bugCommand = params.bugCommand;
     //this.model = params.model;
@@ -489,8 +532,8 @@ export class Config {
   async loadExtensionMcpServers(extension: GeminiCLIExtension): Promise<void> {
     if (!extension.isActive) return;
 
-    const mcpServers = (extension as any).mcpServers || {};
-    for (const [name, config] of Object.entries(mcpServers)) {
+    const mcpServers = extension.mcpServers ?? {};
+    for (const name of Object.keys(mcpServers)) {
       await this.toolRegistry.discoverToolsForServer(name);
     }
 
@@ -504,7 +547,7 @@ export class Config {
    * 🎯 动态卸载扩展中的 MCP 服务器
    */
   async unloadExtensionMcpServers(extension: GeminiCLIExtension): Promise<void> {
-    const mcpServers = (extension as any).mcpServers || {};
+    const mcpServers = extension.mcpServers ?? {};
     for (const name of Object.keys(mcpServers)) {
       await unloadMcpServer(
         name,
@@ -595,7 +638,7 @@ export class Config {
         // 同时更新系统提示以包含最新发现的MCP prompts
         await this.geminiClient.updateSystemPromptWithMcpPrompts();
       }
-    } catch (error) {
+    } catch (_error) {
       // MCP discovery errors are already logged in mcp-client.ts
       // We don't want to crash the CLI if MCP servers fail to connect
     }
@@ -1087,22 +1130,77 @@ export class Config {
   }
 
   /** 搜索 API key；按 provider 分别支持 ARK_API_KEY / OTTO_BOCHA_API_KEY 环境变量。 */
-  getSearchApiKey(): string | undefined {
-    if (this.searchApiKey) {
+  getSearchApiKey(
+    provider: WebSearchProvider = this.getSearchProvider(),
+  ): string | undefined {
+    const providerKey = this.searchProviderConfigs[provider]?.apiKey;
+    if (providerKey) return resolveSecret(providerKey);
+    if (provider === this.getSearchProvider() && this.searchApiKey) {
       // Resolve secret references ($ENV: / $KEYCHAIN:) before returning
       return resolveSecret(this.searchApiKey);
     }
-    return this.getSearchProvider() === 'volcengine'
-      ? process.env.ARK_API_KEY ?? undefined
-      : process.env.OTTO_BOCHA_API_KEY ?? undefined;
+    return provider === 'volcengine'
+      ? (process.env.ARK_API_KEY ?? undefined)
+      : provider === 'bocha'
+        ? (process.env.OTTO_BOCHA_API_KEY ?? undefined)
+        : undefined;
   }
 
-  getSearchApiUrl(): string | undefined {
-    return this.searchApiUrl ?? process.env.OTTO_SEARCH_API_URL ?? undefined;
+  getSearchApiUrl(
+    provider: WebSearchProvider = this.getSearchProvider(),
+  ): string | undefined {
+    return (
+      this.searchProviderConfigs[provider]?.apiUrl ??
+      (provider === this.getSearchProvider() ? this.searchApiUrl : undefined) ??
+      (provider === 'volcengine'
+        ? process.env.OTTO_SEARCH_API_URL
+        : undefined) ??
+      undefined
+    );
   }
 
-  getSearchModel(): string | undefined {
-    return this.searchModel ?? process.env.OTTO_SEARCH_MODEL ?? undefined;
+  getSearchModel(
+    provider: WebSearchProvider = this.getSearchProvider(),
+  ): string | undefined {
+    return (
+      this.searchProviderConfigs[provider]?.model ??
+      (provider === this.getSearchProvider() ? this.searchModel : undefined) ??
+      (provider === 'volcengine' ? process.env.OTTO_SEARCH_MODEL : undefined) ??
+      undefined
+    );
+  }
+
+  getSearchProviderCostCny(provider: WebSearchProvider): number | undefined {
+    const value = this.searchProviderConfigs[provider]?.costPerRequestCny;
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0
+      ? value
+      : undefined;
+  }
+
+  getSearchTenantId(): string {
+    return this.searchTenantId;
+  }
+
+  emitSearchTelemetry(event: SearchTelemetryEvent): void {
+    try {
+      this.searchTelemetrySink?.(event);
+    } catch (error) {
+      console.warn('[Config] Search telemetry sink failed:', error);
+    }
+  }
+
+  checkSearchQuota(estimatedCostCny = 0): SearchQuotaDecision {
+    try {
+      return (
+        this.searchQuotaGuard?.({
+          tenantId: this.searchTenantId,
+          estimatedCostCny: Math.max(0, estimatedCostCny),
+        }) ?? { allowed: true }
+      );
+    } catch (error) {
+      console.warn('[Config] Search quota guard failed:', error);
+      return { allowed: false, reason: 'search quota status unavailable' };
+    }
   }
 
   /** 桌面设置保存后热更新存活会话；WebSearchTool 每次执行都从 Config 读取。 */
@@ -1111,11 +1209,17 @@ export class Config {
     apiKey?: string;
     apiUrl?: string;
     model?: string;
+    providerConfigs?: Partial<
+      Record<WebSearchProvider, SearchProviderRuntimeConfig>
+    >;
   }): void {
     this.searchProvider = config.provider;
     this.searchApiKey = config.apiKey;
     this.searchApiUrl = config.apiUrl;
     this.searchModel = config.model;
+    if (config.providerConfigs) {
+      this.searchProviderConfigs = config.providerConfigs;
+    }
   }
 
   getWorkingDir(): string {
