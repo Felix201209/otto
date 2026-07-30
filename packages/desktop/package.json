@@ -1,6 +1,6 @@
 {
   "name": "otto-desktop",
-  "version": "1.9.9",
+  "version": "1.9.10",
   "description": "Otto Desktop - Electron app shell (main + preload + renderer reusing webview DOM UI)",
   "author": "Otto",
   "license": "Apache-2.0",
@@ -41,13 +41,13 @@
     "@types/react-dom": "^18.3.1",
     "css-loader": "^7.1.2",
     "electron": "^43.1.0",
-    "electron-builder": "^25.1.8",
+    "electron-builder": "26.15.3",
     "html-webpack-plugin": "^5.6.3",
     "jsdom": "^26.1.0",
     "style-loader": "^4.0.0",
     "ts-loader": "^9.5.1",
     "typescript": "5.9.3",
-    "vitest": "3.2.4",
+    "vitest": "^3.2.7",
     "webpack": "^5.97.1",
     "webpack-cli": "^5.1.4",
     "ws": "^8.21.1"

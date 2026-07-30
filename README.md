@@ -6,7 +6,7 @@ Otto 是一个正在走向成熟形态的 agent 产品：核心要轻、边界�
 
 ## 当前内核状态
 
-当前 `1.9.9` 是 LSTC（Long-term Stable Channel）目标版本，正式产品入口是 Electron 桌面端与独立企业服务端：
+当前 `1.9.10` 是 LSTC（Long-term Stable Channel）目标版本，正式产品入口是 Electron 桌面端与独立企业服务端：
 
 - 桌面端: `packages/desktop`
 - 企业服务端: `packages/server`

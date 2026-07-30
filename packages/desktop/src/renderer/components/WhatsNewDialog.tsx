@@ -26,6 +26,15 @@ interface ChangelogEntry {
 /** 版本更新说明（最新在前；只有列在这里的版本会触发弹窗）。 */
 const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.9.10',
+    date: '2026-07-30',
+    items: [
+      '修复可复现构建的安全依赖基线：SheetJS 固定为官方 0.20.3，MCP SDK 升级至 1.30.0，并清除生产依赖中的高危 brace-expansion 版本',
+      '生产依赖审计达到 critical 0、high 0；更新包继续通过国内镜像下载，并在安装前执行大小与 SHA-256 双重校验',
+      '完整继承 1.9.9 的企业权限隔离、园区服务、同事聊天、记忆恢复、工具超时、文档转换和组织结构体验改进',
+    ],
+  },
+  {
     version: '1.9.9',
     date: '2026-07-29',
     items: [

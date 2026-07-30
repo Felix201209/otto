@@ -1,6 +1,6 @@
 {
   "name": "otto-ai",
-  "version": "1.9.9",
+  "version": "1.9.10",
   "engines": {
     "node": ">=22.13.0"
   },
@@ -148,12 +148,15 @@
     },
     "@grpc/grpc-js": "^1.14.4",
     "@isaacs/brace-expansion": "^5.0.1",
-    "@modelcontextprotocol/sdk": "1.29.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
     "@xmldom/xmldom": "^0.8.13",
     "form-data": "^4.0.6",
     "hono": "^4.12.31",
     "minimatch@^9.0.0": "^9.0.9",
-    "minimatch@^10.0.0": "^10.2.5",
+    "minimatch@^10.0.0": {
+      ".": "^10.2.5",
+      "brace-expansion": "^5.0.8"
+    },
     "path-to-regexp": "^8.4.2",
     "picomatch@^2.0.0": "^2.3.2",
     "protobufjs": "^7.6.5",

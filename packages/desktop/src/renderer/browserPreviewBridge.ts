@@ -164,11 +164,11 @@ if (!previewWindow.otto) {
     notificationShow: () => Promise.resolve(),
     notificationMarkRead: () => Promise.resolve(),
     notificationGetUnread: () => Promise.resolve([]),
-    appVersion: () => Promise.resolve('1.9.9-browser-preview'),
+    appVersion: () => Promise.resolve('1.9.10-browser-preview'),
     openExternal: () => Promise.resolve(), openPath: () => Promise.resolve(), saveTextFile: () => Promise.resolve(null),
     getPathForFile: (file: File) => (file as File & { path?: string }).path || file.name,
     readClipboardText: () => navigator.clipboard?.readText?.() ?? Promise.resolve(''),
-    updateCheck: () => Promise.resolve({ status: 'up-to-date', currentVersion: '1.9.9', latestVersion: null }),
+    updateCheck: () => Promise.resolve({ status: 'up-to-date', currentVersion: '1.9.10', latestVersion: null }),
     updateDownload: () => Promise.resolve({ ok: false, error: '浏览器预览不支持更新' }), updateCancel: () => Promise.resolve(), updateInstall: () => Promise.resolve({ ok: false, message: '浏览器预览不支持安装' }),
     themeGet: () => Promise.resolve('dark'), themeSet: () => Promise.resolve('dark'),
     enterpriseSession: () => Promise.resolve({
