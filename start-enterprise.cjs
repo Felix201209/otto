@@ -35,7 +35,7 @@ process.env.OTTO_ENTERPRISE_PORT = String(port);
 const appVersion = process.env.OTTO_APP_VERSION
   || JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version;
 let buildCommit = process.env.OTTO_BUILD_COMMIT || process.env.GITHUB_SHA || '';
-if (!buildCommit) {
+if (!/^[0-9a-f]{40}$/i.test(buildCommit)) {
   try {
     buildCommit = execFileSync('git', ['rev-parse', 'HEAD'], {
       cwd: __dirname,
@@ -43,7 +43,7 @@ if (!buildCommit) {
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
   } catch {
-    // 对外监听在下面 fail closed；本机开发仍可启动并在 health 中标明 unknown。
+    // Public listeners fail closed below; local development reports unknown.
   }
 }
 if (!/^[0-9a-f]{40}$/i.test(buildCommit)) {

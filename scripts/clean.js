@@ -5,7 +5,7 @@
  */
 
 import { rmSync, readFileSync, existsSync } from 'fs';
-import { dirname, join, relative } from 'path';
+import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { globSync } from 'glob';
 import { execSync } from 'child_process';
@@ -55,7 +55,7 @@ printHeader(stepCount++, totalSteps, 'Cleaning compiled source files');
 try {
   execSync('node scripts/clean-compiled-js.js', { cwd: root, stdio: 'pipe' });
   printItem('success', './src/**/*.js', 'JS Source Cache');
-} catch (error) {
+} catch {
   console.log(`  ${COLORS.yellow}⚠  Note: Partial source cleanup or already clean${COLORS.reset}`);
 }
 
@@ -92,11 +92,6 @@ for (const workspacePattern of workspaces) {
 
 // --- STEP 3: System Caches ---
 printHeader(stepCount++, totalSteps, 'Cleaning system caches and build info');
-const caches = [
-  { glob: '**/tsconfig.tsbuildinfo', type: 'TS Build Cache' },
-  { dir: join(os.tmpdir(), 'otto-renderer-webpack-cache'), type: 'Webpack Cache', manual: true }
-];
-
 // TS Build Info
 globSync('**/tsconfig.tsbuildinfo', { cwd: root, ignore: ['node_modules/**'] }).forEach(file => {
   rmSync(join(root, file), RMRF_OPTIONS);

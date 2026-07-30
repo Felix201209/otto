@@ -113,11 +113,11 @@ export async function askLocalPeerOtto(input: AskLocalPeerOttoInput): Promise<st
     };
 
     let stop = (): void => undefined;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timerRef: { current?: ReturnType<typeof setTimeout> } = {};
     const onAbort = (): void => finish(new Error('A2A 请求已取消'), undefined, true);
 
     const cleanup = (cancelServer: boolean): void => {
-      if (timer) clearTimeout(timer);
+      if (timerRef.current) clearTimeout(timerRef.current);
       input.signal?.removeEventListener('abort', onAbort);
       stop();
       // ephemeral A2A 会话由服务端负责隐藏、回收和断开订阅。客户端只在本地
@@ -188,7 +188,7 @@ export async function askLocalPeerOtto(input: AskLocalPeerOttoInput): Promise<st
       finish(undefined, answer);
     });
 
-    timer = setTimeout(() => {
+    timerRef.current = setTimeout(() => {
       finish(new Error('本机 Otto A2A 响应超时'), undefined, true);
     }, timeoutMs);
     input.signal?.addEventListener('abort', onAbort, { once: true });

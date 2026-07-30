@@ -36,7 +36,7 @@ function filesUnder(root: string, current = root): string[] {
       const path = resolve(current, entry.name);
       return entry.isDirectory()
         ? filesUnder(root, path)
-        : [relative(root, path)];
+        : [relative(root, path).replaceAll('\\', '/')];
     })
     .sort();
 }

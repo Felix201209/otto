@@ -31,8 +31,14 @@ export function OrganizationPanel({
   const [companyLink, setCompanyLink] = useState('');
 
   const organization = workspace?.managerWorkspace?.organization;
-  const positions = organization?.positions ?? [];
-  const departments = organization?.departments ?? [];
+  const positions = useMemo(
+    () => organization?.positions ?? [],
+    [organization?.positions],
+  );
+  const departments = useMemo(
+    () => organization?.departments ?? [],
+    [organization?.departments],
+  );
 
   const departmentById = useMemo(
     () => new Map(departments.map((d) => [d.id, d.name])),

@@ -311,30 +311,47 @@ async function executeWithTimeout(
   abortSignal: AbortSignal,
   timeoutMs: number,
 ): Promise<ToolResult> {
-  // Merge the explicit timeout with the incoming AbortSignal
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(new Error('Tool execution timed out')), timeoutMs);
+  let settleCancellation!: (result: ToolResult) => void;
+  const cancellation = new Promise<ToolResult>((resolve) => {
+    settleCancellation = resolve;
+  });
+  const timeoutId = setTimeout(() => {
+    const error = new Error('Tool execution timed out');
+    controller.abort(error);
+    settleCancellation(failResult(`Tool "${tool.name}" ${error.message}`));
+  }, timeoutMs);
 
-  // If the parent signal fires, propagate cancellation
-  const onParentAbort = () => controller.abort(abortSignal.reason);
+  const onParentAbort = (): void => {
+    const reason = abortSignal.reason ?? new Error('Tool execution aborted');
+    controller.abort(reason);
+    settleCancellation(failResult(
+      `Tool "${tool.name}" ${reason instanceof Error ? reason.message : String(reason)}`,
+    ));
+  };
   abortSignal.addEventListener('abort', onParentAbort, { once: true });
+  if (abortSignal.aborted) onParentAbort();
 
   try {
-    const result = await tool.execute(
-      args,
-      controller.signal,
-      undefined, // updateOutput — the envelope doesn't forward streaming
-      undefined, // services    — the envelope doesn't inject extra services
-    );
-    return result;
-  } catch (err: unknown) {
-    if (controller.signal.aborted) {
-      const reason = controller.signal.reason ?? 'Timeout';
-      return failResult(
-        `Tool "${tool.name}" ${reason instanceof Error ? reason.message : String(reason)}`,
-      );
-    }
-    throw err;
+    const execution = (async (): Promise<ToolResult> => {
+      try {
+        return await tool.execute(
+          args,
+          controller.signal,
+          undefined,
+          undefined,
+        );
+      } catch (err: unknown) {
+        if (controller.signal.aborted) {
+          const reason = controller.signal.reason ?? 'Timeout';
+          return failResult(
+            `Tool "${tool.name}" ${reason instanceof Error ? reason.message : String(reason)}`,
+          );
+        }
+        throw err;
+      }
+    })();
+    return await Promise.race([execution, cancellation]);
   } finally {
     clearTimeout(timeoutId);
     abortSignal.removeEventListener('abort', onParentAbort);

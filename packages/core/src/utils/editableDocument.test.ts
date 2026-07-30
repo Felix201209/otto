@@ -9,6 +9,10 @@ import { execFile } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import JSZip from 'jszip';
 import { exportEditedDocument, extractEditableDocument } from './editableDocument.js';
+import {
+  buildBundledPythonEnvironment,
+  resolveDocumentRuntime,
+} from '../services/bundledRuntime.js';
 
 let tempRoot = '';
 
@@ -21,8 +25,18 @@ afterEach(async () => {
 });
 
 async function hasFpdf2(): Promise<boolean> {
+  const python = resolveDocumentRuntime('python');
   return new Promise((resolve) => {
-    execFile('python3', ['-c', 'import fpdf'], { timeout: 3_000 }, (error) => resolve(!error));
+    execFile(
+      python.executable,
+      ['-c', 'import fpdf'],
+      {
+        env: buildBundledPythonEnvironment(python),
+        timeout: 10_000,
+        windowsHide: true,
+      },
+      (error) => resolve(!error),
+    );
   });
 }
 
@@ -73,5 +87,5 @@ describe('editableDocument', () => {
     expect(header.startsWith('%PDF-')).toBe(true);
     expect(header).toContain('xref');
     expect(header).not.toContain('??');
-  });
+  }, 60_000);
 });

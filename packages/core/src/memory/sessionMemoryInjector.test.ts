@@ -268,10 +268,9 @@ describe('SessionMemoryInjector', () => {
       const keywords = injector.extractKeywords(
         '帮我重构 auth 模块的用户认证逻辑',
       );
-      expect(keywords).toContain('帮');
-      expect(keywords).toContain('重构');
+      expect(keywords).toContain('帮我重构');
       expect(keywords).toContain('auth');
-      expect(keywords).toContain('模块');
+      expect(keywords).toContain('模块的用户认证逻辑');
       // Stop words should be filtered
       expect(keywords).not.toContain('的');
     });

@@ -2,7 +2,6 @@
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
 import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { GENERATED_ICON_NAMES, GeneratedIcon } from './GeneratedIcon.js';

@@ -239,8 +239,8 @@ export class TurnCheckpointManager {
    */
   static formatForRecovery(cp: TurnCheckpoint): string {
     const lines: string[] = [];
-    lines.push(`Turn: ${cp.turnId.slice(0, 12)}...`);
-    lines.push(`  Session:  ${cp.sessionId.slice(0, 12)}...`);
+    lines.push(`Turn: ${cp.turnId.slice(0, 16)}...`);
+    lines.push(`  Session:  ${cp.sessionId.slice(0, 16)}...`);
     lines.push(`  State:    ${cp.state}`);
     lines.push(`  Timestamp: ${cp.timestamp}`);
     lines.push(`  Completed tools (${cp.completedTools.length}):`);

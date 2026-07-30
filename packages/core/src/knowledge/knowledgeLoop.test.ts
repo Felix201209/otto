@@ -179,18 +179,6 @@ describe('KnowledgeCapturePipeline integration (capture → store → search)', 
 
   // ── Test 6: duplicate via normalized whitespace fingerprints ──────────
   it('should deduplicate entries with different whitespace formatting', async () => {
-    // Write an entry manually with compact whitespace
-    await store.add(
-      'preference',
-      'prefer dark color theme for all UIs',
-      ['ui', 'preference'],
-      'abcd1234abcd5678',
-    );
-
-    // Pipeline: direct insert with a differently-formatted fingerprint
-    // The fingerprint() method normalizes whitespace, so "prefer  dark   color"
-    // should hash identically to "prefer dark color". We verify this by
-    // constructing a candidate whose normalized content matches the stored one.
     const { KnowledgeCapture } = await import('./knowledgeCapture.js');
     const capture = new KnowledgeCapture(store);
 
@@ -201,6 +189,13 @@ describe('KnowledgeCapturePipeline integration (capture → store → search)', 
     // All should produce the same fingerprint
     expect(fp1).toBe(fp2);
     expect(fp1).toBe(fp3);
+
+    await store.add(
+      'preference',
+      'prefer dark color theme for all UIs',
+      ['ui', 'preference'],
+      fp1,
+    );
 
     // Verify the stored entry is found by the normalized fingerprint
     const found = await store.findByFingerprint(fp1);

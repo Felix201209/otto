@@ -326,7 +326,6 @@ export class ServerManager {
     port: number,
   ): Promise<ServerEndpointRecord> {
     const nodeExec = process.execPath;
-    const argv0 = process.argv0;
     const mod = await this.dependencies.loadOttoServer();
 
     // 查找 bin.js 路径；active kernel overlay 优先，其次回退安装包内 otto-server。

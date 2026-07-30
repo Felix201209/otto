@@ -147,9 +147,6 @@ export class KnowledgeCapture {
    *  - 只有闲聊 / 没有真实成功结果且对话太短（<3 轮交换）→ false
    */
   shouldCapture(messages: SimpleMessage[]): boolean {
-    // 消息太少（比如只有一两句寒暄），不值得沉淀
-    if (messages.length <= 3) return false;
-
     if (messages.length === 0) return false;
 
     // 过滤出实质性消息（tool 结果只算成功的；user/assistant 纯文本）
@@ -161,6 +158,11 @@ export class KnowledgeCapture {
     const successfulTools = messages.filter(
       (m) => m.role === 'tool' && m.toolSuccess === true,
     ).length;
+
+    // 短对话只在有真实成功工具结果且用户、助手都给出实质内容时沉淀。
+    if (messages.length <= 3) {
+      return successfulTools >= 1 && substantive.length >= 2;
+    }
 
     if (substantive.length < 3 && successfulTools === 0) return false;
 

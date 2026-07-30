@@ -97,7 +97,10 @@ async function getJSON(
   return { status: res.status, body: await res.json() as ParkEndpointResponse };
 }
 
-describe('Park endpoints', { timeout: 15_000 }, () => {
+// The first isolated import compiles the large enterprise graph under Vitest
+// coverage. Production uses prebuilt JavaScript, but CI needs a wider startup
+// budget on slower Windows runners.
+describe('Park endpoints', { timeout: 30_000 }, () => {
   it('POST /enterprise/park creates a park (admin only)', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
     const adminHeaders = { 'x-otto-admin-token': ADMIN_TOKEN };

@@ -38,6 +38,11 @@ describe('voiceConfig', () => {
     expect(JSON.stringify(loaded.public)).not.toContain('sk-deepseek');
     expect(loaded.secrets.volcAccessKey).toBe('access');
     const secret = path.join(home, '.otto-user', 'secrets', 'voice-volc-access-key');
-    expect(fs.statSync(secret).mode & 0o777).toBe(0o600);
+    expect(fs.existsSync(secret)).toBe(true);
+    // POSIX honors chmod(0600). Windows exposes inherited ACLs instead of
+    // meaningful POSIX mode bits, so fs.stat().mode commonly reports 0666.
+    if (process.platform !== 'win32') {
+      expect(fs.statSync(secret).mode & 0o777).toBe(0o600);
+    }
   });
 });

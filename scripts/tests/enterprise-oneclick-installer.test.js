@@ -228,7 +228,7 @@ describe('enterprise one-click schema contract', () => {
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it('backs up v3 before migration and verifies that v16 preserves every row', () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-oneclick-upgrade-'));

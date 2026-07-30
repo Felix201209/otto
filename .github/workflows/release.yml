@@ -135,6 +135,12 @@ jobs:
           npm run validate:boundaries
           npm run size:source:check
 
+      - name: Release quality gates
+        run: |
+          npm run lint:ci
+          npm run typecheck
+          npm run test:ci
+
       - name: Focused regression tests
         run: |
           npx vitest run \

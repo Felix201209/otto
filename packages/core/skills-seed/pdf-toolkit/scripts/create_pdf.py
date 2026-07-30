@@ -57,6 +57,10 @@ def parse(text):
             if h: cur["blocks"].append({"t":"table","h":h,"r":r})
             tbl=[]; in_t=False; continue
         if not line.strip(): i+=1; continue
+        m=re.match(r"^#\s+(.+)$",line)
+        if m:
+            if not meta.get("title"): meta["title"]=m.group(1).strip()
+            i+=1; continue
         m=re.match(r"^(##)\s+(.+)$",line)
         if m:
             save(); txt=m.group(2).strip(); lm=LAYOUT_RE.search(txt)
@@ -90,9 +94,15 @@ def parse(text):
               not lines[i].startswith("|") and not lines[i].startswith("> ") and \
               lines[i].strip() not in ("---","***","___"):
             p.append(lines[i]); i+=1
-        cur["blocks"].append({"t":"para","text":"\n".join(p)})
-    if tbl: h,r=_tbl(tbl)
-    if h: cur["blocks"].append({"t":"table","h":h,"r":r})
+        if p:
+            cur["blocks"].append({"t":"para","text":"\n".join(p)})
+        else:
+            # Unknown markdown constructs must still make forward progress.
+            cur["blocks"].append({"t":"para","text":line})
+            i+=1
+    if tbl:
+        h,r=_tbl(tbl)
+        if h: cur["blocks"].append({"t":"table","h":h,"r":r})
     save()
     return meta,secs
 

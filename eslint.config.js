@@ -41,6 +41,12 @@ export default tseslint.config(
       'packages/vscode-ui-plugin/webview/coverage/**',
       'packages/vscode-ide-companion/dist/**',
       'bundle/**',
+      'deliverables/**',
+      'ui/**',
+      '.otto/**',
+      'otto-native/target/**',
+      'otto-native/src/**/*.js',
+      'resources/video-editor/**',
       'packages/web/**',
       'packages/*/coverage/**',
       // Ignore compiled JS files in src directories (when TS compiles to same dir)
@@ -57,6 +63,11 @@ export default tseslint.config(
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    rules: {
+      'no-empty': ['error', { allowEmptyCatch: true }],
+    },
+  },
   reactHooks.configs['recommended-latest'],
   reactPlugin.configs.flat.recommended,
   reactPlugin.configs.flat['jsx-runtime'], // Add this if you are using React 17+
@@ -153,15 +164,27 @@ export default tseslint.config(
   },
   // extra settings for scripts that we run directly with node
   {
-    files: ['./scripts/**/*.js', 'esbuild.config.js'],
+    files: [
+      'scripts/**/*.{js,mjs,cjs}',
+      'deployment/**/*.mjs',
+      'start-enterprise.cjs',
+      'packages/desktop/*.{js,mjs,cjs}',
+      'esbuild.config.js',
+    ],
     languageOptions: {
       globals: {
         ...globals.node,
+        ...globals.nodeBuiltin,
+        ...globals.es2021,
         process: 'readonly',
         console: 'readonly',
+        fetch: 'readonly',
+        AbortSignal: 'readonly',
       },
     },
     rules: {
+      'no-restricted-syntax': 'off',
+      '@typescript-eslint/no-require-imports': 'off',
       '@typescript-eslint/no-unused-vars': [
         'error',
         {

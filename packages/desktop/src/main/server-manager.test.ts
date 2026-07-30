@@ -457,7 +457,7 @@ export class OttoServer {
 }
 `).toString('base64'),
         },
-        { path: 'dist/bin.js', contentBase64: Buffer.from('import \"./index.js\";\n').toString('base64') },
+        { path: 'dist/bin.js', contentBase64: Buffer.from('import "./index.js";\n').toString('base64') },
       ],
     });
     const source = path.join(root, 'overlay.bundle.json');

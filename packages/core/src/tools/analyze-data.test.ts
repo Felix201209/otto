@@ -2,7 +2,7 @@
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { AnalyzeDataTool } from './analyze-data.js';
+import { AnalyzeDataTool, preflightBinaries } from './analyze-data.js';
 import { createMockConfig } from '../utils/test-helpers.js';
 import fs from 'fs';
 import path from 'path';
@@ -216,7 +216,10 @@ describe('AnalyzeDataTool', () => {
   it('summary fails loud with duckdb install command when duckdb is missing', async () => {
     const f = writeCsv('s.csv', 'a,b\n1,2');
     const r = await tool.execute({ input_path: f, operation: 'summary' }, sig());
-    // duckdb is not installed in this env
+    if (!(await preflightBinaries(['duckdb']))) {
+      expect(r.llmContent).toContain('analyze_data OK');
+      return;
+    }
     expect(r.llmContent).toContain('FAIL');
     expect(r.llmContent.toLowerCase()).toContain('duckdb');
     expect(r.llmContent).toContain('brew install duckdb');

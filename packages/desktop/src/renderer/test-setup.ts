@@ -3,6 +3,11 @@
  */
 
 import { beforeEach, vi } from 'vitest';
+import { configure } from '@testing-library/dom';
+
+// Full desktop runs exercise more than two hundred files in parallel. Give
+// async React effects enough time to settle on slower CI/Windows machines.
+configure({ asyncUtilTimeout: 3_000 });
 
 beforeEach(() => {
   const existing = window.otto ?? {};

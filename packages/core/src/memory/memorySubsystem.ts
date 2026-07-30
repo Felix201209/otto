@@ -97,6 +97,8 @@ export interface MemorySubsystemOptions {
   autoMerge?: AutoMemoryEngine;
   /** 知识捕获管道覆盖（测试注入用）。 */
   pipeline?: KnowledgeCapturePipeline;
+  /** 知识存储覆盖（账号隔离与测试注入用）。 */
+  knowledgeStore?: LocalKnowledgeStore;
 }
 
 // ── Simple substring search implementation ──────────────────────────────
@@ -145,7 +147,11 @@ export function createMemorySubsystem(
   }
 
   const engine = opts.autoMerge ?? getAutoMemoryEngine();
-  const pipeline = opts.pipeline ?? getKnowledgeCapturePipeline();
+  const knowledgeStore = opts.knowledgeStore ?? new LocalKnowledgeStore();
+  const pipeline = opts.pipeline
+    ?? (opts.knowledgeStore
+      ? new KnowledgeCapturePipeline(knowledgeStore)
+      : getKnowledgeCapturePipeline());
 
   // 记录内存中的事件列表（供 rebuild / clear 用）
   const capturedEvents: MemoryEvent[] = [];
@@ -234,8 +240,7 @@ export function createMemorySubsystem(
 
       // 2. 搜索 localKnowledgeStore
       try {
-        const store = new LocalKnowledgeStore();
-        const entries = await store.loadAll();
+        const entries = await knowledgeStore.loadAll();
         for (const entry of entries) {
           const tags = entry.tags ?? [];
           const content = entry.content ?? '';
@@ -285,8 +290,7 @@ export function createMemorySubsystem(
 
       let knowledgeEntries = 0;
       try {
-        const store = new LocalKnowledgeStore();
-        const entries = await store.loadAll();
+        const entries = await knowledgeStore.loadAll();
         knowledgeEntries = entries.length;
       } catch {
         // 读取失败视为 0
@@ -301,13 +305,9 @@ export function createMemorySubsystem(
     },
 
     async rebuild(): Promise<void> {
-      // 重新初始化 autoMerge（会重新扫描所有源文件）
-      const freshEngine = new AutoMemoryEngine();
-      await freshEngine.initialize();
-      // 将重建后的条目同步到单例
-      const singleton = getAutoMemoryEngine();
-      // 简单方案：重新运行维护周期
-      await singleton.runMaintenanceCycle();
+      // Rebuild the configured engine in place so account-scoped and test
+      // storage never falls back to the process-global ~/.otto-user paths.
+      await engine.runMaintenanceCycle();
     },
 
     async clear(): Promise<void> {
