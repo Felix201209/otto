@@ -4,6 +4,7 @@
 
 import fs from 'node:fs';
 
+import { assertLocalSqliteDatabasePath } from './enterpriseDatabaseTopology.js';
 import { Database, type DatabaseHandle } from './sqliteCompat.js';
 
 export interface DatabaseReadiness {
@@ -70,6 +71,7 @@ export function createEnterpriseDatabaseLifecycle(
   function getDatabase(): DatabaseHandle {
     if (database) return database;
 
+    assertLocalSqliteDatabasePath(options.databasePath);
     fs.mkdirSync(options.dataDirectory, { recursive: true });
     prepareLegacyBackup(options);
 

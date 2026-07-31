@@ -15,6 +15,8 @@ import {
   createFileEncryptionKeyProvider,
   createSqlCipherFileRuntime,
   parseSqlCipherRuntimeMode,
+  requireLocalSqliteTopology,
+  resolveEnterpriseDatabaseTopology,
   Database,
 } from '../modules/data_platform/index.js';
 import { createAuthorizationComposition } from '../modules/authorization/index.js';
@@ -191,6 +193,12 @@ const DATA_DIR =
   process.env.OTTO_ENTERPRISE_DIR ||
   path.join(os.homedir(), '.otto-enterprise');
 const DB_PATH = path.join(DATA_DIR, 'data.db');
+requireLocalSqliteTopology(
+  resolveEnterpriseDatabaseTopology({
+    environment: process.env,
+    sqliteDatabasePath: DB_PATH,
+  }),
+);
 const DATABASE_ENCRYPTION_MODE = parseSqlCipherRuntimeMode();
 const SQLCIPHER_RUNTIME =
   DATABASE_ENCRYPTION_MODE === 'required'
