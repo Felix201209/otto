@@ -132,6 +132,25 @@ export interface EnsuredServer {
   ownership: ServerOwnership;
 }
 
+/**
+ * Renderer-safe startup snapshot. Keep this deliberately small: it reports
+ * the path actually selected by the desktop process without leaking endpoint
+ * tokens, filesystem paths, or raw exception stacks.
+ */
+export interface DesktopRuntimeDiagnostic {
+  contractVersion: 1;
+  server: {
+    status: 'ready' | 'starting' | 'unavailable';
+    ownership?: ServerOwnership;
+    message?: string;
+  };
+  nativeCore: {
+    mode: 'auto' | 'required' | 'off';
+    status: 'disabled' | 'not_probed' | 'configured';
+    message: string;
+  };
+}
+
 export type EnterpriseServerOwnership =
   | 'external'
   | 'discovered'
@@ -197,6 +216,7 @@ export class ServerManager {
   /** 企业服务的真实可用状态，供诊断和回归测试读取。 */
   private enterpriseOwnership: EnterpriseServerOwnership = 'unavailable';
   private ownership: ServerOwnership = 'discovered';
+  private lastEnsureError?: string;
   /**
    * 已进入退出流程（shutdown 被调过）。ensure 的每个异步完成点都要检查它：
    * 用户可能在 ensure 完成前就关窗退出，此时 shutdown 先跑完、拉起才结束，
@@ -236,10 +256,43 @@ export class ServerManager {
     const operation = this.ensureOnce();
     this.mainEnsurePromise = operation;
     try {
-      return await operation;
+      const ensured = await operation;
+      this.lastEnsureError = undefined;
+      return ensured;
+    } catch (error) {
+      this.lastEnsureError = error instanceof Error ? error.message : String(error);
+      throw error;
     } finally {
       if (this.mainEnsurePromise === operation) this.mainEnsurePromise = undefined;
     }
+  }
+
+  /** A renderer-facing status snapshot for Settings & Diagnostics. */
+  getDesktopRuntimeDiagnostic(): DesktopRuntimeDiagnostic {
+    const rawMode = String(process.env.OTTO_NATIVE_CORE ?? 'auto').toLowerCase();
+    const mode: DesktopRuntimeDiagnostic['nativeCore']['mode'] =
+      rawMode === 'required' || rawMode === 'off' ? rawMode : 'auto';
+    const binaryConfigured = Boolean(process.env.OTTO_NATIVE_CORE_BINARY?.trim());
+    const nativeCore = mode === 'off'
+      ? { mode, status: 'disabled' as const, message: '原生 bridge 已按配置关闭。' }
+      : binaryConfigured
+        ? { mode, status: 'configured' as const, message: '已配置原生核心二进制；具体热路径会在首次使用时验证。' }
+        : { mode, status: 'not_probed' as const, message: '未在桌面启动阶段探测原生热路径；auto 模式会在不可用时使用 TypeScript fallback。' };
+    if (this.currentEndpointRecord) {
+      return {
+        contractVersion: 1,
+        server: { status: 'ready', ownership: this.ownership, message: '本地服务已就绪。' },
+        nativeCore,
+      };
+    }
+    if (this.mainEnsurePromise) {
+      return { contractVersion: 1, server: { status: 'starting', message: '本地服务正在启动。' }, nativeCore };
+    }
+    return {
+      contractVersion: 1,
+      server: { status: 'unavailable', message: this.lastEnsureError ?? '本地服务尚未启动。' },
+      nativeCore,
+    };
   }
 
   /** 单次主服务发现/拉起；并发折叠由 ensure() 负责。 */

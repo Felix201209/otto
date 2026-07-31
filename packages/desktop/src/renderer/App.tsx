@@ -693,7 +693,10 @@ function OttoWorkspaceApp({
           ]);
           authorizedContext = buildEnterpriseKnowledgePromptContext(knowledge);
         } catch {
-          // Knowledge retrieval must improve the answer without blocking the conversation.
+          // Retrieval is optional, but the degraded path must be visible: otherwise
+          // users cannot tell whether a reply omitted enterprise knowledge because
+          // none matched or because the lookup failed.
+          actions.postSystemNote('企业知识检索暂不可用；本轮将继续回答，但未附加企业知识上下文。');
         }
       }
       actions.sendMessage(text, source, attachments, undefined, authorizedContext);

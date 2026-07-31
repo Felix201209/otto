@@ -373,6 +373,7 @@ let videoEditorWindow: BrowserWindow | undefined;
 // ── IPC channel 名（与 preload 对齐）──
 const IPC = {
   getEndpoint: 'otto:get-endpoint',
+  runtimeDiagnostic: 'otto:runtime-diagnostic',
   endpointChanged: 'otto:endpoint-changed',
   openExternal: 'otto:open-external',
   openPath: 'otto:open-path',
@@ -2587,6 +2588,7 @@ function registerIpc(): void {
     if (!endpoint) void ensureEndpoint();
     return endpoint ?? null;
   });
+  ipcMain.handle(IPC.runtimeDiagnostic, () => serverManager.getDesktopRuntimeDiagnostic());
 
   // host-only 命令（替代 webview 的 vscode host 命令；交付文档 [WEBVIEW] §5）。
   ipcMain.handle(IPC.openExternal, (_e, url: unknown) => {
