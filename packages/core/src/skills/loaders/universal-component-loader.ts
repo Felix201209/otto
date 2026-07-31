@@ -20,7 +20,7 @@ import { IUnifiedLoaderService, IComponentLoader, IPluginLoader } from './types.
 export class UniversalComponentLoader implements IUnifiedLoaderService {
   private components: Map<string, UnifiedComponent> = new Map();
   private plugins: Map<string, UnifiedPlugin> = new Map();
-  private loaders: (IComponentLoader | IPluginLoader)[] = [];
+  private loaders: Array<IComponentLoader | IPluginLoader> = [];
   private initialized = false;
 
   constructor() {
@@ -83,7 +83,7 @@ export class UniversalComponentLoader implements IUnifiedLoaderService {
   async getComponents(query?: ComponentQuery): Promise<UnifiedComponent[]> {
     if (!this.initialized) await this.initialize();
 
-    let results = Array.from(this.components.values());
+    const results = Array.from(this.components.values());
 
     if (!query) return results;
 

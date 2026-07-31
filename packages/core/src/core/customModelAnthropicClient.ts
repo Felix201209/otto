@@ -24,6 +24,11 @@ import {
 } from './providerConverters/anthropic.js';
 import { addFunctionCallsGetter } from './providerConverters/shared.js';
 
+type AnthropicRequest = {
+  contents: unknown;
+  config?: unknown;
+};
+
 /**
  * Anthropic 模型单次调用
  * 使用指数退避重试策略处理 429 和 5xx 错误
@@ -31,7 +36,7 @@ import { addFunctionCallsGetter } from './providerConverters/shared.js';
  */
 export async function callAnthropicModel(
   modelConfig: CustomModelConfig,
-  request: any,
+  request: AnthropicRequest,
   abortSignal?: AbortSignal,
 ): Promise<GenerateContentResponse> {
   const baseUrl = resolveEnvVar(modelConfig.baseUrl).replace(/\/+$/, '');
@@ -85,7 +90,7 @@ export async function callAnthropicModel(
  */
 export async function* callAnthropicModelStream(
   modelConfig: CustomModelConfig,
-  request: any,
+  request: AnthropicRequest,
   abortSignal?: AbortSignal,
 ): AsyncGenerator<GenerateContentResponse> {
   const baseUrl = resolveEnvVar(modelConfig.baseUrl).replace(/\/+$/, '');
@@ -190,7 +195,7 @@ export async function* callAnthropicModelStream(
               const resp = { candidates: [{ content, index: 0 }] };
               addFunctionCallsGetter(resp);
               addFunctionCallsGetter(content);
-              yield resp as any;
+              yield resp as unknown as GenerateContentResponse;
             } else if (chunk.delta?.type === 'input_json_delta') {
               const tool = aggregatedTools.get(idx);
               if (tool) tool.args += chunk.delta.partial_json;
@@ -201,11 +206,11 @@ export async function* callAnthropicModelStream(
                 const content = {
                   role: MESSAGE_ROLES.MODEL,
                   parts: [{ reasoning: thinkingChunk }],
-                } as any;
-                const resp = { candidates: [{ content, index: 0 }] } as any;
+                } as Record<string, unknown>;
+                const resp = { candidates: [{ content, index: 0 }] } as Record<string, unknown>;
                 addFunctionCallsGetter(resp);
                 addFunctionCallsGetter(content);
-                yield resp;
+                yield resp as unknown as GenerateContentResponse;
               }
               // 同时累积完整内容，以便在 content_block_stop 时可用（如果需要）
               const existing = aggregatedThinking.get(idx) || '';
@@ -310,7 +315,7 @@ export async function* callAnthropicModelStream(
                 // 保留原始的非缓存输入 token 以便精确计费
                 uncachedInputTokens: inputTokens,
               },
-            } as any;
+            } as unknown as GenerateContentResponse;
             addFunctionCallsGetter(resp);
             addFunctionCallsGetter(content);
             yield resp;
@@ -323,7 +328,7 @@ export async function* callAnthropicModelStream(
             cacheCreationInputTokens = usage.cache_creation_input_tokens || 0;
             cacheReadInputTokens = usage.cache_read_input_tokens || 0;
           }
-        } catch (e) {}
+        } catch (_e) {}
       }
     }
   } finally {

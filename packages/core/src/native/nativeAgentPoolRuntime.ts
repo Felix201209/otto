@@ -91,8 +91,8 @@ export class NativeAgentPoolRuntime {
     let selection: NativeCoreRuntimeSelection;
     try {
       selection = bridge.selection;
-    } catch (error) {
-      throw error;
+    } catch {
+      throw new Error('Native core runtime selection is unavailable');
     }
 
     if (!selection.enabled) {
@@ -141,4 +141,3 @@ export function getNativeAgentPoolRuntime(): NativeAgentPoolRuntime {
 export function resetNativeAgentPoolRuntimeForTests(): void {
   defaultNativeAgentPoolRuntime = undefined;
 }
-

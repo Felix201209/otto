@@ -6,7 +6,6 @@
 
 import {
   Content,
-  GenerateContentConfig,
   SchemaUnion,
   Type,
 } from '@google/genai';
@@ -17,7 +16,6 @@ import { ReadFileTool } from '../tools/read-file.js';
 import { ReadManyFilesTool } from '../tools/read-many-files.js';
 import { GrepTool } from '../tools/grep.js';
 import { LruCache } from './LruCache.js';
-import { DEFAULT_GEMINI_FLASH_MODEL } from '../config/models.js';
 import { MESSAGE_ROLES } from '../config/messageRoles.js';
 import {
   isFunctionResponse,
@@ -26,20 +24,12 @@ import {
 import { isCustomModel } from '../types/customModel.js';
 import { callCustomModel } from '../core/customModelAdapter.js';
 
-import * as fs from 'fs';
 
 const CODE_CORRECTION_SYSTEM_PROMPT = `You are an expert code-editing assistant. Your task is to analyze a failed edit attempt and provide a corrected version of the text snippets.
 The correction should be as minimal as possible, staying very close to the original.
 Focus ONLY on fixing issues like whitespace, indentation, line endings, or incorrect escaping.
 Do NOT invent a completely new edit. Your job is to fix the provided parameters to make the edit succeed.
 Return ONLY the corrected snippet in the specified JSON format.`;
-
-const EditModel = DEFAULT_GEMINI_FLASH_MODEL;
-const EditConfig: GenerateContentConfig = {
-  thinkingConfig: {
-    thinkingBudget: 0,
-  },
-};
 
 const MAX_CACHE_SIZE = 50;
 
@@ -78,12 +68,12 @@ async function callEditCorrectionAPI(
 
       // 构造自定义模型请求
       const request = {
-        contents: contents,
+        contents,
         config: {
           systemInstruction: {
             text: CODE_CORRECTION_SYSTEM_PROMPT,
           },
-          abortSignal: abortSignal,
+          abortSignal,
         }
       };
 
@@ -117,13 +107,13 @@ async function callEditCorrectionAPI(
   console.log(`[Edit Correction] Calling unified interface: ${requestId}`);
 
   const response = await ottoAdapter.generateContent({
-    contents: contents,
+    contents,
     config: {
       systemInstruction: {
         text: CODE_CORRECTION_SYSTEM_PROMPT,
       },
       responseMimeType: 'application/json',
-      abortSignal: abortSignal,
+      abortSignal,
       httpOptions: {
         headers: {
           'X-Scene-Type': 'edit_correction',
@@ -178,11 +168,11 @@ function getTimestampFromFunctionId(fcnId: string): number {
  * @param client the geminiClient, so that we can get the history
  * @returns a DateTime (as a number) of when the last edit occurred, or -1 if no edit was found.
  */
-async function findLastEditTimestamp(
+async function _findLastEditTimestamp(
   filePath: string,
-  client: OttoClient,
+  _client: OttoClient,
 ): Promise<number> {
-  const history = (await client.getHistory()) ?? [];
+  const history = (await _client.getHistory()) ?? [];
 
   // Tools that may reference the file path in their FunctionResponse `output`.
   const toolsInResp = new Set([
@@ -262,8 +252,8 @@ export async function ensureCorrectEdit(
   filePath: string,
   currentContent: string,
   originalParams: EditToolParams, // This is the EditToolParams from edit.ts, without \'corrected\'
-  client: OttoClient,
-  abortSignal: AbortSignal,
+  _client: OttoClient,
+  _abortSignal: AbortSignal,
 ): Promise<CorrectedEditResult> {
   // 🔧 全局禁用修正逻辑：直接使用模型传入的原始参数
   // 不做任何反转义或 LLM 修正，执行不了就让 edit.ts 返回具体错误给模型
@@ -293,8 +283,8 @@ export async function ensureCorrectEdit(
  */
 export async function ensureCorrectFileContent(
   content: string,
-  client: OttoClient,
-  abortSignal: AbortSignal,
+  _client: OttoClient,
+  _abortSignal: AbortSignal,
 ): Promise<string> {
   // 🔧 全局禁用修正逻辑：直接返回原始内容
   console.log(`[Edit Correction] Correction disabled globally for file content - using original content as-is`);
@@ -609,7 +599,7 @@ Return ONLY the corrected string in the specified JSON format with the key 'corr
   }
 }
 
-function trimPairIfPossible(
+function _trimPairIfPossible(
   target: string,
   trimIfTargetTrims: string,
   currentContent: string,

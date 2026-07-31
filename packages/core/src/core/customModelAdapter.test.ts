@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { callOpenAICompatibleModelStream, callAnthropicModelStream, callOpenAICompatibleModel, callAnthropicModel, callOpenAIResponsesModel, callOpenAIResponsesModelStream, callGeminiNativeModel, callGeminiNativeModelStream, parseJSONSafeExport, sanitiseGeminiToolSchemaExport, sanitiseGeminiToolsExport, shouldDumpGeminiRequest } from './customModelAdapter.js';
 import { MESSAGE_ROLES } from '../config/messageRoles.js';
+import type { CustomModelConfig } from '../types/customModel.js';
 
 // 为了测试内部函数，需要导出它（见下方的导出添加）
 // 如果无法导出，可以通过流式测试间接验证
@@ -43,7 +44,7 @@ describe('parseJSONSafe - JSON parsing robustness', () => {
     it('should return object directly if already an object', () => {
       if (!parseJSONSafeExport) return;
       const obj = { pattern: 'test' };
-      expect(parseJSONSafeExport(obj as any)).toBe(obj);
+      expect(parseJSONSafeExport(obj as unknown)).toBe(obj);
     });
   });
 
@@ -1712,7 +1713,7 @@ describe('customModelAdapter - OpenAI Responses API', () => {
 
   describe('Non-streaming', () => {
     it('should call /responses endpoint and parse output items', async () => {
-      let capturedUrl: string = '';
+      let capturedUrl = '';
       let capturedBody: any;
       const mockResponse = {
         ok: true,
@@ -2256,7 +2257,7 @@ describe('customModelAdapter - OpenAI Responses API', () => {
       const request = { contents: [{ role: MESSAGE_ROLES.USER, parts: [{ text: 'hi' }] }] };
 
       // Drain stream
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
       for await (const _ of callOpenAIResponsesModelStream(modelConfig as any, request)) {
         // no-op
       }

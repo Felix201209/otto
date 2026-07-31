@@ -8,22 +8,30 @@
 import { logIfNotSilent } from '../utils/logging.js';
 import { getUserAgent } from '../utils/userAgent.js';
 
+type JsonBody = Record<string, unknown> | unknown[] | string | number | boolean | null;
+type TokenManager = {
+  getAccessToken?: () => Promise<string | undefined>;
+  refreshAccessToken?: () => Promise<string | undefined>;
+  clearTokens?: () => Promise<void>;
+  clear?: () => void;
+};
+
 /**
  * 认证HTTP客户端
  * 自动处理JWT令牌的添加、刷新和错误处理
  */
 export class AuthenticatedHttpClient {
-  private tokenManager: any;
+  private tokenManager?: TokenManager;
   private baseURL: string;
   private requestQueue: Array<{
-    resolve: Function;
-    reject: Function;
+    resolve: (response: Response) => void;
+    reject: (error: unknown) => void;
     request: () => Promise<Response>;
   }> = [];
   private isRefreshing = false;
   private onAuthenticationRequired?: () => void;
 
-  constructor(baseURL: string, tokenManager: any, onAuthenticationRequired?: () => void) {
+  constructor(baseURL: string, tokenManager?: TokenManager, onAuthenticationRequired?: () => void) {
     this.baseURL = baseURL.replace(/\/$/, ''); // 移除尾部斜杠
     this.tokenManager = tokenManager;
     this.onAuthenticationRequired = onAuthenticationRequired;
@@ -71,7 +79,7 @@ export class AuthenticatedHttpClient {
    */
   async post(
     endpoint: string,
-    body?: any,
+    body?: JsonBody,
     options: RequestInit = {}
   ): Promise<Response> {
     const requestOptions: RequestInit = {
@@ -95,7 +103,7 @@ export class AuthenticatedHttpClient {
    */
   async put(
     endpoint: string,
-    body?: any,
+    body?: JsonBody,
     options: RequestInit = {}
   ): Promise<Response> {
     const requestOptions: RequestInit = {
@@ -133,7 +141,7 @@ export class AuthenticatedHttpClient {
     // 获取访问令牌
     if (this.tokenManager) {
       try {
-        const token = await this.tokenManager.getAccessToken();
+        const token = await this.tokenManager.getAccessToken?.();
         if (token) {
           (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
         } else {
@@ -179,7 +187,7 @@ export class AuthenticatedHttpClient {
       logIfNotSilent('log', '🔄 Access token expired, attempting refresh...');
 
       // 尝试刷新令牌
-      const newToken = await this.tokenManager.refreshAccessToken();
+      const newToken = await this.tokenManager?.refreshAccessToken?.();
 
       if (newToken) {
         logIfNotSilent('log', '✅ Token refreshed successfully');
@@ -207,9 +215,9 @@ export class AuthenticatedHttpClient {
       console.error('❌ Token refresh failed:', error);
 
       // 清除令牌
-      if (this.tokenManager.clearTokens) {
+      if (this.tokenManager?.clearTokens) {
         await this.tokenManager.clearTokens();
-      } else if (this.tokenManager.clear) {
+      } else if (this.tokenManager?.clear) {
         this.tokenManager.clear();
       }
 
@@ -232,7 +240,7 @@ export class AuthenticatedHttpClient {
   /**
    * 处理请求队列
    */
-  private processRequestQueue(newToken: string): void {
+  private processRequestQueue(_newToken: string): void {
     const queue = this.requestQueue.splice(0);
 
     queue.forEach(({ resolve, reject, request }) => {
@@ -256,7 +264,7 @@ export class AuthenticatedHttpClient {
   /**
    * 检查响应是否成功
    */
-  static async checkResponse(response: Response): Promise<any> {
+  static async checkResponse(response: Response): Promise<unknown> {
     if (!response.ok) {
       const errorText = await response.text();
       throw new HttpError(
@@ -280,7 +288,7 @@ export class AuthenticatedHttpClient {
   async requestJson(
     endpoint: string,
     options: RequestInit = {}
-  ): Promise<any> {
+  ): Promise<unknown> {
     const response = await this.request(endpoint, options);
     return AuthenticatedHttpClient.checkResponse(response);
   }
@@ -288,7 +296,7 @@ export class AuthenticatedHttpClient {
   /**
    * 便捷方法：发送POST JSON请求
    */
-  async postJson(endpoint: string, body?: any): Promise<any> {
+  async postJson(endpoint: string, body?: JsonBody): Promise<unknown> {
     const response = await this.post(endpoint, body);
     return AuthenticatedHttpClient.checkResponse(response);
   }
@@ -296,7 +304,7 @@ export class AuthenticatedHttpClient {
   /**
    * 便捷方法：发送PUT JSON请求
    */
-  async putJson(endpoint: string, body?: any): Promise<any> {
+  async putJson(endpoint: string, body?: JsonBody): Promise<unknown> {
     const response = await this.put(endpoint, body);
     return AuthenticatedHttpClient.checkResponse(response);
   }
@@ -304,7 +312,7 @@ export class AuthenticatedHttpClient {
   /**
    * 便捷方法：发送GET JSON请求
    */
-  async getJson(endpoint: string): Promise<any> {
+  async getJson(endpoint: string): Promise<unknown> {
     const response = await this.get(endpoint);
     return AuthenticatedHttpClient.checkResponse(response);
   }
@@ -312,7 +320,7 @@ export class AuthenticatedHttpClient {
   /**
    * 便捷方法：发送DELETE JSON请求
    */
-  async deleteJson(endpoint: string): Promise<any> {
+  async deleteJson(endpoint: string): Promise<unknown> {
     const response = await this.delete(endpoint);
     return AuthenticatedHttpClient.checkResponse(response);
   }
@@ -348,7 +356,7 @@ export class HttpError extends Error {
  */
 export function createAuthenticatedHttpClient(
   baseURL: string,
-  tokenManager?: any,
+  tokenManager?: TokenManager,
   onAuthenticationRequired?: () => void
 ): AuthenticatedHttpClient {
   return new AuthenticatedHttpClient(baseURL, tokenManager, onAuthenticationRequired);

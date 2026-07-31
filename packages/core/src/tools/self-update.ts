@@ -327,7 +327,7 @@ export class SelfUpdateTool extends BaseTool<SelfUpdateParams, ToolResult> {
    */
   static onBeforeRestart: (() => Promise<void>) | null = null;
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
   constructor(private readonly config: Config) {
     super(
       SelfUpdateTool.Name,

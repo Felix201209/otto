@@ -41,13 +41,13 @@ export class PluginStructureAnalyzer {
     if (hasClaudePluginDir) {
       // 标准 Claude Code 格式 (带 .claude-plugin)
       detectedFormat = 'claude-code';
-    } else if (hasAgents || hasCommands) {
+    } else if (hasPluginJson && (hasAgents || hasCommands) && !hasSkills) {
       // 隐式 Claude Code 格式 (如 plugin-dev)
       detectedFormat = 'claude-code';
     } else if (hasPluginJson && hasSkills && !hasAgents && !hasCommands) {
       // 传统 Otto 格式
       detectedFormat = 'otto-code';
-    } else if (hasPluginJson && (hasAgents || hasCommands)) {
+    } else if (hasPluginJson && (hasAgents || hasCommands) && hasSkills) {
       // 混合格式
       detectedFormat = 'hybrid';
     }

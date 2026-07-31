@@ -927,7 +927,7 @@ export class GrepTool extends BaseTool<GrepToolParams, ToolResult> {
       if (isNaN(lineNumber)) continue;
 
       const match = {
-        filePath: filePath,
+        filePath,
         lineNumber,
         line: content,
       };

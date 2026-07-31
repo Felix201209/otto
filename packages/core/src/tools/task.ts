@@ -11,14 +11,11 @@ import {
   ToolResult,
   Icon,
   ToolCallConfirmationDetails,
-  ToolConfirmationOutcome,
   ToolExecutionServices
 } from './tools.js';
 import { ToolRegistry } from './tool-registry.js';
 import { Config } from '../config/config.js';
-import { OttoClient } from '../core/client.js';
 import { SubAgent, SubAgentResult } from '../core/subAgent.js';
-import { ToolExecutionContext } from '../core/toolSchedulerAdapter.js';
 import { createSubAgentUpdateMessage } from './toolOutputMessage.js';
 import { SubAgentDisplay } from './tools.js';
 import { TaskPrompts } from '../core/taskPrompts.js';
@@ -243,8 +240,8 @@ export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
   }
 
   async shouldConfirmExecute(
-    params: TaskToolParams,
-    abortSignal: AbortSignal,
+    _params: TaskToolParams,
+    _abortSignal: AbortSignal,
   ): Promise<ToolCallConfirmationDetails | false> {
     // Task工具本身不需要确认
     return false;
@@ -262,7 +259,7 @@ export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
     return agentDefinition?.displayName ?? params.description;
   }
 
-  toolLocations(params: TaskToolParams): Array<{ path: string; type: 'file' | 'directory' }> {
+  toolLocations(_params: TaskToolParams): Array<{ path: string; type: 'file' | 'directory' }> {
     // 返回空数组使多个task调用可以真正并行执行
     // SubAgent内部有自己独立的ToolExecutionEngine，其子工具调用仍会通过FileOperationQueue保证文件安全
     return [];
@@ -561,7 +558,7 @@ export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
     displayData: SubAgentDisplayData,
     statusEvent: any
   ): SubAgentDisplayData {
-    let updates: Partial<SubAgentDisplayData> = {};
+    const updates: Partial<SubAgentDisplayData> = {};
 
     switch (statusEvent.status) {
       case 'starting':
@@ -584,6 +581,8 @@ export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
         updates.status = 'cancelled';
         updates.showDetailedProcess = false;
         break;
+      default:
+        break;
     }
 
     // 更新轮次信息
@@ -604,7 +603,7 @@ export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
     displayData: SubAgentDisplayData,
     event: any
   ): SubAgentDisplayData {
-    let updates: Partial<SubAgentDisplayData> = {};
+    const updates: Partial<SubAgentDisplayData> = {};
 
     switch (event.type) {
       case 'conversation_turn':
@@ -617,6 +616,8 @@ export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
           filesCreated: event.filesCreated || [],
           commandsRun: event.commandsRun || [],
         };
+        break;
+      default:
         break;
     }
 

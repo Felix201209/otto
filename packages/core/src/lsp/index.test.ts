@@ -12,9 +12,9 @@ import * as fsp from 'node:fs/promises';
 import { PassThrough } from 'node:stream';
 import {
   createMessageConnection,
-  StreamMessageReader,
-  StreamMessageWriter,
-} from 'vscode-jsonrpc/node.js';
+  ReadableStreamMessageReader,
+  WriteableStreamMessageWriter,
+} from 'vscode-jsonrpc';
 import { LSPManager } from './index.js';
 
 function createDuplexTransport() {
@@ -28,8 +28,8 @@ function createDuplexTransport() {
   };
 
   const serverConnection = createMessageConnection(
-    new StreamMessageReader(clientToServer),
-    new StreamMessageWriter(serverToClient),
+    new ReadableStreamMessageReader(clientToServer as never),
+    new WriteableStreamMessageWriter(serverToClient as never),
   );
 
   return { fakeProcess, serverConnection };
@@ -70,16 +70,12 @@ describe('LSPManager robustness', () => {
       },
     ];
 
-    serverConnection.onRequest('initialize', async () => {
-      return { capabilities: {} };
-    });
+    serverConnection.onRequest('initialize', async () => ({ capabilities: {} }));
 
     // Never resolve hover -> simulate server stuck.
-    serverConnection.onRequest('textDocument/hover', async () => {
-      return await new Promise(() => {
+    serverConnection.onRequest('textDocument/hover', async () => await new Promise(() => {
         // intentionally never resolves
-      });
-    });
+      }));
 
     serverConnection.listen();
 

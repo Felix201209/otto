@@ -25,7 +25,7 @@ import {
   SkillType,
   SkillSource,
 } from './skill-types.js';
-import { SettingsManager, SkillsPaths } from './settings-manager.js';
+import { SettingsManager } from './settings-manager.js';
 import { isDirentDirectoryFollowingSymlinks } from './utils/fs-helpers.js';
 import { MarketplaceManager } from './marketplace-manager.js';
 import { MarketplaceLoader } from './loaders/marketplace-loader.js';
@@ -217,7 +217,7 @@ export class SkillLoader {
           location: {
             type: source,
             path: skillPath,
-            rootPath: rootPath,
+            rootPath,
             relativePath: path.relative(rootPath, skillPath),
           },
           isCustom: true,
@@ -247,10 +247,11 @@ export class SkillLoader {
     switch (source) {
       case SkillSource.USER_GLOBAL:
         return `user:${relativePath}`;
-      case SkillSource.USER_PROJECT:
+      case SkillSource.USER_PROJECT: {
         // 使用 this.projectRoot 而非 process.cwd()，避免 cwd 切换导致 ID 不稳定
         const projectName = path.basename(this.projectRoot);
         return `project:${projectName}:${relativePath}`;
+      }
       default:
         return relativePath;
     }
@@ -369,7 +370,7 @@ export class SkillLoader {
       metadata,
       content,
       enabled: component.enabled,
-      loadLevel: loadLevel,
+      loadLevel,
       scripts: (component.scripts || []).map(s => ({
         name: s.name,
         path: s.path,
@@ -433,7 +434,7 @@ export class SkillLoader {
         // If it's a file, it IS the skill file (command/agent markdown)
         skillDirPath = path.dirname(skillPath);
       }
-    } catch (error) {
+    } catch (_error) {
       // Path doesn't exist.
       // If type is COMMAND or AGENT, and it ends in .md, assume it's a missing file.
       // Otherwise, assume it's a missing directory that should have SKILL.md
@@ -648,7 +649,7 @@ export class SkillLoader {
       mtimeMs = undefined;
     }
     this.cache.set(skill.id, {
-      skill: skill,
+      skill,
       timestamp: Date.now(),
       loadLevel: skill.loadLevel,
       mtimeMs,

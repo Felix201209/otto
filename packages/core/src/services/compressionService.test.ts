@@ -20,10 +20,8 @@ vi.mock('../core/tokenLimits.js', () => ({
 }));
 
 vi.mock('../utils/messageInspectors.js', () => ({
-  isFunctionResponse: (content: Content) => {
-    return content.role === 'user' &&
-           content.parts?.some(part => !!part.functionResponse);
-  }
+  isFunctionResponse: (content: Content) => content.role === 'user' &&
+           content.parts?.some(part => !!part.functionResponse)
 }));
 
 describe('CompressionService', () => {

@@ -79,7 +79,7 @@ Example (when appropriate - 5+ independent file reads):
      * 1. Stringified JSON objects (LLM hallucination)
      * 2. Property aliases (tool vs name vs function)
      */
-    private normalizeToolCalls(toolCalls: any[]): Array<{ tool: string; parameters: Record<string, unknown> }> {
+    private normalizeToolCalls(toolCalls: unknown[]): Array<{ tool: string; parameters: Record<string, unknown> }> {
         if (!Array.isArray(toolCalls)) return [];
 
         return toolCalls.map(call => {
@@ -99,10 +99,12 @@ Example (when appropriate - 5+ independent file reads):
             }
 
             // Handle property aliases
-            const toolName = callObj.tool || callObj.name || callObj.function || callObj.tool_name || 'unknown';
-            const parameters = callObj.parameters || callObj.args || callObj.arguments || {};
+            const record = callObj as Record<string, unknown>;
+            const toolName = typeof (record.tool ?? record.name ?? record.function ?? record.tool_name) === 'string'
+              ? (record.tool ?? record.name ?? record.function ?? record.tool_name) as string : 'unknown';
+            const parameters = record.parameters ?? record.args ?? record.arguments;
 
-            return { tool: toolName, parameters };
+            return { tool: toolName, parameters: parameters && typeof parameters === 'object' ? parameters as Record<string, unknown> : {} };
         });
     }
 
@@ -171,7 +173,7 @@ Example (when appropriate - 5+ independent file reads):
                     await services.onPreToolExecution({
                         callId: `batch-sub-${Date.now()}-${Math.random().toString(16).slice(2)}`,
                         tool,
-                        args: call.parameters as any
+                        args: call.parameters
                     });
                 } catch (preExecError) {
                     console.warn(`[BatchTool] Pre-execution hook failed for ${call.tool}:`, preExecError);
@@ -179,7 +181,7 @@ Example (when appropriate - 5+ independent file reads):
             }
 
             try {
-                const result = await tool.execute(call.parameters as any, signal, updateOutput, services);
+                const result = await tool.execute(call.parameters, signal, updateOutput, services);
                 const resultContent = typeof result.llmContent === 'string'
                     ? result.llmContent
                     : JSON.stringify(result.llmContent);

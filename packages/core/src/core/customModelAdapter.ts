@@ -4,12 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { type GenerateContentResponse } from '@google/genai';
+import { type GenerateContentParameters, type GenerateContentResponse } from '@google/genai';
 import {
   CustomModelConfig,
   resolveThinkingConfig,
 } from '../types/customModel.js';
 import { OttoChat } from './ottoChat.js';
+import type { Content } from '../types/extendedContent.js';
 import {
   sanitiseGeminiToolSchema,
   sanitiseGeminiTools,
@@ -42,16 +43,18 @@ export {
   callGeminiNativeModelStream,
 };
 
+type CustomModelRequest = Omit<GenerateContentParameters, 'model'> & { model?: string };
+
 export async function* callCustomModelStream(
   modelConfig: CustomModelConfig,
-  request: any,
+  request: CustomModelRequest,
   abortSignal?: AbortSignal,
 ): AsyncGenerator<GenerateContentResponse> {
   console.log(
     `[CustomModel] Stream call: ${modelConfig.displayName} (${modelConfig.provider})`,
   );
   // 🐛 [thinking-debug] 直连自定义模型路径 - 打印解析后的 thinking 配置
-  // eslint-disable-next-line no-console
+
   console.log(
     `\x1b[35m[thinking-debug]\x1b[0m (custom-direct/stream) modelId=\x1b[36m${modelConfig.modelId}\x1b[0m  resolvedThinking=${JSON.stringify(resolveThinkingConfig(modelConfig))}`,
   );
@@ -64,7 +67,7 @@ export async function* callCustomModelStream(
     request && Array.isArray(request.contents)
       ? {
           ...request,
-          contents: OttoChat.sanitizeRequestContents(request.contents),
+          contents: OttoChat.sanitizeRequestContents(request.contents as unknown as Content[]),
         }
       : request;
 
@@ -92,14 +95,14 @@ export async function* callCustomModelStream(
 
 export async function callCustomModel(
   modelConfig: CustomModelConfig,
-  request: any,
+  request: CustomModelRequest,
   abortSignal?: AbortSignal,
 ): Promise<GenerateContentResponse> {
   console.log(
     `[CustomModel] Unary call: ${modelConfig.displayName} (${modelConfig.provider})`,
   );
   // 🐛 [thinking-debug] 直连自定义模型路径 - 打印解析后的 thinking 配置
-  // eslint-disable-next-line no-console
+
   console.log(
     `\x1b[35m[thinking-debug]\x1b[0m (custom-direct/unary) modelId=\x1b[36m${modelConfig.modelId}\x1b[0m  resolvedThinking=${JSON.stringify(resolveThinkingConfig(modelConfig))}`,
   );
@@ -109,7 +112,7 @@ export async function callCustomModel(
     request && Array.isArray(request.contents)
       ? {
           ...request,
-          contents: OttoChat.sanitizeRequestContents(request.contents),
+          contents: OttoChat.sanitizeRequestContents(request.contents as unknown as Content[]),
         }
       : request;
 

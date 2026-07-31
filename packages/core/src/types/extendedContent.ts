@@ -12,12 +12,6 @@
  */
 import {
   Content as OriginalContent,
-  Part,
-  GenerateContentResponse,
-  FunctionCall,
-  PartListUnion,
-  PartUnion,
-  Tool,
   GenerateContentResponseUsageMetadata
 } from '@google/genai';
 
@@ -54,7 +48,7 @@ export function createContentWithUI(
  * for API compatibility
  */
 export function stripUIFields(content: Content): OriginalContent {
-  const { prompt_id, ...cleanContent } = content;
+  const { prompt_id: _prompt_id, ...cleanContent } = content;
   return cleanContent as OriginalContent;
 }
 

@@ -130,7 +130,7 @@ export class TaskWatchdog {
    * 通知 watchdog 有新的输出（重置空闲计时器）。
    * Agent 每输出一条消息都应调用此方法。
    */
-  heartbeat(message?: string): void {
+  heartbeat(_message?: string): void {
     this.lastOutputAt = Date.now();
 
     if (this.state === 'stalled' && !this.stallNotified) {
@@ -261,6 +261,7 @@ export class TaskWatchdog {
       case 'active': return '🟢';
       case 'stalled': return '🔴';
       case 'recovering': return '🟡';
+      default: return '❔';
     }
   }
 

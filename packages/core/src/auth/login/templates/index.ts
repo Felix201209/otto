@@ -51,7 +51,7 @@ export class AuthTemplates {
    * 设置自定义基础路径（用于VSCode扩展等打包环境）
    * @param basePath 扩展的根目录路径
    */
-  public static setBasePath(basePath: string): void {
+  static setBasePath(basePath: string): void {
     this.customBasePath = basePath;
     console.log(`📁 [AuthTemplates] Custom base path set: ${basePath}`);
   }
@@ -59,28 +59,28 @@ export class AuthTemplates {
   /**
    * 获取认证选择页面模板
    */
-  public static getAuthSelectPage(): string {
+  static getAuthSelectPage(): string {
     return this.loadTemplate('authSelectPage.html');
   }
 
   /**
    * 获取飞书成功页面模板
    */
-  public static getFeishuSuccessPage(): string {
+  static getFeishuSuccessPage(): string {
     return this.generateFeishuSuccessTemplate();
   }
 
   /**
    * 获取Otto成功页面模板
    */
-  public static getOttoSuccessPage(): string {
+  static getOttoSuccessPage(): string {
     return this.generateOttoSuccessTemplate();
   }
 
   /**
    * 获取错误页面模板
    */
-  public static getErrorPage(message: string): string {
+  static getErrorPage(message: string): string {
     return this.generateErrorTemplate(message);
   }
 
@@ -143,7 +143,7 @@ export class AuthTemplates {
           possiblePaths.push(path.join(cwd, 'dist', 'bundled', 'auth', 'login', 'templates', filename));
           possiblePaths.push(path.join(cwd, 'bundled', 'auth', 'login', 'templates', filename));
           possiblePaths.push(path.join(cwd, 'auth', 'login', 'templates', filename));
-        } catch (e) {
+      } catch {
           // process.cwd() 可能在某些环境下失败，忽略
         }
       }
@@ -157,7 +157,7 @@ export class AuthTemplates {
             console.error(`✅ [AuthTemplates] Template loaded: ${filename} from ${testPath}`);
             break;
           }
-        } catch (e) {
+      } catch {
           // 某些路径可能因权限问题无法访问，继续尝试下一个
           continue;
         }
@@ -173,7 +173,7 @@ export class AuthTemplates {
         if (typeof process !== 'undefined' && process.cwd) {
           try {
             console.warn(`   Process cwd: ${process.cwd()}`);
-          } catch (e) {
+      } catch {
             console.warn(`   Process cwd: unavailable`);
           }
         }
@@ -991,7 +991,7 @@ export class AuthTemplates {
   /**
    * 清除缓存
    */
-  public static clearCache(): void {
+  static clearCache(): void {
     this.cache.clear();
   }
 }

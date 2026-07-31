@@ -210,7 +210,7 @@ export interface LarkCliParams {
  */
 export interface LarkCliResult extends ToolResult {
   status: 'success' | 'failed' | 'auth_required';
-  data?: any;
+  data?: unknown;
   authUrl?: string;
   error?: string;
 }
@@ -323,7 +323,7 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
         '  Step 2 — Fill auto-created doc with content: command="docs +update" args=["--api-version", "v2", "--doc", "<obj_token_from_step1_response>", "--command", "overwrite", "--content", "@<relative-path>"]',
         '  IMPORTANT: wiki +node-create does NOT have --obj-token flag (it has --obj-type and --origin-node-token). It always creates an empty backing document. The correct flow is: create node -> read obj_token from response -> docs +update to fill it.',
         '- Link a pre-existing doc to wiki (skip node-create, use raw API):',
-        '  command="api" args=["POST", "/open-apis/wiki/v2/spaces/<space_id>/nodes", "--data", "{\"obj_type\":\"docx\",\"parent_node_token\":\"<parent_or_space_id>\",\"node_type\":\"origin\",\"origin_node_token\":\"<obj_token_of_doc>\",\"title\":\"Title\"}"]',
+        '  command="api" args=["POST", "/open-apis/wiki/v2/spaces/<space_id>/nodes", "--data", "{"obj_type":"docx","parent_node_token":"<parent_or_space_id>","node_type":"origin","origin_node_token":"<obj_token_of_doc>","title":"Title"}"]',
         '  Use this if you already created a doc via docs +create and now want to add it to the wiki.',
         '- Get node info: command="wiki +node-get" args=["--node-token", "<token>"]',
         '  NOTE: Returns node metadata including obj_type and obj_token. To read the actual content, use docs +fetch with the obj_token from the node-get result.',
@@ -333,7 +333,7 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
         '    3. If step 2 fails with old doc error, fall back to raw API (see lark_doc_read for details)',
         '- DELETE wiki node (including dead nodes): command="wiki +node-delete" args=["--space-id", "<id>", "--node-token", "<token>"]',
         '  FALLBACK for dead nodes (error 131005): If wiki +node-delete fails because the underlying document was already deleted, use the raw API:',
-        '    command="api" args=["DELETE", "/open-apis/wiki/v2/spaces/<space_id>/nodes/<node_token>", "--data", "{\\\"obj_token\\\": \\\"<obj_token>\\\", \\\"obj_type\\\": \\\"wiki\\\"}"]',
+        '    command="api" args=["DELETE", "/open-apis/wiki/v2/spaces/<space_id>/nodes/<node_token>", "--data", "{\\"obj_token\\": \\"<obj_token>\\", \\"obj_type\\": \\"wiki\\"}"]',
         '  CRITICAL: First use wiki +node-get to obtain the obj_token, then pass it in the DELETE body. Without the explicit obj_token in the body, the API cannot identify the dead node.',
         '  KNOWN API LIMITATION: After a successful deletion, wiki +node-list may still show the deleted node for a short period (Feishu API caching delay). This is a Feishu API-side issue, not an Otto bug. If the node still appears, wait 1-2 minutes and list again — it should be gone. Do NOT attempt to delete it again if the first deletion returned success.',
         '',
@@ -1070,7 +1070,7 @@ export class LarkCliTool extends BaseTool<LarkCliParams, LarkCliResult> {
       // 顶层标量、被精心构造的字段)当成可信结构化结果。这里做基本类型/结构校验:
       // 仅接受「纯对象」或「数组」作为结构化 data;其余(标量、null、解析失败)
       // 一律当作不可信纯文本 {rawOutput},不信任其内部内容。
-      let parsedData: any;
+      let parsedData: unknown;
       try {
         const candidate = JSON.parse(output || '{}');
         parsedData = isPlainStructuredData(candidate)

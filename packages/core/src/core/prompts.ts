@@ -587,6 +587,8 @@ export function getStaticSystemPrompt(agentStyle: AgentStyle = 'default'): strin
       return getAntigravitySystemPrompt();
     case 'windsurf':
       return getWindsurfSystemPrompt();
+    default:
+      break;
   }
 
   // Default 模式：参考 Claude Code CLI 风格，精简结构
@@ -1059,16 +1061,12 @@ function getMcpPromptsContext(promptRegistry?: PromptRegistry): string {
       promptsByServer.get(prompt.serverName)?.push(prompt.name);
     }
 
-    // Format as readable context
-    let mcpPromptsText = '\n\n## Available MCP Prompts\n\n';
+    const lines = ['\n\n## Available MCP Prompts'];
     for (const [serverName, promptNames] of promptsByServer.entries()) {
-      mcpPromptsText += `**${serverName}:**\n`;
-      for (const promptName of promptNames) {
-        mcpPromptsText += `- \`${promptName}\`\n`;
-      }
+      lines.push(`- **${serverName}:** ${promptNames.map((name) => `\`${name}\``).join(', ')}`);
     }
 
-    return mcpPromptsText;
+    return `${lines.join('\n')}\n`;
   } catch (error) {
     // MCP prompts system not available or failed to load
     return '';
@@ -1218,8 +1216,8 @@ export function getCoreSystemPrompt(
   if (mcpPromptsContext) {
     finalPrompt += mcpPromptsContext;
   }
-
-  // Inject Skills context (cached from startup)
+  // Skill discovery is initialized at runtime and this is the final shared
+  // system-instruction assembly point used by every model request.
   const skillsContext = getSkillsContext();
   if (skillsContext) {
     finalPrompt += `\n\n${skillsContext}`;
@@ -1239,6 +1237,8 @@ export function getCoreSystemPrompt(
   }
 
   finalPrompt += `\n\n---\n\n## Task completion feedback\nWhen a turn used tools or completed multi-step work, the final user-facing response must say what was completed, the concrete result or artifact, and what verification was performed. Mention any unresolved boundary plainly. Never finish with only a task count such as "processed 2 tasks", and do not expose hidden chain-of-thought or raw internal logs.`;
+
+  finalPrompt += `\n\n---\n\n## Financial computation: fail closed\nFor any financial input directly supplied by the user (including text, pasted numbers, spreadsheets, files, screenshots, OCR, PDFs, voice transcriptions, or downloaded RPA artifacts), use a deterministic, auditable calculation tool before stating any amount, price, tax, balance, exchange rate, percentage, ranking, reconciliation result, or financial recommendation. The model may select the tool and explain its verified output, but must never calculate, estimate, infer, or fill in financial numbers itself. If the tool or input is unavailable, report the blockage and ask for the missing data; do not use approximation, OCR values, confidence language, or YOLO mode to bypass this rule. A successful calculation does not authorize a payment, writeback, quote, filing, or external send: those actions require their own confirmation.`;
 
   // Keep the concrete model identity last so user rules, skills, and channel
   // context cannot accidentally overwrite it. It is the single source of truth

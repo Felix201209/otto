@@ -8,8 +8,6 @@
 import {
   ToolCall,
   Tool,
-  ToolCallConfirmationDetails,
-  ToolConfirmationOutcome,
   CompletedToolCall,
   EditorType,
 } from '../index.js';
@@ -43,10 +41,10 @@ export interface ToolSchedulerAdapter {
    * @param context 执行上下文
    */
   onToolStatusChanged(
-    callId: string,
-    newStatus: string,
-    toolCall: ToolCall,
-    context: ToolExecutionContext,
+    _callId: string,
+    _newStatus: string,
+    _toolCall: ToolCall,
+    _context: ToolExecutionContext,
   ): void;
 
   /**
@@ -56,9 +54,9 @@ export interface ToolSchedulerAdapter {
    * @param context 执行上下文
    */
   onOutputUpdate(
-    callId: string,
-    output: string,
-    context: ToolExecutionContext,
+    _callId: string,
+    _output: string,
+    _context: ToolExecutionContext,
   ): void;
 
 
@@ -68,7 +66,7 @@ export interface ToolSchedulerAdapter {
    * @param context 执行上下文
    * @returns EditorType | undefined 编辑器类型
    */
-  getPreferredEditor(context: ToolExecutionContext): EditorType | undefined;
+  getPreferredEditor(_context: ToolExecutionContext): EditorType | undefined;
 
   /**
    * 获取状态更新回调函数
@@ -85,10 +83,10 @@ export interface ToolSchedulerAdapter {
    * @param context 执行上下文
    */
   onPreToolExecution(
-    callId: string,
-    tool: Tool,
-    args: Record<string, unknown>,
-    context: ToolExecutionContext,
+    _callId: string,
+    _tool: Tool,
+    _args: Record<string, unknown>,
+    _context: ToolExecutionContext,
   ): Promise<void> | void;
 
   /**
@@ -97,8 +95,8 @@ export interface ToolSchedulerAdapter {
    * @param context 执行上下文
    */
   onAllToolsComplete(
-    completedCalls: CompletedToolCall[],
-    context: ToolExecutionContext,
+    _completedCalls: CompletedToolCall[],
+    _context: ToolExecutionContext,
   ): void;
 
   /**
@@ -107,8 +105,8 @@ export interface ToolSchedulerAdapter {
    * @param context 执行上下文
    */
   onToolCallsUpdate(
-    toolCalls: ToolCall[],
-    context: ToolExecutionContext,
+    _toolCalls: ToolCall[],
+    _context: ToolExecutionContext,
   ): void;
 }
 
@@ -117,25 +115,25 @@ export interface ToolSchedulerAdapter {
  */
 export class NoOpToolSchedulerAdapter implements ToolSchedulerAdapter {
   onToolStatusChanged(
-    callId: string,
-    newStatus: string,
-    toolCall: ToolCall,
-    context: ToolExecutionContext,
+    _callId: string,
+    _newStatus: string,
+    _toolCall: ToolCall,
+    _context: ToolExecutionContext,
   ): void {
     // 空实现
   }
 
   onOutputUpdate(
-    callId: string,
-    output: string,
-    context: ToolExecutionContext,
+    _callId: string,
+    _output: string,
+    _context: ToolExecutionContext,
   ): void {
     // 空实现
   }
 
 
 
-  getPreferredEditor(context: ToolExecutionContext): EditorType | undefined {
+  getPreferredEditor(_context: ToolExecutionContext): EditorType | undefined {
     return undefined;
   }
 
@@ -144,24 +142,24 @@ export class NoOpToolSchedulerAdapter implements ToolSchedulerAdapter {
   }
 
   onPreToolExecution(
-    callId: string,
-    tool: Tool,
-    args: Record<string, unknown>,
-    context: ToolExecutionContext,
+    _callId: string,
+    _tool: Tool,
+    _args: Record<string, unknown>,
+    _context: ToolExecutionContext,
   ): void {
     // 空实现
   }
 
   onAllToolsComplete(
-    completedCalls: CompletedToolCall[],
-    context: ToolExecutionContext,
+    _completedCalls: CompletedToolCall[],
+    _context: ToolExecutionContext,
   ): void {
     // 空实现
   }
 
   onToolCallsUpdate(
-    toolCalls: ToolCall[],
-    context: ToolExecutionContext,
+    _toolCalls: ToolCall[],
+    _context: ToolExecutionContext,
   ): void {
     // 空实现
   }

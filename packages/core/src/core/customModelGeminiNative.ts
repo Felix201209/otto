@@ -9,6 +9,14 @@ import { MESSAGE_ROLES } from '../config/messageRoles.js';
 import { CustomModelConfig, resolveThinkingConfig, effortToGeminiLevel, effortToGeminiBudget } from '../types/customModel.js';
 import { sanitiseGeminiTools } from './customModelGeminiSchema.js';
 
+type NativePart = Record<string, unknown>;
+type NativeContent = { role?: string; parts?: NativePart[] };
+export type NativeRequest = { contents?: unknown; config?: unknown };
+type NativeChunk = Record<string, unknown> & {
+  candidates?: Array<{ content?: NativeContent; finishReason?: string }>;
+  usageMetadata?: Record<string, unknown>;
+};
+
 // ============================================================================
 // Gemini native (GenAI v1beta) — POST /v1beta/models/{id}:streamGenerateContent
 // ----------------------------------------------------------------------------
@@ -64,10 +72,12 @@ function applyGeminiNativeThinking(
  */
 export function buildGeminiNativeRequestBody(
   modelConfig: CustomModelConfig,
-  request: any,
+  request: NativeRequest,
   maxOutputTokens: number,
 ): Record<string, unknown> {
-  const reqConfig = request?.config || {};
+  const reqConfig = request?.config && typeof request.config === 'object'
+    ? request.config as Record<string, unknown>
+    : {};
   const generationConfig: Record<string, unknown> = {
     ...(reqConfig.generationConfig || {}),
   };
@@ -135,22 +145,22 @@ export function buildGeminiNativeRequestBody(
   // rewrite both the call AND its corresponding response as text.
   const nakedCallKeys: Set<string> = new Set();
   if (isGemini3Target && Array.isArray(request.contents)) {
-    for (const c of request.contents) {
+    for (const c of request.contents as NativeContent[]) {
       if (!c || typeof c !== 'object') continue;
       const parts = Array.isArray(c.parts) ? c.parts : [];
       for (const p of parts) {
         if (!p || typeof p !== 'object') continue;
+        const fc = p.functionCall as Record<string, unknown> | undefined;
         if (
-          p.functionCall &&
-          typeof p.functionCall === 'object' &&
-          typeof p.functionCall.name === 'string' &&
-          p.functionCall.name.length > 0 &&
+          fc &&
+          typeof fc.name === 'string' &&
+          fc.name.length > 0 &&
           typeof p.thoughtSignature !== 'string'
         ) {
           const key =
-            typeof p.functionCall.id === 'string' && p.functionCall.id.length > 0
-              ? p.functionCall.id
-              : `name:${p.functionCall.name}`;
+            typeof fc.id === 'string' && fc.id.length > 0
+              ? fc.id
+              : `name:${fc.name}`;
           nakedCallKeys.add(key);
         }
       }
@@ -171,21 +181,21 @@ export function buildGeminiNativeRequestBody(
     }
   };
 
-  const sanitiseContentsForGemini = (raw: any[] | undefined): any[] => {
+  const sanitiseContentsForGemini = (raw: NativeContent[] | undefined): NativeContent[] => {
     if (!Array.isArray(raw)) return [];
-    const out: any[] = [];
+    const out: NativeContent[] = [];
     for (const c of raw) {
       if (!c || typeof c !== 'object') continue;
       const role = c.role;
       const parts = Array.isArray(c.parts) ? c.parts : [];
-      const cleanParts: any[] = [];
+      const cleanParts: NativePart[] = [];
       for (const p of parts) {
         if (!p || typeof p !== 'object') continue;
         // 1) UI-only `reasoning` projection → fold back to a thought part so
         //    the attached thoughtSignature (if any) is preserved.
         if (typeof p.reasoning === 'string') {
           if (p.reasoning.length === 0) continue;
-          const part: any = { thought: true, text: p.reasoning };
+          const part: NativePart = { thought: true, text: p.reasoning };
           if (typeof p.thoughtSignature === 'string') part.thoughtSignature = p.thoughtSignature;
           cleanParts.push(part);
           continue;
@@ -193,7 +203,7 @@ export function buildGeminiNativeRequestBody(
         // 2) Raw Gemini `thought:true` part — pass through with signature.
         if (p.thought === true) {
           if (typeof p.text !== 'string' || p.text.length === 0) continue;
-          const part: any = { thought: true, text: p.text };
+          const part: NativePart = { thought: true, text: p.text };
           if (typeof p.thoughtSignature === 'string') part.thoughtSignature = p.thoughtSignature;
           cleanParts.push(part);
           continue;
@@ -229,7 +239,7 @@ export function buildGeminiNativeRequestBody(
               });
               continue;
             }
-            const part: any = {
+            const part: NativePart = {
               functionCall: {
                 name: fc.name,
                 args: (fc.args && typeof fc.args === 'object') ? fc.args : {},
@@ -305,7 +315,7 @@ export function buildGeminiNativeRequestBody(
   };
 
   const body: Record<string, unknown> = {
-    contents: sanitiseContentsForGemini(request.contents),
+    contents: sanitiseContentsForGemini(Array.isArray(request.contents) ? request.contents as NativeContent[] : undefined),
     generationConfig,
   };
   /**
@@ -403,13 +413,14 @@ export function buildGeminiNativeUrl(
  * input rate; the cache is server-managed). Pretending otherwise would
  * double-count in cost calculators.
  */
-export function normaliseGeminiUsageMetadata(usage: any): any {
+export function normaliseGeminiUsageMetadata(usage: unknown): Record<string, unknown> | unknown {
   if (!usage || typeof usage !== 'object') return usage;
-  const cached = usage.cachedContentTokenCount || 0;
+  const metadata = usage as Record<string, unknown>;
+  const cached = typeof metadata.cachedContentTokenCount === 'number' ? metadata.cachedContentTokenCount : 0;
   // Already normalised (defensive — never expected from Google's API today).
-  if (typeof usage.cacheReadInputTokens === 'number') return usage;
+  if (typeof metadata.cacheReadInputTokens === 'number') return usage;
   return {
-    ...usage,
+    ...metadata,
     // Alias only when the upstream actually reported a hit; absent field
     // (round 1, miss) → leave undefined so existing `|| 0` fallbacks
     // downstream behave identically.
@@ -428,32 +439,33 @@ export function normaliseGeminiUsageMetadata(usage: any): any {
  * provider.
  */
 export function* mapGeminiChunkToResponses(
-  chunk: any,
-  attachFunctionCallsGetter: (obj: any) => void,
+  chunk: NativeChunk,
+  attachFunctionCallsGetter: (obj: Record<string, unknown>) => void,
 ): Generator<GenerateContentResponse> {
   const cand = chunk?.candidates?.[0];
   const parts = cand?.content?.parts;
   if (Array.isArray(parts) && parts.length > 0) {
-    const mappedParts: any[] = [];
+    const mappedParts: NativePart[] = [];
     for (const p of parts) {
       // Gemini 3.x with thinking emits a `thoughtSignature` on functionCall
       // parts. We must propagate it back on the next request, otherwise
       // Gemini rejects with HTTP 400 "Function call is missing a thought_signature".
       // Carry the field as-is — opaque to us, validated by Gemini.
       if (p?.thought === true && typeof p.text === 'string') {
-        const out: any = { reasoning: p.text };
+        const out: NativePart = { reasoning: p.text };
         if (typeof p.thoughtSignature === 'string') out.thoughtSignature = p.thoughtSignature;
         mappedParts.push(out);
       } else if (typeof p?.text === 'string') {
-        const out: any = { text: p.text };
+        const out: NativePart = { text: p.text };
         if (typeof p.thoughtSignature === 'string') out.thoughtSignature = p.thoughtSignature;
         mappedParts.push(out);
-      } else if (p?.functionCall) {
-        const out: any = {
+      } else if (p?.functionCall && typeof p.functionCall === 'object') {
+        const fc = p.functionCall as Record<string, unknown>;
+        const out: NativePart = {
           functionCall: {
-            name: p.functionCall.name?.trim() || p.functionCall.name,
-            args: p.functionCall.args || {},
-            id: p.functionCall.id,
+            name: typeof fc.name === 'string' ? fc.name.trim() || fc.name : undefined,
+            args: fc.args || {},
+            id: fc.id,
           },
         };
         if (typeof p.thoughtSignature === 'string') out.thoughtSignature = p.thoughtSignature;
@@ -469,14 +481,14 @@ export function* mapGeminiChunkToResponses(
         candidates: [
           {
             content,
-            ...(cand.finishReason ? { finishReason: cand.finishReason } : {}),
+            ...(cand?.finishReason ? { finishReason: cand.finishReason } : {}),
             index: 0,
           },
         ],
       };
       attachFunctionCallsGetter(resp);
       attachFunctionCallsGetter(content);
-      yield resp as any as GenerateContentResponse;
+      yield resp as unknown as GenerateContentResponse;
     }
   }
   // Usage metadata may arrive on any chunk (often the last one) — forward it,
@@ -486,7 +498,7 @@ export function* mapGeminiChunkToResponses(
     yield {
       candidates: [],
       usageMetadata: normaliseGeminiUsageMetadata(chunk.usageMetadata),
-    } as any;
+    } as unknown as GenerateContentResponse;
   }
 }
 

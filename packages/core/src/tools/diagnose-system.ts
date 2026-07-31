@@ -127,7 +127,7 @@ No prerequisites -- uses built-in OS tools on both macOS and Windows.`;
     return this.hf('Disk Usage',df)+this.hf('Common dirs',top)+this.hf('Large files (>100MB)',big||'None');
   }
   private async macMemory():Promise<string>{
-    const gb=(parseInt(await this.sh('sysctl -n hw.memsize'))/1024/1024/1024).toFixed(1);
+    const gb=(parseInt(await this.sh('sysctl -n hw.memsize'), 10)/1024/1024/1024).toFixed(1);
     return 'Total: '+gb+' GB\n\n'+this.hf('VM Stats',await this.sh('vm_stat'))+this.hf('Top CPU',await this.sh('ps aux -c -r | head -20'));
   }
   private async macNetwork():Promise<string>{

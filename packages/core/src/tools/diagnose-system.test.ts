@@ -2,6 +2,7 @@
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { EventEmitter } from 'node:events';
 import { DiagnoseSystemTool } from './diagnose-system.js';
 import { createMockConfig } from '../utils/test-helpers.js';
 import { ApprovalMode } from '../config/config.js';
@@ -60,9 +61,7 @@ describe('DiagnoseSystemTool', () => {
   // --- execute: integration tests (mock exec) ---
   describe('execute with mocked exec', () => {
     beforeEach(() => {
-      vi.mock('child_process', () => {
-        const EventEmitter = require('events').EventEmitter;
-        return {
+      vi.mock('child_process', () => ({
           exec: vi.fn((_cmd: string, _opts: any) => {
             const child = new EventEmitter();
             child.stdout = new EventEmitter();
@@ -77,8 +76,7 @@ describe('DiagnoseSystemTool', () => {
           execFile: vi.fn((_file: string, _args: string[], _opts: any, cb: (error: Error | null, stdout?: string, stderr?: string) => void) => {
             setImmediate(() => cb(null, 'mock output', ''));
           }),
-        };
-      });
+      }));
     });
 
     it('execute system_info returns OK', async () => {

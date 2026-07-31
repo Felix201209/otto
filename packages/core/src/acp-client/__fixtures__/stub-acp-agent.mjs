@@ -23,6 +23,8 @@
 import * as acp from '@agentclientprotocol/sdk';
 import { Readable, Writable } from 'node:stream';
 
+/* global process */
+
 const MODE = process.env.STUB_MODE || 'normal';
 
 const stream = acp.ndJsonStream(
@@ -30,7 +32,7 @@ const stream = acp.ndJsonStream(
   Readable.toWeb(process.stdin),
 );
 
-// eslint-disable-next-line no-new
+
 new acp.AgentSideConnection(
   (conn) => ({
     async initialize() {

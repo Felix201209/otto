@@ -17,22 +17,26 @@ import { OpenAIResponsesConverter } from '../customModelOpenAIResponsesConverter
 import { parseJSONSafe } from '../customModelJson.js';
 import { addFunctionCallsGetter } from './shared.js';
 
+type OpenAIRecord = Record<string, unknown>;
+
 export function buildOpenAIChatRequestBody(input: {
   modelConfig: CustomModelConfig;
-  request: any;
+  request: { contents?: unknown; config?: unknown };
   systemText: string;
   maxOutputTokens: number;
   stream: boolean;
-}): any {
+}): OpenAIRecord {
   const thinkingConfig = resolveThinkingConfig(input.modelConfig);
-  const messages = OpenAIConverter.contentsToMessages(input.request.contents);
+  const contents = Array.isArray(input.request.contents) ? input.request.contents as OpenAIRecord[] : [];
+  const messages = OpenAIConverter.contentsToMessages(contents);
   if (input.systemText) {
     messages.unshift({ role: 'system', content: input.systemText });
   }
-  const requestBody: any = {
+  const config = input.request.config && typeof input.request.config === 'object' ? input.request.config as { tools?: unknown } : undefined;
+  const requestBody: OpenAIRecord = {
     model: input.modelConfig.modelId,
     messages,
-    tools: OpenAIConverter.toolsToOpenAITools(input.request.config?.tools),
+    tools: OpenAIConverter.toolsToOpenAITools(Array.isArray(config?.tools) ? config.tools as OpenAIRecord[] : []),
     stream: input.stream,
     max_tokens: input.maxOutputTokens,
   };
@@ -48,23 +52,25 @@ export function buildOpenAIChatRequestBody(input: {
 }
 
 export function mapOpenAIChatCompletionResponse(
-  data: any,
+  data: OpenAIRecord,
 ): GenerateContentResponse {
-  const choice = data.choices[0];
-  const message = choice.message;
+  const choices = Array.isArray(data.choices) ? data.choices as OpenAIRecord[] : [];
+  const choice = choices[0] ?? {};
+  const message = choice.message && typeof choice.message === 'object' ? choice.message as OpenAIRecord : {};
 
-  const parts: any[] = [];
-  if (message.reasoning_content) {
+  const parts: OpenAIRecord[] = [];
+  if (typeof message.reasoning_content === 'string') {
     parts.push({ reasoning: message.reasoning_content });
   }
-  if (message.content) parts.push({ text: message.content });
-  if (message.tool_calls) {
-    for (const tc of message.tool_calls) {
+  if (typeof message.content === 'string') parts.push({ text: message.content });
+  if (Array.isArray(message.tool_calls)) {
+    for (const tc of message.tool_calls as OpenAIRecord[]) {
       if (tc.type === 'function') {
+        const fn = tc.function && typeof tc.function === 'object' ? tc.function as OpenAIRecord : {};
         parts.push({
           functionCall: {
-            name: tc.function.name?.trim() || tc.function.name,
-            args: parseJSONSafe(tc.function.arguments),
+            name: typeof fn.name === 'string' ? fn.name.trim() || fn.name : '',
+            args: parseJSONSafe(typeof fn.arguments === 'string' ? fn.arguments : '{}'),
             id: tc.id,
           },
         });
@@ -72,8 +78,10 @@ export function mapOpenAIChatCompletionResponse(
     }
   }
 
-  const cachedTokens = data.usage?.prompt_tokens_details?.cached_tokens || 0;
-  const promptTokens = data.usage?.prompt_tokens || 0;
+  const usage = data.usage && typeof data.usage === 'object' ? data.usage as OpenAIRecord : {};
+  const details = usage.prompt_tokens_details && typeof usage.prompt_tokens_details === 'object' ? usage.prompt_tokens_details as OpenAIRecord : {};
+  const cachedTokens = typeof details.cached_tokens === 'number' ? details.cached_tokens : 0;
+  const promptTokens = typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : 0;
 
   const result = {
     candidates: [
@@ -82,36 +90,38 @@ export function mapOpenAIChatCompletionResponse(
           role: MESSAGE_ROLES.MODEL,
           parts: parts.length ? parts : [{ text: '' }],
         },
-        finishReason: OpenAIConverter.mapFinishReason(choice.finish_reason),
+        finishReason: OpenAIConverter.mapFinishReason(typeof choice.finish_reason === 'string' ? choice.finish_reason : ''),
         index: 0,
       },
     ],
     usageMetadata: {
       promptTokenCount: promptTokens,
-      candidatesTokenCount: data.usage?.completion_tokens || 0,
-      totalTokenCount: data.usage?.total_tokens || 0,
+      candidatesTokenCount: typeof usage.completion_tokens === 'number' ? usage.completion_tokens : 0,
+      totalTokenCount: typeof usage.total_tokens === 'number' ? usage.total_tokens : 0,
       ...(cachedTokens > 0 && { cacheReadInputTokens: cachedTokens }),
       uncachedInputTokens: promptTokens - cachedTokens,
-    } as any,
+    },
   };
   addFunctionCallsGetter(result);
-  return result as GenerateContentResponse;
+  return result as unknown as GenerateContentResponse;
 }
 
 export function buildOpenAIResponsesRequestBody(input: {
   modelConfig: CustomModelConfig;
-  request: any;
+  request: { contents?: unknown; config?: unknown };
   systemText: string;
   maxOutputTokens: number;
   stream: boolean;
   codexAuth: boolean;
-}): any {
+}): OpenAIRecord {
   const thinkingConfig = resolveThinkingConfig(input.modelConfig);
-  const requestBody: any = {
+  const requestContents = Array.isArray(input.request.contents) ? input.request.contents as OpenAIRecord[] : [];
+  const config = input.request.config && typeof input.request.config === 'object' ? input.request.config as { tools?: unknown } : undefined;
+  const requestBody: OpenAIRecord = {
     model: input.modelConfig.modelId,
-    input: OpenAIResponsesConverter.contentsToInput(input.request.contents),
+    input: OpenAIResponsesConverter.contentsToInput(requestContents),
     tools: OpenAIResponsesConverter.toolsToResponsesTools(
-      input.request.config?.tools,
+      Array.isArray(config?.tools) ? config.tools as OpenAIRecord[] : [],
     ),
     stream: input.stream,
     store: false,
@@ -139,12 +149,14 @@ export function buildOpenAIResponsesRequestBody(input: {
   return requestBody;
 }
 
-export function mapOpenAIResponsesResponse(data: any): GenerateContentResponse {
-  const parts = OpenAIResponsesConverter.outputToParts(data.output);
+export function mapOpenAIResponsesResponse(data: OpenAIRecord): GenerateContentResponse {
+  const parts = OpenAIResponsesConverter.outputToParts(Array.isArray(data.output) ? data.output as OpenAIRecord[] : []);
 
-  const cachedTokens = data.usage?.input_tokens_details?.cached_tokens || 0;
-  const promptTokens = data.usage?.input_tokens || 0;
-  const outputTokens = data.usage?.output_tokens || 0;
+  const usage = data.usage && typeof data.usage === 'object' ? data.usage as OpenAIRecord : {};
+  const details = usage.input_tokens_details && typeof usage.input_tokens_details === 'object' ? usage.input_tokens_details as OpenAIRecord : {};
+  const cachedTokens = typeof details.cached_tokens === 'number' ? details.cached_tokens : 0;
+  const promptTokens = typeof usage.input_tokens === 'number' ? usage.input_tokens : 0;
+  const outputTokens = typeof usage.output_tokens === 'number' ? usage.output_tokens : 0;
 
   const result = {
     candidates: [
@@ -153,7 +165,7 @@ export function mapOpenAIResponsesResponse(data: any): GenerateContentResponse {
           role: MESSAGE_ROLES.MODEL,
           parts: parts.length ? parts : [{ text: '' }],
         },
-        finishReason: OpenAIResponsesConverter.mapFinishReason(data.status),
+        finishReason: OpenAIResponsesConverter.mapFinishReason(typeof data.status === 'string' ? data.status : ''),
         index: 0,
       },
     ],
@@ -161,11 +173,11 @@ export function mapOpenAIResponsesResponse(data: any): GenerateContentResponse {
       promptTokenCount: promptTokens,
       candidatesTokenCount: outputTokens,
       totalTokenCount:
-        promptTokens + outputTokens || data.usage?.total_tokens || 0,
+        promptTokens + outputTokens || (typeof usage.total_tokens === 'number' ? usage.total_tokens : 0),
       ...(cachedTokens > 0 && { cacheReadInputTokens: cachedTokens }),
       uncachedInputTokens: promptTokens - cachedTokens,
-    } as any,
+    },
   };
   addFunctionCallsGetter(result);
-  return result as GenerateContentResponse;
+  return result as unknown as GenerateContentResponse;
 }

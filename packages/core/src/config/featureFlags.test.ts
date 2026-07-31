@@ -17,10 +17,10 @@ vi.mock('fs', async () => {
 
   return {
     ...actual,
-    existsSync: vi.fn((p: string) => {
+    existsSync: vi.fn((p: string) =>
       // 模拟 ~/.otto/settings.json 始终「存在」
-      return p.includes('.otto/settings.json') ? true : false;
-    }),
+       p.includes('.otto/settings.json') ? true : false
+    ),
     readFileSync: vi.fn((p: string) => {
       const key = p.toString();
       return store[key] || '{}';

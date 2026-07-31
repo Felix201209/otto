@@ -9,9 +9,9 @@ import { PassThrough } from 'node:stream';
 import * as path from 'node:path';
 import {
   createMessageConnection,
-  StreamMessageReader,
-  StreamMessageWriter,
-} from 'vscode-jsonrpc/node.js';
+  ReadableStreamMessageReader,
+  WriteableStreamMessageWriter,
+} from 'vscode-jsonrpc';
 import { createLSPClient, stopLSPClient } from './client.js';
 
 type FakeProcess = {
@@ -47,8 +47,8 @@ async function runHandshakeScenario(input: {
   const { fakeProcess, serverReader, serverWriter } = createDuplexTransport();
 
   const serverConnection = createMessageConnection(
-    new StreamMessageReader(serverReader),
-    new StreamMessageWriter(serverWriter),
+    new ReadableStreamMessageReader(serverReader as never),
+    new WriteableStreamMessageWriter(serverWriter as never),
   );
 
   serverConnection.onRequest('initialize', async () => {
@@ -58,9 +58,7 @@ async function runHandshakeScenario(input: {
   });
 
   // Basic request handlers a server would implement.
-  serverConnection.onRequest('textDocument/hover', async () => {
-    return { contents: 'ok' };
-  });
+  serverConnection.onRequest('textDocument/hover', async () => ({ contents: 'ok' }));
 
   serverConnection.listen();
 
@@ -162,9 +160,7 @@ describe('LSP createLSPClient handshake robustness', () => {
         new StreamMessageWriter(serverWriter),
       );
 
-      serverConnection.onRequest('initialize', async () => {
-        return { capabilities: {} };
-      });
+      serverConnection.onRequest('initialize', async () => ({ capabilities: {} }));
 
       serverConnection.onRequest('textDocument/hover', async () => {
         // Server asks client to create progress and waits for response.

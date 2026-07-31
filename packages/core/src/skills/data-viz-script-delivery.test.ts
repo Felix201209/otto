@@ -177,7 +177,7 @@ describe('data-viz-pro 脚本交付门槛', () => {
 
     expect(result.status).not.toBe(0);
     if (manifest && typeof manifest === 'object' && 'charts' in manifest) {
-      for (const chart of (manifest as { charts: Record<string, unknown>[] })
+      for (const chart of (manifest as { charts: Array<Record<string, unknown>> })
         .charts) {
         expect(chart).not.toHaveProperty('png');
         expect(chart).not.toHaveProperty('svg');

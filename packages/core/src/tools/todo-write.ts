@@ -201,7 +201,7 @@ Each todo object must have:
         completed: todoItems.filter(t => t.status === 'completed').length,
       };
 
-      let output = `Todo List Updated Successfully\n\n`;
+      const output = `Todo List Updated Successfully\n\n`;
 
       // UI友好排序：已完成 > 进行中 > 待办
       const sortedTodos = [...todoItems].sort((a, b) => {

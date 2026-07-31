@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   discoverTools,
   discoverPrompts,
@@ -12,9 +12,6 @@ import {
   isEnabled,
 } from './mcp-client.js';
 import { MCPServerConfig } from '../config/config.js';
-import { ToolRegistry } from './tool-registry.js';
-import { PromptRegistry } from '../prompts/prompt-registry.js';
-import { ResourceRegistry } from '../resources/resource-registry.js';
 import {
   StreamableHTTPClientTransport,
 } from '@modelcontextprotocol/sdk/client/streamableHttp.js';

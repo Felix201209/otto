@@ -18,14 +18,13 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { homedir } from 'os';
 import type { Config } from '../config/config.js';
 import { OrgMemoryStore } from '../memory/orgMemoryStore.js';
 import type { SkillRecord } from '../memory/orgMemoryTypes.js';
 import { getWorkLogger } from './workLog.js';
 import { getProactiveService } from './proactiveService.js';
-import { getEnterpriseSync, checkUserPermission } from './enterpriseSync.js';
-import type { Permission, LicenseRecord } from '../memory/orgMemoryTypes.js';
+import { getEnterpriseSync } from './enterpriseSync.js';
+import type { Permission } from '../memory/orgMemoryTypes.js';
 
 /** 分享状态 */
 export type ShareStatus = 'active' | 'revoked' | 'deprecated';
@@ -929,6 +928,8 @@ export class SkillShareManager {
       case 'newest':
         marketShares.sort((a, b) => b.sharedAt.localeCompare(a.sharedAt));
         break;
+      default:
+        break;
     }
 
     if (options.limit) marketShares = marketShares.slice(0, options.limit);
@@ -1417,7 +1418,7 @@ function extractFeature(content: string): string {
 }
 
 /** 从 SKILL.md 内容提取 name */
-function extractName(content: string): string | null {
+function _extractName(content: string): string | null {
   const match = content.match(/^---[\s\S]*?name:\s*(.+?)$/m);
   return match ? match[1].trim().replace(/^["']|["']$/g, '') : null;
 }

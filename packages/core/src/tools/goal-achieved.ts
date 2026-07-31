@@ -194,7 +194,7 @@ export class GoalAchievedTool extends BaseTool<GoalAchievedParams, ToolResult> {
           model: 'deepseek-v4-flash',
           task: activeGoalContext.task || '',
           criteria: activeGoalContext.criteria || '',
-          reason: reason,
+          reason,
           cacheSafeSnapshot: snapshot,
           signal: _signal,
         });
@@ -237,7 +237,7 @@ export class GoalAchievedTool extends BaseTool<GoalAchievedParams, ToolResult> {
         llmContent: rejectLlmContent,
         returnDisplay: {
           type: 'goal_rejected_display',
-          feedback: feedback,
+          feedback,
         },
         summary: 'goal completion rejected',
       };

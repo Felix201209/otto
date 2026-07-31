@@ -27,13 +27,15 @@ import {
 } from './providerConverters/openai.js';
 import { addFunctionCallsGetter } from './providerConverters/shared.js';
 
+type OpenAIRequest = Record<string, unknown>;
+
 /**
  * OpenAI 兼容模型单次调用
  * 使用指数退避重试策略处理 429 和 5xx 错误
  */
 export async function callOpenAICompatibleModel(
   modelConfig: CustomModelConfig,
-  request: any,
+  request: OpenAIRequest,
   abortSignal?: AbortSignal,
 ): Promise<GenerateContentResponse> {
   const baseUrl = resolveEnvVar(modelConfig.baseUrl).replace(/\/+$/, '');
@@ -87,7 +89,7 @@ export async function callOpenAICompatibleModel(
  */
 export async function callOpenAIResponsesModel(
   modelConfig: CustomModelConfig,
-  request: any,
+  request: OpenAIRequest,
   abortSignal?: AbortSignal,
 ): Promise<GenerateContentResponse> {
   const baseUrl = resolveEnvVar(modelConfig.baseUrl).replace(/\/+$/, '');
@@ -142,7 +144,7 @@ export async function callOpenAIResponsesModel(
  */
 export async function* callOpenAIResponsesModelStream(
   modelConfig: CustomModelConfig,
-  request: any,
+  request: OpenAIRequest,
   abortSignal?: AbortSignal,
 ): AsyncGenerator<GenerateContentResponse> {
   const baseUrl = resolveEnvVar(modelConfig.baseUrl).replace(/\/+$/, '');
@@ -270,7 +272,7 @@ export async function* callOpenAIResponsesModelStream(
               const resp = { candidates: [{ content, index: 0 }] };
               addFunctionCallsGetter(resp);
               addFunctionCallsGetter(content);
-              yield resp as any as GenerateContentResponse;
+              yield resp as unknown as GenerateContentResponse;
             }
           }
 
@@ -363,10 +365,10 @@ export async function* callOpenAIResponsesModelStream(
                   }),
                   uncachedInputTokens: promptTokens - cachedTokens,
                 },
-              } as any;
+              } as unknown as GenerateContentResponse;
             }
           }
-        } catch (e) {}
+        } catch {}
       }
 
       if (isDone) {
@@ -385,7 +387,7 @@ export async function* callOpenAIResponsesModelStream(
  */
 export async function* callOpenAICompatibleModelStream(
   modelConfig: CustomModelConfig,
-  request: any,
+  request: OpenAIRequest,
   abortSignal?: AbortSignal,
 ): AsyncGenerator<GenerateContentResponse> {
   const baseUrl = resolveEnvVar(modelConfig.baseUrl).replace(/\/+$/, '');
@@ -511,7 +513,7 @@ export async function* callOpenAICompatibleModelStream(
               const resp = { candidates: [{ content, index: 0 }] };
               addFunctionCallsGetter(resp);
               addFunctionCallsGetter(content);
-              yield resp as any as GenerateContentResponse;
+              yield resp as unknown as GenerateContentResponse;
             }
 
             // 处理文本内容 - 立即 yield
@@ -523,7 +525,7 @@ export async function* callOpenAICompatibleModelStream(
               const resp = { candidates: [{ content, index: 0 }] };
               addFunctionCallsGetter(resp);
               addFunctionCallsGetter(content);
-              yield resp as any as GenerateContentResponse;
+              yield resp as unknown as GenerateContentResponse;
             }
 
             // 聚合工具调用 - 不立即 yield，等待完全接收
@@ -564,9 +566,9 @@ export async function* callOpenAICompatibleModelStream(
                 // OpenAI 不区分 cache creation，只有 cache read
                 uncachedInputTokens: promptTokens - cachedTokens,
               },
-            } as any;
+            } as unknown as GenerateContentResponse;
           }
-        } catch (e) {}
+        } catch {}
       }
 
       if (isDone) {

@@ -208,7 +208,7 @@ export class DiscoveredMCPTool extends BaseTool<ToolParams, ToolResult> {
 
     try {
       // 🎯 使用Promise.race来处理取消、超时和正常执行
-      const promises: Promise<Part[]>[] = [mcpCallPromise, cancelPromise];
+      const promises: Array<Promise<Part[]>> = [mcpCallPromise, cancelPromise];
       if (timeoutPromise) {
         promises.push(timeoutPromise);
       }

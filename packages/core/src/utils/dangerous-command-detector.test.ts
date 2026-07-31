@@ -387,7 +387,7 @@ describe('DangerousCommandDetector', () => {
     });
 
     it('should apply cross-platform rules on all platforms', () => {
-      const platforms: ('linux' | 'darwin' | 'win32')[] = ['linux', 'darwin', 'win32'];
+      const platforms: Array<'linux' | 'darwin' | 'win32'> = ['linux', 'darwin', 'win32'];
       for (const platform of platforms) {
         const rule = detectDangerousCommand('git reset --hard', platform);
         expect(rule).not.toBeNull();

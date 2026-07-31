@@ -54,7 +54,7 @@ export class CodeAssistServer implements ContentGenerator {
 
   async generateContentStream(
     req: GenerateContentParameters,
-    scene: SceneType,
+    _scene: SceneType,
   ): Promise<AsyncGenerator<GenerateContentResponse>> {
     const resps = await this.requestStreamingPost<CaGenerateContentResponse>(
       'streamGenerateContent',
@@ -70,7 +70,7 @@ export class CodeAssistServer implements ContentGenerator {
 
   async generateContent(
     req: GenerateContentParameters,
-    scene: SceneType,
+    _scene: SceneType,
   ): Promise<GenerateContentResponse> {
     const resp = await this.requestPost<CaGenerateContentResponse>(
       'generateContent',
@@ -192,7 +192,7 @@ export class CodeAssistServer implements ContentGenerator {
         console.log('[CodeAssist] Stream cancelled by user - closing readline interface');
         try {
           rl.close();  // 立即关闭 readline，停止流消费
-        } catch (e) {
+        } catch {
           // 忽略close可能抛出的错误
         }
       };
@@ -232,7 +232,7 @@ export class CodeAssistServer implements ContentGenerator {
         }
         try {
           rl.close();
-        } catch (e) {
+        } catch {
           // 忽略close可能的错误
         }
       }

@@ -129,8 +129,8 @@ export function canTransitionTo(from: TurnState, to: TurnState): boolean {
 
 export class InvalidTransitionError extends Error {
   constructor(
-    public readonly from: TurnState,
-    public readonly to: TurnState,
+    readonly from: TurnState,
+    readonly to: TurnState,
   ) {
     super(
       `Invalid turn state transition: ${describeTransition(from, to)}`,

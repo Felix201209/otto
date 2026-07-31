@@ -64,6 +64,8 @@ export function summarizeAgentActivity(state: AgentActivityState, activeSubAgent
       return 'Thinking';
     case 'using_tool':
       return 'Using a tool';
+    default:
+      return 'Unknown';
     case 'waiting_for_user':
       return 'Needs your input';
     case 'running_subagents':

@@ -6,6 +6,11 @@
 
 import { MESSAGE_ROLES } from '../config/messageRoles.js';
 
+type ToolCallData = { id?: string; name?: string };
+type ToolResponseData = { id?: string; name?: string };
+type ToolPart = { functionCall?: ToolCallData; functionResponse?: ToolResponseData };
+type ToolContent = { role?: string; parts?: ToolPart[] };
+
 /**
  * 跨协议通用的「tool_call ↔ tool_result id 配对」预扫描器。
  *
@@ -26,18 +31,20 @@ import { MESSAGE_ROLES } from '../config/messageRoles.js';
  * @returns WeakMap<part, canonicalId>
  */
 export function pairToolCallIds(
-  contents: any[],
+  contents: unknown[],
   synthPrefix: string,
 ): WeakMap<object, string> {
   const idByPart = new WeakMap<object, string>();
   let synthCounter = 0;
-  const hasId = (x: any) => x && typeof x.id === 'string' && x.id.length > 0;
+  const hasId = (x: { id?: string } | undefined): x is { id: string } => Boolean(x && typeof x.id === 'string' && x.id.length > 0);
 
-  const callPartsByName: Map<string, Array<{ part: any; fc: any }>> = new Map();
-  const respPartsByName: Map<string, Array<{ part: any; fr: any }>> = new Map();
+  const callPartsByName: Map<string, Array<{ part: object; fc: ToolCallData }>> = new Map();
+  const respPartsByName: Map<string, Array<{ part: object; fr: ToolResponseData }>> = new Map();
   for (const content of contents || []) {
-    const parts = content?.parts || [];
-    if (content?.role === MESSAGE_ROLES.MODEL) {
+    if (!content || typeof content !== 'object') continue;
+    const normalized = content as ToolContent;
+    const parts = normalized.parts || [];
+    if (normalized.role === MESSAGE_ROLES.MODEL) {
       for (const part of parts) {
         if (!part || typeof part !== 'object') continue;
         const fc = part.functionCall;
@@ -46,7 +53,7 @@ export function pairToolCallIds(
         if (!callPartsByName.has(name)) callPartsByName.set(name, []);
         callPartsByName.get(name)!.push({ part, fc });
       }
-    } else if (content?.role === MESSAGE_ROLES.USER) {
+    } else if (normalized.role === MESSAGE_ROLES.USER) {
       for (const part of parts) {
         if (!part || typeof part !== 'object') continue;
         const fr = part.functionResponse;
@@ -68,7 +75,7 @@ export function pairToolCallIds(
 
     // 步骤 A：剔除「fc.id === fr.id」的自洽配对，避免 FIFO 误配。
     const usedResp = new Set<number>();
-    const pendingCalls: Array<{ part: any; fc: any }> = [];
+    const pendingCalls: Array<{ part: object; fc: ToolCallData }> = [];
     for (const c of calls) {
       if (hasId(c.fc)) {
         const matchIdx = resps.findIndex(

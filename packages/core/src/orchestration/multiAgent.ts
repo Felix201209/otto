@@ -339,7 +339,7 @@ export class MultiAgentCollaboration {
   cleanupStaleRequests(): void {
     const now = Date.now();
     for (const [id, req] of this.pendingRequests) {
-      const reqTime = parseInt(id.split('_')[1] || '0');
+      const reqTime = parseInt(id.split('_')[1] || '0', 10);
       if (now - reqTime > 5 * 60 * 1000) {
         this.pendingRequests.delete(id);
       }

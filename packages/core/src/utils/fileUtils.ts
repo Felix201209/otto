@@ -24,7 +24,6 @@ const MAX_IMAGE_WIDTH_AGGRESSIVE = 1280; // 激进压缩时的最大宽度
 const MAX_IMAGE_HEIGHT_AGGRESSIVE = 720;  // 激进压缩时的最大高度
 const JPEG_QUALITY = 60; // 降低JPEG质量以获得更好的压缩率
 const JPEG_QUALITY_AGGRESSIVE = 45; // 更激进的压缩质量
-const PNG_COMPRESSION_LEVEL = 6;
 
 // Default values for encoding and separator format
 export const DEFAULT_ENCODING: BufferEncoding = 'utf-8';
@@ -181,7 +180,7 @@ async function compressImage(
     }
 
     let compressedBuffer: Buffer;
-    let finalMimeType: string;
+    const finalMimeType = 'image/jpeg';
 
     // Convert all images to JPEG for maximum compression
     console.log('🎨 转换为JPEG格式进行激进压缩...');
@@ -195,7 +194,6 @@ async function compressImage(
     const selectedQuality = jpegAggressive.length < jpegNormal.length ? JPEG_QUALITY_AGGRESSIVE : JPEG_QUALITY;
 
     console.log(`📊 选择JPEG质量: ${selectedQuality} (${Math.round(compressedBuffer.length/1024)}KB)`);
-    finalMimeType = 'image/jpeg';
 
     // 4MB兜底机制：如果压缩后仍然大于4MB，继续缩小尺寸
     const maxSize = 4 * 1024 * 1024; // 4MB
@@ -288,13 +286,13 @@ async function isLinuxDeviceTreeFile(filePath: string): Promise<boolean> {
     // Simple feature check: any device tree characteristic indicates it's a DT file
     return /\/\/\s*SPDX-License-Identifier:|\/dts-v1\/|#include.*dt-bindings|compatible\s*=|#address-cells|&\w+/.test(content);
 
-  } catch (error) {
+  } catch (_error) {
     return false;
   } finally {
     if (fileHandle) {
       try {
         await fileHandle.close();
-      } catch (closeError) {
+      } catch {
         // Ignore close errors
       }
     }
@@ -404,11 +402,14 @@ async function extractExcelContent(filePath: string): Promise<string> {
     /**
      * Clean cell content by removing excess whitespace and control characters
      */
-    const cleanCellContent = (cell: any): string => {
+    const cleanCellContent = (cell: unknown): string => {
       if (cell === null || cell === undefined) return '';
       let text = String(cell);
       // Remove control characters (except newlines and tabs)
-      text = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+      text = [...text].filter(char => {
+        const code = char.charCodeAt(0);
+        return !(code <= 8 || code === 11 || code === 12 || (code >= 14 && code <= 31) || code === 127);
+      }).join('');
       // Normalize multiple spaces to single space
       text = text.replace(/\s+/g, ' ');
       // Trim leading and trailing whitespace
@@ -425,14 +426,14 @@ async function extractExcelContent(filePath: string): Promise<string> {
       }
 
       // Convert to array of arrays (rows and columns)
-      const jsonData: any[][] = XLSX.utils.sheet_to_json(worksheet, {
+      const jsonData: unknown[][] = XLSX.utils.sheet_to_json(worksheet, {
         header: 1,
         defval: '', // Use empty string for empty cells
         blankrows: false // Skip completely blank rows
       });
 
       // Format as tab-separated values
-      jsonData.forEach((row: any[], rowIndex) => {
+      jsonData.forEach((row: unknown[], _rowIndex) => {
         const cleanedRow = row.map(cleanCellContent);
         // Only add rows that have at least one non-empty cell
         if (cleanedRow.some(cell => cell.length > 0)) {
@@ -658,23 +659,27 @@ async function extractPdfWithPdf2json(filePath: string): Promise<string> {
         reject(new Error('pdf2json parsing timeout after 6 seconds'));
       }, 6000);
 
-      pdfParser.on('pdfParser_dataError', (errData: any) => {
+      pdfParser.on('pdfParser_dataError', (errData: unknown) => {
         clearTimeout(timeout);
-        reject(new Error(`pdf2json parsing error: ${errData?.parserError || 'unknown error'}`));
+        const parserError = errData && typeof errData === 'object' ? (errData as { parserError?: string }).parserError : undefined;
+        reject(new Error(`pdf2json parsing error: ${parserError || 'unknown error'}`));
       });
 
-      pdfParser.on('pdfParser_dataReady', (pdfData: any) => {
+      pdfParser.on('pdfParser_dataReady', (pdfData: unknown) => {
         clearTimeout(timeout);
         try {
           let fullText = '';
 
-          if (pdfData?.Pages) {
-            pdfData.Pages.forEach((page: any) => {
-              if (page?.Texts) {
-                page.Texts.forEach((text: any) => {
-                  if (text?.R?.[0]?.T) {
+          const pages = pdfData && typeof pdfData === 'object' ? (pdfData as { Pages?: unknown[] }).Pages : undefined;
+          if (pages) {
+            pages.forEach((page: unknown) => {
+              const pageData = page && typeof page === 'object' ? page as { Texts?: unknown[] } : {};
+              if (pageData.Texts) {
+                pageData.Texts.forEach((text: unknown) => {
+                  const textData = text && typeof text === 'object' ? text as { R?: Array<{ T?: string }> } : {};
+                  if (textData.R?.[0]?.T) {
                     // Decode URI components and add spaces between text elements
-                    fullText += decodeURIComponent(text.R[0].T) + ' ';
+                    fullText += decodeURIComponent(textData.R[0].T) + ' ';
                   }
                 });
               }

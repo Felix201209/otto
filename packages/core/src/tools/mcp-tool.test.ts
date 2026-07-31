@@ -229,13 +229,11 @@ describe('DiscoveredMCPTool', () => {
       const abortController = new AbortController();
 
       // 模拟一个长时间运行的MCP调用
-      mockCallTool.mockImplementation(() => {
-        return new Promise((resolve) => {
+      mockCallTool.mockImplementation(() => new Promise((resolve) => {
           setTimeout(() => {
             resolve([{ text: 'completed' }]);
           }, 1000); // 1秒后完成
-        });
-      });
+        }));
 
       // 开始执行并立即取消
       const executePromise = tool.execute(params, abortController.signal);
@@ -263,13 +261,11 @@ describe('DiscoveredMCPTool', () => {
       const params = { param: 'testValue' };
 
       // 模拟一个长时间运行的MCP调用
-      mockCallTool.mockImplementation(() => {
-        return new Promise((resolve) => {
+      mockCallTool.mockImplementation(() => new Promise((resolve) => {
           setTimeout(() => {
             resolve([{ text: 'completed' }]);
           }, 500); // 500ms后完成，超过100ms超时
-        });
-      });
+        }));
 
       await expect(tool.execute(params, new AbortController().signal)).rejects.toThrow(
         `MCP tool execution timed out after ${customTimeout}ms`

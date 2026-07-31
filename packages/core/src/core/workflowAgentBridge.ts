@@ -98,7 +98,7 @@ export class WorkflowAgentBridge implements WorkflowAgentAPI {
   /** Cumulative total of agents spawned in this workflow (lifetime limit). */
   private totalAgentCount: number = 0;
   /** Current phase index. The workflow script should update this before each phase. */
-  public currentPhaseIndex: number = 0;
+  currentPhaseIndex: number = 0;
 
   setCurrentPhaseIndex(index: number): void {
     this.currentPhaseIndex = index;

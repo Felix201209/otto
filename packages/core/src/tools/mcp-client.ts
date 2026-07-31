@@ -166,7 +166,7 @@ let mcpDiscoveryState: MCPDiscoveryState = MCPDiscoveryState.NOT_STARTED;
  * Flag to track if MCP discovery has been triggered (prevents duplicate discovery)
  * Used in VSCode plugin mode where multiple AIService/Config instances are created
  */
-let mcpDiscoveryTriggered: boolean = false;
+let mcpDiscoveryTriggered = false;
 
 /**
  * Check if MCP discovery has already been triggered

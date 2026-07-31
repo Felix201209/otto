@@ -22,13 +22,14 @@ import {
 } from './customModelRuntimeHelpers.js';
 import { mapGeminiGenerateContentResponse } from './providerConverters/gemini.js';
 import { addFunctionCallsGetter } from './providerConverters/shared.js';
+import type { NativeRequest } from './customModelGeminiNative.js';
 
 /**
  * Gemini native single-shot call (GenAI generateContent).
  */
 export async function callGeminiNativeModel(
   modelConfig: CustomModelConfig,
-  request: any,
+  request: NativeRequest,
   abortSignal?: AbortSignal,
 ): Promise<GenerateContentResponse> {
   const url = buildGeminiNativeUrl(
@@ -81,7 +82,7 @@ export async function callGeminiNativeModel(
  */
 export async function* callGeminiNativeModelStream(
   modelConfig: CustomModelConfig,
-  request: any,
+  request: NativeRequest,
   abortSignal?: AbortSignal,
 ): AsyncGenerator<GenerateContentResponse> {
   const url = buildGeminiNativeUrl(

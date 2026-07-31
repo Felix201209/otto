@@ -7,13 +7,12 @@
 
 import { BaseTool, Icon, ToolResult, ToolCallConfirmationDetails, ToolEditConfirmationDetails, ToolConfirmationOutcome, ToolExecutionServices } from './tools.js';
 import { Config, ApprovalMode } from '../config/config.js';
-import { EditTool, EditToolParams } from './edit.js';
+import { EditTool } from './edit.js';
 import { Type } from '@google/genai';
 import { SchemaValidator } from '../utils/schemaValidator.js';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import * as Diff from 'diff';
-import { makeRelative, shortenPath } from '../utils/paths.js';
 import { DEFAULT_DIFF_OPTIONS } from './diffOptions.js';
 
 interface MultiEditToolParams {
@@ -67,12 +66,13 @@ export class MultiEditTool extends BaseTool<MultiEditToolParams, ToolResult> {
      * 并统一处理驼峰 (camelCase) 和下划线 (snake_case) 命名冲突。
      */
     private normalizeParams(params: MultiEditToolParams): MultiEditToolParams {
-        let normalizedEdits = (params as any).edits;
+        const rawParams = params as unknown as Record<string, unknown>;
+        let normalizedEdits = rawParams.edits;
 
         // 如果 edits 是字符串，尝试解析为数组
-        if (typeof (params as any).edits === 'string') {
+        if (typeof rawParams.edits === 'string') {
             try {
-                normalizedEdits = JSON.parse((params as any).edits);
+                normalizedEdits = JSON.parse(rawParams.edits);
                 console.log('[MultiEditTool] Parsed edits from JSON string');
             } catch (e) {
                 console.error('[MultiEditTool] Failed to parse edits string:', e);
@@ -81,7 +81,7 @@ export class MultiEditTool extends BaseTool<MultiEditToolParams, ToolResult> {
 
         // 统一处理属性名冲突（兼容历史遗留的 camelCase 以及 AI 可能发送的嵌套字符串）
         if (Array.isArray(normalizedEdits)) {
-            normalizedEdits = normalizedEdits.map((edit: any) => {
+            normalizedEdits = normalizedEdits.map((edit: unknown) => {
                 let finalEdit = edit;
 
                 // 如果数组项是字符串，尝试二次解析（处理 AI 的转义错误）
@@ -94,18 +94,19 @@ export class MultiEditTool extends BaseTool<MultiEditToolParams, ToolResult> {
                     }
                 }
 
+                const editRecord = finalEdit && typeof finalEdit === 'object' ? finalEdit as Record<string, unknown> : {};
                 return {
-                    file_path: finalEdit.file_path || finalEdit.filePath,
-                    old_string: finalEdit.old_string !== undefined ? finalEdit.old_string : finalEdit.oldString,
-                    new_string: finalEdit.new_string !== undefined ? finalEdit.new_string : finalEdit.newString,
-                    replace_all: finalEdit.replace_all !== undefined ? finalEdit.replace_all : (finalEdit.replaceAll !== undefined ? finalEdit.replaceAll : false)
+                    file_path: typeof editRecord.file_path === 'string' ? editRecord.file_path : typeof editRecord.filePath === 'string' ? editRecord.filePath : undefined,
+                    old_string: String(editRecord.old_string ?? editRecord.oldString ?? ''),
+                    new_string: String(editRecord.new_string ?? editRecord.newString ?? ''),
+                    replace_all: editRecord.replace_all !== undefined ? Boolean(editRecord.replace_all) : Boolean(editRecord.replaceAll ?? false)
                 };
             });
         }
 
         return {
-            file_path: params.file_path || (params as any).filePath,
-            edits: normalizedEdits
+            file_path: params.file_path || (typeof rawParams.filePath === 'string' ? rawParams.filePath : ''),
+            edits: normalizedEdits as MultiEditToolParams['edits']
         };
     }
 
@@ -262,7 +263,7 @@ export class MultiEditTool extends BaseTool<MultiEditToolParams, ToolResult> {
 
         // Collect all diffs for visual display
         const allDiffs = results
-            .map(r => (r.returnDisplay && typeof r.returnDisplay === 'object' && 'fileDiff' in r.returnDisplay) ? (r.returnDisplay as any).fileDiff : '')
+            .map(r => (r.returnDisplay && typeof r.returnDisplay === 'object' && 'fileDiff' in r.returnDisplay) ? (r.returnDisplay as { fileDiff?: string }).fileDiff ?? '' : '')
             .filter(d => !!d)
             .join('\n');
 

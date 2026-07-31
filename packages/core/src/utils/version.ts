@@ -16,22 +16,13 @@ import path from 'node:path';
  * CommonJS provides as a global.
  */
 function getThisDir(): string {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const meta = (globalThis as any)['import']?.['meta'] ?? undefined;
-  // In ESM, import.meta.url is a statically-resolved property on the module;
-  // reading it through the global pathway above is intentionally defensive
-  // for environments where a bundler strips it. If it fails, fall back.
   try {
-    // @ts-ignore — import.meta is valid in our source, but may be rewritten.
-    const url = (typeof import.meta !== 'undefined' ? import.meta.url : undefined) as
-      | string
-      | undefined;
+    const url = import.meta.url;
     if (url) return path.dirname(fileURLToPath(url));
   } catch {
     // swallow and try the CJS fallback
   }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const cjsDir = (globalThis as any)['__dirname'] as string | undefined;
+  const cjsDir = (globalThis as typeof globalThis & { __dirname?: string }).__dirname;
   if (typeof cjsDir === 'string') return cjsDir;
   return process.cwd();
 }

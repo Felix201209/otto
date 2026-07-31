@@ -11,14 +11,36 @@ import {
   UnifiedPlugin,
   ComponentSource,
   ComponentType,
-  ComponentLoadLevel,
-  PluginStructure
 } from '../models/unified.js';
 import { IPluginLoader } from './types.js';
 import { SettingsManager, SkillsPaths } from '../settings-manager.js';
 import { PluginStructureAnalyzer, ComponentParser } from '../parsers/index.js';
 import { isDirentDirectoryFollowingSymlinks } from '../utils/fs-helpers.js';
 import { PluginSource } from '../skill-types.js';
+
+type ComponentPath = string | { path?: string };
+interface MarketplacePluginDefinition {
+  name: string;
+  source?: string | PluginSource;
+  version?: string;
+  description?: string;
+  author?: string;
+  metadata?: { pluginRoot?: string };
+  skills?: ComponentPath | ComponentPath[];
+  commands?: ComponentPath | ComponentPath[];
+  agents?: ComponentPath | ComponentPath[];
+  hooks?: unknown;
+}
+interface PluginMetadata {
+  name?: string;
+  description?: string;
+  author?: string;
+  version?: string;
+  pluginRoot?: string;
+  skills?: string | string[];
+  commands?: string | string[];
+  agents?: string | string[];
+}
 
 /**
  * Marketplace 加载器
@@ -113,7 +135,7 @@ export class MarketplaceLoader implements IPluginLoader {
     return plugins;
   }
 
-  async loadPlugin(pluginId: string): Promise<UnifiedPlugin | null> {
+  async loadPlugin(_pluginId: string): Promise<UnifiedPlugin | null> {
     // TODO: Implement single plugin loading
     return null;
   }
@@ -129,7 +151,7 @@ export class MarketplaceLoader implements IPluginLoader {
   private async loadPluginFromManifest(
     marketplaceId: string,
     mpPath: string,
-    pluginDef: any
+    pluginDef: MarketplacePluginDefinition
   ): Promise<UnifiedPlugin | null> {
     const id = `${marketplaceId}:${pluginDef.name}`;
     const source = pluginDef.source;
@@ -141,7 +163,7 @@ export class MarketplaceLoader implements IPluginLoader {
       // Startup log suppressed for clean CLI output
       // console.log(`[MarketplaceLoader] Using installPath from installed plugin: ${installedInfo.installPath}`);
       pluginDir = installedInfo.installPath;
-    } else if (this.isRemoteGitSource(source)) {
+    } else if (source && this.isRemoteGitSource(source)) {
       // 1. 远程 Git source（需要缓存）
       const version = pluginDef.version || 'unknown';
       const cachePath = SkillsPaths.getPluginCachePath(marketplaceId, pluginDef.name, version);
@@ -153,9 +175,9 @@ export class MarketplaceLoader implements IPluginLoader {
         pluginDir = cachePath;
       } else {
         // 克隆到缓存目录
-        const gitUrl = this.extractGitUrl(source);
+        const gitUrl = this.extractGitUrl(source as PluginSource);
         if (gitUrl) {
-          await this.clonePluginToCache(gitUrl, cachePath, source);
+          await this.clonePluginToCache(gitUrl, cachePath, source as PluginSource);
           pluginDir = cachePath;
         } else {
           console.warn(`Cannot extract Git URL from source: ${JSON.stringify(source)}`);
@@ -230,7 +252,7 @@ export class MarketplaceLoader implements IPluginLoader {
     // 🔧 尝试加载 plugin.json 进行补充 (如果有的话)
     const pluginJsonPath = path.join(pluginDir, 'plugin.json');
     const claudePluginJsonPath = path.join(pluginDir, '.claude-plugin', 'plugin.json');
-    let metadata: any = {};
+    let metadata: PluginMetadata = {};
     if (await fs.pathExists(pluginJsonPath)) {
       metadata = await fs.readJson(pluginJsonPath);
     } else if (await fs.pathExists(claudePluginJsonPath)) {
@@ -375,7 +397,7 @@ export class MarketplaceLoader implements IPluginLoader {
     const structure = await analyzer.analyze();
 
     // 2. 读取元数据 (plugin.json)
-    let metadata: any = { name: pluginName, description: '', version: 'unknown' };
+    let metadata: PluginMetadata = { name: pluginName, description: '', version: 'unknown' };
     const pluginJsonPath = path.join(pluginDir, 'plugin.json');
     const claudePluginJsonPath = path.join(pluginDir, '.claude-plugin', 'plugin.json');
 
@@ -420,7 +442,7 @@ export class MarketplaceLoader implements IPluginLoader {
 
     // 自动发现组件（去重）
     const existingIds = new Set(components.map(c => c.id));
-    const addComponent = (c: any) => {
+    const addComponent = (c: UnifiedComponent) => {
       if (c && !existingIds.has(c.id)) {
         components.push(c);
         existingIds.add(c.id);

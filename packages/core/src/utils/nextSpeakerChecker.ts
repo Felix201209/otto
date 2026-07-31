@@ -14,9 +14,9 @@ export interface NextSpeakerResponse {
 }
 
 export async function checkNextSpeaker(
-  chat: OttoChat,
-  geminiClient: OttoClient,
-  abortSignal: AbortSignal,
+  _chat: OttoChat,
+  _geminiClient: OttoClient,
+  _abortSignal: AbortSignal,
 ): Promise<NextSpeakerResponse | null> {
   // 不在调用模型判断是否该谁说话，节省token
   return null;

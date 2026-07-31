@@ -225,7 +225,7 @@ export class SessionMemoryInjector {
     const haystack = `${entry.content} ${entry.sourceEvent}`.toLowerCase();
     // 包含路径分隔符、package.json、项目名等特征 → 可能是项目级
     const projectPatterns =
-      /[\/\\]|package\.json|tsconfig|\.git|src[\/\\]|node_modules|project|repo/i;
+      /[/\\]|package\.json|tsconfig|\.git|src[/\\]|node_modules|project|repo/i;
     return projectPatterns.test(haystack);
   }
 

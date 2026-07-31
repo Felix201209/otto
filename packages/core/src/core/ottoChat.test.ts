@@ -159,7 +159,7 @@ describe('OttoChat', () => {
         SceneType.CHAT_CONVERSATION,
       );
       // 消费完整个流以触发 recordHistory
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
       for await (const _ of stream) { /* drain */ }
 
       const history = chat.getHistory();

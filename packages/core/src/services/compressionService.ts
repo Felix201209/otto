@@ -5,7 +5,6 @@
  */
 
 
-import { Tool } from '@google/genai';
 import { Content } from '../types/extendedContent.js';
 import { ChatCompressionInfo } from '../core/turn.js';
 import { ContentGenerator } from '../core/contentGenerator.js';
@@ -18,7 +17,20 @@ import { Config } from '../config/config.js';
 import { MESSAGE_ROLES } from '../config/messageRoles.js';
 import { retryWithBackoff } from '../utils/retry.js';
 import { estimateHistoryTokens, computeHistoryHash } from '../utils/tokenEstimator.js';
-import { SemanticRetention, RetentionContext, extractRetentionContext } from './semanticRetention.js';
+import type { GenerateContentResponse, Part } from '@google/genai';
+
+type CompressionPart = Part & {
+  toolResult?: unknown;
+  toolUseId?: string;
+  file_path?: string;
+  absolute_path?: string;
+  path?: string;
+  pattern?: string;
+  command?: string;
+  output?: unknown;
+  toolName?: string;
+  thought?: boolean;
+};
 
 /**
  * 对话历史压缩服务配置
@@ -180,8 +192,8 @@ export class CompressionService {
     const left = history[cutIndex - 1]; // 会被压缩的消息
     const right = history[cutIndex];    // 会保留的第一条消息
     // 左边是 model 且有 functionCall，右边是 user 且有 functionResponse → 会孤立
-    if (left.role === MESSAGE_ROLES.MODEL && left.parts?.some((p: any) => p.functionCall)) {
-      if (right.role === MESSAGE_ROLES.USER && right.parts?.some((p: any) => p.functionResponse)) {
+    if (left.role === MESSAGE_ROLES.MODEL && left.parts?.some((p: CompressionPart) => p.functionCall)) {
+      if (right.role === MESSAGE_ROLES.USER && right.parts?.some((p: CompressionPart) => p.functionResponse)) {
         return true;
       }
     }
@@ -205,9 +217,9 @@ export class CompressionService {
     console.log(`[findToolCallBoundary] Searching from index ${startIndex} to ${history.length - 1}, total history length: ${history.length}`);
 
     // Helper function to check if a part contains a protected tool
-    const isProtectedTool = (part: any): boolean => {
+    const isProtectedTool = (part: CompressionPart): boolean => {
       const toolName = part.functionResponse?.name || part.functionCall?.name;
-      return toolName && CompressionService.PROTECTED_TOOLS.includes(toolName);
+      return Boolean(toolName && CompressionService.PROTECTED_TOOLS.includes(toolName));
     };
 
     // 策略1：首先寻找user消息作为首选边界
@@ -239,8 +251,8 @@ export class CompressionService {
           const prevMsg = history[i - 1];
           // 如果前一个消息是model消息，检查其是否只包含functionCall（还没有响应）
           if (prevMsg.role === MESSAGE_ROLES.MODEL && prevMsg.parts) {
-            const hasFunctionCall = prevMsg.parts.some((p: any) => p.functionCall);
-            const hasToolResult = prevMsg.parts.some((p: any) => p.toolResult);
+            const hasFunctionCall = prevMsg.parts.some((p: CompressionPart) => p.functionCall);
+            const hasToolResult = prevMsg.parts.some((p: CompressionPart) => p.toolResult);
 
             // 如果有functionCall但没有toolResult，这表示tool还未响应，继续寻找
             if (hasFunctionCall && !hasToolResult) {
@@ -254,7 +266,7 @@ export class CompressionService {
         console.log(`${msgInfo} (user) - FOUND SUITABLE BOUNDARY at index ${i + 1}`);
         return i + 1; // 压缩到这个user消息（包含），保留后面的内容
       } else {
-        const partTypes = msg.parts?.map((p: any) => {
+        const partTypes = msg.parts?.map((p: CompressionPart) => {
           if (p.text) return 'text';
           if (p.functionCall) return 'functionCall';
           if (p.toolResult) return 'toolResult';
@@ -268,7 +280,7 @@ export class CompressionService {
     console.warn(`[findToolCallBoundary] No suitable user message boundary found. Trying fallback strategy with model messages...`);
     for (let i = history.length - 1; i >= startIndex; i--) {
       const msg = history[i];
-      if (msg.role === MESSAGE_ROLES.MODEL && msg.parts?.some((p: any) => p.text)) {
+      if (msg.role === MESSAGE_ROLES.MODEL && msg.parts?.some((p: CompressionPart) => p.text)) {
         const candidateBoundary = i + 1;
         // 防止切在 model(functionCall) 和 user(functionResponse) 之间导致孤立
         if (this.wouldOrphanFunctionResponse(history, candidateBoundary)) {
@@ -326,7 +338,7 @@ export class CompressionService {
       // 检查每个消息中的parts
       if (msg.parts && msg.parts.length > 0) {
         for (const part of msg.parts) {
-          const partAny = part as any;
+          const partAny = part as unknown as CompressionPart;
 
           // 记录tool_use调用
           if (partAny.functionCall) {
@@ -343,7 +355,7 @@ export class CompressionService {
 
           // 检查tool_result响应 (Claude format)
           if (partAny.toolResult) {
-            const toolResultId = partAny.toolResult?.toolUseId;
+            const toolResultId = (partAny.toolResult as { toolUseId?: string } | undefined)?.toolUseId;
             if (!toolResultId || !toolCallStack[toolResultId]) {
               // 这是一个孤立的tool_result，需要移除整个消息
               console.warn(`[CompressionService] Found orphaned tool_result with ID: ${toolResultId}. Removing this message.`);
@@ -453,7 +465,7 @@ export class CompressionService {
     // 判断一条消息是否包含工具调用或工具响应（即非纯文本）
     const hasToolParts = (msg: Content): boolean => {
       if (!msg.parts || msg.parts.length === 0) return false;
-      return msg.parts.some((p: any) => p.functionCall || p.functionResponse || p.toolResult);
+      return msg.parts.some((p: CompressionPart) => p.functionCall || p.functionResponse || p.toolResult);
     };
 
     // 从末尾向前，找到最后一条"纯文本 user 消息"的位置
@@ -499,7 +511,7 @@ export class CompressionService {
     for (const msg of trimmedMessages) {
       if (!msg.parts) continue;
       for (const part of msg.parts) {
-        const p = part as any;
+        const p = part as unknown as CompressionPart;
         if (p.functionCall) {
           const args = p.functionCall.args;
           // 提取关键参数摘要（例如 file_path, pattern 等）
@@ -508,7 +520,7 @@ export class CompressionService {
             if (args.file_path || args.absolute_path) argSummary = ` on "${args.file_path || args.absolute_path}"`;
             else if (args.path) argSummary = ` on "${args.path}"`;
             else if (args.pattern) argSummary = ` for "${args.pattern}"`;
-            else if (args.command) argSummary = `: \`${args.command.substring(0, 80)}\``;
+            else if (typeof args.command === 'string') argSummary = `: \`${args.command.substring(0, 80)}\``;
           }
           toolSummaryParts.push(`- Called \`${p.functionCall.name}\`${argSummary}`);
         }
@@ -697,7 +709,7 @@ export class CompressionService {
         console.log(`[compressHistory] Last 5 messages in conversationHistory:`);
         for (let i = Math.max(0, conversationHistory.length - 5); i < conversationHistory.length; i++) {
           const msg = conversationHistory[i];
-          const partTypes = msg.parts?.map((p: any) => {
+          const partTypes = msg.parts?.map((p: CompressionPart) => {
             if (p.text) return 'text';
             if (p.functionCall) return 'functionCall';
             if (p.toolResult) return 'toolResult';
@@ -731,7 +743,7 @@ export class CompressionService {
 
         // Case 1: Model message with only toolResult (unlikely in Gemini, but possible in some mappings)
         if (firstMessage.role === MESSAGE_ROLES.MODEL) {
-          const hasOnlyToolResult = firstMessage.parts?.every((part: any) => 'toolResult' in part && !('text' in part));
+          const hasOnlyToolResult = firstMessage.parts?.every((part: CompressionPart) => 'toolResult' in part && !('text' in part));
           if (hasOnlyToolResult && firstMessage.parts && firstMessage.parts.length > 0) {
             shouldRemove = true;
           }
@@ -739,7 +751,7 @@ export class CompressionService {
 
         // Case 2: User message with functionResponse (Common in Gemini)
         if (firstMessage.role === MESSAGE_ROLES.USER) {
-          const hasFunctionResponse = firstMessage.parts?.some((part: any) => part.functionResponse);
+          const hasFunctionResponse = firstMessage.parts?.some((part: CompressionPart) => part.functionResponse);
           if (hasFunctionResponse) {
             shouldRemove = true;
           }
@@ -754,7 +766,7 @@ export class CompressionService {
       }
 
       // 检查historyToCompress最后一个消息，如果是user需要添加model回复避免连续user消息
-      let historyForCompression = [...environmentMessages, ...historyToCompress];
+      const historyForCompression = [...environmentMessages, ...historyToCompress];
       const lastMessage = historyToCompress[historyToCompress.length - 1];
 
       if (lastMessage && lastMessage.role === 'user') {
@@ -802,7 +814,7 @@ export class CompressionService {
       for (const msg of historyForCompressionRequest) {
         if (msg.role === MESSAGE_ROLES.USER || msg.role === MESSAGE_ROLES.MODEL) {
           // 只保留文本内容，移除所有函数调用和函数响应
-          const textParts = msg.parts?.filter((part: any) => 'text' in part) || [];
+        const textParts = msg.parts?.filter((part: CompressionPart) => 'text' in part) || [];
           if (textParts.length > 0) {
             purifiedHistory.push({
               ...msg,
@@ -812,19 +824,13 @@ export class CompressionService {
         }
       }
 
-      // 构建包含历史的完整对话
-      const compressionContents = [
-        ...purifiedHistory,
-        { role: MESSAGE_ROLES.USER, parts: [{ text: compressionPrompt }] }
-      ];
-
       // PTL 渐进降级：如果压缩请求自身触发 prompt-too-long 错误，
       // 逐步截断最旧的消息组并重试
       const MAX_PTL_RETRIES = 3;
       const PTL_TRUNCATE_RATIO = 0.2; // 每次截断 20% 的消息
       let ptlRetryCount = 0;
       let currentPurifiedHistory = [...purifiedHistory];
-      let compressionResponse: any = null;
+      let compressionResponse: GenerateContentResponse | null = null;
 
       while (ptlRetryCount <= MAX_PTL_RETRIES) {
         const contentsForRequest = [
@@ -851,8 +857,8 @@ export class CompressionService {
             SceneType.COMPRESSION
           );
           break; // 成功，退出重试循环
-        } catch (ptlError: any) {
-          const errorMsg = ptlError?.message?.toLowerCase() || '';
+        } catch (ptlError: unknown) {
+          const errorMsg = getErrorMessage(ptlError).toLowerCase();
           const isPTL = errorMsg.includes('prompt') && errorMsg.includes('too long')
             || errorMsg.includes('token limit')
             || errorMsg.includes('context length')
@@ -899,7 +905,7 @@ export class CompressionService {
         firstCandidateFinishReason: compressionResponse.candidates?.[0]?.finishReason,
         hasContent: !!compressionResponse.candidates?.[0]?.content,
         partsCount: compressionResponse.candidates?.[0]?.content?.parts?.length || 0,
-        partTypes: compressionResponse.candidates?.[0]?.content?.parts?.map((p: any) => {
+        partTypes: compressionResponse.candidates?.[0]?.content?.parts?.map((p: CompressionPart) => {
           if (p.thought) return 'thought';
           if ('text' in p) return 'text';
           if ('functionCall' in p) return 'functionCall';
@@ -913,7 +919,7 @@ export class CompressionService {
       const parts = compressionResponse.candidates?.[0]?.content?.parts || [];
       for (const part of parts) {
         if (part && 'text' in part && typeof part.text === 'string' && part.text.length > 0 && !part.thought) {
-          summary = (part as any).text;
+          summary = part.text ?? '';
           break;
         }
       }
@@ -923,7 +929,7 @@ export class CompressionService {
           candidates: compressionResponse.candidates?.length || 0,
           firstCandidateFinishReason: compressionResponse.candidates?.[0]?.finishReason,
           firstCandidateContent: compressionResponse.candidates?.[0]?.content?.parts?.length || 0,
-          partTypes: compressionResponse.candidates?.[0]?.content?.parts?.map((p: any) => {
+          partTypes: compressionResponse.candidates?.[0]?.content?.parts?.map((p: CompressionPart) => {
             if (p.thought) return 'thought';
             if ('text' in p) return 'text';
             if ('functionCall' in p) return 'functionCall';
@@ -991,10 +997,10 @@ IMPORTANT POST-COMPRESSION RULES:
       console.log('[CompressionService] First 5 messages structure:');
       for (let i = 0; i < Math.min(5, newHistory.length); i++) {
         const msg = newHistory[i];
-        const partTypes = msg.parts?.map((p: any) => {
+        const partTypes = msg.parts?.map((p: CompressionPart) => {
           if (p.text) return 'text';
           if (p.functionCall) return `functionCall(${p.functionCall?.id})`;
-          if (p.toolResult) return `toolResult(${p.toolResult?.toolUseId})`;
+          if (p.toolResult) return `toolResult(${(p.toolResult as { toolUseId?: string }).toolUseId})`;
           return 'unknown';
         }).join(',') || 'no-parts';
         console.log(`  [${i}] role=${msg.role}, parts=[${partTypes}]`);
@@ -1062,7 +1068,7 @@ IMPORTANT POST-COMPRESSION RULES:
     history: Content[],
     model: string,
     compressionModel: string,
-    geminiClient: any, // 使用 OttoClient 而不是 ContentGenerator
+    geminiClient: OttoClient,
     prompt_id: string,
     abortSignal: AbortSignal,
     force: boolean = false
@@ -1254,8 +1260,8 @@ IMPORTANT POST-COMPRESSION RULES:
       return result;
     }, {
       maxAttempts: 3, // 最多重试3次
-      shouldRetry: (error: any) => {
-        console.warn(`[CompressionService] compressToFit attempt failed: ${error.message || String(error)}. Retrying...`);
+      shouldRetry: (error: unknown) => {
+        console.warn(`[CompressionService] compressToFit attempt failed: ${getErrorMessage(error)}. Retrying...`);
         return true;
       }
     });
@@ -1297,7 +1303,7 @@ IMPORTANT POST-COMPRESSION RULES:
       const msg = history[i];
       if (!msg.parts) continue;
       for (const part of msg.parts) {
-        const p = part as any;
+        const p = part as unknown as CompressionPart;
         if (p.functionResponse || p.toolResult) {
           toolResultIndices.push(i);
           break;
@@ -1310,7 +1316,7 @@ IMPORTANT POST-COMPRESSION RULES:
 
     for (let i = 0; i < history.length; i++) {
       const msg = history[i];
-      const cleanParts: any[] = [];
+      const cleanParts: CompressionPart[] = [];
 
       if (!msg.parts) {
         result.push(msg);
@@ -1318,7 +1324,7 @@ IMPORTANT POST-COMPRESSION RULES:
       }
 
       for (const part of msg.parts) {
-        const p = part as any;
+        const p = part as unknown as CompressionPart;
 
         if (p.text && msg.role === MESSAGE_ROLES.USER) {
           const text = p.text as string;
@@ -1344,7 +1350,7 @@ IMPORTANT POST-COMPRESSION RULES:
           }
         } else if (p.functionResponse || p.toolResult) {
           if (!recentToolIndices.has(i)) {
-            const toolName = p.functionResponse?.name || p.toolResult?.toolName || 'unknown';
+            const toolName = p.functionResponse?.name || (p.toolResult as { toolName?: string } | undefined)?.toolName || 'unknown';
             cleanParts.push({
               functionResponse: {
                 name: toolName,
@@ -1389,7 +1395,7 @@ IMPORTANT POST-COMPRESSION RULES:
     const lastMsg = history[history.length - 1];
     if (!lastMsg || !lastMsg.parts) return false;
 
-    const hasToolResp = lastMsg.parts.some((p: any) =>
+    const hasToolResp = lastMsg.parts.some((p: CompressionPart) =>
       p.functionResponse || p.toolResult
     );
 
@@ -1397,10 +1403,10 @@ IMPORTANT POST-COMPRESSION RULES:
     for (let i = history.length - 2; i >= 0; i--) {
       const msg = history[i];
       if (msg.role === MESSAGE_ROLES.MODEL && msg.parts) {
-        const hasFC = msg.parts.some((p: any) => p.functionCall);
+        const hasFC = msg.parts.some((p: CompressionPart) => p.functionCall);
         if (hasFC) {
           const next = history[i + 1];
-          if (!next || !next.parts || !next.parts.some((p: any) => p.functionResponse || p.toolResult)) {
+          if (!next || !next.parts || !next.parts.some((p: CompressionPart) => p.functionResponse || p.toolResult)) {
             hasPending = true;
           }
         }

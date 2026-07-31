@@ -8,7 +8,7 @@ import { SkillContextInjector, SkillLoadLevel } from './index.js';
 import { seedDefaultSkills } from './seed-skills.js';
 
 let cachedSkillsContext: string | null = null;
-let lastCacheTime: number = 0;
+let lastCacheTime = 0;
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 /**

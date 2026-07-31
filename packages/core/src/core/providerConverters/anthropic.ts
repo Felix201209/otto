@@ -17,13 +17,19 @@ import {
 import { AnthropicConverter } from '../customModelAnthropicConverter.js';
 import { addFunctionCallsGetter } from './shared.js';
 
+type AnthropicRecord = Record<string, unknown>;
+type AnthropicInput = {
+  contents: Array<{ role?: string; parts?: AnthropicRecord[] }> | unknown;
+  config?: unknown;
+};
+
 function shouldEnableThinkingByDefault(): boolean {
   return true;
 }
 
 export function buildAnthropicMessagesRequestBody(input: {
   modelConfig: CustomModelConfig;
-  request: any;
+  request: AnthropicInput;
   systemText: string;
   maxOutputTokens: number;
   resolveOutputTokens(
@@ -31,11 +37,15 @@ export function buildAnthropicMessagesRequestBody(input: {
     thinkingMinimum?: number,
   ): number;
   stream: boolean;
-}): any {
-  const { messages, system } = AnthropicConverter.contentsToAnthropic(
-    input.request.contents,
-  );
+}): AnthropicRecord {
+  const contents = Array.isArray(input.request.contents)
+    ? input.request.contents as Array<{ role?: string; parts?: AnthropicRecord[] }>
+    : [];
+  const { messages, system } = AnthropicConverter.contentsToAnthropic(contents);
   const systemBlocks = system ? [...system] : [];
+  const config = input.request.config && typeof input.request.config === 'object'
+    ? input.request.config as { tools?: unknown }
+    : undefined;
   if (
     input.systemText &&
     !systemBlocks.some((block) => block.text === input.systemText)
@@ -47,11 +57,11 @@ export function buildAnthropicMessagesRequestBody(input: {
     });
   }
 
-  const requestBody: any = {
+  const requestBody: AnthropicRecord = {
     model: input.modelConfig.modelId,
     messages,
     tools: AnthropicConverter.toolsToAnthropicTools(
-      input.request.config?.tools,
+      Array.isArray(config?.tools) ? config.tools as AnthropicRecord[] : [],
     ),
     max_tokens: input.maxOutputTokens,
   };
@@ -96,15 +106,16 @@ export function buildAnthropicMessagesRequestBody(input: {
 }
 
 export function mapAnthropicMessageResponse(
-  data: any,
+  data: AnthropicRecord,
 ): GenerateContentResponse {
-  const parts = data.content
-    .map((c: any) => {
+  const content = Array.isArray(data.content) ? data.content as AnthropicRecord[] : [];
+  const parts = content
+    .map((c) => {
       if (c.type === 'text') return { text: c.text };
       if (c.type === 'tool_use') {
         return {
           functionCall: {
-            name: c.name?.trim() || c.name,
+            name: typeof c.name === 'string' ? c.name.trim() || c.name : '',
             args: c.input,
             id: c.id,
           },
@@ -115,12 +126,13 @@ export function mapAnthropicMessageResponse(
     })
     .filter(Boolean);
 
-  const directInputTokens = data.usage?.input_tokens || 0;
-  const cacheCreationTokens = data.usage?.cache_creation_input_tokens || 0;
-  const cacheReadTokens = data.usage?.cache_read_input_tokens || 0;
+  const usage = data.usage && typeof data.usage === 'object' ? data.usage as AnthropicRecord : {};
+  const directInputTokens = typeof usage.input_tokens === 'number' ? usage.input_tokens : 0;
+  const cacheCreationTokens = typeof usage.cache_creation_input_tokens === 'number' ? usage.cache_creation_input_tokens : 0;
+  const cacheReadTokens = typeof usage.cache_read_input_tokens === 'number' ? usage.cache_read_input_tokens : 0;
   const actualPromptTokens =
     directInputTokens + cacheCreationTokens + cacheReadTokens;
-  const outputTokens = data.usage?.output_tokens || 0;
+  const outputTokens = typeof usage.output_tokens === 'number' ? usage.output_tokens : 0;
 
   const result = {
     candidates: [
@@ -129,7 +141,7 @@ export function mapAnthropicMessageResponse(
           role: MESSAGE_ROLES.MODEL,
           parts: parts.length ? parts : [{ text: '' }],
         },
-        finishReason: AnthropicConverter.mapFinishReason(data.stop_reason),
+        finishReason: AnthropicConverter.mapFinishReason(typeof data.stop_reason === 'string' ? data.stop_reason : ''),
         index: 0,
       },
     ],
@@ -143,8 +155,8 @@ export function mapAnthropicMessageResponse(
       }),
       ...(cacheReadTokens != null && { cacheReadInputTokens: cacheReadTokens }),
       uncachedInputTokens: directInputTokens,
-    } as any,
+    },
   };
   addFunctionCallsGetter(result);
-  return result as GenerateContentResponse;
+  return result as unknown as GenerateContentResponse;
 }

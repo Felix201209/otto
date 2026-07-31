@@ -7,15 +7,9 @@
 import {
   AuthType,
   CompletedToolCall,
-  ContentGeneratorConfig,
-  EditTool,
-  ErroredToolCall,
-  OttoClient,
   ToolConfirmationOutcome,
-  ToolRegistry,
 } from '../index.js';
 import { logs } from '@opentelemetry/api-logs';
-import { SemanticAttributes } from '@opentelemetry/semantic-conventions';
 import { Config, ApprovalMode } from '../config/config.js';
 import {
   EVENT_API_REQUEST,

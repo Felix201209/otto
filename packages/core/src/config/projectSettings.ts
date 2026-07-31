@@ -64,7 +64,7 @@ export class ProjectSettingsManager {
   /**
    * 获取配置目录路径
    */
-  public getConfigDirPath(): string {
+  getConfigDirPath(): string {
     return path.join(this.workspaceDir, PROJECT_CONFIG_DIR_NAME);
   }
 

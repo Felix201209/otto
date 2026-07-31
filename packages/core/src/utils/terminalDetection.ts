@@ -61,7 +61,7 @@ export function detectTerminalEnvironment(): TerminalInfo {
  * Windows 下的快速 Shell 检测（仅环境变量）
  * 注意：PSModulePath 是系统级环境变量，在 CMD 中也存在，不能用于判断当前是否在 PowerShell 中
  */
-function detectWindowsShellFast(env: NodeJS.ProcessEnv): string {
+function _detectWindowsShellFast(env: NodeJS.ProcessEnv): string {
   // 检查 Git Bash
   if (env.MSYSTEM || env.MINGW_PREFIX || env.MSYS2_PATH_TYPE) {
     return 'Git Bash (MSYS2)';
@@ -91,7 +91,7 @@ function detectWindowsShellFast(env: NodeJS.ProcessEnv): string {
 /**
  * 异步增强 Windows Shell 检测（使用进程树扫描）
  */
-async function enhanceWindowsShellAsync(env: NodeJS.ProcessEnv): Promise<void> {
+async function _enhanceWindowsShellAsync(_env: NodeJS.ProcessEnv): Promise<void> {
   try {
     const shellFromTree = await findShellInProcessTreeAsync(process.pid);
     if (shellFromTree && cachedTerminalInfo) {
@@ -139,7 +139,7 @@ async function findShellInProcessTreeAsync(
       return foundShells.length > 0 ? foundShells.sort((a, b) => b.depth - a.depth)[0].shell : null;
     }
 
-    const parentPid = parseInt(parentPidMatch[1]);
+    const parentPid = parseInt(parentPidMatch[1], 10);
     const processName = processNameMatch[1].toLowerCase().trim();
 
     let currentShell: string | null = null;
@@ -149,7 +149,7 @@ async function findShellInProcessTreeAsync(
     else if (processName.includes('bash.exe')) currentShell = 'Git Bash';
 
     if (currentShell) {
-      foundShells.push({shell: currentShell, pid: currentPid, depth: depth});
+      foundShells.push({shell: currentShell, pid: currentPid, depth});
     }
 
     if (parentPid > 0 && parentPid !== currentPid) {
@@ -167,7 +167,7 @@ async function findShellInProcessTreeAsync(
 /**
  * 递归查找进程树中的所有 Shell 进程 (保留同步版本以防万一，但不再被 detectTerminalEnvironment 调用)
  */
-function findShellInProcessTree(currentPid: number, visited: Set<number> = new Set(), depth: number = 0, foundShells: Array<{shell: string, pid: number, depth: number}> = []): string | null {
+function _findShellInProcessTree(currentPid: number, visited: Set<number> = new Set(), depth: number = 0, foundShells: Array<{shell: string, pid: number, depth: number}> = []): string | null {
   if (depth > 8 || visited.has(currentPid)) {
     if (foundShells.length > 0) {
       const topShell = foundShells.sort((a, b) => b.depth - a.depth)[0];
@@ -197,7 +197,7 @@ function findShellInProcessTree(currentPid: number, visited: Set<number> = new S
       return null;
     }
 
-    const parentPid = parseInt(parentPidMatch[1]);
+    const parentPid = parseInt(parentPidMatch[1], 10);
     const processName = processNameMatch[1].toLowerCase().trim();
 
     let currentShell: string | null = null;
@@ -207,11 +207,11 @@ function findShellInProcessTree(currentPid: number, visited: Set<number> = new S
     else if (processName.includes('bash.exe')) currentShell = 'Git Bash';
 
     if (currentShell) {
-      foundShells.push({shell: currentShell, pid: currentPid, depth: depth});
+      foundShells.push({shell: currentShell, pid: currentPid, depth});
     }
 
     if (parentPid > 0 && parentPid !== currentPid) {
-      return findShellInProcessTree(parentPid, visited, depth + 1, foundShells);
+      return _findShellInProcessTree(parentPid, visited, depth + 1, foundShells);
     }
 
     if (foundShells.length > 0) {
@@ -219,7 +219,7 @@ function findShellInProcessTree(currentPid: number, visited: Set<number> = new S
       return topShell.shell;
     }
     return null;
-  } catch (error) {
+  } catch {
     if (foundShells.length > 0) {
       const topShell = foundShells.sort((a, b) => b.depth - a.depth)[0];
       return topShell.shell;
@@ -286,7 +286,7 @@ function findFirstShellInProcessTree(currentPid: number, visited: Set<number> = 
       return null;
     }
 
-    const parentPid = parseInt(parentPidMatch[1]);
+    const parentPid = parseInt(parentPidMatch[1], 10);
     const processName = processNameMatch[1].toLowerCase().trim();
 
     // 检测到 shell 立即返回，不继续向上遍历

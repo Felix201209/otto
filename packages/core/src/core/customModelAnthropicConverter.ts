@@ -8,6 +8,19 @@ import { FinishReason } from '@google/genai';
 import { MESSAGE_ROLES } from '../config/messageRoles.js';
 import { pairToolCallIds } from './customModelToolCallIds.js';
 
+type JsonRecord = Record<string, unknown>;
+type GeminiPartLike = JsonRecord & {
+  text?: string;
+  cache_control?: JsonRecord;
+  inlineData?: { mimeType?: string; data?: string };
+  functionCall?: { id?: string; name?: string; args?: JsonRecord };
+  functionResponse?: { id?: string; name?: string; response?: unknown };
+};
+type GeminiContentLike = JsonRecord & { role?: string; parts?: GeminiPartLike[] };
+type AnthropicBlock = JsonRecord & { type: string; text?: string; cache_control?: JsonRecord };
+type AnthropicMessage = { role: 'user' | 'assistant'; content: AnthropicBlock[] };
+type ToolDeclaration = JsonRecord & { functionDeclarations?: JsonRecord[]; function?: JsonRecord };
+
 /**
  * Anthropic 格式转换工具
  * 完整支持 Anthropic Messages API 格式，包括：
@@ -24,9 +37,9 @@ export const AnthropicConverter = {
    * - 用户消息的最后一个文本块添加 cache_control: { type: 'ephemeral' }
    * @see https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
    */
-  contentsToAnthropic(contents: any[]): { messages: any[], system?: any[] } {
-    const messages: any[] = [];
-    const systemBlocks: any[] = [];
+  contentsToAnthropic(contents: GeminiContentLike[]): { messages: AnthropicMessage[], system?: AnthropicBlock[] } {
+    const messages: AnthropicMessage[] = [];
+    const systemBlocks: AnthropicBlock[] = [];
 
     // 🆕 跨模型迁移 → Anthropic：tool_use / tool_result 必须 id 严格一致
     //
@@ -76,7 +89,7 @@ export const AnthropicConverter = {
         // 转换为 Anthropic system 数组格式
         for (const p of parts) {
           if (p.text && p.text.trim() !== '') {
-            const block: any = { type: 'text', text: p.text };
+          const block: AnthropicBlock = { type: 'text', text: p.text };
             // 🆕 自动添加 cache_control（与 Claude Code 行为一致）
             block.cache_control = p.cache_control || { type: 'ephemeral' };
             systemBlocks.push(block);
@@ -86,11 +99,11 @@ export const AnthropicConverter = {
       }
 
       const role = content.role === MESSAGE_ROLES.MODEL ? 'assistant' : 'user';
-      const anthropicParts: any[] = [];
+      const anthropicParts: AnthropicBlock[] = [];
 
       for (const part of parts) {
         if (part.text && part.text.trim() !== '') {
-          const textBlock: any = { type: 'text', text: part.text };
+          const textBlock: AnthropicBlock = { type: 'text', text: part.text };
           // 透传已有的 cache_control（后续会为最后一个文本块自动添加）
           if (part.cache_control) {
             textBlock.cache_control = part.cache_control;
@@ -163,10 +176,10 @@ export const AnthropicConverter = {
     }
 
     if (messages.length > 0 && messages[0].role === 'assistant') {
-      messages.unshift({ role: 'user', content: '...' });
+      messages.unshift({ role: 'user', content: [{ type: 'text', text: '...' }] });
     }
 
-    const merged: any[] = [];
+    const merged: AnthropicMessage[] = [];
     for (const msg of messages) {
       const prev = merged[merged.length - 1];
       if (prev && prev.role === msg.role) {
@@ -229,45 +242,47 @@ export const AnthropicConverter = {
    * 将工具定义转换为 Anthropic 格式
    * 完整支持 input_schema（含 additionalProperties: false）
    */
-  toolsToAnthropicTools(tools: any[]): any[] | undefined {
+  toolsToAnthropicTools(tools: ToolDeclaration[]): JsonRecord[] | undefined {
     if (!tools || tools.length === 0) return undefined;
 
-    const cleanSchema = (schema: any, isRoot: boolean = false): any => {
-      if (!schema || typeof schema !== 'object') return schema;
-      const cleaned: any = {};
+    const cleanSchema = (schema: unknown, _isRoot: boolean = false): JsonRecord => {
+      if (!schema || typeof schema !== 'object') return {};
+      const source = schema as JsonRecord;
+      const cleaned: JsonRecord = {};
       const validFields = ['type', 'properties', 'required', 'items', 'enum', 'description', 'default', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'minLength', 'maxLength', 'pattern', 'format', 'minItems', 'maxItems', 'uniqueItems', 'additionalProperties', 'anyOf', 'oneOf', 'allOf', 'not'];
       for (const key of validFields) {
-        if (schema[key] !== undefined) {
-          if (key === 'type' && typeof schema[key] === 'string') cleaned[key] = schema[key].toLowerCase();
+        if (source[key] !== undefined) {
+          if (key === 'type' && typeof source[key] === 'string') cleaned[key] = source[key].toLowerCase();
           else if (['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'minLength', 'maxLength', 'minItems', 'maxItems'].includes(key)) {
-            const val = parseFloat(schema[key]);
+            const val = parseFloat(String(source[key]));
             if (!isNaN(val)) cleaned[key] = val;
           }
-          else if (key === 'properties' && typeof schema[key] === 'object') {
+          else if (key === 'properties' && typeof source[key] === 'object' && source[key] !== null) {
             cleaned[key] = {};
-            for (const k in schema[key]) cleaned[key][k] = cleanSchema(schema[key][k], false);
-          } else if (key === 'items') cleaned[key] = cleanSchema(schema[key], false);
-          else cleaned[key] = schema[key];
+            const properties = cleaned[key] as JsonRecord;
+            for (const [k, value] of Object.entries(source[key] as JsonRecord)) properties[k] = cleanSchema(value);
+          } else if (key === 'items') cleaned[key] = cleanSchema(source[key]);
+          else cleaned[key] = source[key];
         }
       }
       return cleaned;
     };
 
-    return tools.flatMap((tool: any) => {
+    return tools.flatMap((tool) => {
       const decls = tool.functionDeclarations || [tool];
-      return decls.map((fd: any) => {
+      return decls.map((fd) => {
         const cleaned = cleanSchema(fd.parameters || {}, true);
+        const inputSchema: JsonRecord = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          properties: cleaned.properties || {},
+          additionalProperties: false,
+        };
+        if (cleaned.required !== undefined) inputSchema.required = cleaned.required;
         return {
           name: fd.name,
           description: fd.description || '',
-          input_schema: {
-            $schema: 'https://json-schema.org/draft/2020-12/schema',
-            type: 'object',
-            properties: cleaned.properties || {},
-            ...(cleaned.required && { required: cleaned.required }),
-            // 🔧 关键：添加 additionalProperties: false 以匹配 Claude Code 的行为
-            additionalProperties: false,
-          },
+          input_schema: inputSchema,
         };
       });
     });
