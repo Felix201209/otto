@@ -259,6 +259,7 @@ export async function resolveDeploymentUpdatePolicy(
       envelope.policy,
       envelope.signature,
       options.verificationPublicKeys,
+      typeof envelope.signingKeyId === 'string' ? envelope.signingKeyId : null,
     );
     if (!verification.valid || !verification.keyId) {
       throw new Error('control update policy signature is invalid');

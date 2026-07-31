@@ -406,6 +406,7 @@ export const {
     parsePublicKeyList(
       process.env.OTTO_LICENSE_PUBLIC_KEYS ||
         process.env.OTTO_LICENSE_PUBLIC_KEY,
+      process.env.OTTO_LICENSE_REVOKED_KEY_IDS,
     ),
   telemetryEndpoint: () => process.env.OTTO_TELEMETRY_ENDPOINT || null,
   telemetryIngestSecret: () =>

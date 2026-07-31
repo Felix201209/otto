@@ -160,11 +160,13 @@ function verifyDeploymentLicensePayload(
   store: DeploymentRepositoryStore,
   payload: unknown,
   signature: string,
+  expectedKeyId?: string | null,
 ): { valid: boolean; keyId: string | null } {
   return verifyEd25519Envelope(
     payload,
     signature,
     store.licenseVerificationPublicKeys(),
+    expectedKeyId,
   );
 }
 
@@ -312,6 +314,7 @@ function toDeploymentLicenseView(
       store,
       payload,
       row.signature,
+      row.signing_key_id,
     );
     signingKeyId = verification.keyId;
     if (
@@ -339,6 +342,7 @@ function toDeploymentLicenseView(
           store,
           leasePayload,
           leaseRow.signature,
+          leaseRow.signing_key_id,
         ).valid &&
         leaseRow.signature_algorithm === 'ed25519' &&
         leaseRow.license_id === row.id &&
@@ -415,10 +419,14 @@ export function importDeploymentLicense(
   }
   const signature =
     typeof envelope.signature === 'string' ? envelope.signature : '';
+  const declaredSigningKeyId = typeof envelope.signingKeyId === 'string'
+    ? envelope.signingKeyId
+    : null;
   const verification = verifyDeploymentLicensePayload(
     store,
     payload,
     signature,
+    declaredSigningKeyId,
   );
   if (!verification.valid)
     throw new Error('license signature invalid');
@@ -563,10 +571,14 @@ export function importDeploymentLicenseLease(
   const payload = safeJsonObject(envelope.lease ?? envelope.payload);
   const signature =
     typeof envelope.signature === 'string' ? envelope.signature : '';
+  const declaredSigningKeyId = typeof envelope.signingKeyId === 'string'
+    ? envelope.signingKeyId
+    : null;
   const verification = verifyDeploymentLicensePayload(
     store,
     payload,
     signature,
+    declaredSigningKeyId,
   );
   if (!verification.valid) throw new Error('license lease signature invalid');
   if (String(payload.licenseId || '') !== license.id)

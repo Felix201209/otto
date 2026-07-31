@@ -9,7 +9,7 @@ import { createAuditLogSchemaContributor } from './auditLogSchema.js';
 import { createCommercialControlComposition } from './commercialControlComposition.js';
 import { signTelemetryRequest } from './deploymentRepository.js';
 import { PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR } from './privateDeploymentSchema.js';
-import { canonicalJson, signEd25519Envelope } from './signedEnvelope.js';
+import { canonicalJson, publicKeyId, signEd25519Envelope } from './signedEnvelope.js';
 
 function setup() {
   const pair = generateKeyPairSync('ed25519');
@@ -52,12 +52,12 @@ function setup() {
     }),
     databaseReadiness: () => ({ ready: true, schemaVersion: 1 }),
   });
-  return { database, control, privateKey };
+  return { database, control, privateKey, publicKey };
 }
 
 describe('private deployment license repository', () => {
   it('requires an Ed25519 license bound to this deployment, organization, and machine', () => {
-    const { database, control, privateKey } = setup();
+    const { database, control, privateKey, publicKey } = setup();
     try {
       const now = Date.now();
       const payload = {
@@ -85,6 +85,15 @@ describe('private deployment license repository', () => {
         signatureAlgorithm: 'ed25519',
         status: 'active',
       });
+      expect(() => control.importDeploymentLicense({
+        license: { ...payload, id: 'lic-wrong-key-id' },
+        signingKeyId: '0000000000000000',
+        signature: signEd25519Envelope(
+          { ...payload, id: 'lic-wrong-key-id' },
+          privateKey,
+        ),
+      })).toThrow('signature invalid');
+      expect(publicKeyId(publicKey)).toBe(license.signingKeyId);
 
       const copied = { ...payload, id: 'lic-copied', machineFingerprint: 'other' };
       expect(() =>

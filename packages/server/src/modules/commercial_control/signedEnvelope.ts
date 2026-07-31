@@ -73,6 +73,7 @@ export function verifyEd25519Envelope(
   payload: unknown,
   signature: string,
   publicKeys: readonly string[],
+  expectedKeyId?: string | null,
 ): { valid: boolean; keyId: string | null } {
   if (!signature.startsWith(ED25519_SIGNATURE_PREFIX)) {
     return { valid: false, keyId: null };
@@ -91,8 +92,10 @@ export function verifyEd25519Envelope(
   for (const publicKey of publicKeys) {
     try {
       const key = normalizePublicKey(publicKey);
+      const keyId = publicKeyId(publicKey);
+      if (expectedKeyId && keyId !== expectedKeyId) continue;
       if (verify(null, message, key, signatureBytes)) {
-        return { valid: true, keyId: publicKeyId(publicKey) };
+        return { valid: true, keyId };
       }
     } catch {
       // A malformed rotated key must not prevent trying the remaining keys.
@@ -101,20 +104,94 @@ export function verifyEd25519Envelope(
   return { valid: false, keyId: null };
 }
 
-export function parsePublicKeyList(raw: string | undefined): string[] {
+interface PublicKeyringEntry {
+  keyId?: unknown;
+  publicKeyPem?: unknown;
+  state?: unknown;
+}
+
+function revokedKeyIds(raw: string | undefined): Set<string> {
+  const value = raw?.trim();
+  if (!value) return new Set();
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) {
+      return new Set(parsed.filter(
+        (item): item is string => typeof item === 'string' && /^[a-f0-9]{16}$/u.test(item),
+      ));
+    }
+  } catch {
+    // Fall through to the comma-delimited operational form.
+  }
+  return new Set(value.split(',').map((item) => item.trim()).filter(
+    (item) => /^[a-f0-9]{16}$/u.test(item),
+  ));
+}
+
+function keyringEntries(value: unknown): PublicKeyringEntry[] | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const object = value as Record<string, unknown>;
+  const keyring = object.keyring && typeof object.keyring === 'object'
+    ? object.keyring as Record<string, unknown>
+    : object;
+  return Array.isArray(keyring.keys) ? keyring.keys as PublicKeyringEntry[] : null;
+}
+
+export function parsePublicKeyList(
+  raw: string | undefined,
+  revokedRaw?: string,
+): string[] {
   const value = raw?.trim();
   if (!value) return [];
+  const explicitlyRevoked = revokedKeyIds(revokedRaw);
   if (value.startsWith('[')) {
     try {
       const parsed = JSON.parse(value);
       if (Array.isArray(parsed)) {
-        return parsed.filter(
+        const strings = parsed.filter(
           (item): item is string => typeof item === 'string' && item.trim().length > 0,
         );
+        if (strings.length === parsed.length) {
+          return strings.filter((key) => {
+            try {
+              return !explicitlyRevoked.has(publicKeyId(key));
+            } catch {
+              return false;
+            }
+          });
+        }
       }
     } catch {
       return [];
     }
   }
-  return [value];
+  if (value.startsWith('{')) {
+    try {
+      const entries = keyringEntries(JSON.parse(value));
+      if (!entries) return [];
+      return entries.flatMap((entry) => {
+        if (
+          typeof entry.publicKeyPem !== 'string' ||
+          (entry.state !== 'active' && entry.state !== 'standby' && entry.state !== 'retired')
+        ) return [];
+        try {
+          const computedKeyId = publicKeyId(entry.publicKeyPem);
+          if (
+            (typeof entry.keyId === 'string' && entry.keyId !== computedKeyId) ||
+            explicitlyRevoked.has(computedKeyId)
+          ) return [];
+          return [entry.publicKeyPem];
+        } catch {
+          return [];
+        }
+      });
+    } catch {
+      return [];
+    }
+  }
+  try {
+    return explicitlyRevoked.has(publicKeyId(value)) ? [] : [value];
+  } catch {
+    return [];
+  }
 }
