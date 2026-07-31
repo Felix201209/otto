@@ -57,6 +57,8 @@ import {
   SessionMemoryInjector,
   type MemoryInjection,
 } from '../memory/sessionMemoryInjector.js';
+import { assembleRelevantLayeredMemory } from '../memory/memoryRecall.js';
+import { FileMemoryProvider } from '../memory/memoryProvider.js';
 import { createMemorySubsystem } from '../memory/memorySubsystem.js';
 import {
   buildCheckpointRecoveryHistory,
@@ -182,9 +184,9 @@ export class OttoClient {
   private sessionTurnCount = 0;
   private readonly MAX_TURNS = 100;
 
-  private buildSystemInstruction(model: string, isVSCode: boolean): string {
+  private async buildSystemInstruction(model: string, isVSCode: boolean): Promise<string> {
     const userRules = this.config.getUserRules();
-    return buildRuntimeSystemInstruction({
+    const baseInstruction = buildRuntimeSystemInstruction({
       isolatedA2A:
         this.config.getEnvironmentContextDisabled()
         && this.config.getToolsDisabled(),
@@ -200,6 +202,32 @@ export class OttoClient {
         this.getCustomModelInfo(model),
         this.config.getFeishuMode(),
       ),
+    });
+    const memoryRecall = await this.buildMemoryRecallSection();
+    return memoryRecall
+      ? `${baseInstruction}\n\n# Relevant Memory\n\n${memoryRecall}`
+      : baseInstruction;
+  }
+
+  private async buildMemoryRecallSection(): Promise<string> {
+    const provider = this.config.getMemoryProvider()
+      ?? new FileMemoryProvider({
+        projectRoot: this.config.getProjectRoot(),
+        sessionId: this.config.getSessionId(),
+      });
+    const queryTerms = [
+      this.config.getQuestion(),
+      this.config.getProjectRoot(),
+      this.config.getSessionId(),
+    ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+    return assembleRelevantLayeredMemory(provider, {
+      terms: queryTerms,
+      projectRoot: this.config.getProjectRoot(),
+      sessionId: this.config.getSessionId(),
+      scope: 'project',
+      maxSections: 3,
+      maxItemsPerSection: 3,
+      maxChars: 1000,
     });
   }
 
@@ -626,7 +654,7 @@ export class OttoClient {
         systemInstruction = 'You are a helpful assistant.';
       }
     } else {
-      systemInstruction = this.buildSystemInstruction(modelToUse, false);
+      systemInstruction = await this.buildSystemInstruction(modelToUse, false);
     }
 
     const isThinking = isThinkingSupported(modelToUse);
@@ -937,7 +965,7 @@ export class OttoClient {
   async updateSystemPromptWithMcpPrompts(): Promise<void> {
     const isVSCode = this.config.getVsCodePluginMode();
     const currentModel = this.config.getModel();
-    const updatedSystemPrompt = this.buildSystemInstruction(currentModel, isVSCode);
+    const updatedSystemPrompt = await this.buildSystemInstruction(currentModel, isVSCode);
 
     if (this.chat) {
       this.chat.setSystemInstruction(updatedSystemPrompt);
@@ -1114,7 +1142,7 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
     try {
       const isVSCode = this.config.getVsCodePluginMode();
       const currentModel = this.config.getModel();
-      const systemInstruction = this.buildSystemInstruction(currentModel, isVSCode);
+      const systemInstruction = await this.buildSystemInstruction(currentModel, isVSCode);
 
       // 🐛 FIX: 同上，不再在这里写死 includeThoughts:false 覆盖下游。
       const generateContentConfigWithThinking = this.generateContentConfig;

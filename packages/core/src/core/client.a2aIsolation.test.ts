@@ -58,4 +58,34 @@ describe('OttoClient A2A 隔离上下文', () => {
     expect(prompt).not.toContain('.llm-wiki');
     expect(prompt).not.toContain('GLOBAL_SKILLS_METADATA');
   });
+
+  it('puts initialized Skills and relevant layered memory in the final model instruction', async () => {
+    const skills = await import('../skills/skills-integration.js');
+    vi.spyOn(skills, 'getSkillsContext').mockReturnValue('# Available Skills\n- data-viz');
+    const client = Object.create(OttoClient.prototype) as OttoClient;
+    (client as unknown as { config: Record<string, unknown> }).config = {
+      getUserRules: () => '', getEnvironmentContextDisabled: () => false,
+      getToolsDisabled: () => false, getPreferredLanguage: () => undefined,
+      getUserMemory: () => undefined, getPromptRegistry: () => undefined,
+      getAgentStyle: () => 'default', getFeishuMode: () => false,
+      getProjectRoot: () => '/work/otto', getSessionId: () => 'session-1',
+      getQuestion: () => 'data visualization', getCustomModelConfig: () => undefined,
+      getMemoryProvider: () => ({
+        name: 'test', save: async () => undefined,
+        load: async (scope: string) => scope === 'project'
+          ? '- data visualization must cite sources'
+          : '',
+      }),
+    };
+
+    const instruction = await (client as unknown as {
+      buildSystemInstruction(model: string, isVSCode: boolean): Promise<string>;
+    }).buildSystemInstruction('test-model', false);
+
+    expect(instruction).toContain('# Available Skills');
+    expect(instruction).toContain('data-viz');
+    expect(instruction).toContain('# Relevant Memory');
+    expect(instruction).toContain('data visualization must cite sources');
+    vi.restoreAllMocks();
+  });
 });
