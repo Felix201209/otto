@@ -318,6 +318,14 @@ describe('服务端 Agent profile 白名单', () => {
     expect(research?.systemPrompt).toContain('SWOT');
   });
 
+  it('每个专家目录入口都把声明的内置 Skill 强制注入运行时', () => {
+    for (const id of COMMON_EXPERT_IDS) {
+      const profile = resolveAgentProfile(id);
+      expect(profile?.skills.length).toBeGreaterThan(0);
+      expect(profile?.embeddedSkills).toEqual(profile?.skills);
+    }
+  });
+
   it('每个专家都有对应身份的简短欢迎语', () => {
     for (const profile of BUILTIN_AGENT_PROFILES) {
       expect(profile.welcomeMessage).toContain('Hello，我是');
