@@ -10,6 +10,7 @@ import {
   exportDeploymentDiagnostics as exportDeploymentDiagnosticsFromRepository,
   ensureDeploymentLicenseSecretsEncrypted as ensureDeploymentLicenseSecretsEncryptedInRepository,
   flushTelemetryQueue as flushTelemetryQueueInRepository,
+  createDeploymentBillingUsageStore,
   getDeploymentId as getDeploymentIdFromRepository,
   getDeploymentLicense as getDeploymentLicenseFromRepository,
   getDeploymentUpdatePolicyCredentials,
@@ -26,6 +27,10 @@ import {
   refreshDeploymentLicenseLease as refreshDeploymentLicenseLeaseInRepository,
   updateTelemetrySettings as updateTelemetrySettingsInRepository,
 } from './deploymentRepository.js';
+import {
+  flushBillingUsageQueue as flushBillingUsageQueueInRepository,
+  queueBillingUsage as queueBillingUsageInRepository,
+} from './billingUsageRepository.js';
 import { resolveDeploymentUpdatePolicy } from './updatePolicyClient.js';
 import { createDeploymentSettingsRepository } from './deploymentSettingsRepository.js';
 import {
@@ -81,6 +86,7 @@ export function createCommercialControlComposition(
     audit: audit.logAudit,
   };
   const getDeploymentId = () => getDeploymentIdFromRepository(deploymentStore);
+  const billingUsageStore = createDeploymentBillingUsageStore(deploymentStore);
   const moduleUpdateStore = {
     ...settings,
     deploymentId: getDeploymentId,
@@ -146,6 +152,12 @@ export function createCommercialControlComposition(
     flushTelemetryQueue: (
       fetchImpl?: Parameters<typeof flushTelemetryQueueInRepository>[1],
     ) => flushTelemetryQueueInRepository(deploymentStore, fetchImpl),
+    queueBillingUsage: (
+      input: Parameters<typeof queueBillingUsageInRepository>[1],
+    ) => queueBillingUsageInRepository(billingUsageStore, input),
+    flushBillingUsageQueue: (
+      fetchImpl?: Parameters<typeof flushBillingUsageQueueInRepository>[1],
+    ) => flushBillingUsageQueueInRepository(billingUsageStore, fetchImpl),
     ingestTelemetryBatch: (
       raw: unknown,
       authorization: string | undefined,

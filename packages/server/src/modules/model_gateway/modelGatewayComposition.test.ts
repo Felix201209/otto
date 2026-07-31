@@ -2,7 +2,7 @@
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   applyDatabaseSchemaContributors,
   Database,
@@ -54,6 +54,7 @@ describe('model gateway composition', () => {
     const database = createDatabase();
     const activeAccount = account();
     const activeOrganization = organization();
+    const onRecordedUsage = vi.fn();
     const modelGateway = createModelGatewayComposition({
       db: () => database,
       getAccount: (accountId) =>
@@ -62,6 +63,7 @@ describe('model gateway composition', () => {
         organizationId === activeOrganization.id ? activeOrganization : null,
       listOrganizationAccounts: () => [activeAccount],
       createId: () => 'request-1',
+      onRecordedUsage,
     });
     const usage = {
       accountId: 'account-a',
@@ -76,6 +78,15 @@ describe('model gateway composition', () => {
     try {
       expect(modelGateway.recordTokenUsage(usage)).toBe(true);
       expect(modelGateway.recordTokenUsage(usage)).toBe(false);
+      expect(onRecordedUsage).toHaveBeenCalledTimes(1);
+      expect(onRecordedUsage).toHaveBeenCalledWith({
+        organizationId: 'org-a',
+        messageId: 'message-a',
+        model: 'model-a',
+        inputTokens: 12,
+        outputTokens: 8,
+        totalTokens: 20,
+      });
       expect(
         database.prepare('SELECT id FROM account_token_usage').get(),
       ).toEqual({ id: 'usage_request-1' });

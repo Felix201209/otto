@@ -56,6 +56,104 @@ function setup() {
 }
 
 describe('private deployment license repository', () => {
+  it('queues content-free module usage and retries it with License-bound billing credentials', async () => {
+    const { database, control, privateKey } = setup();
+    try {
+      const now = Date.now();
+      const licensePayload = {
+        id: 'lic-billing',
+        deploymentId: control.getDeploymentId(),
+        organizationId: 'org-licensed',
+        machineFingerprint: control.getMachineFingerprint(),
+        customerName: 'Billing customer',
+        plan: 'enterprise',
+        expiresAtMs: now + 90 * 24 * 60 * 60 * 1000,
+        seatLimit: 20,
+        modules: ['enterprise_tree'],
+        offline: false,
+        leaseEndpoint: 'https://control.otto.example/v1/licenses/lic-billing/lease',
+        billingEndpoint: 'https://control.otto.example/v1/billing/usage/consume',
+        leaseToken: 'test-license-lease-token-at-least-32-characters',
+        telemetryAllowed: false,
+        issuedAtMs: now,
+      };
+      control.importDeploymentLicense({
+        license: licensePayload,
+        signature: signEd25519Envelope(licensePayload, privateKey),
+      });
+      const leasePayload = {
+        id: 'lease-billing',
+        licenseId: licensePayload.id,
+        deploymentId: licensePayload.deploymentId,
+        machineFingerprint: licensePayload.machineFingerprint,
+        issuedAtMs: now,
+        expiresAtMs: now + 10 * 60 * 1000,
+      };
+      control.importDeploymentLicenseLease({
+        lease: leasePayload,
+        signature: signEd25519Envelope(leasePayload, privateKey),
+      });
+
+      expect(control.queueBillingUsage({
+        organizationId: 'org-licensed',
+        module: 'model_gateway',
+        units: 1_250,
+        referenceId: 'usage_abcdef',
+        idempotencyKey: 'usage:abcdef',
+      })).toBe(true);
+      expect(control.queueBillingUsage({
+        organizationId: 'org-licensed',
+        module: 'model_gateway',
+        units: 1_250,
+        referenceId: 'usage_abcdef',
+        idempotencyKey: 'usage:abcdef',
+      })).toBe(false);
+
+      let uploaded: Record<string, unknown> = {};
+      let attempt = 0;
+      const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        expect(String(url)).toBe(licensePayload.billingEndpoint);
+        expect((init?.headers as Record<string, string>).authorization)
+          .toBe(`Bearer ${licensePayload.leaseToken}`);
+        uploaded = JSON.parse(String(init?.body));
+        attempt += 1;
+        if (attempt === 1) return new Response('{}', { status: 503 });
+        return Response.json({ replayed: false }, { status: 201 });
+      }) as unknown as typeof fetch;
+      await expect(control.flushBillingUsageQueue(fetchImpl)).resolves.toMatchObject({
+        attempted: 1,
+        sent: 0,
+        failed: 1,
+      });
+      expect(database.prepare(
+        'SELECT status, COUNT(*) AS count FROM billing_usage_outbox GROUP BY status',
+      ).all()).toEqual([{ status: 'failed', count: 1 }]);
+      database.prepare(
+        'UPDATE billing_usage_outbox SET next_attempt_at_ms = NULL WHERE idempotency_key = ?',
+      ).run('usage:abcdef');
+      await expect(control.flushBillingUsageQueue(fetchImpl)).resolves.toMatchObject({
+        attempted: 1,
+        sent: 1,
+        failed: 0,
+      });
+      expect(uploaded).toMatchObject({
+        licenseId: 'lic-billing',
+        deploymentId: licensePayload.deploymentId,
+        organizationId: 'org-licensed',
+        module: 'model_gateway',
+        units: 1_250,
+        referenceId: 'usage_abcdef',
+        idempotencyKey: 'usage:abcdef',
+      });
+      expect(JSON.stringify(uploaded)).not.toContain('prompt');
+      expect(database.prepare(
+        'SELECT status FROM billing_usage_outbox WHERE idempotency_key = ?',
+      ).get('usage:abcdef')).toEqual({ status: 'sent' });
+    } finally {
+      database.close();
+    }
+  });
+
   it('requires an Ed25519 license bound to this deployment, organization, and machine', () => {
     const { database, control, privateKey, publicKey } = setup();
     try {

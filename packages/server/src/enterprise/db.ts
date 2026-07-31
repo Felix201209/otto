@@ -59,7 +59,7 @@ import {
 } from '../modules/park_services/index.js';
 import path from 'path';
 import os from 'os';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
   createAuditLogSchemaContributor,
   createCommercialControlComposition,
@@ -388,6 +388,8 @@ export const {
   recordTelemetryEvent,
   getTelemetryQueueSummary,
   flushTelemetryQueue,
+  queueBillingUsage,
+  flushBillingUsageQueue,
   ingestTelemetryBatch,
   ensureDeploymentLicenseSecretsEncrypted,
   getPrivateDeploymentStatus,
@@ -933,6 +935,22 @@ const modelGateway = createModelGatewayComposition({
   getOrganization,
   listOrganizationAccounts: listAccounts,
   createId: randomUUID,
+  onRecordedUsage(input) {
+    if (input.totalTokens < 1) return;
+    const digest = createHash('sha256')
+      .update(
+        [getDeploymentId(), input.organizationId, input.messageId].join('\0'),
+        'utf8',
+      )
+      .digest('hex');
+    queueBillingUsage({
+      organizationId: input.organizationId,
+      module: 'model_gateway',
+      units: input.totalTokens,
+      referenceId: `usage_${digest.slice(0, 32)}`,
+      idempotencyKey: `usage:${digest}`,
+    });
+  },
 });
 
 export const { getOrganizationUsageSummary, recordTokenUsage } = modelGateway;

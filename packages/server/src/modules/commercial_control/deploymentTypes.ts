@@ -78,6 +78,14 @@ export interface PrivateDeploymentStatus {
     sent: number;
     lastQueuedAt: string | null;
   };
+  billing: {
+    queued: number;
+    failed: number;
+    sent: number;
+    discarded: number;
+    lastQueuedAt: string | null;
+    lastError: string | null;
+  };
   dataBoundary: {
     uploadsContentByDefault: false;
     includesUserMessages: false;

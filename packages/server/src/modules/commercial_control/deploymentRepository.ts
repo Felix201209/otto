@@ -29,6 +29,11 @@ import type {
   PrivateDeploymentStatus,
 } from './deploymentTypes.js';
 import { canonicalJson, verifyEd25519Envelope } from './signedEnvelope.js';
+import {
+  getBillingUsageQueueSummary,
+  type BillingUsageRepositoryStore,
+  type DeploymentBillingCredentials,
+} from './billingUsageRepository.js';
 
 export interface DeploymentRepositoryStore {
   db(): Database;
@@ -933,6 +938,46 @@ export function getDeploymentUpdatePolicyCredentials(
   };
 }
 
+export function getDeploymentBillingCredentials(
+  store: DeploymentRepositoryStore,
+): DeploymentBillingCredentials | null {
+  const license = getDeploymentLicense(store);
+  if (
+    license.id === 'unlicensed' || license.offline ||
+    !license.lease.endpoint || !license.organizationId ||
+    ['missing', 'invalid', 'revoked', 'expired'].includes(license.status)
+  ) return null;
+  const payload = latestLicensePayload(store);
+  const leaseToken = payload.leaseToken;
+  if (typeof leaseToken !== 'string' || leaseToken.length < 32) return null;
+  let endpoint: URL;
+  try {
+    endpoint = typeof payload.billingEndpoint === 'string'
+      ? new URL(payload.billingEndpoint)
+      : new URL('/v1/billing/usage/consume', license.lease.endpoint);
+  } catch {
+    return null;
+  }
+  if (endpoint.protocol !== 'https:') return null;
+  return {
+    licenseId: license.id,
+    deploymentId: license.deploymentId,
+    organizationId: license.organizationId,
+    machineFingerprint: getMachineFingerprint(),
+    endpoint: endpoint.toString(),
+    leaseToken,
+  };
+}
+
+export function createDeploymentBillingUsageStore(
+  store: DeploymentRepositoryStore,
+): BillingUsageRepositoryStore {
+  return {
+    db: store.db,
+    credentials: () => getDeploymentBillingCredentials(store),
+  };
+}
+
 /** Migrates legacy plaintext lease and telemetry tokens before accepting traffic. */
 export function ensureDeploymentLicenseSecretsEncrypted(
   store: DeploymentRepositoryStore,
@@ -1330,6 +1375,7 @@ export function getPrivateDeploymentStatus(
     machineFingerprint: getMachineFingerprint(),
     license: getDeploymentLicense(store),
     telemetry: { ...telemetry, ...getTelemetryQueueSummary(store) },
+    billing: getBillingUsageQueueSummary(createDeploymentBillingUsageStore(store)),
     dataBoundary: {
       uploadsContentByDefault: false,
       includesUserMessages: false,
