@@ -38,11 +38,11 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { readActiveKernelBinPath, readActiveKernelModulePath } from './incremental-kernel-store.js';
-import type {
-  OttoServer as OttoServerType,
-  ServerEndpoint,
-} from 'otto-server';
+import {
+  readActiveKernelBinPath,
+  readActiveKernelModulePath,
+} from './incremental-kernel-store.js';
+import type { OttoServer as OttoServerType, ServerEndpoint } from 'otto-server';
 import type { AuthenticatedEnterpriseAccountInput } from './enterprise-identity.js';
 
 type ServerEndpointRecord = ServerEndpoint & { controlToken?: string };
@@ -60,8 +60,13 @@ type TrustedOttoServer = OttoServerType & {
 
 /** otto-server（ESM）动态加载并缓存：避免每次调用都重新 import()。 */
 let ottoServerModulePromise: Promise<typeof import('otto-server')> | undefined;
-const kernelOverlayModulePromises = new Map<string, Promise<typeof import('otto-server')>>();
-async function loadOttoServer(kernelUpdateRoot?: string): Promise<typeof import('otto-server')> {
+const kernelOverlayModulePromises = new Map<
+  string,
+  Promise<typeof import('otto-server')>
+>();
+async function loadOttoServer(
+  kernelUpdateRoot?: string,
+): Promise<typeof import('otto-server')> {
   const activeModulePath = kernelUpdateRoot
     ? await readActiveKernelModulePath(kernelUpdateRoot).catch(() => null)
     : null;
@@ -81,7 +86,8 @@ async function loadOttoServer(kernelUpdateRoot?: string): Promise<typeof import(
 }
 
 /** enterprise-server（ESM）动态加载并缓存。 */
-let enterpriseServerModulePromise: Promise<typeof import('otto-server')> | undefined;
+let enterpriseServerModulePromise:
+  Promise<typeof import('otto-server')> | undefined;
 function loadEnterpriseServer(): Promise<typeof import('otto-server')> {
   if (!enterpriseServerModulePromise) {
     enterpriseServerModulePromise = import('otto-server');
@@ -133,10 +139,7 @@ export interface EnsuredServer {
 }
 
 export type EnterpriseServerOwnership =
-  | 'external'
-  | 'discovered'
-  | 'embedded'
-  | 'unavailable';
+  'external' | 'discovered' | 'embedded' | 'unavailable';
 
 /**
  * ServerManager 的可替换边界。生产环境使用下面的真实默认值；单测注入隔离实现，
@@ -220,7 +223,9 @@ export class ServerManager {
       ...DEFAULT_DEPENDENCIES,
       loadOttoServer: () => loadOttoServer(this.kernelUpdateRoot),
     };
-    this.localEnterpriseServerUrl = loopbackServerUrl(options.enterpriseServerUrl);
+    this.localEnterpriseServerUrl = loopbackServerUrl(
+      options.enterpriseServerUrl,
+    );
     this.onHealthChange = options.onHealthChange;
     if (!this.localEnterpriseServerUrl && options.enterpriseServerUrl) {
       this.enterpriseOwnership = 'external';
@@ -238,7 +243,8 @@ export class ServerManager {
     try {
       return await operation;
     } finally {
-      if (this.mainEnsurePromise === operation) this.mainEnsurePromise = undefined;
+      if (this.mainEnsurePromise === operation)
+        this.mainEnsurePromise = undefined;
     }
   }
 
@@ -247,11 +253,12 @@ export class ServerManager {
     this.throwIfShuttingDown();
     // 同一 manager 已经拉起时直接复用。
     if (this.currentEndpointRecord) {
-      const isAlive = this.ownership === 'embedded'
-        ? (this.embedded != null)
-        : this.ownership === 'detached'
-          ? (this.detachedChild?.exitCode === null)
-          : true;
+      const isAlive =
+        this.ownership === 'embedded'
+          ? this.embedded != null
+          : this.ownership === 'detached'
+            ? this.detachedChild?.exitCode === null
+            : true;
       if (isAlive) {
         return {
           endpoint: publicServerEndpoint(this.currentEndpointRecord),
@@ -262,9 +269,11 @@ export class ServerManager {
     const mod = await this.dependencies.loadOttoServer();
     this.throwIfShuttingDown();
     // 1) 发现并探活已运行的 server（headless / CLI / detached 已在跑时直接复用）。
-    const readEndpointRecord = (mod as typeof mod & {
-      readEndpointRecord?: () => ServerEndpointRecord | undefined;
-    }).readEndpointRecord;
+    const readEndpointRecord = (
+      mod as typeof mod & {
+        readEndpointRecord?: () => ServerEndpointRecord | undefined;
+      }
+    ).readEndpointRecord;
     const discovered = readEndpointRecord?.() ?? mod.readEndpoint();
     if (discovered && this.dependencies.pidAlive(discovered.pid)) {
       const healthy = await this.dependencies.probeHealth(
@@ -302,7 +311,10 @@ export class ServerManager {
         ownership: 'detached',
       };
     } catch (detachedErr) {
-      console.warn('[ServerManager] detached 启动失败，回退内嵌:', (detachedErr as Error)?.message ?? String(detachedErr));
+      console.warn(
+        '[ServerManager] detached 启动失败，回退内嵌:',
+        (detachedErr as Error)?.message ?? String(detachedErr),
+      );
       // 回退：同进程内嵌
       const embeddedEp = await this.startEmbedded(port, mod);
       this.ownership = 'embedded';
@@ -322,9 +334,7 @@ export class ServerManager {
    * 使用 process.execPath + ELECTRON_RUN_AS_NODE=1 打包形态可用。
    * 开发形态：直接 node bin.js。
    */
-  private async startDetached(
-    port: number,
-  ): Promise<ServerEndpointRecord> {
+  private async startDetached(port: number): Promise<ServerEndpointRecord> {
     const nodeExec = process.execPath;
     const mod = await this.dependencies.loadOttoServer();
 
@@ -366,6 +376,11 @@ export class ServerManager {
     if (nodeExec.endsWith('Electron') || nodeExec.includes('electron')) {
       // 打包形态：Electron 主二进制 + ELECTRON_RUN_AS_NODE
       env.ELECTRON_RUN_AS_NODE = '1';
+      env.OTTO_SQLCIPHER_NATIVE_BINDING = path.join(
+        process.resourcesPath,
+        'sqlcipher',
+        'better_sqlite3.node',
+      );
       spawnArgs = [binPath, 'start'];
       spawnOpts = {
         env,
@@ -393,7 +408,9 @@ export class ServerManager {
 
     // 监听子进程退出
     child.on('exit', (code, signal) => {
-      console.warn(`[ServerManager] detached server 退出 code=${code} signal=${signal}`);
+      console.warn(
+        `[ServerManager] detached server 退出 code=${code} signal=${signal}`,
+      );
       if (this.detachedChild === child) {
         this.detachedChild = undefined;
       }
@@ -402,24 +419,34 @@ export class ServerManager {
     // 收集启动输出用于诊断
     let stdout = '';
     let stderr = '';
-    child.stdout?.on('data', (data: Buffer) => { stdout += data.toString(); });
-    child.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); });
+    child.stdout?.on('data', (data: Buffer) => {
+      stdout += data.toString();
+    });
+    child.stderr?.on('data', (data: Buffer) => {
+      stderr += data.toString();
+    });
 
     // 等 server 写端点文件（轮询最多 15 秒）
     const timeoutMs = 15000;
     const startTime = Date.now();
     while (Date.now() - startTime < timeoutMs) {
       if (this.shuttingDown) {
-        try { child.kill('SIGTERM'); } catch {}
+        try {
+          child.kill('SIGTERM');
+        } catch {}
         throw new Error('app 正在退出，已停掉刚拉起的 detached server');
       }
       const ep = mod.readEndpointRecord?.() ?? mod.readEndpoint();
       if (ep && this.dependencies.pidAlive(ep.pid)) {
         const healthy = await this.dependencies.probeHealth(
-          ep.host, ep.port, mod.HTTP_ROUTES.health,
+          ep.host,
+          ep.port,
+          mod.HTTP_ROUTES.health,
         );
         if (healthy) {
-          console.log(`[ServerManager] detached server 就绪 → http://${ep.host}:${ep.port}`);
+          console.log(
+            `[ServerManager] detached server 就绪 → http://${ep.host}:${ep.port}`,
+          );
           return ep;
         }
       }
@@ -469,11 +496,18 @@ export class ServerManager {
     this.stopHealthCheck();
 
     const logPrefix = forceKill ? 'FORCE_SHUTDOWN' : 'SHUTDOWN';
-    try { fs.appendFileSync(serverLogPath(), `[${new Date().toISOString()}] ${logPrefix} 进程退出\n`); } catch {}
+    try {
+      fs.appendFileSync(
+        serverLogPath(),
+        `[${new Date().toISOString()}] ${logPrefix} 进程退出\n`,
+      );
+    } catch {}
 
     this.enterpriseListenAbort?.abort();
     if (this.enterpriseEnsurePromise) {
-      try { await this.enterpriseEnsurePromise; } catch {}
+      try {
+        await this.enterpriseEnsurePromise;
+      } catch {}
     }
     if (this.enterpriseSrv) {
       try {
@@ -486,8 +520,14 @@ export class ServerManager {
       this.enterpriseOwnership = 'unavailable';
     }
     if (this.embedded) {
-      try { await this.embedded.stop(); } catch {} finally {
-        try { const mod = await this.dependencies.loadOttoServer(); mod.clearEndpoint(); } catch {}
+      try {
+        await this.embedded.stop();
+      } catch {
+      } finally {
+        try {
+          const mod = await this.dependencies.loadOttoServer();
+          mod.clearEndpoint();
+        } catch {}
         this.embedded = undefined;
         this.currentEndpointRecord = undefined;
       }
@@ -501,11 +541,14 @@ export class ServerManager {
           if (ep?.pid && this.dependencies.pidAlive(ep.pid)) {
             process.kill(ep.pid, 'SIGTERM');
             await new Promise((r) => setTimeout(r, 2000));
-            if (this.dependencies.pidAlive(ep.pid)) process.kill(ep.pid, 'SIGKILL');
+            if (this.dependencies.pidAlive(ep.pid))
+              process.kill(ep.pid, 'SIGKILL');
           }
           mod.clearEndpoint();
         } catch {}
-        try { this.detachedChild.kill('SIGTERM'); } catch {}
+        try {
+          this.detachedChild.kill('SIGTERM');
+        } catch {}
       } else {
         console.log('[ServerManager] detached server 留活（飞书继续运行）');
       }
@@ -538,7 +581,9 @@ export class ServerManager {
     try {
       const mod = await this.dependencies.loadOttoServer();
       const healthy = await this.dependencies.probeHealth(
-        host, port, mod.HTTP_ROUTES.health,
+        host,
+        port,
+        mod.HTTP_ROUTES.health,
       );
       if (healthy) {
         this.consecutiveHealthFailures = 0;
@@ -551,11 +596,18 @@ export class ServerManager {
       // probeHealth 自己吞异常，到这里就是 unhealthy
     }
     this.consecutiveHealthFailures++;
-    this.onHealthChange?.(`心跳异常 (${this.consecutiveHealthFailures}/${MAX_HEALTH_FAILURES})`);
+    this.onHealthChange?.(
+      `心跳异常 (${this.consecutiveHealthFailures}/${MAX_HEALTH_FAILURES})`,
+    );
     console.warn(
       `[ServerManager] 健康检查失败 (${this.consecutiveHealthFailures}/${MAX_HEALTH_FAILURES})`,
     );
-    try { fs.appendFileSync(serverLogPath(), `[${new Date().toISOString()}] HEALTH_FAIL #${this.consecutiveHealthFailures}\n`); } catch {}
+    try {
+      fs.appendFileSync(
+        serverLogPath(),
+        `[${new Date().toISOString()}] HEALTH_FAIL #${this.consecutiveHealthFailures}\n`,
+      );
+    } catch {}
     if (this.consecutiveHealthFailures >= MAX_HEALTH_FAILURES) {
       await this.restartServer();
     }
@@ -568,21 +620,32 @@ export class ServerManager {
     if (this.restartCount > MAX_RESTART_COUNT) {
       const msg = `[ServerManager] 已重启 ${MAX_RESTART_COUNT} 次依然不健康，停止自动重启。请手动排查。`;
       console.error(msg);
-      try { fs.appendFileSync(serverLogPath(), `[${new Date().toISOString()}] ${msg}\n`); } catch {}
+      try {
+        fs.appendFileSync(
+          serverLogPath(),
+          `[${new Date().toISOString()}] ${msg}\n`,
+        );
+      } catch {}
       this.stopHealthCheck();
       return;
     }
     const backoffMs = [1000, 3000, 5000][this.restartCount - 1] ?? 5000;
-    console.warn(`[ServerManager] ${backoffMs / 1000}s 后尝试第 ${this.restartCount} 次重启…`);
+    console.warn(
+      `[ServerManager] ${backoffMs / 1000}s 后尝试第 ${this.restartCount} 次重启…`,
+    );
     await new Promise((r) => setTimeout(r, backoffMs));
     if (this.shuttingDown) return;
 
     // 停旧实例
     if (this.embedded) {
-      try { await this.embedded.stop(); } catch {}
+      try {
+        await this.embedded.stop();
+      } catch {}
     }
     if (this.detachedChild) {
-      try { this.detachedChild.kill('SIGTERM'); } catch {}
+      try {
+        this.detachedChild.kill('SIGTERM');
+      } catch {}
       this.detachedChild = undefined;
     }
     try {
@@ -614,11 +677,21 @@ export class ServerManager {
       this.startHealthCheck();
       const restartMsg = `[ServerManager] server 已成功重启于端口 ${this.currentEndpointRecord.port}`;
       console.log(restartMsg);
-      try { fs.appendFileSync(serverLogPath(), `[${new Date().toISOString()}] ${restartMsg}\n`); } catch {}
+      try {
+        fs.appendFileSync(
+          serverLogPath(),
+          `[${new Date().toISOString()}] ${restartMsg}\n`,
+        );
+      } catch {}
     } catch (err) {
       const failMsg = `[ServerManager] 自动重启失败: ${(err as Error)?.message ?? String(err)}`;
       console.error(failMsg);
-      try { fs.appendFileSync(serverLogPath(), `[${new Date().toISOString()}] ${failMsg}\n`); } catch {}
+      try {
+        fs.appendFileSync(
+          serverLogPath(),
+          `[${new Date().toISOString()}] ${failMsg}\n`,
+        );
+      } catch {}
     }
   }
 
@@ -639,7 +712,9 @@ export class ServerManager {
     const enableFeishu = feishuCredentialsExist();
     const store = new mod.PersistentSessionStore(sessionsDir());
     // 确保日志目录存在并设置固定日志路径
-    try { fs.mkdirSync(logsDir(), { recursive: true }); } catch {}
+    try {
+      fs.mkdirSync(logsDir(), { recursive: true });
+    } catch {}
     process.env.OTTO_LOG_DIR = logsDir();
     const server = new mod.OttoServer({
       host: mod.DEFAULT_HOST,
@@ -659,10 +734,20 @@ export class ServerManager {
           );
         }
         console.warn(`[ServerManager] 端口 ${port} 被占用，尝试 ${nextPort}…`);
-        try { fs.appendFileSync(serverLogPath(), `[${new Date().toISOString()}] WARN 端口 ${port} 被占用，尝试 ${nextPort}\n`); } catch {}
+        try {
+          fs.appendFileSync(
+            serverLogPath(),
+            `[${new Date().toISOString()}] WARN 端口 ${port} 被占用，尝试 ${nextPort}\n`,
+          );
+        } catch {}
         return this.startEmbedded(nextPort, mod);
       }
-      try { fs.appendFileSync(serverLogPath(), `[${new Date().toISOString()}] ERROR server启动失败: ${(err as Error)?.message ?? String(err)}\n`); } catch {}
+      try {
+        fs.appendFileSync(
+          serverLogPath(),
+          `[${new Date().toISOString()}] ERROR server启动失败: ${(err as Error)?.message ?? String(err)}\n`,
+        );
+      } catch {}
       throw err;
     }
     // listen 完成时若已进入退出流程（shutdown 与 ensure 竞态：shutdown 先跑完、
@@ -680,16 +765,17 @@ export class ServerManager {
     // start 成功且未在退出流程，才把引用交给 shutdown 管理
     // （避免 shutdown 对一个 start 尚未完成的 server 调 stop）。
     this.embedded = server;
-    const {
-      host,
-      port: boundPort,
-      clientToken,
-    } = server.endpoint;
+    const { host, port: boundPort, clientToken } = server.endpoint;
     const logMsg = `[ServerManager] otto-server 已就绪 → http://${host}:${boundPort} | 飞书:${enableFeishu ? '已启用' : '未启用'} | 日志: ${serverLogPath()}`;
     const logFile = serverLogPath();
-    try { fs.mkdirSync(logsDir(), { recursive: true }); } catch {}
     try {
-      fs.appendFileSync(logFile, `[${new Date().toISOString()}] STARTED ${logMsg}\n`);
+      fs.mkdirSync(logsDir(), { recursive: true });
+    } catch {}
+    try {
+      fs.appendFileSync(
+        logFile,
+        `[${new Date().toISOString()}] STARTED ${logMsg}\n`,
+      );
     } catch {}
     console.log(logMsg);
     const { controlToken } = server;
@@ -718,11 +804,12 @@ export class ServerManager {
     }
 
     const record = this.currentEndpointRecord;
-    if (!record) throw new Error('本机 OttoServer 尚未就绪，请重启 Otto 后重试');
+    if (!record)
+      throw new Error('本机 OttoServer 尚未就绪，请重启 Otto 后重试');
     if (!record.controlToken?.trim()) {
       throw new Error(
         '检测到旧版本本机 OttoServer，无法安全同步企业身份。' +
-        '请退出所有 Otto/CLI 进程后重新启动 Otto。',
+          '请退出所有 Otto/CLI 进程后重新启动 Otto。',
       );
     }
     if (!isLoopbackHost(record.host)) {
@@ -730,13 +817,15 @@ export class ServerManager {
     }
 
     const mod = await this.dependencies.loadOttoServer();
-    const identityRoute = (mod.HTTP_ROUTES as typeof mod.HTTP_ROUTES & {
-      enterpriseIdentity?: string;
-    }).enterpriseIdentity;
+    const identityRoute = (
+      mod.HTTP_ROUTES as typeof mod.HTTP_ROUTES & {
+        enterpriseIdentity?: string;
+      }
+    ).enterpriseIdentity;
     if (!identityRoute) {
       throw new Error(
         '检测到旧版本本机 OttoServer，缺少企业身份控制接口。' +
-        '请退出所有 Otto/CLI 进程后重新启动 Otto。',
+          '请退出所有 Otto/CLI 进程后重新启动 Otto。',
       );
     }
     const controller = new AbortController();
@@ -756,25 +845,34 @@ export class ServerManager {
         },
       );
       if (!response.ok) {
-        const body = await response.json().catch(() => ({})) as { error?: unknown };
-        const detail = typeof body.error === 'string' && body.error.trim()
-          ? `：${body.error.trim()}`
-          : `（HTTP ${response.status}）`;
+        const body = (await response.json().catch(() => ({}))) as {
+          error?: unknown;
+        };
+        const detail =
+          typeof body.error === 'string' && body.error.trim()
+            ? `：${body.error.trim()}`
+            : `（HTTP ${response.status}）`;
         throw new Error(
           `本机 OttoServer 拒绝身份同步${detail}。` +
-          '请退出所有 Otto/CLI 进程后重新启动 Otto。',
+            '请退出所有 Otto/CLI 进程后重新启动 Otto。',
         );
       }
     } catch (error) {
-      if (error instanceof Error && error.message.includes('请退出所有 Otto/CLI')) {
+      if (
+        error instanceof Error &&
+        error.message.includes('请退出所有 Otto/CLI')
+      ) {
         throw error;
       }
-      const detail = error instanceof Error && error.name === 'AbortError'
-        ? '请求超时'
-        : error instanceof Error ? error.message : String(error);
+      const detail =
+        error instanceof Error && error.name === 'AbortError'
+          ? '请求超时'
+          : error instanceof Error
+            ? error.message
+            : String(error);
       throw new Error(
         `本机 OttoServer 身份同步失败：${detail}。` +
-        '请退出所有 Otto/CLI 进程后重新启动 Otto。',
+          '请退出所有 Otto/CLI 进程后重新启动 Otto。',
       );
     } finally {
       clearTimeout(timer);
@@ -803,18 +901,24 @@ export class ServerManager {
   /** enterprise-server 单次启动尝试；调用方负责并发去重。 */
   private async startEnterprise(): Promise<void> {
     const localUrl = new URL(this.localEnterpriseServerUrl!);
-    const host = localUrl.hostname === 'localhost'
-      ? '127.0.0.1'
-      : localUrl.hostname.replace(/^\[|\]$/g, '');
-    const port = localUrl.port ? Number(localUrl.port) : ENTERPRISE_DEFAULT_PORT;
+    const host =
+      localUrl.hostname === 'localhost'
+        ? '127.0.0.1'
+        : localUrl.hostname.replace(/^\[|\]$/g, '');
+    const port = localUrl.port
+      ? Number(localUrl.port)
+      : ENTERPRISE_DEFAULT_PORT;
     try {
       // 先探活再监听：CLI 或另一个 Otto 实例已经启动企业服务时直接复用，
       // 避免把正常的 EADDRINUSE 当成后台不可用。
-      if (await this.dependencies.probeHealth(host, port, '/enterprise/health')) {
+      if (
+        await this.dependencies.probeHealth(host, port, '/enterprise/health')
+      ) {
         this.enterpriseOwnership = 'discovered';
         return;
       }
-      const { createEnterpriseServer } = await this.dependencies.loadEnterpriseServer();
+      const { createEnterpriseServer } =
+        await this.dependencies.loadEnterpriseServer();
       if (this.shuttingDown) return;
       const created = createEnterpriseServer({
         host,
@@ -845,16 +949,18 @@ export class ServerManager {
       // 探活与 listen 之间可能有另一个进程抢先占住 7777。只要它此刻健康，
       // 就视为成功复用；否则才诚实标为不可用。
       if (
-        (err as NodeJS.ErrnoException)?.code === 'EADDRINUSE'
-        && await this.dependencies.probeHealth(host, port, '/enterprise/health')
+        (err as NodeJS.ErrnoException)?.code === 'EADDRINUSE' &&
+        (await this.dependencies.probeHealth(host, port, '/enterprise/health'))
       ) {
         this.enterpriseOwnership = 'discovered';
         return;
       }
       this.enterpriseOwnership = 'unavailable';
       if (!this.shuttingDown) {
-        console.warn('[ServerManager] enterprise-server 启动失败（非致命，管理后台不可用）:',
-          (err as Error)?.message ?? String(err));
+        console.warn(
+          '[ServerManager] enterprise-server 启动失败（非致命，管理后台不可用）:',
+          (err as Error)?.message ?? String(err),
+        );
       }
     } finally {
       this.enterpriseListenAbort = undefined;
@@ -878,9 +984,11 @@ function publicServerEndpoint(record: ServerEndpointRecord): ServerEndpoint {
 
 function isLoopbackHost(host: string): boolean {
   const normalized = host.replace(/^\[|\]$/g, '').toLowerCase();
-  return normalized === 'localhost'
-    || normalized === '127.0.0.1'
-    || normalized === '::1';
+  return (
+    normalized === 'localhost' ||
+    normalized === '127.0.0.1' ||
+    normalized === '::1'
+  );
 }
 
 function formatHttpHost(host: string): string {
@@ -951,8 +1059,12 @@ function loopbackServerUrl(input: string | null | undefined): string | null {
   try {
     const url = new URL(input);
     const hostname = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
-    const isLoopback = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
-    if (url.protocol !== 'http:' || !isLoopback || url.username || url.password) return null;
+    const isLoopback =
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '::1';
+    if (url.protocol !== 'http:' || !isLoopback || url.username || url.password)
+      return null;
     if (url.search || url.hash) return null;
     const pathname = url.pathname.replace(/\/+$/, '');
     if (pathname && pathname !== '/') return null;

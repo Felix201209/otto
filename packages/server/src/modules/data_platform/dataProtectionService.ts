@@ -10,7 +10,7 @@ import { backup, DatabaseSync } from 'node:sqlite';
 
 import { createEncryptedBackupArchive } from './encryptedBackupArchive.js';
 import type { EncryptedObjectStore } from './encryptedObjectStore.js';
-import type { DatabaseHandle } from './sqliteCompat.js';
+import { Database, type DatabaseHandle } from './sqliteCompat.js';
 
 const BACKUP_NAME_PATTERN =
   /^otto-enterprise-(\d{8}T\d{6}Z)-([0-9a-f]{8})\.otto-backup$/;
@@ -48,11 +48,15 @@ export interface DataProtectionServiceOptions {
   accountSyncKeyPath: string;
   attachmentKeyPath: string;
   fieldEncryptionKeyPath: string;
+  /** Exportable offline keyring or a KMS/keystore recovery envelope. */
+  databaseKeyRecoveryPath?: string;
   attachmentDirectory: string;
   privacyDeletionLedgerPath?: string;
   privacyDeletionLedgerKeyPath?: string;
   attachmentObjectStore: EncryptedObjectStore;
   getDatabase(): DatabaseHandle;
+  createDatabaseSnapshot?: (destinationPath: string) => void | Promise<void>;
+  openDatabaseSnapshot?: (databasePath: string) => DatabaseHandle;
   backupDirectory?: string;
   replicaDirectory?: string | null;
   encryptionKey?: string;
@@ -206,8 +210,10 @@ function listBackupFiles(directory: string): Array<{
 function validateSnapshot(
   databasePath: string,
   expectedSchema: number,
+  openDatabase: (databasePath: string) => DatabaseHandle = (snapshotPath) =>
+    new Database(snapshotPath, { readOnly: true }),
 ): number {
-  const database = new DatabaseSync(databasePath, { readOnly: true });
+  const database = openDatabase(databasePath);
   try {
     const quickCheck = database.prepare('PRAGMA quick_check').get() as
       { quick_check?: string } | undefined;
@@ -439,15 +445,22 @@ export function createDataProtectionService(
       }
       await mkdir(workDirectory, { recursive: false, mode: 0o700 });
       const snapshotPath = path.join(workDirectory, 'data.db');
-      const source = new DatabaseSync(options.databasePath, { readOnly: true });
-      try {
-        await backup(source, snapshotPath, { rate: 100 });
-      } finally {
-        source.close();
+      if (options.createDatabaseSnapshot) {
+        await options.createDatabaseSnapshot(snapshotPath);
+      } else {
+        const source = new DatabaseSync(options.databasePath, {
+          readOnly: true,
+        });
+        try {
+          await backup(source, snapshotPath, { rate: 100 });
+        } finally {
+          source.close();
+        }
       }
       const schemaVersion = validateSnapshot(
         snapshotPath,
         options.schemaVersion,
+        options.openDatabaseSnapshot,
       );
       const createdAt = now();
       const timestamp = createdAt
@@ -474,18 +487,36 @@ export function createDataProtectionService(
         { sourcePath: snapshotPath, archivePath: 'database/data.db' },
         { sourcePath: manifestPath, archivePath: 'manifest.json' },
       ];
+      if (
+        options.databaseKeyRecoveryPath &&
+        !fs.existsSync(options.databaseKeyRecoveryPath)
+      ) {
+        throw new Error('database encryption recovery material is missing');
+      }
       for (const [sourcePath, archivePath] of [
+        ...(options.databaseKeyRecoveryPath
+          ? [
+              [
+                options.databaseKeyRecoveryPath,
+                'keys/database.keyring',
+              ] as const,
+            ]
+          : []),
         [options.accountSyncKeyPath, 'keys/account-sync.key'],
         [options.attachmentKeyPath, 'keys/attachment-storage.key'],
         [options.fieldEncryptionKeyPath, 'keys/field-encryption.key'],
       ] as const) {
-        if (fs.existsSync(sourcePath)) files.push({ sourcePath, archivePath });
+        if (typeof sourcePath === 'string' && fs.existsSync(sourcePath)) {
+          files.push({ sourcePath, archivePath });
+        }
       }
       const privacyLedgerPath = options.privacyDeletionLedgerPath;
       const privacyLedgerKeyPath = options.privacyDeletionLedgerKeyPath;
       if (privacyLedgerPath || privacyLedgerKeyPath) {
         if (!privacyLedgerPath || !privacyLedgerKeyPath) {
-          throw new Error('privacy deletion ledger paths must be configured together');
+          throw new Error(
+            'privacy deletion ledger paths must be configured together',
+          );
         }
         if (fs.existsSync(privacyLedgerPath)) {
           if (!fs.existsSync(privacyLedgerKeyPath)) {

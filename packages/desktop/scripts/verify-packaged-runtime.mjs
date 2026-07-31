@@ -18,7 +18,9 @@ function readJson(filePath) {
 
 function readAsarJson(archivePath, archiveEntry) {
   const nativeEntry = archiveEntry.split('/').join(path.sep);
-  return JSON.parse(asar.extractFile(archivePath, nativeEntry).toString('utf8'));
+  return JSON.parse(
+    asar.extractFile(archivePath, nativeEntry).toString('utf8'),
+  );
 }
 
 function requireAsarEntry(entries, archiveEntry) {
@@ -36,14 +38,21 @@ function expectedSheetJsVersion(specifier) {
   return match[1];
 }
 
-export function verifyPackagedRuntime(archivePath, platform = process.platform) {
+export function verifyPackagedRuntime(
+  archivePath,
+  platform = process.platform,
+) {
   if (!existsSync(archivePath)) {
     throw new Error(`app.asar not found: ${archivePath}`);
   }
 
   const desktopPackage = readJson(path.join(desktopRoot, 'package.json'));
-  const serverPackage = readJson(path.join(repoRoot, 'packages/server/package.json'));
-  const corePackage = readJson(path.join(repoRoot, 'packages/core/package.json'));
+  const serverPackage = readJson(
+    path.join(repoRoot, 'packages/server/package.json'),
+  );
+  const corePackage = readJson(
+    path.join(repoRoot, 'packages/core/package.json'),
+  );
   const entries = new Set(
     asar.listPackage(archivePath).map((entry) => entry.replaceAll('\\', '/')),
   );
@@ -66,8 +75,14 @@ export function verifyPackagedRuntime(archivePath, platform = process.platform) 
     archivePath,
     'node_modules/otto-server/package.json',
   );
-  const packagedCore = readAsarJson(archivePath, 'node_modules/otto-core/package.json');
-  const packagedXlsx = readAsarJson(archivePath, 'node_modules/xlsx/package.json');
+  const packagedCore = readAsarJson(
+    archivePath,
+    'node_modules/otto-core/package.json',
+  );
+  const packagedXlsx = readAsarJson(
+    archivePath,
+    'node_modules/xlsx/package.json',
+  );
   const packagedMcp = readAsarJson(
     archivePath,
     'node_modules/@modelcontextprotocol/sdk/package.json',
@@ -96,14 +111,51 @@ export function verifyPackagedRuntime(archivePath, platform = process.platform) 
     }
   }
 
+  const sqlCipherDirectory = path.join(path.dirname(archivePath), 'sqlcipher');
+  const sqlCipherBinding = path.join(sqlCipherDirectory, 'better_sqlite3.node');
+  const sqlCipherManifest = path.join(sqlCipherDirectory, 'manifest.json');
+  const sqlCipherNotices = path.join(
+    sqlCipherDirectory,
+    'THIRD_PARTY_NOTICES.md',
+  );
+  for (const required of [
+    sqlCipherBinding,
+    sqlCipherManifest,
+    sqlCipherNotices,
+  ]) {
+    if (!existsSync(required)) {
+      throw new Error(`packaged SQLCipher resource is missing: ${required}`);
+    }
+  }
+  const nativeHeader = readFileSync(sqlCipherBinding).subarray(0, 4);
+  const validNativeHeader =
+    platform === 'win32'
+      ? nativeHeader.subarray(0, 2).toString('ascii') === 'MZ'
+      : platform === 'linux'
+        ? nativeHeader.equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
+        : ['cffaedfe', 'cefaedfe', 'cafebabe', 'cafebabf'].includes(
+            nativeHeader.toString('hex'),
+          );
+  if (!validNativeHeader) {
+    throw new Error(
+      `packaged SQLCipher resource has wrong platform format: ${sqlCipherBinding}`,
+    );
+  }
+
   if (platform === 'win32') {
-    const ripgrepPath = path.join(path.dirname(archivePath), 'ripgrep', 'rg.exe');
+    const ripgrepPath = path.join(
+      path.dirname(archivePath),
+      'ripgrep',
+      'rg.exe',
+    );
     if (!existsSync(ripgrepPath)) {
       throw new Error(`packaged ripgrep is missing: ${ripgrepPath}`);
     }
     const magic = readFileSync(ripgrepPath).subarray(0, 2).toString('ascii');
     if (magic !== 'MZ') {
-      throw new Error(`packaged ripgrep is not a Windows executable: ${ripgrepPath}`);
+      throw new Error(
+        `packaged ripgrep is not a Windows executable: ${ripgrepPath}`,
+      );
     }
   }
 
@@ -118,12 +170,16 @@ function main() {
     );
   }
   const platformIndex = process.argv.indexOf('--platform');
-  const platform = platformIndex === -1 ? process.platform : process.argv[platformIndex + 1];
+  const platform =
+    platformIndex === -1 ? process.platform : process.argv[platformIndex + 1];
   const archivePath = path.resolve(process.cwd(), archiveArgument);
   const versions = verifyPackagedRuntime(archivePath, platform);
   console.log(`[packaged-runtime] verified ${JSON.stringify(versions)}`);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
   main();
 }

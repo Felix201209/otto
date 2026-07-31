@@ -4,6 +4,10 @@
 
 export * from './sqliteCompat.js';
 export * from './fileEncryptionKeyProvider.js';
+export * from './fileSqlCipherKeyProvider.js';
+export * from './sqlCipherDatabaseLifecycle.js';
+export * from './betterSqlCipherDriver.js';
+export * from './sqlCipherRuntime.js';
 export * from './encryptedFieldCipher.js';
 export * from './encryptedObjectStore.js';
 export * from './encryptedBackupArchive.js';

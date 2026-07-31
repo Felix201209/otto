@@ -13,6 +13,8 @@ import {
   createEncryptedObjectStore,
   createDataPlatformComposition,
   createFileEncryptionKeyProvider,
+  createSqlCipherFileRuntime,
+  parseSqlCipherRuntimeMode,
   Database,
 } from '../modules/data_platform/index.js';
 import { createAuthorizationComposition } from '../modules/authorization/index.js';
@@ -187,6 +189,11 @@ const DATA_DIR =
   process.env.OTTO_ENTERPRISE_DIR ||
   path.join(os.homedir(), '.otto-enterprise');
 const DB_PATH = path.join(DATA_DIR, 'data.db');
+const DATABASE_ENCRYPTION_MODE = parseSqlCipherRuntimeMode();
+const SQLCIPHER_RUNTIME =
+  DATABASE_ENCRYPTION_MODE === 'required'
+    ? createSqlCipherFileRuntime({ dataDirectory: DATA_DIR })
+    : null;
 const ACCOUNT_SYNC_EXTERNAL_KEY_PATH =
   process.env.OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE?.trim() || null;
 const ACCOUNT_SYNC_KEY_PATH =
@@ -290,6 +297,14 @@ const dataPlatform = createDataPlatformComposition({
     },
     initializeSchema: initSchema,
   },
+  ...(SQLCIPHER_RUNTIME
+    ? {
+        databaseEncryption: {
+          keyProvider: SQLCIPHER_RUNTIME.keyProvider,
+          driver: SQLCIPHER_RUNTIME.driver,
+        },
+      }
+    : {}),
 });
 const accountSyncKeyProvider = dataPlatform.encryptionKeyProvider;
 const attachmentStorageKeyProvider = createFileEncryptionKeyProvider({
@@ -320,6 +335,13 @@ const dataProtection = createDataProtectionService({
   accountSyncKeyPath: ACCOUNT_SYNC_KEY_PATH,
   attachmentKeyPath: ATTACHMENT_STORAGE_KEY_PATH,
   fieldEncryptionKeyPath: FIELD_ENCRYPTION_KEY_PATH,
+  ...(SQLCIPHER_RUNTIME
+    ? {
+        databaseKeyRecoveryPath: SQLCIPHER_RUNTIME.keyPath,
+        createDatabaseSnapshot: dataPlatform.createDatabaseSnapshot,
+        openDatabaseSnapshot: dataPlatform.openDatabaseSnapshot,
+      }
+    : {}),
   attachmentDirectory: ATTACHMENT_STORAGE_DIR,
   privacyDeletionLedgerPath: PRIVACY_DELETION_LEDGER_PATH,
   privacyDeletionLedgerKeyPath: PRIVACY_DELETION_LEDGER_KEY_PATH,
@@ -352,6 +374,9 @@ export const getDB = dataPlatform.getDatabase;
 
 /** 执行真实读查询，供 HTTP readiness 判断数据库与 schema 是否可用。 */
 export const getDatabaseReadiness = dataPlatform.getReadiness;
+export const getDatabaseEncryptionStatus =
+  dataPlatform.getDatabaseEncryptionStatus;
+export const rotateDatabaseEncryptionKey = dataPlatform.rotateDatabaseKey;
 
 export const getDataProtectionStatus = dataProtection.getStatus;
 export const runDataProtectionBackup = dataProtection.runBackup;

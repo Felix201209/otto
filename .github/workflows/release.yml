@@ -36,10 +36,15 @@ env:
   UPDATE_MIRROR_ROOT: '/opt/otto-website'
 
 jobs:
+  sqlcipher-native:
+    name: Build verified SQLCipher native matrix
+    uses: ./.github/workflows/sqlcipher-native.yml
+
   build:
     name: Check, Build, Draft Release
     runs-on: macos-latest
     timeout-minutes: 90
+    needs: sqlcipher-native
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -66,6 +71,15 @@ jobs:
         env:
           PYTHON: python3.11
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download verified SQLCipher native matrix
+        uses: actions/download-artifact@v7
+        with:
+          name: sqlcipher-native-matrix
+          path: native/sqlcipher
+
+      - name: Verify SQLCipher native matrix before packaging
+        run: node scripts/verify-sqlcipher-native-assets.mjs
 
       - name: Resolve release version
         id: version
