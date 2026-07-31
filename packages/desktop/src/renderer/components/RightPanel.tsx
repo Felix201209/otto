@@ -658,7 +658,7 @@ export function RightPanel({
                   type="button"
                   className="otto-expert-card"
                   onClick={openParkServices}
-                  title="装修管理 · 满意度调查 · 园区公告 · 停车位办理 · 网络与电话 · 会议室预约 · 电卡充电 · 客户报修 · 来访车辆"
+                  title="装修管理 · 满意度调查 · 园区公告 · 停车位办理 · 网络与固话 · 会议室预约 · 电卡充电 · 客户报修 · 来访车辆"
                 >
                   <span className="otto-expert-card__body">
                     <span className="otto-expert-card__name">{parkBrand}</span>
@@ -1251,7 +1251,7 @@ export function RightPanel({
                       ? '成员与部门由中心组织树实时加载'
                       : `${workspace?.members.length ?? 0} 位成员 · ${workspace?.managerWorkspace?.organization.departments.length ?? 0} 个部门`}
                   </span>
-                  <button type="button" onClick={onOpenOrganization}>打开企业组织树</button>
+                  <button type="button" onClick={onOpenOrganization}>打开组织架构</button>
                 </div>
               ) : (
                 <div className="otto-collab-drawer__content">

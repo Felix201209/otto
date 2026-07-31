@@ -17,11 +17,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import type {
-  ProductWorkspaceSnapshot,
-  ScheduleItemInfo,
-  SessionSummary,
-} from 'otto-server';
+import type { SessionSummary } from 'otto-server';
 import { type SessionGroup } from '../state/useOttoStore.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import { SourceBadge } from './SourceBadge.js';
@@ -32,10 +28,6 @@ import {
   IconSettings,
   IconUserAvatar,
 } from './icons.js';
-import {
-  OrganizationTree,
-  type EnterpriseDirectChatOpenRequest,
-} from './OrganizationTree.js';
 import { LogoutConfirmDialog } from './LogoutConfirmDialog.js';
 import { JoinEnterpriseDialog } from './JoinEnterpriseDialog.js';
 import type { EnterpriseAccount } from '../../preload/index.js';
@@ -91,13 +83,8 @@ interface SidebarProps {
   accountManagementActive?: boolean;
   /** 静默检查发现新版 → 设置入口亮一个不打扰的小圆点（无弹窗）。 */
   updateBadge?: boolean;
-  productWorkspace?: ProductWorkspaceSnapshot | null;
-  productSchedules?: readonly ScheduleItemInfo[];
   enterpriseAccount?: EnterpriseAccount;
-  organizationOpenRequest?: number;
-  organizationRefreshRevision?: number;
   enterpriseUnreadCounts?: EnterpriseUnreadCounts;
-  enterpriseDirectChatOpenRequest?: EnterpriseDirectChatOpenRequest;
   onSelect: (id: string) => void;
   onNewChat: () => void;
   onOpenHub: () => void;
@@ -105,7 +92,6 @@ interface SidebarProps {
   onNavigate?: (view: 'chat' | 'organization' | 'inbox' | 'work' | 'hub') => void;
   onJoinEnterprise?: (input: { inviteCode: string }) => Promise<void>;
   onLogout?: () => void | Promise<void>;
-  onEnterpriseMessageRead?: (peerAccountId: string) => void;
   onViewAll: () => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
@@ -120,13 +106,8 @@ export function Sidebar({
   activeView = 'chat',
   accountManagementActive = false,
   updateBadge = false,
-  productWorkspace = null,
-  productSchedules = [],
   enterpriseAccount,
-  organizationOpenRequest = 0,
-  organizationRefreshRevision = 0,
   enterpriseUnreadCounts = {},
-  enterpriseDirectChatOpenRequest,
   onSelect,
   onNewChat,
   onOpenHub,
@@ -134,7 +115,6 @@ export function Sidebar({
   onNavigate,
   onJoinEnterprise,
   onLogout,
-  onEnterpriseMessageRead,
   onViewAll,
   onRename,
   onDelete,
@@ -213,19 +193,6 @@ export function Sidebar({
       ) : null}
 
       <div className="otto-sidebar__workspace">
-        <OrganizationTree
-          workspace={productWorkspace}
-          schedules={productSchedules}
-          enterpriseAccount={enterpriseAccount?.accountType === 'personal'
-            ? undefined
-            : enterpriseAccount}
-          openRequest={organizationOpenRequest}
-          refreshRevision={organizationRefreshRevision}
-          unreadCounts={enterpriseUnreadCounts}
-          directChatOpenRequest={enterpriseDirectChatOpenRequest}
-          onMessageRead={onEnterpriseMessageRead}
-        />
-
         <section className="otto-conversations" aria-label="对话任务">
           <button
             type="button"

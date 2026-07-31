@@ -9902,10 +9902,117 @@ h6.otto-prose__h {
   min-height: 0;
   overflow: auto;
   padding: 20px 28px 40px;
-  max-width: 860px;
+  max-width: 980px;
   margin: 0 auto;
   width: 100%;
   box-sizing: border-box;
+}
+
+.otto-org-page__tree {
+  border: 1px solid var(--otto-border);
+  border-radius: 14px;
+  background: var(--otto-surface);
+  overflow: hidden;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.04);
+}
+.otto-org-page__tree-root {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--otto-border);
+  background: linear-gradient(135deg, var(--otto-accent-soft), transparent 68%);
+}
+.otto-org-page__tree-heading {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.otto-org-page__tree-heading strong { font-size: 15px; letter-spacing: -0.01em; }
+.otto-org-page__tree-heading span { color: var(--otto-text-tertiary); font-size: 11px; }
+.otto-org-page__tree-children { padding: 10px 12px 14px; }
+.otto-org-page__tree-dept { position: relative; margin: 4px 0; }
+.otto-org-page__tree-node {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--otto-text);
+  cursor: pointer;
+  text-align: left;
+}
+.otto-org-page__tree-node:hover { background: var(--otto-accent-soft); }
+.otto-org-page__tree-node svg { flex: 0 0 auto; color: var(--otto-text-tertiary); transition: transform 0.15s; }
+.otto-org-page__tree-node svg.is-collapsed { transform: rotate(-90deg); }
+.otto-org-page__tree-node--dept { padding: 10px; font-size: 13px; }
+.otto-org-page__tree-node--position { padding: 8px 9px; font-size: 12px; }
+.otto-org-page__tree-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  font-weight: 750;
+}
+.otto-org-page__tree-icon--root {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: var(--otto-accent);
+  color: #fff;
+  font-size: 17px;
+}
+.otto-org-page__tree-icon--dept {
+  width: 28px;
+  height: 28px;
+  background: var(--otto-accent-soft);
+  color: var(--otto-accent);
+  font-size: 12px;
+}
+.otto-org-page__tree-icon--position {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  background: var(--otto-bg);
+  border: 1px solid var(--otto-border);
+  color: var(--otto-text-tertiary);
+  font-size: 11px;
+}
+.otto-org-page__tree-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 650;
+}
+.otto-org-page__tree-meta { flex: 0 0 auto; color: var(--otto-text-tertiary); font-size: 11px; }
+.otto-org-page__tree-position-list {
+  margin-left: 24px;
+  padding-left: 16px;
+  border-left: 1px solid var(--otto-border);
+}
+.otto-org-page__tree-position { margin: 2px 0; }
+.otto-org-page__tree-position .otto-org-page__members {
+  margin-left: 28px;
+  padding-left: 14px;
+  border-top: 0;
+  border-left: 1px solid var(--otto-border);
+}
+.otto-org-page__tree .otto-org-page__member {
+  border-bottom: 0;
+  border-radius: 9px;
+  padding: 8px 10px;
+}
+.otto-org-page__tree .otto-org-page__member:hover { background: var(--otto-accent-soft); }
+.otto-org-page__tree-empty,
+.otto-org-page__position-empty {
+  color: var(--otto-text-tertiary);
+  font-size: 11px;
+  padding: 8px 10px 10px 42px;
 }
 .otto-org-page__dept {
   margin-bottom: 12px;

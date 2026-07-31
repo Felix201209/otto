@@ -838,7 +838,7 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(screen.getByText('中心企业')).toBeTruthy();
     expect(screen.queryByText('宏创 AI')).toBeNull();
     expect(screen.getByText('成员与部门由中心组织树实时加载')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '打开企业组织树' }));
+    fireEvent.click(screen.getByRole('button', { name: '打开组织架构' }));
     expect(openOrganization).toHaveBeenCalledOnce();
   });
 

@@ -244,7 +244,7 @@ describe('ParkServicesPlugin', () => {
     openDialog();
     expect(screen.getByRole('dialog')).toBeTruthy();
     for (const name of [
-      '装修管理', '满意度调查', '园区公告', '停车办理', '网络与电话', '会议室预约',
+      '装修管理', '满意度调查', '园区公告', '停车办理', '网络与固话', '会议室预约',
       '电卡服务', '物业报修', '车辆与访客',
     ]) {
       expect(screen.getByText(name)).toBeTruthy();
@@ -355,7 +355,7 @@ describe('ParkServicesPlugin', () => {
     const services = [
       { serviceId: 'renovation', name: '装修管理', count: 1 },
       { serviceId: 'parking', name: '停车办理', count: 1 },
-      { serviceId: 'network-phone', name: '网络与电话', count: 1 },
+      { serviceId: 'network-phone', name: '网络与固话', count: 1 },
       { serviceId: 'meeting-room', name: '会议室预约', count: 3 },
       { serviceId: 'electric-card', name: '电卡服务', count: 1 },
       { serviceId: 'repair', name: '物业报修', count: 1 },

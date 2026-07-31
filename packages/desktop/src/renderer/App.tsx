@@ -40,6 +40,7 @@ import {
   buildHelpMarkdown,
 } from './components/SlashCommands.js';
 import { RightPanel } from './components/RightPanel.js';
+import { ParkServicesPlugin } from './components/ParkServicesPlugin.js';
 import { AllConversations } from './components/AllConversations.js';
 import { AgentGallery } from './components/AgentGallery.js';
 import { SetupPanel } from './setup/SetupPanel.js';
@@ -474,8 +475,7 @@ function OttoWorkspaceApp({
 
   // —— 主内容区视图：对话 / 专家 / 设置，整页切换（右侧栏常驻）——
   const [mainView, setMainView] = useState<MainView>('chat');
-  // 右栏企业入口只负责展开左侧真实组织树，避免另开一张仅含身份的伪组织页。
-  const [organizationOpenRequest, setOrganizationOpenRequest] = useState(0);
+  // 组织架构整页通过 enterpriseOrganizationView 加载；管理员变更后递增刷新。
   const [organizationRefreshRevision, setOrganizationRefreshRevision] = useState(0);
   const [enterpriseDirectChatOpenRequest, setEnterpriseDirectChatOpenRequest] = useState<{
     peerAccountId: string;
@@ -486,8 +486,7 @@ function OttoWorkspaceApp({
     if (!sessionId.startsWith(prefix)) return;
     const peerAccountId = sessionId.slice(prefix.length);
     if (!peerAccountId) return;
-    setMainView('chat');
-    setOrganizationOpenRequest((request) => request + 1);
+    setMainView('organization');
     setEnterpriseDirectChatOpenRequest((current) => ({
       peerAccountId,
       requestId: (current?.requestId ?? 0) + 1,
@@ -880,25 +879,19 @@ function OttoWorkspaceApp({
         onViewAll={() => setAllConvOpen(true)}
         onRename={actions.renameSession}
         onDelete={actions.deleteSession}
-        productWorkspace={product.state.workspace}
-        productSchedules={product.state.schedules}
         enterpriseAccount={account}
-        organizationOpenRequest={organizationOpenRequest}
-        organizationRefreshRevision={organizationRefreshRevision}
         enterpriseUnreadCounts={enterpriseUnreadCounts}
-        enterpriseDirectChatOpenRequest={enterpriseDirectChatOpenRequest}
-        onEnterpriseMessageRead={markEnterpriseDirectMessageRead}
         onJoinEnterprise={onJoinEnterprise}
         onLogout={onLogout}
         unreadSessions={state.unreadSessions}
       />
+      <ParkServicesPlugin />
 
       {/* 主内容区：组织架构 / 我的消息 / 我的工作 / 设置 / 专家 / 对话，整页切换。 */}
       {mainView === 'organization' ? (
         <OrganizationPage
           enterpriseAccount={account}
           organizationRefreshRevision={organizationRefreshRevision}
-          schedules={product.state.schedules}
           enterpriseUnreadCounts={enterpriseUnreadCounts}
           enterpriseDirectChatOpenRequest={enterpriseDirectChatOpenRequest}
           onMessageRead={markEnterpriseDirectMessageRead}
@@ -909,8 +902,7 @@ function OttoWorkspaceApp({
           enterpriseAccount={account}
           enterpriseUnreadCounts={enterpriseUnreadCounts}
           onOpenDirectChat={(peerId) => {
-            setMainView('chat');
-            setOrganizationOpenRequest((r) => r + 1);
+            setMainView('organization');
             setEnterpriseDirectChatOpenRequest((cur) => ({
               peerAccountId: peerId,
               requestId: (cur?.requestId ?? 0) + 1,
@@ -981,8 +973,7 @@ function OttoWorkspaceApp({
               setMainView('agenda');
             }}
             onOpenOrganization={() => {
-              setMainView('chat');
-              setOrganizationOpenRequest((request) => request + 1);
+              setMainView('organization');
             }}
             onAddFriend={product.actions.addFriend}
             autoSkillCandidates={product.state.pendingAutoSkills}

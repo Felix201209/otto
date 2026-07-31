@@ -26,7 +26,7 @@ import type { RespondQuestionFn } from './ToolCalls.js';
 import { Composer } from './Composer.js';
 import type { SlashCommand } from './SlashCommands.js';
 import { IconArrowDown, IconMoon, IconSun, OttoAvatar } from './icons.js';
-import { ParkServicesPlugin } from './ParkServicesPlugin.js';
+
 import { OttoPetStage } from './OttoPetStage.js';
 import {
   PET_WIDGET_PREFERENCE_EVENT,
@@ -344,7 +344,7 @@ export function ChatView({
       ) : null}
 
       {/* 园区服务插件：常驻挂载（右侧面板「园区服务」入口经事件打开弹窗）。 */}
-      <ParkServicesPlugin />
+
 
       {petWidgetEnabled ? (
         <OttoPetStage
