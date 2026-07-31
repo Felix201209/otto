@@ -5,7 +5,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import * as db from './db.js';
-import type { RepairNotificationSender } from './repairNotifications.js';
+import type { RepairNotificationSender } from '../modules/integration_adapters/index.js';
+import { isParkRequestServiceId } from '../modules/park_services/index.js';
 
 interface TicketRouteDeps {
   path: string;
@@ -122,15 +123,11 @@ export async function handleTicketRoute({
       sendJSON(res, 400, { error: '工单标题或描述过长' });
       return true;
     }
-    const parkRequestIds = new Set([
-      'renovation', 'parking', 'network-phone', 'meeting-room',
-      'electric-card', 'repair', 'vehicle-visit',
-    ]);
-    if (!parkRequestIds.has(serviceId) && serviceId !== 'it') {
+    if (!isParkRequestServiceId(serviceId) && serviceId !== 'it') {
       sendJSON(res, 400, { error: '园区服务类型不正确' });
       return true;
     }
-    const isParkRequest = parkRequestIds.has(serviceId);
+    const isParkRequest = isParkRequestServiceId(serviceId);
     const ticketPark = isParkRequest
       ? db.getParkForOrganization(account.organizationId)
       : null;
@@ -229,7 +226,7 @@ export async function handleTicketRoute({
         (item) => item.key === formData.endTime,
       );
       if (!validStart || !validEnd || formData.startTime >= formData.endTime) {
-        sendJSON(res, 400, { error: '请在 09:00-23:00 之间按 10 分钟选择连续时段' });
+        sendJSON(res, 400, { error: `请在 09:00-23:00 之间按 ${db.PARK_MEETING_SLOT_MINUTES} 分钟选择连续时段` });
         return true;
       }
       formData.slotKey = formData.startTime;
@@ -250,10 +247,8 @@ export async function handleTicketRoute({
     }
     let ticket: ReturnType<typeof db.createTicket>;
     try {
-      const database = db.getDB();
-      database.exec('BEGIN IMMEDIATE');
-      try {
-        ticket = db.createTicket({
+      ticket = db.createTicketWithMeetingReservation({
+        ticket: {
           createdByAccountId: account.id,
           serviceId,
           title,
@@ -265,21 +260,19 @@ export async function handleTicketRoute({
           urgency: typeof body.urgency === 'string' ? body.urgency : undefined,
           contact: typeof body.contact === 'string' ? body.contact : undefined,
           contactPhone: typeof body.contactPhone === 'string' ? body.contactPhone : undefined,
-        });
-        if (hasScheduledMeetingRoomBooking) {
-          db.reserveParkMeetingPeriod(meetingResourceOrganizationId, {
-            roomId: formData.roomId || '',
-            date: formData.date || '',
-            startTime: formData.startTime || '',
-            endTime: formData.endTime || '',
-            ticketId: ticket.id,
-          });
-        }
-        database.exec('COMMIT');
-      } catch (cause) {
-        database.exec('ROLLBACK');
-        throw cause;
-      }
+        },
+        meetingReservation: hasScheduledMeetingRoomBooking
+          ? {
+              organizationId: meetingResourceOrganizationId,
+              input: {
+                roomId: formData.roomId || '',
+                date: formData.date || '',
+                startTime: formData.startTime || '',
+                endTime: formData.endTime || '',
+              },
+            }
+          : undefined,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : '会议室预约失败';
       if (

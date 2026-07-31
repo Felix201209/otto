@@ -17,6 +17,7 @@ describe('model gateway module boundary', () => {
     expect(modelGateway.MODEL_GATEWAY_SCHEMA_CONTRIBUTOR.id).toBe(
       'model_gateway',
     );
+    expect(modelGateway.createModelGatewayComposition).toBeTypeOf('function');
     expect(modelGateway.createModelUsageFacade).toBeTypeOf('function');
     expect(modelGateway.recordModelUsageInRepository).toBeTypeOf('function');
     expect(modelGateway.getOrganizationUsageSummaryFromRepository).toBeTypeOf(
@@ -44,14 +45,16 @@ describe('model gateway module boundary', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('removes the legacy repository and composes the facade in db.ts', () => {
+  it('removes the legacy repository and composes the gateway in db.ts', () => {
     expect(
       fs.existsSync(
         path.join(sourceRoot, 'enterprise', 'tokenUsageRepository.ts'),
       ),
     ).toBe(false);
     const databaseFacade = fs.readFileSync(databaseFacadePath, 'utf8');
-    expect(databaseFacade).toContain('createModelUsageFacade');
+    expect(databaseFacade).toContain('createModelGatewayComposition');
+    expect(databaseFacade).not.toContain('createModelUsageFacade');
+    expect(databaseFacade).not.toContain('createUsageId');
     expect(databaseFacade).toContain('../modules/model_gateway/index.js');
     expect(databaseFacade).not.toContain("from './tokenUsageRepository.js'");
     expect(databaseFacade).not.toContain('INSERT INTO account_token_usage');

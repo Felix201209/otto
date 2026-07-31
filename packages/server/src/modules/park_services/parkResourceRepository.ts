@@ -194,7 +194,7 @@ function assertMeetingPeriod(startValue: string, endValue: string): {
     || startMinutes % PARK_MEETING_SLOT_MINUTES !== 0
     || endMinutes % PARK_MEETING_SLOT_MINUTES !== 0
   ) {
-    throw new Error('会议时间必须在 09:00-23:00 内，并按 10 分钟选择');
+    throw new Error(`会议时间必须在 09:00-23:00 内，并按 ${PARK_MEETING_SLOT_MINUTES} 分钟选择`);
   }
   return {
     startTime: meetingClock(startMinutes),

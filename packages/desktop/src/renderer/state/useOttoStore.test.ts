@@ -403,11 +403,55 @@ describe('applyFrame 各帧分支', () => {
 
     await waitFor(() => expect(knowledgeSpy).toHaveBeenCalledTimes(1));
     expect(knowledgeSpy).toHaveBeenCalledWith({
-      sourceId: 'kb_123',
+      sourceId: 'auto:s1:kb_123',
+      sourceSessionId: 's1',
+      sourceFingerprint: 'kb_123',
       category: 'solution',
       content: '合同审查先核对违约条款。',
       confidence: 0.9,
+      sourceType: 'auto_capture',
+      sourceLabel: 'Otto 对话知识观察',
+      tags: ['contract'],
+      verified: false,
+      impactScore: 0.5,
+      significanceSignals: [],
+      observedAt: '2026-07-15T00:00:00.000Z',
     });
+  });
+
+  it('同步重复知识观察，让企业侧按跨会话证据晋级而不是保存整段对话', async () => {
+    const { push } = setup('org-retention');
+    push({
+      type: 'knowledge_activity',
+      payload: {
+        action: 'auto_capture',
+        sessionId: 'session-2',
+        written: 0,
+        captured: [],
+        observations: [{
+          category: 'solution',
+          content: '根因是缓存键未包含企业编号。\n修复后跨企业缓存隔离测试通过。',
+          tags: ['cache', 'tenant'],
+          sourceSessionId: 'session-2',
+          confidence: 0.91,
+          fingerprint: 'fp-retained',
+          verified: true,
+          impactScore: 0.88,
+          significanceSignals: ['successful_tool_result'],
+          observedAt: '2026-07-30T00:00:00.000Z',
+        }],
+        recent: [],
+      },
+    } as ServerToClient);
+
+    await waitFor(() => expect(knowledgeSpy).toHaveBeenCalledOnce());
+    expect(knowledgeSpy).toHaveBeenCalledWith(expect.objectContaining({
+      sourceId: 'auto:session-2:fp-retained',
+      sourceSessionId: 'session-2',
+      sourceType: 'auto_capture',
+      verified: true,
+      impactScore: 0.88,
+    }));
   });
 
   it('组织 knowledge=false 时保留个人本地捕获但不上传企业知识', async () => {

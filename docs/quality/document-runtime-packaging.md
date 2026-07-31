@@ -1,11 +1,12 @@
-# Otto 桌面文档运行时打包契约
+# Otto 文档运行时组件契约
 
-发布打包从以下目录读取各平台运行时：
+默认桌面安装包保持轻量，不直接包含 Python、Node.js 和 LibreOffice。企业发行版或
+独立文档运行时组件从以下目录读取各平台运行时：
 
 `packages/desktop/vendor/runtime/<platform>-<arch>/`
 
-必须具备以下布局；任一缺失，`dist` 和带 `--build` 的交付脚本都会在 Electron
-打包前失败，不允许发布缺功能的安装包。
+需要生成带完整文档能力的企业发行物时，必须具备以下布局；任一缺失，运行时组件
+校验必须失败，不允许用占位文件冒充完整能力。
 
 - macOS/Linux Python：`python/bin/python3`
 - Windows Python：`python/python.exe`
@@ -15,11 +16,10 @@
 - macOS LibreOffice：`libreoffice/LibreOffice.app/Contents/MacOS/soffice`
 - Windows/Linux LibreOffice：`libreoffice/program/soffice[.exe]`
 
-这些大型二进制不以占位文件冒充，也不由运行时代码临时下载。构建环境必须先按平台
-提供经过审核的真实运行时；`scripts/verify-document-runtime.mjs` 负责静态完整性闸门。
-Electron Builder 只把当前 `${platform}-${arch}` 目录复制到安装包对应的
-`resources/runtime/<platform>-<arch>`，不会把 macOS 双架构和 Windows 三套大型运行时
-同时塞进一个安装包。
+这些大型二进制不以占位文件冒充。构建环境必须先按平台提供经过审核的真实运行时；
+`scripts/verify-document-runtime.mjs` 负责独立组件的静态完整性闸门。若发行渠道选择把
+组件随安装包交付，只允许复制当前 `${platform}-${arch}` 目录，不得把 macOS 双架构和
+Windows 多套大型运行时同时塞进一个安装包。
 
 运行时解析顺序固定为：
 

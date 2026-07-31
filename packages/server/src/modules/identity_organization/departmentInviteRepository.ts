@@ -244,3 +244,17 @@ export function consumeDepartmentInviteInRepository(
     return { valid: true, ...resolution };
   });
 }
+
+export function listDepartmentInvitesForBackup(
+  store: Pick<DepartmentInviteRepositoryStore, 'db'>,
+  organizationId: string,
+): DepartmentInviteRow[] {
+  return store
+    .db()
+    .prepare(
+      `SELECT * FROM invite_codes
+       WHERE organization_id = ?
+       ORDER BY created_at, code`,
+    )
+    .all(organizationId) as DepartmentInviteRow[];
+}

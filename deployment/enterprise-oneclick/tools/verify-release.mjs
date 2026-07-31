@@ -5,8 +5,6 @@ import { createReadStream } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-const EXPECTED_SCHEMA_FROM = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
-
 function fail(message) {
   process.stderr.write(`[Otto Release] ${message}\n`);
   process.exit(3);
@@ -48,11 +46,31 @@ if (
   || typeof manifest.database !== 'object'
   || manifest.database === null
   || Array.isArray(manifest.database)
-  || JSON.stringify(manifest.database.schemaFrom) !== JSON.stringify(EXPECTED_SCHEMA_FROM)
-  || manifest.database.schemaTo !== 11
+  || !Array.isArray(manifest.database.schemaFrom)
+  || !Number.isInteger(manifest.database.schemaTo)
+  || manifest.database.schemaTo < 2
+  || JSON.stringify(manifest.database.schemaFrom)
+    !== JSON.stringify(Array.from(
+      { length: manifest.database.schemaTo - 1 },
+      (_, index) => index + 2,
+    ))
   || manifest.database.futureSchemaPolicy !== 'reject'
 ) {
   fail('manifest.json 格式不正确');
+}
+
+let runtimePackage;
+try {
+  runtimePackage = JSON.parse(
+    await readFile(path.join(root, 'package.json'), 'utf8'),
+  );
+} catch (error) {
+  fail(`无法读取运行时 package.json：${error instanceof Error ? error.message : String(error)}`);
+}
+if (runtimePackage?.version !== manifest.version) {
+  fail(
+    `版本漂移：manifest=${manifest.version} runtime=${runtimePackage?.version ?? 'missing'}`,
+  );
 }
 
 const actualFiles = (await filesBelow(root)).filter((file) => file !== 'manifest.json');

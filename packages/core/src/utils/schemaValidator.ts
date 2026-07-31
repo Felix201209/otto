@@ -42,7 +42,9 @@ export class SchemaValidator {
     const validate = ajValidator.compile(this.toObjectSchema(schema));
     const valid = validate(data);
     if (!valid && validate.errors) {
-      return ajValidator.errorsText(validate.errors, { dataVar: 'params' });
+      return String(ajValidator.errorsText(validate.errors, { dataVar: 'params' }))
+        .replace(/\bshould\b/g, 'must')
+        .replace(/\bparams\.([A-Za-z0-9_]+)/g, 'params/$1');
     }
     return null;
   }

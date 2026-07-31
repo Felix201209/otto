@@ -135,6 +135,20 @@ export type IncrementalUpdateCheckResult =
     }
   | { status: 'up-to-date'; appVersion: string }
   | { status: 'check-failed'; appVersion: string; message: string };
+
+export interface DesktopRuntimeDiagnostic {
+  contractVersion: 1;
+  server: {
+    status: 'ready' | 'starting' | 'unavailable';
+    ownership?: 'discovered' | 'detached' | 'embedded';
+    message?: string;
+  };
+  nativeCore: {
+    mode: 'auto' | 'required' | 'off';
+    status: 'disabled' | 'not_probed' | 'configured';
+    message: string;
+  };
+}
 export type IncrementalUpdateApplyResult =
   | {
       ok: true;
@@ -287,6 +301,58 @@ export interface EnterpriseSessionState {
   connectionError?: string;
 }
 
+export interface EnterpriseDataGovernanceProfile {
+  controller: { name: string; privacyContact: string; configured: boolean };
+  residency: { mode: string; region: string; crossBorderEnabled: boolean; localizationReady: boolean };
+  security: {
+    publicTransport: string;
+    database: string;
+    encryptedData: string[];
+    hashedData: string[];
+    plaintextData: string[];
+  };
+  retention: {
+    securityAuditMinimumDays: number;
+    encryptedBackupDefaultDays: number;
+    healthTelemetryDefaultDays: number;
+  };
+  readiness: { configured: boolean; warnings: string[] };
+  documents: Array<{
+    id: 'terms' | 'privacy'; title: string; version: string; effectiveAt: string;
+    required: true; summary: string[]; sourceUrls: string[]; hash: string;
+    accepted: boolean; acceptedAt: number | null;
+  }>;
+  processingActivities: Array<{
+    id: string; category: string; purpose: string;
+    sensitivity: 'ordinary' | 'sensitive' | 'security';
+    storage: 'user_device' | 'enterprise_server' | 'configured_provider';
+    atRest: string; transport: string; retention: string; deletion: string;
+    recipients: string[]; crossBorder: boolean;
+  }>;
+  rights: string[];
+  currentConsentComplete: boolean;
+  authorization: {
+    deploymentId: string;
+    license: {
+      status: string; plan: string; expiresAt: string; seatLimit: number;
+      activeSeatCount: number; modules: string[]; offline: boolean; enforce: boolean;
+    };
+    telemetry: { enabled: boolean; contentMode: string };
+    dataBoundary: Record<string, unknown>;
+  };
+}
+
+export interface EnterprisePrivacyDeletionReceipt {
+  requestId: string;
+  accountId: string;
+  organizationId: string;
+  completedAt: string;
+  deleted: string[];
+  anonymized: string[];
+  retained: Array<{ category: string; reason: string; restriction: string }>;
+  backupExpiry: string;
+}
+
 export interface EnterpriseTokenUsageInput {
   sessionId: string;
   messageId: string;
@@ -298,21 +364,125 @@ export interface EnterpriseTokenUsageInput {
 
 export interface EnterpriseKnowledgeRecordInput {
   sourceId: string;
+  title?: string;
   category: string;
   content: string;
   confidence: number;
+  sourceType?: 'manual' | 'auto_capture' | 'work_result' | 'task_log' | 'document' | 'offboarding';
+  sourceLabel?: string;
+  sourceSessionId?: string;
+  sourceFingerprint?: string;
+  tags?: string[];
+  verified?: boolean;
+  impactScore?: number;
+  significanceSignals?: string[];
+  observedAt?: string;
+}
+
+export interface EnterpriseKnowledgeRecordResult {
+  status: 'added' | 'exists' | 'observed' | 'duplicate' | 'promoted';
+  added: boolean;
+  outcome?: 'added' | 'updated' | 'unchanged' | 'observed' | 'duplicate' | 'promoted';
+  reviewStatus?: EnterpriseKnowledgeItem['status'];
+  knowledgeId?: number;
+  retention?: {
+    promoted: boolean;
+    reason: 'incubating' | 'long_term_recurrence' | 'cross_member_corroboration' | 'high_impact_verified';
+    evidenceCount: number;
+    distinctSessionCount: number;
+    distinctContributorCount: number;
+    spanDays: number;
+    impactScore: number;
+  };
 }
 
 export interface EnterpriseKnowledgeItem {
   id: string;
   organizationId: string;
   sourceId: string | null;
+  title?: string;
   department: string | null;
   category: string;
   content: string;
   contributor: string | null;
   confidence: number;
+  sourceType?: 'manual' | 'auto_capture' | 'work_result' | 'task_log' | 'document' | 'offboarding';
+  sourceLabel?: string | null;
+  status?: 'pending_review' | 'active' | 'archived';
+  version?: number;
+  reviewedBy?: string | null;
+  reviewedAt?: string | null;
   createdAt: string;
+  updatedAt?: string;
+  evidenceCount?: number;
+  distinctSessionCount?: number;
+  distinctContributorCount?: number;
+  firstObservedAt?: string | null;
+  lastObservedAt?: string | null;
+}
+
+export interface EnterpriseKnowledgeRevision {
+  id: string;
+  knowledgeId: string;
+  version: number;
+  title: string;
+  category: string;
+  content: string;
+  status: NonNullable<EnterpriseKnowledgeItem['status']>;
+  changedBy: string | null;
+  changeNote: string | null;
+  createdAt: string;
+}
+
+export type EnterpriseSkillVisibility = 'department' | 'company';
+export type EnterpriseSkillStatus = 'pending_review' | 'active' | 'archived';
+export type EnterpriseSkillScope = 'department' | 'company' | 'mine' | 'review';
+export type EnterpriseSkillSort = 'recommended' | 'rating' | 'installs' | 'usage' | 'newest';
+
+export interface LocalSkillShareCandidate {
+  name: string;
+  description: string;
+  kind: 'auto' | 'personal';
+}
+
+export interface EnterpriseSkillMarketItem {
+  id: string;
+  organizationId: string;
+  slug: string;
+  name: string;
+  description: string;
+  department: string | null;
+  visibility: EnterpriseSkillVisibility;
+  status: EnterpriseSkillStatus;
+  authorAccountId: string | null;
+  authorName: string;
+  contentHash: string;
+  version: number;
+  installCount: number;
+  usageCount: number;
+  successCount: number;
+  failureCount: number;
+  rating: number;
+  ratingCount: number;
+  installedVersion: number | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EnterpriseSkillLeaderboard {
+  skills: Array<EnterpriseSkillMarketItem & { rank: number; score: number; successRate: number }>;
+  contributors: Array<{
+    rank: number;
+    accountId: string | null;
+    name: string;
+    skillCount: number;
+    installCount: number;
+    usageCount: number;
+    score: number;
+  }>;
+  generatedAt: string;
 }
 
 export interface EnterpriseOrganizationInvite {
@@ -345,6 +515,7 @@ export interface EnterpriseOrganizationFeatures {
   direct_messages: boolean;
   atoa: boolean;
   knowledge: boolean;
+  skill_market: boolean;
 }
 
 export type EnterprisePositionRoleMapping = 'member' | 'department_admin' | 'enterprise_admin';
@@ -687,9 +858,12 @@ export interface AutoGeneratedAgentProfile {
 // ── IPC channel 名（与 main 对齐）──
 const IPC = {
   getEndpoint: 'otto:get-endpoint',
+  runtimeDiagnostic: 'otto:runtime-diagnostic',
   endpointChanged: 'otto:endpoint-changed',
   openExternal: 'otto:open-external',
   openPath: 'otto:open-path',
+  inspectLocalPath: 'otto:inspect-local-path',
+  activateLocalPath: 'otto:activate-local-path',
   selectFiles: 'otto:select-files',
   grantBrowserFile: 'otto:grant-browser-file',
   authorizeMessageFiles: 'otto:authorize-message-files',
@@ -734,10 +908,17 @@ const IPC = {
   enterpriseAccountCreate: 'otto:enterprise-account-create',
   enterpriseAccountUpdate: 'otto:enterprise-account-update',
   enterpriseAccountDelete: 'otto:enterprise-account-delete',
+  enterpriseDataGovernanceGet: 'otto:enterprise-data-governance-get',
+  enterpriseLegalAccept: 'otto:enterprise-legal-accept',
+  enterprisePrivacyExport: 'otto:enterprise-privacy-export',
+  enterprisePrivacyDelete: 'otto:enterprise-privacy-delete',
   enterprisePair: 'otto:enterprise-pair',
   enterpriseUsageRecord: 'otto:enterprise-usage-record',
   enterpriseKnowledgeRecord: 'otto:enterprise-knowledge-record',
   enterpriseKnowledgeList: 'otto:enterprise-knowledge-list',
+  enterpriseKnowledgeReview: 'otto:enterprise-knowledge-review',
+  enterpriseKnowledgeRevise: 'otto:enterprise-knowledge-revise',
+  enterpriseKnowledgeRevisions: 'otto:enterprise-knowledge-revisions',
   enterpriseOrganizationView: 'otto:enterprise-organization-view',
   enterprisePresenceHeartbeat: 'otto:enterprise-presence-heartbeat',
   enterpriseOrganizationFeaturesGet: 'otto:enterprise-organization-features-get',
@@ -795,6 +976,13 @@ const IPC = {
   workLogReport: 'otto:worklog-report',
   skillShareList: 'otto:skill-share-list',
   skillMarketplace: 'otto:skill-marketplace',
+  enterpriseSkillLocalList: 'otto:enterprise-skill-local-list',
+  enterpriseSkillList: 'otto:enterprise-skill-list',
+  enterpriseSkillSubmit: 'otto:enterprise-skill-submit',
+  enterpriseSkillReview: 'otto:enterprise-skill-review',
+  enterpriseSkillInstall: 'otto:enterprise-skill-install',
+  enterpriseSkillRate: 'otto:enterprise-skill-rate',
+  enterpriseSkillLeaderboard: 'otto:enterprise-skill-leaderboard',
   parkNativeNotify: 'otto:park-native-notify',
   writeClipboard: 'otto:write-clipboard',
 } as const;
@@ -839,6 +1027,17 @@ export interface OttoBridge {
   openExternal(url: string): Promise<void>;
   /** host-only 命令：用系统默认程序打开本地路径。 */
   openPath(path: string): Promise<void>;
+  /** 检查回答中出现的本地绝对路径；主进程仅返回当前用户目录内的真实文件。 */
+  inspectLocalPath(path: string): Promise<{
+    exists: boolean;
+    kind: 'file' | 'directory' | 'missing';
+    canOpen: boolean;
+  }>;
+  /** 安全打开回答里的输出文件，或在系统文件管理器中定位。 */
+  activateLocalPath(
+    path: string,
+    action: 'open' | 'reveal',
+  ): Promise<{ ok: boolean; error?: string }>;
   /**
    * 原生文件选择器：打开系统文件对话框，返回完整路径数组。
    * 用户主动授权选择，不受浏览器沙箱限制。
@@ -952,10 +1151,32 @@ export interface OttoBridge {
   }>;
   /** 一键生成脱敏诊断包并保存到桌面。 */
   createDiagnosticBundle(): Promise<{ ok: boolean; path: string; fileCount: number; message: string }>;
+  runtimeDiagnostic(): Promise<DesktopRuntimeDiagnostic>;
   /** 部门共享 Skill 列表。 */
   skillShareList(teamId?: string): Promise<{ text: string }>;
   /** 公司 Skill 市场。 */
   skillMarketplace(): Promise<{ text: string }>;
+  enterpriseSkillLocalList(): Promise<LocalSkillShareCandidate[]>;
+  enterpriseSkillList(input?: {
+    scope?: EnterpriseSkillScope;
+    query?: string;
+    sort?: EnterpriseSkillSort;
+  }): Promise<EnterpriseSkillMarketItem[]>;
+  enterpriseSkillSubmit(input: {
+    localSkillName: string;
+    visibility: EnterpriseSkillVisibility;
+  }): Promise<{ outcome: 'submitted' | 'exists'; skill: EnterpriseSkillMarketItem }>;
+  enterpriseSkillReview(
+    id: string,
+    action: 'approve' | 'archive',
+    visibility?: EnterpriseSkillVisibility,
+  ): Promise<EnterpriseSkillMarketItem>;
+  enterpriseSkillInstall(id: string): Promise<{
+    skill: EnterpriseSkillMarketItem;
+    installedPath: string;
+  }>;
+  enterpriseSkillRate(id: string, score: number): Promise<EnterpriseSkillMarketItem>;
+  enterpriseSkillLeaderboard(): Promise<EnterpriseSkillLeaderboard>;
   /**
    * 本地测试模式：把 customProxyServerUrl 设为指定地址（不空）或清除（空字符串）。
    * main 进程需要把该 URL 注入到 server manager（如设置 OTTO_SERVER_URL env）。
@@ -1040,6 +1261,7 @@ export interface OttoBridge {
     code: string;
     name: string;
     password: string;
+    legalConsent: true;
   }): Promise<{ serverUrl: string; account: EnterpriseAccount; expiresAt: string }>;
   enterpriseJoinOrganization(input: {
     inviteCode: string;
@@ -1055,18 +1277,37 @@ export interface OttoBridge {
   enterpriseAccountCreate(input: EnterpriseAccountCreateInput): Promise<EnterpriseAccount>;
   enterpriseAccountUpdate(id: string, input: EnterpriseAccountUpdateInput): Promise<EnterpriseAccount>;
   enterpriseAccountDelete(id: string): Promise<{ id: string; deleted: true }>;
+  enterpriseDataGovernanceGet(): Promise<EnterpriseDataGovernanceProfile>;
+  enterpriseLegalAccept(): Promise<EnterpriseDataGovernanceProfile>;
+  enterprisePrivacyExport(): Promise<{ ok: true; path: string } | null>;
+  enterprisePrivacyDelete(input: {
+    password: string;
+    confirmation: string;
+  }): Promise<EnterprisePrivacyDeletionReceipt>;
   enterpriseUsageRecord(input: EnterpriseTokenUsageInput): Promise<{
     recorded: boolean;
     source: 'client_reported';
   }>;
-  enterpriseKnowledgeRecord(input: EnterpriseKnowledgeRecordInput): Promise<{
-    status: 'added' | 'exists';
-    added: boolean;
-  }>;
+  enterpriseKnowledgeRecord(input: EnterpriseKnowledgeRecordInput): Promise<EnterpriseKnowledgeRecordResult>;
   enterpriseKnowledgeList(input?: {
     query?: string;
     department?: string;
+    includeReview?: boolean;
+    status?: EnterpriseKnowledgeItem['status'];
   }): Promise<EnterpriseKnowledgeItem[]>;
+  enterpriseKnowledgeReview(
+    id: string,
+    action: 'approve' | 'archive',
+    note?: string,
+  ): Promise<EnterpriseKnowledgeItem>;
+  enterpriseKnowledgeRevise(id: string, input: {
+    title: string;
+    category: string;
+    content: string;
+    confidence?: number;
+    changeNote?: string;
+  }): Promise<EnterpriseKnowledgeItem>;
+  enterpriseKnowledgeRevisions(id: string): Promise<EnterpriseKnowledgeRevision[]>;
   enterpriseOrganizationView(): Promise<EnterpriseOrganizationView>;
   enterprisePresenceHeartbeat(): Promise<void>;
   enterpriseOrganizationFeaturesGet(): Promise<EnterpriseOrganizationFeatures>;
@@ -1431,6 +1672,28 @@ const bridge: OttoBridge = {
     return ipcRenderer.invoke(IPC.openPath, path) as Promise<void>;
   },
 
+  inspectLocalPath(path: string): Promise<{
+    exists: boolean;
+    kind: 'file' | 'directory' | 'missing';
+    canOpen: boolean;
+  }> {
+    return ipcRenderer.invoke(IPC.inspectLocalPath, path) as Promise<{
+      exists: boolean;
+      kind: 'file' | 'directory' | 'missing';
+      canOpen: boolean;
+    }>;
+  },
+
+  activateLocalPath(
+    path: string,
+    action: 'open' | 'reveal',
+  ): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke(IPC.activateLocalPath, path, action) as Promise<{
+      ok: boolean;
+      error?: string;
+    }>;
+  },
+
   selectFiles(): Promise<string[]> {
     return ipcRenderer.invoke(IPC.selectFiles) as Promise<string[]>;
   },
@@ -1629,11 +1892,39 @@ const bridge: OttoBridge = {
       message: string;
     }>;
   },
+  runtimeDiagnostic(): Promise<DesktopRuntimeDiagnostic> {
+    return ipcRenderer.invoke(IPC.runtimeDiagnostic) as Promise<DesktopRuntimeDiagnostic>;
+  },
   skillShareList(teamId?: string): Promise<{ text: string }> {
     return ipcRenderer.invoke('otto:skill-share-list', teamId) as Promise<{ text: string }>;
   },
   skillMarketplace(): Promise<{ text: string }> {
     return ipcRenderer.invoke('otto:skill-marketplace') as Promise<{ text: string }>;
+  },
+  enterpriseSkillLocalList() {
+    return ipcRenderer.invoke(IPC.enterpriseSkillLocalList) as Promise<LocalSkillShareCandidate[]>;
+  },
+  enterpriseSkillList(input = {}) {
+    return ipcRenderer.invoke(IPC.enterpriseSkillList, input) as Promise<EnterpriseSkillMarketItem[]>;
+  },
+  enterpriseSkillSubmit(input) {
+    return ipcRenderer.invoke(IPC.enterpriseSkillSubmit, input) as Promise<{
+      outcome: 'submitted' | 'exists'; skill: EnterpriseSkillMarketItem;
+    }>;
+  },
+  enterpriseSkillReview(id, action, visibility) {
+    return ipcRenderer.invoke(IPC.enterpriseSkillReview, { id, action, visibility }) as Promise<EnterpriseSkillMarketItem>;
+  },
+  enterpriseSkillInstall(id) {
+    return ipcRenderer.invoke(IPC.enterpriseSkillInstall, { id }) as Promise<{
+      skill: EnterpriseSkillMarketItem; installedPath: string;
+    }>;
+  },
+  enterpriseSkillRate(id, score) {
+    return ipcRenderer.invoke(IPC.enterpriseSkillRate, { id, score }) as Promise<EnterpriseSkillMarketItem>;
+  },
+  enterpriseSkillLeaderboard() {
+    return ipcRenderer.invoke(IPC.enterpriseSkillLeaderboard) as Promise<EnterpriseSkillLeaderboard>;
   },
   setLocalTestUrl(url: string): Promise<void> {
     return ipcRenderer.invoke(IPC.setLocalTestUrl, url) as Promise<void>;
@@ -1785,6 +2076,7 @@ const bridge: OttoBridge = {
     code: string;
     name: string;
     password: string;
+    legalConsent: true;
   }): Promise<{ serverUrl: string; account: EnterpriseAccount; expiresAt: string }> {
     return ipcRenderer.invoke(IPC.enterpriseRegister, input) as Promise<{
       serverUrl: string;
@@ -1828,6 +2120,21 @@ const bridge: OttoBridge = {
       deleted: true;
     }>;
   },
+  enterpriseDataGovernanceGet(): Promise<EnterpriseDataGovernanceProfile> {
+    return ipcRenderer.invoke(IPC.enterpriseDataGovernanceGet) as Promise<EnterpriseDataGovernanceProfile>;
+  },
+  enterpriseLegalAccept(): Promise<EnterpriseDataGovernanceProfile> {
+    return ipcRenderer.invoke(IPC.enterpriseLegalAccept) as Promise<EnterpriseDataGovernanceProfile>;
+  },
+  enterprisePrivacyExport(): Promise<{ ok: true; path: string } | null> {
+    return ipcRenderer.invoke(IPC.enterprisePrivacyExport) as Promise<{ ok: true; path: string } | null>;
+  },
+  enterprisePrivacyDelete(input: {
+    password: string;
+    confirmation: string;
+  }): Promise<EnterprisePrivacyDeletionReceipt> {
+    return ipcRenderer.invoke(IPC.enterprisePrivacyDelete, input) as Promise<EnterprisePrivacyDeletionReceipt>;
+  },
   enterpriseUsageRecord(input: EnterpriseTokenUsageInput): Promise<{
     recorded: boolean;
     source: 'client_reported';
@@ -1837,20 +2144,32 @@ const bridge: OttoBridge = {
       source: 'client_reported';
     }>;
   },
-  enterpriseKnowledgeRecord(input: EnterpriseKnowledgeRecordInput): Promise<{
-    status: 'added' | 'exists';
-    added: boolean;
-  }> {
-    return ipcRenderer.invoke(IPC.enterpriseKnowledgeRecord, input) as Promise<{
-      status: 'added' | 'exists';
-      added: boolean;
-    }>;
+  enterpriseKnowledgeRecord(input: EnterpriseKnowledgeRecordInput): Promise<EnterpriseKnowledgeRecordResult> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseKnowledgeRecord,
+      input,
+    ) as Promise<EnterpriseKnowledgeRecordResult>;
   },
   enterpriseKnowledgeList(input?: {
     query?: string;
     department?: string;
+    includeReview?: boolean;
+    status?: EnterpriseKnowledgeItem['status'];
   }): Promise<EnterpriseKnowledgeItem[]> {
     return ipcRenderer.invoke(IPC.enterpriseKnowledgeList, input ?? {}) as Promise<EnterpriseKnowledgeItem[]>;
+  },
+  enterpriseKnowledgeReview(
+    id: string,
+    action: 'approve' | 'archive',
+    note?: string,
+  ): Promise<EnterpriseKnowledgeItem> {
+    return ipcRenderer.invoke(IPC.enterpriseKnowledgeReview, { id, action, note }) as Promise<EnterpriseKnowledgeItem>;
+  },
+  enterpriseKnowledgeRevise(id, input) {
+    return ipcRenderer.invoke(IPC.enterpriseKnowledgeRevise, { id, input }) as Promise<EnterpriseKnowledgeItem>;
+  },
+  enterpriseKnowledgeRevisions(id) {
+    return ipcRenderer.invoke(IPC.enterpriseKnowledgeRevisions, { id }) as Promise<EnterpriseKnowledgeRevision[]>;
   },
   enterpriseOrganizationView(): Promise<EnterpriseOrganizationView> {
     return ipcRenderer.invoke(IPC.enterpriseOrganizationView) as Promise<

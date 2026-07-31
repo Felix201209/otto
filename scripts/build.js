@@ -65,7 +65,7 @@ if (!existsSync(join(root, 'node_modules'))) {
   try {
     execSync('npm install', { stdio: 'inherit', cwd: root });
     printItem('success', 'NPM packages', 'Installed');
-  } catch (error) {
+  } catch {
     printItem('failed', 'NPM packages', 'Failed to install');
     process.exit(1);
   }
@@ -117,7 +117,7 @@ if (skipRebuild) {
         }
       }
     }
-  } catch (error) {
+  } catch {
     printSummary(results);
     console.error(`\n${COLORS.red}${COLORS.bright}[!] Build process interrupted due to critical workspace failure.${COLORS.reset}`);
     process.exit(1);
@@ -163,4 +163,3 @@ function printSummary(workspaceResults) {
   console.log(`${COLORS.bright}${COLORS.blue}-------------------------------------------------------------${COLORS.reset}`);
   console.log(`\n${COLORS.green}${COLORS.bright}Build process completed in ${duration}s.${COLORS.reset}\n`);
 }
-

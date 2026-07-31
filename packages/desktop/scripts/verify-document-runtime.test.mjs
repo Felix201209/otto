@@ -83,21 +83,16 @@ describe('document runtime packaging guard', () => {
     expect(report.missingRequired).toEqual([]);
   });
 
-  it('packages only the current platform and architecture runtime directory', () => {
+  it('keeps optional document runtimes out of the lightweight desktop installer', () => {
     const packageJson = JSON.parse(
       readFileSync(path.resolve(process.cwd(), 'package.json'), 'utf8'),
     );
-    expect(packageJson.build.mac.extraResources).toContainEqual({
-      from: 'vendor/runtime/darwin-${arch}',
-      to: 'runtime/darwin-${arch}',
-    });
-    expect(packageJson.build.win.extraResources).toContainEqual({
-      from: 'vendor/runtime/win32-${arch}',
-      to: 'runtime/win32-${arch}',
-    });
-    expect(packageJson.build.mac.extraResources).not.toContainEqual({
-      from: 'vendor/runtime',
-      to: 'runtime',
-    });
+    const resources = [
+      ...(packageJson.build.mac.extraResources ?? []),
+      ...(packageJson.build.win.extraResources ?? []),
+    ];
+    expect(resources.map((resource) => resource.from).join('\n')).not.toContain(
+      'vendor/runtime',
+    );
   });
 });

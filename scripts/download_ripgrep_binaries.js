@@ -7,7 +7,6 @@
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
-import { pipeline } from 'stream/promises';
 import { fileURLToPath } from 'url';
 import { createWriteStream, existsSync, mkdirSync } from 'fs';
 
@@ -90,13 +89,6 @@ function getDownloadUrl(target, version = VERSION) {
   return `${BASE_URL}/${version}/${filename}`;
 }
 
-function getBinaryPath(target, tempDir) {
-  if (target.includes('windows')) {
-    return path.join(tempDir, 'rg.exe');
-  }
-  return path.join(tempDir, 'rg');
-}
-
 async function extractBinary(archivePath, target, outputPath) {
   const { execSync } = await import('child_process');
   const tempDir = path.join(path.dirname(archivePath), 'temp_' + target.replace(/[^\w]/g, '_'));
@@ -110,7 +102,7 @@ async function extractBinary(archivePath, target, outputPath) {
       // Extract zip file (requires unzip or equivalent)
       try {
         execSync(`unzip -q "${archivePath}" -d "${tempDir}"`, { stdio: 'pipe' });
-      } catch (e) {
+      } catch {
         // Try with Python if unzip is not available
         execSync(`python -m zipfile -e "${archivePath}" "${tempDir}"`, { stdio: 'pipe' });
       }

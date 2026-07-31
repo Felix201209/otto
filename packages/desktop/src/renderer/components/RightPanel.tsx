@@ -17,18 +17,13 @@ import type {
 import { SLASH_COMMANDS, insertComposerDraft } from './Composer.js';
 import { FilePreview, type FileEntry } from './FilePreview.js';
 import { GeneratedIcon } from './GeneratedIcon.js';
-import { OttoPetStage } from './OttoPetStage.js';
 import { openParkServices, useParkBrand } from './ParkServicesPlugin.js';
 import type { CentralEnterpriseRole } from '../state/centralEnterpriseIdentity.js';
 import { getEnterpriseOrganizationFeatures } from '../state/enterpriseOrganizationFeatures.js';
-import {
-  IconBuilding,
-  IconChevron,
-  IconChevronDown,
-  IconTerminal,
-} from './icons.js';
+import { IconChevron, IconChevronDown } from './icons.js';
 
-type TabType = 'agents' | 'documents' | 'worklog';
+type TabType = 'agents' | 'documents' | 'memory' | 'worklog';
+type KnowledgeView = 'knowledge' | 'timeline';
 
 // server 构建产物更新前也保持 renderer 可独立 typecheck；字段由当前协议快照提供。
 type AuthenticatedWorkspaceSnapshot = ProductWorkspaceSnapshot & {
@@ -39,17 +34,51 @@ interface EnterpriseKnowledgeItem {
   id: string;
   organizationId: string;
   sourceId: string | null;
+  title?: string;
   department: string | null;
   category: string;
   content: string;
   contributor: string | null;
   confidence: number;
+  sourceType?: 'manual' | 'auto_capture' | 'work_result' | 'task_log' | 'document' | 'offboarding';
+  sourceLabel?: string | null;
+  status?: 'pending_review' | 'active' | 'archived';
+  version?: number;
+  reviewedBy?: string | null;
+  reviewedAt?: string | null;
+  createdAt: string;
+  updatedAt?: string;
+  evidenceCount?: number;
+  distinctSessionCount?: number;
+  distinctContributorCount?: number;
+  firstObservedAt?: string | null;
+  lastObservedAt?: string | null;
+}
+
+interface EnterpriseKnowledgeRevision {
+  id: string;
+  knowledgeId: string;
+  version: number;
+  title: string;
+  category: string;
+  content: string;
+  status: 'pending_review' | 'active' | 'archived';
+  changedBy: string | null;
+  changeNote: string | null;
   createdAt: string;
 }
 
 const TAB_LABEL: Record<TabType, string> = {
   agents: '专家',
   documents: '文档',
+  memory: '企业记忆',
+  worklog: '工作日志',
+};
+
+const TAB_ARIA_LABEL: Record<TabType, string> = {
+  agents: '专家',
+  documents: '文档',
+  memory: '企业记忆',
   worklog: '工作日志',
 };
 
@@ -70,6 +99,7 @@ const TOOL_COMMANDS = SLASH_COMMANDS.filter((command) => TOOL_COMMAND_IDS.has(co
 
 export interface RightPanelProps {
   busy: boolean;
+  presentation?: 'panel' | 'page';
   mode?: 'personal' | 'enterprise';
   /** 已由中心服务认证的角色；不能从本机 workspace.role 推导。 */
   enterpriseRole?: CentralEnterpriseRole;
@@ -108,6 +138,7 @@ function visibleProfiles(
 
 export function RightPanel({
   busy,
+  presentation = 'panel',
   mode = 'personal',
   enterpriseRole,
   enterpriseOrganizationId: authenticatedOrganizationId,
@@ -138,9 +169,12 @@ export function RightPanel({
       || null
     : null;
   const [enterpriseKnowledgeEnabled, setEnterpriseKnowledgeEnabled] = useState(false);
+  const [enterpriseSkillMarketEnabled, setEnterpriseSkillMarketEnabled] = useState(false);
   const tabs = useMemo<TabType[]>(
-    () => ['agents', 'documents', 'worklog'],
-    [],
+    () => mode === 'enterprise' && enterpriseKnowledgeEnabled
+      ? ['agents', 'documents', 'memory', 'worklog']
+      : ['agents', 'documents', 'worklog'],
+    [enterpriseKnowledgeEnabled, mode],
   );
   const [activeTab, setActiveTab] = useState<TabType>('agents');
   const [collapsed, setCollapsed] = useState(false);
@@ -169,8 +203,27 @@ export function RightPanel({
   const [workReportMessage, setWorkReportMessage] = useState('');
   const [workReportPath, setWorkReportPath] = useState('');
   const [knowledgeItems, setKnowledgeItems] = useState<EnterpriseKnowledgeItem[]>([]);
+  const [knowledgeView, setKnowledgeView] = useState<KnowledgeView>('knowledge');
   const [knowledgeLoading, setKnowledgeLoading] = useState(false);
   const [knowledgeError, setKnowledgeError] = useState('');
+  const [knowledgeQuery, setKnowledgeQuery] = useState('');
+  const [knowledgeAppliedQuery, setKnowledgeAppliedQuery] = useState('');
+  const [knowledgeNotice, setKnowledgeNotice] = useState('');
+  const [knowledgeBusyId, setKnowledgeBusyId] = useState('');
+  const [knowledgeCandidates, setKnowledgeCandidates] = useState<Array<{
+    date: string;
+    entry: WorkLogEntry;
+  }>>([]);
+  const [knowledgeEditor, setKnowledgeEditor] = useState<{
+    id?: string;
+    title: string;
+    category: string;
+    content: string;
+  } | null>(null);
+  const [knowledgeRevisions, setKnowledgeRevisions] = useState<Record<
+    string,
+    EnterpriseKnowledgeRevision[]
+  >>({});
   const profiles = useMemo(
     () => providedProfiles ?? visibleProfiles(mode, enterpriseRole),
     [enterpriseRole, mode, providedProfiles],
@@ -180,15 +233,25 @@ export function RightPanel({
   useEffect(() => {
     let cancelled = false;
     setEnterpriseKnowledgeEnabled(false);
+    setEnterpriseSkillMarketEnabled(false);
     setKnowledgeItems([]);
     setKnowledgeError('');
+    setKnowledgeEditor(null);
+    setKnowledgeView('knowledge');
+    setKnowledgeRevisions({});
     if (!enterpriseOrganizationId) return () => { cancelled = true; };
     void getEnterpriseOrganizationFeatures(enterpriseOrganizationId, { force: true })
       .then((features) => {
-        if (!cancelled) setEnterpriseKnowledgeEnabled(features.knowledge);
+        if (!cancelled) {
+          setEnterpriseKnowledgeEnabled(features.knowledge);
+          setEnterpriseSkillMarketEnabled(features.skill_market);
+        }
       })
       .catch(() => {
-        if (!cancelled) setEnterpriseKnowledgeEnabled(false);
+        if (!cancelled) {
+          setEnterpriseKnowledgeEnabled(false);
+          setEnterpriseSkillMarketEnabled(false);
+        }
       });
     return () => { cancelled = true; };
   }, [enterpriseOrganizationId]);
@@ -287,8 +350,20 @@ export function RightPanel({
         setKnowledgeItems([]);
         return;
       }
-      const entries = await window.otto.enterpriseKnowledgeList();
+      const [entries, recentWork] = await Promise.all([
+        window.otto.enterpriseKnowledgeList({
+          query: knowledgeAppliedQuery || undefined,
+          includeReview: true,
+        }),
+        window.otto.workLogRecent(7).catch(() => []),
+      ]);
       setKnowledgeItems(entries);
+      setKnowledgeCandidates(
+        recentWork
+          .flatMap((day) => day.entries.map((entry) => ({ date: day.date, entry })))
+          .filter(({ entry }) => entry.entryType === 'work_result' && entry.success)
+          .slice(0, 3),
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setEnterpriseKnowledgeEnabled(false);
@@ -297,15 +372,196 @@ export function RightPanel({
     } finally {
       setKnowledgeLoading(false);
     }
-  }, [enterpriseOrganizationId, mode]);
+  }, [enterpriseOrganizationId, knowledgeAppliedQuery, mode]);
+
+  const submitKnowledgeCandidate = useCallback(async (
+    date: string,
+    entry: WorkLogEntry,
+  ): Promise<void> => {
+    const title = (entry.taskTitle || entry.action || '工作成果').trim();
+    const sourceId = `work-result:${date}:${entry.time}:${title}`.slice(0, 150);
+    setKnowledgeBusyId(sourceId);
+    setKnowledgeNotice('');
+    try {
+      const result = await window.otto.enterpriseKnowledgeRecord({
+        sourceId,
+        title,
+        category: entry.category || 'work_result',
+        content: [title, entry.details].filter(Boolean).join('\n'),
+        confidence: 0.82,
+        sourceType: 'work_result',
+        sourceLabel: `${date} ${entry.time} Otto 工作成果`,
+      });
+      setKnowledgeNotice(
+        result.reviewStatus === 'active'
+          ? '已沉淀为企业知识。'
+          : result.status === 'exists'
+            ? '这项成果已经在审核队列中。'
+            : '已提交为知识候选，管理员确认后会进入企业知识库。',
+      );
+      await refreshEnterpriseKnowledge();
+    } catch (error) {
+      setKnowledgeError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setKnowledgeBusyId('');
+    }
+  }, [refreshEnterpriseKnowledge]);
+
+  const reviewKnowledge = useCallback(async (
+    id: string,
+    action: 'approve' | 'archive',
+  ): Promise<void> => {
+    setKnowledgeBusyId(id);
+    setKnowledgeNotice('');
+    try {
+      await window.otto.enterpriseKnowledgeReview(id, action);
+      setKnowledgeRevisions((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+      setKnowledgeNotice(action === 'approve' ? '知识已发布，可供 Otto 检索引用。' : '知识候选已归档。');
+      await refreshEnterpriseKnowledge();
+    } catch (error) {
+      setKnowledgeError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setKnowledgeBusyId('');
+    }
+  }, [refreshEnterpriseKnowledge]);
+
+  const saveKnowledgeEditor = useCallback(async (): Promise<void> => {
+    if (!knowledgeEditor) return;
+    const title = knowledgeEditor.title.trim();
+    const category = knowledgeEditor.category.trim();
+    const content = knowledgeEditor.content.trim();
+    if (!title || !category || !content) {
+      setKnowledgeError('请完整填写标题、分类和知识内容。');
+      return;
+    }
+    const busyId = knowledgeEditor.id || 'new-knowledge';
+    setKnowledgeBusyId(busyId);
+    setKnowledgeError('');
+    setKnowledgeNotice('');
+    try {
+      if (knowledgeEditor.id) {
+        await window.otto.enterpriseKnowledgeRevise(knowledgeEditor.id, {
+          title,
+          category,
+          content,
+          confidence: 0.95,
+          changeNote: '管理员在企业知识面板中修订',
+        });
+        setKnowledgeRevisions((current) => {
+          const next = { ...current };
+          delete next[knowledgeEditor.id!];
+          return next;
+        });
+        setKnowledgeNotice('知识已修订，新版本立即用于后续检索。');
+      } else {
+        const uniquePart = globalThis.crypto?.randomUUID?.() || `${Date.now()}`;
+        await window.otto.enterpriseKnowledgeRecord({
+          sourceId: `manual:${uniquePart}`,
+          title,
+          category,
+          content,
+          confidence: 0.95,
+          sourceType: 'manual',
+          sourceLabel: '企业管理员手动录入',
+        });
+        setKnowledgeNotice('企业知识已发布。');
+      }
+      setKnowledgeEditor(null);
+      await refreshEnterpriseKnowledge();
+    } catch (error) {
+      setKnowledgeError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setKnowledgeBusyId('');
+    }
+  }, [knowledgeEditor, refreshEnterpriseKnowledge]);
+
+  const toggleKnowledgeRevisions = useCallback(async (id: string): Promise<void> => {
+    if (knowledgeRevisions[id]) {
+      setKnowledgeRevisions((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+      return;
+    }
+    setKnowledgeBusyId(id);
+    setKnowledgeError('');
+    try {
+      const revisions = await window.otto.enterpriseKnowledgeRevisions(id);
+      setKnowledgeRevisions((current) => ({ ...current, [id]: revisions }));
+    } catch (error) {
+      setKnowledgeError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setKnowledgeBusyId('');
+    }
+  }, [knowledgeRevisions]);
 
   useEffect(() => {
     if (activeTab === 'worklog') void refreshWorkLog();
   }, [activeTab, refreshWorkLog]);
 
   useEffect(() => {
-    if (activeTab === 'documents' && enterpriseKnowledgeEnabled) void refreshEnterpriseKnowledge();
+    if (activeTab === 'memory' && enterpriseKnowledgeEnabled) void refreshEnterpriseKnowledge();
   }, [activeTab, enterpriseKnowledgeEnabled, refreshEnterpriseKnowledge]);
+
+  useEffect(() => {
+    if (knowledgeView !== 'timeline' || enterpriseRole !== 'company_admin') return;
+    const missing = knowledgeItems
+      .filter((item) => item.status !== 'archived' && knowledgeRevisions[item.id] === undefined)
+      .slice(0, 30);
+    if (missing.length === 0) return;
+    void Promise.all(missing.map(async (item) => ({
+      id: item.id,
+      revisions: await window.otto.enterpriseKnowledgeRevisions(item.id),
+    }))).then((loaded) => {
+      setKnowledgeRevisions((current) => ({
+        ...current,
+        ...Object.fromEntries(loaded.map((item) => [item.id, item.revisions])),
+      }));
+    }).catch((error) => {
+      setKnowledgeError(error instanceof Error ? error.message : String(error));
+    });
+  }, [enterpriseRole, knowledgeItems, knowledgeRevisions, knowledgeView]);
+
+  const knowledgeTimeline = useMemo(() => knowledgeItems
+    .filter((item) => !item.status || item.status === 'active')
+    .flatMap((item) => {
+      const revisions = knowledgeRevisions[item.id];
+      if (revisions?.length) {
+        return revisions.map((revision) => ({
+          id: revision.id,
+          knowledgeId: item.id,
+          title: revision.title,
+          category: revision.category,
+          content: revision.content,
+          version: revision.version,
+          changedBy: revision.changedBy || item.contributor || '系统沉淀',
+          changeNote: revision.changeNote || revision.status,
+          createdAt: revision.createdAt,
+          department: item.department,
+        }));
+      }
+      return [{
+        id: `current-${item.id}`,
+        knowledgeId: item.id,
+        title: item.title || item.category,
+        category: item.category,
+        content: item.content,
+        version: item.version || 1,
+        changedBy: item.contributor || '系统沉淀',
+        changeNote: item.version && item.version > 1 ? '当前版本' : '形成知识',
+        createdAt: item.updatedAt || item.createdAt,
+        department: item.department,
+      }];
+    })
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt)), [
+      knowledgeItems,
+      knowledgeRevisions,
+    ]);
 
   const worklogByDate = useMemo(
     () => Object.fromEntries(worklogDays.map((day) => [day.date, day.entries])),
@@ -343,9 +599,13 @@ export function RightPanel({
     }
   };
 
-  if (collapsed) {
+  if (collapsed && presentation === 'panel') {
     return (
-      <aside className="otto-right-panel otto-right-panel--collapsed" aria-label="右侧功能栏（已折叠）">
+      <aside
+        className="otto-right-panel otto-right-panel--collapsed"
+        aria-label="右侧功能栏（已折叠）"
+        aria-busy={busy}
+      >
         <button type="button" className="otto-right-panel__edge" onClick={() => setCollapsed(false)} aria-label="展开右侧功能栏">
           ‹
         </button>
@@ -359,11 +619,16 @@ export function RightPanel({
   }
 
   return (
-    <aside className="otto-right-panel">
-      <button type="button" className="otto-right-panel__edge" onClick={() => setCollapsed(true)} aria-label="折叠右侧功能栏">›</button>
+    <aside
+      className={`otto-right-panel otto-right-panel--${presentation}`}
+      aria-busy={busy}
+    >
+      {presentation === 'panel' ? (
+        <button type="button" className="otto-right-panel__edge" onClick={() => setCollapsed(true)} aria-label="折叠右侧功能栏">›</button>
+      ) : null}
       <div className="otto-right-panel__tabs" role="tablist" aria-label="右侧面板">
         {tabs.map((tab) => (
-          <button key={tab} type="button" role="tab" aria-selected={activeTab === tab} className={`otto-right-panel__tab${activeTab === tab ? ' is-active' : ''}`} onClick={() => setActiveTab(tab)}>
+          <button key={tab} type="button" role="tab" aria-label={TAB_ARIA_LABEL[tab]} aria-selected={activeTab === tab} className={`otto-right-panel__tab${activeTab === tab ? ' is-active' : ''}`} onClick={() => setActiveTab(tab)}>
             {TAB_LABEL[tab]}
           </button>
         ))}
@@ -395,9 +660,6 @@ export function RightPanel({
                   onClick={openParkServices}
                   title="装修管理 · 满意度调查 · 园区公告 · 停车位办理 · 网络与电话 · 会议室预约 · 电卡充电 · 客户报修 · 来访车辆"
                 >
-                  <span className="otto-expert-card__icon otto-expert-card__icon--dev" aria-hidden>
-                    <IconBuilding size={17} />
-                  </span>
                   <span className="otto-expert-card__body">
                     <span className="otto-expert-card__name">{parkBrand}</span>
                     <span className="otto-expert-card__desc">装修 · 公告 · 停车 · 网络 · 会议 · 报修</span>
@@ -429,9 +691,6 @@ export function RightPanel({
                       onClick={() => onLaunchAgentProfile(SELF_DEVELOPMENT_PROFILE)}
                       title={SELF_DEVELOPMENT_PROFILE.tagline}
                     >
-                      <span className="otto-expert-card__icon otto-expert-card__icon--dev" aria-hidden>
-                        <IconTerminal size={17} />
-                      </span>
                       <span className="otto-expert-card__body">
                         <span className="otto-expert-card__name">{SELF_DEVELOPMENT_PROFILE.name}</span>
                         <span className="otto-expert-card__desc">{SELF_DEVELOPMENT_PROFILE.tagline}</span>
@@ -535,11 +794,41 @@ export function RightPanel({
                 <div className="otto-auto-skill__empty">暂无候选。点击“立即分析”会扫描最近工作成果和操作日志；同类成果多次出现后会进入这里。</div>
               ) : autoSkillCandidates.map((candidate) => (
                 <article key={candidate.id} className="otto-auto-skill__candidate">
-                  <strong>{candidate.name}</strong>
+                  <header>
+                    <strong>{candidate.name}</strong>
+                    {typeof candidate.qualityScore === 'number' ? (
+                      <em>质量 {candidate.qualityScore}/100</em>
+                    ) : null}
+                  </header>
+                  {candidate.recommendation === 'enhance' && candidate.targetSkillName ? (
+                    <b className="otto-auto-skill__mode">
+                      增强已有 Skill：{candidate.targetSkillName}
+                    </b>
+                  ) : null}
                   <span>{candidate.description}</span>
-                  <small>{candidate.detectedPattern} · {candidate.occurrenceCount} 天重复</small>
+                  <small>
+                    {candidate.detectedPattern} · {candidate.occurrenceCount} 次重复
+                    {typeof candidate.confidence === 'number'
+                      ? ` · 可信度 ${Math.round(candidate.confidence * 100)}%`
+                      : ''}
+                  </small>
+                  {candidate.evidence?.length ? (
+                    <ul>
+                      {candidate.evidence.slice(0, 3).map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {candidate.failureLessons?.length ? (
+                    <p>已吸收修正：{candidate.failureLessons.slice(0, 2).join('；')}</p>
+                  ) : null}
+                  {candidate.knowledgeEvidenceCount ? (
+                    <p>已引用 {candidate.knowledgeEvidenceCount} 条稳定个人知识作为步骤或边界依据</p>
+                  ) : null}
                   <div>
-                    <button type="button" onClick={() => onConfirmAutoSkill(candidate.id)}>确认生成</button>
+                    <button type="button" onClick={() => onConfirmAutoSkill(candidate.id)}>
+                      {candidate.recommendation === 'enhance' ? '确认增强' : '确认生成'}
+                    </button>
                     <button type="button" onClick={() => onRejectAutoSkill(candidate.id)}>不再建议</button>
                   </div>
                 </article>
@@ -564,8 +853,8 @@ export function RightPanel({
           <div className="otto-documents-panel">
             <div className="otto-worklog-panel__head">
               <div>
-                <strong>右侧文档</strong>
-                <span>Markdown、TXT 和代码文件可直接编辑保存</span>
+                <strong>Documents</strong>
+                <span>Open, edit, and export local files</span>
               </div>
               <button type="button" disabled={documentsLoading} onClick={() => void selectDocumentFiles()}>
                 {documentsLoading ? '读取中' : '选择文件'}
@@ -586,49 +875,245 @@ export function RightPanel({
                 return window.otto.saveTextFile(file.name, content);
               }}
             />
-            {/* 企业记忆合入文档 tab：知识和文档都是信息载体。 */}
-            {mode === 'enterprise' && enterpriseKnowledgeEnabled ? (
-              <>
-                <div className="otto-right-panel__waist" role="separator" />
-                <div className="otto-worklog-panel__head">
-                  <div>
-                    <strong>企业记忆</strong>
-                    <span>组织与部门沉淀的真实知识</span>
-                  </div>
-                  <button type="button" disabled={knowledgeLoading} onClick={() => void refreshEnterpriseKnowledge()}>
-                    {knowledgeLoading ? '加载中' : '刷新'}
+          </div>
+        ) : null}
+
+        {activeTab === 'memory' && enterpriseKnowledgeEnabled ? (
+          <div>
+            <div className="otto-worklog-panel__head">
+              <div>
+                <strong>{knowledgeView === 'knowledge' ? '企业知识' : '企业记忆沿革'}</strong>
+                <span>{knowledgeView === 'knowledge'
+                  ? '长期复现或高影响结论，经审核后保留'
+                  : '按时间查看组织结论如何形成、修订与生效'}</span>
+              </div>
+              <div className="otto-enterprise-memory-head-actions">
+                {enterpriseRole === 'company_admin' ? (
+                  <button
+                    type="button"
+                    onClick={() => setKnowledgeEditor({ title: '', category: '制度流程', content: '' })}
+                  >新增</button>
+                ) : null}
+                <button type="button" disabled={knowledgeLoading} onClick={() => void refreshEnterpriseKnowledge()}>
+                  {knowledgeLoading ? '加载中' : '刷新'}
+                </button>
+              </div>
+            </div>
+            <div className="otto-enterprise-memory-switch" role="tablist" aria-label="企业知识与记忆">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={knowledgeView === 'knowledge'}
+                onClick={() => setKnowledgeView('knowledge')}
+              >企业知识</button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={knowledgeView === 'timeline'}
+                onClick={() => setKnowledgeView('timeline')}
+              >记忆沿革</button>
+            </div>
+            <form
+              className="otto-enterprise-memory-search"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const nextQuery = knowledgeQuery.trim();
+                if (nextQuery === knowledgeAppliedQuery) {
+                  void refreshEnterpriseKnowledge();
+                } else {
+                  setKnowledgeAppliedQuery(nextQuery);
+                }
+              }}
+            >
+              <input
+                value={knowledgeQuery}
+                onChange={(event) => setKnowledgeQuery(event.target.value)}
+                placeholder="搜索制度、流程、项目结论"
+                aria-label="搜索企业知识"
+              />
+              <button type="submit" disabled={knowledgeLoading}>搜索</button>
+            </form>
+            {knowledgeView === 'knowledge' && knowledgeEditor ? (
+              <form
+                className="otto-enterprise-memory-editor"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void saveKnowledgeEditor();
+                }}
+              >
+                <input
+                  aria-label="知识标题"
+                  value={knowledgeEditor.title}
+                  onChange={(event) => setKnowledgeEditor((current) => current
+                    ? { ...current, title: event.target.value }
+                    : current)}
+                  placeholder="知识标题"
+                />
+                <input
+                  aria-label="知识分类"
+                  value={knowledgeEditor.category}
+                  onChange={(event) => setKnowledgeEditor((current) => current
+                    ? { ...current, category: event.target.value }
+                    : current)}
+                  placeholder="例如：制度、流程、客户项目"
+                />
+                <textarea
+                  aria-label="知识内容"
+                  value={knowledgeEditor.content}
+                  onChange={(event) => setKnowledgeEditor((current) => current
+                    ? { ...current, content: event.target.value }
+                    : current)}
+                  placeholder="写清适用范围、结论和执行步骤"
+                  rows={5}
+                />
+                <div>
+                  <button type="button" onClick={() => setKnowledgeEditor(null)}>取消</button>
+                  <button type="submit" disabled={Boolean(knowledgeBusyId)}>
+                    {knowledgeBusyId ? '保存中' : knowledgeEditor.id ? '保存修订' : '发布知识'}
                   </button>
                 </div>
-                {knowledgeError ? (
-                  <div className="otto-right-panel__empty">
-                    企业记忆加载失败：{knowledgeError}
-                  </div>
-                ) : knowledgeLoading && knowledgeItems.length === 0 ? (
-                  <div className="otto-right-panel__empty">正在加载企业记忆…</div>
-                ) : knowledgeItems.length === 0 ? (
-                  <div className="otto-right-panel__empty">
-                    暂无企业记忆。Otto 会在企业会话中把已确认、已去重的工作知识同步到这里。
-                  </div>
-                ) : (
-                  <div className="otto-enterprise-memory-list">
-                    {knowledgeItems.map((item) => (
-                      <article key={item.id} className="otto-enterprise-memory-card">
-                        <div className="otto-enterprise-memory-card__meta">
-                          <span>{item.department || '全组织'}</span>
-                          <span>{item.category}</span>
-                          <span>{Math.round(item.confidence * 100)}%</span>
-                        </div>
-                        <p>{item.content}</p>
-                        <div className="otto-enterprise-memory-card__foot">
-                          {item.contributor ? <span>{item.contributor}</span> : <span>系统沉淀</span>}
-                          <span>{formatEnterpriseMemoryDate(item.createdAt)}</span>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                )}
-              </>
+              </form>
             ) : null}
+            {knowledgeNotice ? (
+              <div className="otto-enterprise-memory-notice" role="status">{knowledgeNotice}</div>
+            ) : null}
+            {knowledgeView === 'knowledge' && knowledgeCandidates.length > 0 ? (
+              <section className="otto-enterprise-memory-candidates" aria-label="可沉淀的工作成果">
+                <div>
+                  <strong>最近成果候选</strong>
+                  <span>提交后先审核，不会把个人内容静默发布给全公司</span>
+                </div>
+                {knowledgeCandidates.map(({ date, entry }) => {
+                  const title = entry.taskTitle || entry.action;
+                  const sourceId = `work-result:${date}:${entry.time}:${title}`.slice(0, 150);
+                  const submitted = knowledgeItems.some((item) =>
+                    item.sourceId?.endsWith(sourceId),
+                  );
+                  return (
+                    <div className="otto-enterprise-memory-candidate" key={sourceId}>
+                      <span><strong>{title}</strong><small>{date} {entry.time}</small></span>
+                      <button
+                        type="button"
+                        disabled={submitted || knowledgeBusyId === sourceId}
+                        onClick={() => void submitKnowledgeCandidate(date, entry)}
+                      >
+                        {submitted ? '已提交' : knowledgeBusyId === sourceId ? '提交中' : '沉淀'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </section>
+            ) : null}
+            {knowledgeError ? (
+              <div className="otto-right-panel__empty">
+                企业记忆加载失败：{knowledgeError}
+              </div>
+            ) : knowledgeLoading && knowledgeItems.length === 0 ? (
+              <div className="otto-right-panel__empty">正在加载企业记忆…</div>
+            ) : knowledgeItems.length === 0 ? (
+              <div className="otto-right-panel__empty">
+                暂无达到保留标准的企业知识。普通对话不会直接进入企业知识库。
+              </div>
+            ) : knowledgeView === 'timeline' ? (
+              <div className="otto-enterprise-memory-timeline" aria-label="企业记忆沿革">
+                {knowledgeTimeline.map((event) => (
+                  <article key={`${event.knowledgeId}-${event.id}`}>
+                    <time>{formatEnterpriseMemoryDate(event.createdAt)}</time>
+                    <div>
+                      <span>{event.department || '全组织'} · {event.category} · v{event.version}</span>
+                      <strong>{event.title}</strong>
+                      <p>{event.content}</p>
+                      <small>{event.changedBy} · {event.changeNote}</small>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="otto-enterprise-memory-list">
+                {knowledgeItems.filter((item) => item.status !== 'archived').map((item) => (
+                  <article key={item.id} className="otto-enterprise-memory-card">
+                    <div className="otto-enterprise-memory-card__meta">
+                      <span>{item.department || '全组织'}</span>
+                      <span>{item.category}</span>
+                      <span>{item.status === 'pending_review' ? '待审核' : '已发布'}</span>
+                      <span>v{item.version || 1}</span>
+                      <span>{Math.round(item.confidence * 100)}%</span>
+                    </div>
+                    {(item.evidenceCount ?? 0) > 0 ? (
+                      <div className="otto-enterprise-memory-card__evidence">
+                        <strong>{item.evidenceCount} 条证据</strong>
+                        <span>{item.distinctSessionCount || 0} 个会话</span>
+                        <span>{item.distinctContributorCount || 0} 名贡献者</span>
+                        {item.lastObservedAt ? (
+                          <span>最近验证 {formatEnterpriseMemoryDate(item.lastObservedAt)}</span>
+                        ) : null}
+                      </div>
+                    ) : item.sourceType === 'manual' ? (
+                      <div className="otto-enterprise-memory-card__evidence">
+                        <strong>管理员确认发布</strong>
+                      </div>
+                    ) : null}
+                    {item.title && item.title !== item.category ? (
+                      <strong className="otto-enterprise-memory-card__title">
+                        {item.title}
+                      </strong>
+                    ) : null}
+                    <p>{item.content}</p>
+                    {item.sourceLabel || item.sourceId ? (
+                      <div className="otto-enterprise-memory-card__source">
+                        来源：{item.sourceLabel || item.sourceId}
+                      </div>
+                    ) : null}
+                    <div className="otto-enterprise-memory-card__foot">
+                      {item.contributor ? <span>{item.contributor}</span> : <span>系统沉淀</span>}
+                      <span>{formatEnterpriseMemoryDate(item.updatedAt || item.createdAt)}</span>
+                    </div>
+                    {enterpriseRole === 'company_admin' ? (
+                      <div className="otto-enterprise-memory-card__actions">
+                        {item.status === 'pending_review' ? (
+                          <button
+                            type="button"
+                            disabled={knowledgeBusyId === item.id}
+                            onClick={() => void reviewKnowledge(item.id, 'approve')}
+                          >发布</button>
+                        ) : null}
+                        <button
+                          type="button"
+                          disabled={knowledgeBusyId === item.id}
+                          onClick={() => setKnowledgeEditor({
+                            id: item.id,
+                            title: item.title || item.category,
+                            category: item.category,
+                            content: item.content,
+                          })}
+                        >修订</button>
+                        <button
+                          type="button"
+                          disabled={knowledgeBusyId === item.id}
+                          onClick={() => void toggleKnowledgeRevisions(item.id)}
+                        >{knowledgeRevisions[item.id] ? '收起版本' : '版本'}</button>
+                        <button
+                          type="button"
+                          disabled={knowledgeBusyId === item.id}
+                          onClick={() => void reviewKnowledge(item.id, 'archive')}
+                        >归档</button>
+                      </div>
+                    ) : null}
+                    {knowledgeRevisions[item.id] ? (
+                      <div className="otto-enterprise-memory-revisions">
+                        {knowledgeRevisions[item.id].map((revision) => (
+                          <div key={revision.id}>
+                            <span>v{revision.version} · {revision.changedBy || '系统'} · {formatEnterpriseMemoryDate(revision.createdAt)}</span>
+                            <strong>{revision.changeNote || revision.status}</strong>
+                            <p>{revision.content}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+            )}
           </div>
         ) : null}
 
@@ -746,7 +1231,9 @@ export function RightPanel({
 
       {mode === 'enterprise' ? (
         <div className="otto-right-panel__bottom-actions">
-          <button type="button" className="otto-right-panel__skillzone" onClick={onOpenSkillZone}>Skill 专区</button>
+          {enterpriseSkillMarketEnabled ? (
+            <button type="button" className="otto-right-panel__skillzone" onClick={onOpenSkillZone}>Skill 专区</button>
+          ) : null}
           <button type="button" className="otto-right-panel__collab-toggle" onClick={() => setCollabOpen((value) => !value)} aria-expanded={collabOpen}>
             企业与好友 <IconChevronDown size={13} className={collabOpen ? '' : 'is-collapsed'} />
           </button>
@@ -781,7 +1268,6 @@ export function RightPanel({
           ) : null}
         </div>
       ) : null}
-      <OttoPetStage running={busy} />
     </aside>
   );
 }

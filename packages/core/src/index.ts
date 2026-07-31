@@ -216,6 +216,7 @@ export * from './memory/permissionChecker.js';
 export * from './memory/skillFormation.js';
 export * from './tools/shell.js';
 export * from './tools/web-search.js';
+export * from './tools/web-search-runtime.js';
 export * from './tools/image-reader.js';
 export * from './tools/audio-reader.js';
 export * from './tools/video-analyzer.js';

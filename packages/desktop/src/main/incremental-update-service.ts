@@ -9,6 +9,7 @@ import { readActiveRendererCssPatch, resolvePatchUpdateRoot } from './incrementa
 import { applyComponentUpdate } from './incremental-component-updater.js';
 import type { IncrementalUpdateArtifact, IncrementalUpdateKind, IncrementalUpdateManifest } from './incremental-update-manifest.js';
 import { parseIncrementalUpdateManifest } from './incremental-update-manifest.js';
+import { parseVerifiedManifestJson } from './update-manifest-integrity.js';
 
 const CHECK_TIMEOUT_MS = 15_000;
 const ENV_MANIFEST_URL = 'OTTO_INCREMENTAL_UPDATE_MANIFEST_URL';
@@ -87,7 +88,11 @@ function resolveIncrementalManifestUrl(candidate = process.env[ENV_MANIFEST_URL]
   }
 }
 
-async function fetchJson(url: string, timeoutMs: number): Promise<FetchJsonResult> {
+async function fetchJson(
+  url: string,
+  timeoutMs: number,
+  expectedSha256?: string,
+): Promise<FetchJsonResult> {
   const controller = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -105,7 +110,7 @@ async function fetchJson(url: string, timeoutMs: number): Promise<FetchJsonResul
     });
     if (!res.ok) return { ok: false, error: `增量更新源返回 HTTP ${res.status}`, httpStatus: res.status };
     try {
-      return { ok: true, json: (await res.json()) as unknown };
+      return parseVerifiedManifestJson(await res.text(), expectedSha256);
     } catch {
       return { ok: false, error: '增量更新清单不是有效 JSON' };
     }
@@ -139,7 +144,10 @@ export class IncrementalUpdateService {
 
   constructor(private readonly getWebContents?: () => WebContents | undefined) {}
 
-  async checkForUpdates(manifestUrlOverride?: string): Promise<IncrementalUpdateCheckResult> {
+  async checkForUpdates(
+    manifestUrlOverride?: string,
+    expectedManifestSha256?: string,
+  ): Promise<IncrementalUpdateCheckResult> {
     this.lastManifest = null;
     this.allowedAssetOrigins = [];
     const appVersion = app.getVersion();
@@ -152,7 +160,11 @@ export class IncrementalUpdateService {
       };
     }
 
-    const fetched = await fetchJson(manifestUrl, CHECK_TIMEOUT_MS);
+    const fetched = await fetchJson(
+      manifestUrl,
+      CHECK_TIMEOUT_MS,
+      expectedManifestSha256,
+    );
     if (!fetched.ok) return { status: 'check-failed', appVersion, message: fetched.error };
 
     const parsed = parseIncrementalUpdateManifest(fetched.json);

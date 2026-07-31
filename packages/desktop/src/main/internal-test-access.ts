@@ -7,4 +7,7 @@
  * 构建明确标记的内部免登录测试包，而不是删除认证能力。
  */
 
-export const INTERNAL_TEST_ACCESS_ENABLED = false;
+/** 仅显式开启本地预览内测入口；正式启动默认仍强制企业验证。 */
+export const INTERNAL_TEST_ACCESS_ENABLED =
+  typeof process !== 'undefined'
+  && process.env.OTTO_INTERNAL_TEST_ACCESS === '1';

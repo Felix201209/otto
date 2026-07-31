@@ -59,6 +59,29 @@ export function IconAgent({ size, className }: IconProps): React.JSX.Element {
   );
 }
 
+/** 默认账户头像：简洁的人形轮廓，避免用字母或高饱和色块占位。 */
+export function IconUserAvatar({ size = 28, className }: IconProps): React.JSX.Element {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 32 32"
+      fill="none"
+      className={className}
+      aria-hidden
+    >
+      <circle cx="16" cy="16" r="15" fill="currentColor" opacity=".14" />
+      <circle cx="16" cy="12" r="5" fill="currentColor" opacity=".82" />
+      <path
+        d="M7.5 26c1.4-4.2 4.3-6.3 8.5-6.3s7.1 2.1 8.5 6.3"
+        fill="currentColor"
+        opacity=".82"
+      />
+      <path d="M10 26.5h12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" opacity=".35" />
+    </svg>
+  );
+}
+
 export function IconList({ size, className }: IconProps): React.JSX.Element {
   return (
     <svg {...base(size)} className={className}>
@@ -99,6 +122,15 @@ export function IconFile({ size, className }: IconProps): React.JSX.Element {
     <svg {...base(size)} className={className}>
       <path d="M14 3v5h5" />
       <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+    </svg>
+  );
+}
+
+/** 文件夹：用于在系统文件管理器中定位输出文件。 */
+export function IconFolder({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M3 6.5A2.5 2.5 0 0 1 5.5 4H9l2 2h7.5A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5Z" />
     </svg>
   );
 }

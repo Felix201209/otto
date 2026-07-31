@@ -8,6 +8,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Config } from '../config/config.js';
 import type { WorkLogEntry } from './workLog.js';
+import { LocalKnowledgeStore } from '../knowledge/localKnowledgeStore.js';
 
 const workLogMock = vi.hoisted(() => ({
   readDateRange: vi.fn(),
@@ -114,6 +115,71 @@ describe('AutoSkillGenerator 个人 Skill 候选闭环', () => {
     expect(candidate).toBeDefined();
     expect(candidate?.skillContent).toContain('业务交付流程');
     expect(candidate?.skillContent).toContain('已观察到的典型需求');
+  });
+
+  it('把同类成果的真实失败吸收到边界说明，而不是伪造百分百成功', async () => {
+    const logs = repeatedWorkResultLogs();
+    logs['2026-07-10'].push({
+      ...workResult('品牌营销方案', 10, '生成品牌营销方案'),
+      success: false,
+      details: '缺少品牌色导致交付返工',
+    });
+    workLogMock.readDateRange.mockResolvedValueOnce(logs);
+
+    const candidates = await generateSkillCandidates(fakeConfig);
+
+    const candidate = candidates.find((item) => item.name === 'auto-copywriting');
+    expect(candidate?.failureLessons).toContain('缺少品牌色导致交付返工');
+    expect(candidate?.skillContent).toContain('缺少品牌色导致交付返工');
+    expect(candidate?.evidence?.join('\n')).toContain('成功率 75%');
+  });
+
+  it('使用跨会话稳定个人知识增强 Skill 的步骤依据', async () => {
+    workLogMock.readDateRange.mockResolvedValueOnce(repeatedWorkResultLogs());
+    const store = new LocalKnowledgeStore();
+    await store.add(
+      'copywriting',
+      '品牌营销方案交付前必须核对品牌色、受众和统计周期',
+      ['品牌营销'],
+      'brand-check',
+      0.95,
+      'session-a',
+    );
+    await store.reinforceByFingerprint('brand-check', { sourceSessionId: 'session-b' });
+
+    const candidates = await generateSkillCandidates(fakeConfig);
+    const candidate = candidates.find((item) => item.name === 'auto-copywriting');
+
+    expect(candidate?.knowledgeEvidence).toHaveLength(1);
+    expect(candidate?.evidence?.join('\n')).toContain('个人知识证据');
+  });
+
+  it('确认增强已有 Skill 时保留旧版本并写入证据签名', async () => {
+    const skillDir = path.join(resolveAutoSkillSkillsDir(), 'auto-copywriting');
+    const skillPath = path.join(skillDir, 'SKILL.md');
+    await fs.mkdir(skillDir, { recursive: true });
+    await fs.writeFile(skillPath, [
+      '---',
+      'name: auto-copywriting',
+      'description: 品牌营销方案流程',
+      '---',
+      '# 旧版品牌营销流程',
+    ].join('\n'));
+    const logs = repeatedWorkResultLogs();
+    logs['2026-07-10'].push({
+      ...workResult('品牌营销方案', 10, '生成品牌营销方案'),
+      success: false,
+      details: '品牌色缺失导致返工',
+    });
+    workLogMock.readDateRange.mockResolvedValueOnce(logs);
+
+    const candidate = (await generateSkillCandidates(fakeConfig))
+      .find((item) => item.targetSkillName === 'auto-copywriting');
+    expect(candidate?.recommendation).toBe('enhance');
+    await confirmAndSaveSkill(candidate!);
+
+    expect(await fs.readFile(skillPath, 'utf8')).toContain('otto-auto-skill-evidence:');
+    expect(await fs.readdir(path.join(skillDir, 'history'))).toHaveLength(1);
   });
 
   it('扫描只暂存候选，用户明确确认后才写 SKILL.md', async () => {

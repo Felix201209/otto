@@ -72,6 +72,23 @@ OTTO_BOOTSTRAP_USERNAME="${OTTO_BOOTSTRAP_USERNAME:-admin}"
 OTTO_BOOTSTRAP_PASSWORD="${OTTO_BOOTSTRAP_PASSWORD:-auto}"
 OTTO_BOOTSTRAP_NAME="${OTTO_BOOTSTRAP_NAME:-系统管理员}"
 OTTO_ALLOW_SMS_DISABLED="${OTTO_ALLOW_SMS_DISABLED:-0}"
+OTTO_BACKUP_ENCRYPTION_KEY="${OTTO_BACKUP_ENCRYPTION_KEY:-auto}"
+OTTO_BACKUP_INTERVAL_HOURS="${OTTO_BACKUP_INTERVAL_HOURS:-24}"
+OTTO_BACKUP_RETENTION_DAYS="${OTTO_BACKUP_RETENTION_DAYS:-30}"
+OTTO_BACKUP_MINIMUM_RETAINED="${OTTO_BACKUP_MINIMUM_RETAINED:-3}"
+OTTO_BACKUP_REPLICA_DIR="${OTTO_BACKUP_REPLICA_DIR:-}"
+OTTO_DISK_MIN_FREE_MB="${OTTO_DISK_MIN_FREE_MB:-2048}"
+OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE="${OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE:-}"
+OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE="${OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE:-}"
+OTTO_FIELD_ENCRYPTION_KEY_FILE="${OTTO_FIELD_ENCRYPTION_KEY_FILE:-}"
+OTTO_TELEMETRY_ENDPOINT="${OTTO_TELEMETRY_ENDPOINT:-}"
+OTTO_TELEMETRY_RETENTION_DAYS="${OTTO_TELEMETRY_RETENTION_DAYS:-90}"
+OTTO_DATA_CONTROLLER_NAME="${OTTO_DATA_CONTROLLER_NAME:-}"
+OTTO_PRIVACY_CONTACT="${OTTO_PRIVACY_CONTACT:-}"
+OTTO_DATA_REGION="${OTTO_DATA_REGION:-CN}"
+OTTO_DATA_RESIDENCY="${OTTO_DATA_RESIDENCY:-customer_server}"
+OTTO_STORAGE_VOLUME_ENCRYPTED="${OTTO_STORAGE_VOLUME_ENCRYPTED:-false}"
+OTTO_CROSS_BORDER_DATA_ENABLED="${OTTO_CROSS_BORDER_DATA_ENABLED:-false}"
 
 [[ "$OTTO_PUBLIC_HOST" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] \
   || otto_die "OTTO_PUBLIC_HOST 不是合法主机名"
@@ -103,6 +120,43 @@ case "$OTTO_ALLOW_SMS_DISABLED" in
   0|1) ;;
   *) otto_die "OTTO_ALLOW_SMS_DISABLED 只能是 0 或 1" ;;
 esac
+for numeric_value in \
+  "$OTTO_BACKUP_INTERVAL_HOURS" \
+  "$OTTO_BACKUP_RETENTION_DAYS" \
+  "$OTTO_BACKUP_MINIMUM_RETAINED" \
+  "$OTTO_DISK_MIN_FREE_MB" \
+  "$OTTO_TELEMETRY_RETENTION_DAYS"; do
+  [[ "$numeric_value" =~ ^[0-9]+$ ]] && [ "$numeric_value" -ge 1 ] \
+    || otto_die "备份周期、保留策略和磁盘阈值必须是正整数"
+done
+case "$OTTO_CROSS_BORDER_DATA_ENABLED" in
+  true|false) ;;
+  *) otto_die "OTTO_CROSS_BORDER_DATA_ENABLED 只能是 true 或 false" ;;
+esac
+case "$OTTO_STORAGE_VOLUME_ENCRYPTED" in
+  true|false) ;;
+  *) otto_die "OTTO_STORAGE_VOLUME_ENCRYPTED 只能是 true 或 false" ;;
+esac
+if [ -n "$OTTO_BACKUP_REPLICA_DIR" ] \
+  && [ "$OTTO_BACKUP_REPLICA_DIR" != "/var/backups/otto-enterprise" ]; then
+  otto_die "一键部署的异地备份挂载点固定为 /var/backups/otto-enterprise"
+fi
+case "$OTTO_TELEMETRY_ENDPOINT" in
+  ""|https://*) ;;
+  *) otto_die "OTTO_TELEMETRY_ENDPOINT 必须为空或使用 HTTPS" ;;
+esac
+for key_variable in \
+  OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE \
+  OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE \
+  OTTO_FIELD_ENCRYPTION_KEY_FILE; do
+  key_path="${!key_variable}"
+  [ -z "$key_path" ] && continue
+  [[ "$key_path" = /* ]] || otto_die "${key_variable} 必须使用绝对路径"
+  [ -f "$key_path" ] && [ ! -L "$key_path" ] \
+    || otto_die "${key_variable} 必须指向已存在的普通文件，且不能是符号链接"
+  [ "$(wc -c < "$key_path")" -eq 32 ] \
+    || otto_die "${key_variable} 必须包含恰好 32 字节原始密钥"
+done
 if [ "$OTTO_ALLOW_SMS_DISABLED" = "0" ]; then
   for key in \
     ALIYUN_SMS_ACCESS_KEY_ID \
@@ -312,6 +366,7 @@ fi
 RELEASE_INFO="$("$NODE_PATH" "${SCRIPT_DIR}/tools/verify-release.mjs" "${SCRIPT_DIR}/release")"
 RELEASE_VERSION="$("$NODE_PATH" -e "const x=JSON.parse(process.argv[1]);console.log(x.version)" "$RELEASE_INFO")"
 BUILD_ID="$("$NODE_PATH" -e "const x=JSON.parse(process.argv[1]);console.log(x.buildCommit)" "$RELEASE_INFO")"
+RELEASE_SCHEMA_TO="$("$NODE_PATH" -e "const x=JSON.parse(process.argv[1]);console.log(x.database.schemaTo)" "$RELEASE_INFO")"
 RELEASE_NAME="${RELEASE_VERSION}-${BUILD_ID:0:12}"
 TARGET_RELEASE="${INSTALL_ROOT}/releases/${RELEASE_NAME}"
 
@@ -405,10 +460,8 @@ NODE
   IMPORT_INFO="$("$NODE_PATH" "${SCRIPT_DIR}/tools/db-tool.mjs" inspect "$MIGRATION_DB")"
   IMPORT_SCHEMA="$("$NODE_PATH" -e \
     "const x=JSON.parse(process.argv[1]);console.log(x.userVersion)" "$IMPORT_INFO")"
-  case "$IMPORT_SCHEMA" in
-    2|3|4|5|6|7|8|9|10|11) ;;
-    *) otto_die "本迁入包只接受 schema 2 至 11，迁移包为 schema ${IMPORT_SCHEMA}；请先在旧服务器走受控升级" 5 ;;
-  esac
+  [ "$IMPORT_SCHEMA" -ge 2 ] && [ "$IMPORT_SCHEMA" -le "$RELEASE_SCHEMA_TO" ] \
+    || otto_die "本迁入包只接受 schema 2 至 ${RELEASE_SCHEMA_TO}，迁移包为 schema ${IMPORT_SCHEMA}；请先在旧服务器走受控升级" 5
   EXPECTED_DB_SHA="$("$NODE_PATH" -e \
     "const x=require(process.argv[1]);console.log(x.database.sha256)" "$MIGRATION_MANIFEST")"
   ACTUAL_DB_SHA="$("$NODE_PATH" -e \
@@ -506,17 +559,31 @@ chown root:root "$INSTALL_ROOT" "${INSTALL_ROOT}/runtime" "${INSTALL_ROOT}/relea
 chown -R root:root "${INSTALL_ROOT}/runtime" "$TARGET_RELEASE"
 otto_prepare_service_layout "$INSTALL_ROOT" "$TARGET_RELEASE"
 "$NODE_PATH" "${SCRIPT_DIR}/tools/verify-release.mjs" "$TARGET_RELEASE" >/dev/null
+export OTTO_LICENSE_TRUST_FILE="${TARGET_RELEASE}/license-public-keys.json"
 
 mkdir -p "${INSTALL_ROOT}/deploy"
 DEPLOY_CREATED=1
 cp -a "${SCRIPT_DIR}/tools" "${INSTALL_ROOT}/deploy/"
 cp -a "${SCRIPT_DIR}/lib" "${INSTALL_ROOT}/deploy/"
 cp -a "${SCRIPT_DIR}/verify.sh" "${INSTALL_ROOT}/deploy/verify.sh"
-chmod 755 "${INSTALL_ROOT}/deploy/verify.sh"
+cp -a "${SCRIPT_DIR}/backup-now.sh" "${INSTALL_ROOT}/deploy/backup-now.sh"
+cp -a "${SCRIPT_DIR}/restore-backup.sh" "${INSTALL_ROOT}/deploy/restore-backup.sh"
+chmod 755 \
+  "${INSTALL_ROOT}/deploy/verify.sh" \
+  "${INSTALL_ROOT}/deploy/backup-now.sh" \
+  "${INSTALL_ROOT}/deploy/restore-backup.sh"
 
 if [ "$OTTO_ENTERPRISE_ADMIN_TOKEN" = "auto" ]; then
   OTTO_ENTERPRISE_ADMIN_TOKEN="$(otto_random_secret "$NODE_PATH")"
 fi
+if [ "$OTTO_BACKUP_ENCRYPTION_KEY" = "auto" ]; then
+  OTTO_BACKUP_ENCRYPTION_KEY="$($NODE_PATH --input-type=module -e \
+    "import { randomBytes } from 'node:crypto'; console.log(randomBytes(32).toString('base64'))")"
+fi
+"$NODE_PATH" --input-type=module -e \
+  "const value = process.argv[1]; const key = /^[0-9a-f]{64}$/i.test(value) ? Buffer.from(value, 'hex') : Buffer.from(value, 'base64'); if (key.length !== 32) process.exit(1)" \
+  "$OTTO_BACKUP_ENCRYPTION_KEY" \
+  || otto_die "OTTO_BACKUP_ENCRYPTION_KEY 必须是 32 字节 Base64 或 64 位十六进制密钥"
 [ "${#OTTO_ENTERPRISE_ADMIN_TOKEN}" -ge 32 ] \
   || otto_die "OTTO_ENTERPRISE_ADMIN_TOKEN 至少 32 个字符"
 export OTTO_ENTERPRISE_ADMIN_TOKEN
@@ -551,6 +618,7 @@ CANARY_OK=0
 for _ in $(seq 1 20); do
   if "$NODE_PATH" "${SCRIPT_DIR}/tools/health-check.mjs" \
     http://127.0.0.1:17777 "$RELEASE_VERSION" "$BUILD_ID" \
+    "$RELEASE_SCHEMA_TO" \
     "$([ "$OTTO_ALLOW_SMS_DISABLED" = "1" ] && printf 'allow-sms-disabled' || printf 'require-sms')" \
     >/dev/null 2>&1; then
     CANARY_OK=1
@@ -568,9 +636,22 @@ if ! id otto-enterprise >/dev/null 2>&1; then
   useradd --system --home-dir "$DATA_DIR" --shell /usr/sbin/nologin \
     --user-group otto-enterprise
 fi
+for key_path in \
+  "$OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE" \
+  "$OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE" \
+  "$OTTO_FIELD_ENCRYPTION_KEY_FILE"; do
+  [ -z "$key_path" ] && continue
+  runuser -u otto-enterprise -- test -r "$key_path" \
+    || otto_die "otto-enterprise 服务账号无法读取外部加密密钥：${key_path}"
+done
 mkdir -p "$DATA_DIR" "$CONFIG_DIR"
 chown otto-enterprise:otto-enterprise "$DATA_DIR"
 chmod 0700 "$DATA_DIR"
+if [ -n "$OTTO_BACKUP_REPLICA_DIR" ]; then
+  mkdir -p "$OTTO_BACKUP_REPLICA_DIR"
+  chown otto-enterprise:otto-enterprise "$OTTO_BACKUP_REPLICA_DIR"
+  chmod 0700 "$OTTO_BACKUP_REPLICA_DIR"
+fi
 install -o otto-enterprise -g otto-enterprise -m 0600 \
   "${CANARY_DIR}/data.db" "${DATA_DIR}/data.db"
 DATA_CREATED=1
@@ -600,6 +681,23 @@ write_env "$ENV_TEMP" \
   OTTO_ENTERPRISE_TRUST_PROXY_HOPS "1" \
   OTTO_APP_VERSION "$RELEASE_VERSION" \
   OTTO_BUILD_COMMIT "$BUILD_ID" \
+  OTTO_BACKUP_ENCRYPTION_KEY "$OTTO_BACKUP_ENCRYPTION_KEY" \
+  OTTO_BACKUP_INTERVAL_HOURS "$OTTO_BACKUP_INTERVAL_HOURS" \
+  OTTO_BACKUP_RETENTION_DAYS "$OTTO_BACKUP_RETENTION_DAYS" \
+  OTTO_BACKUP_MINIMUM_RETAINED "$OTTO_BACKUP_MINIMUM_RETAINED" \
+  OTTO_BACKUP_REPLICA_DIR "$OTTO_BACKUP_REPLICA_DIR" \
+  OTTO_DISK_MIN_FREE_MB "$OTTO_DISK_MIN_FREE_MB" \
+  OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE "$OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE" \
+  OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE "$OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE" \
+  OTTO_FIELD_ENCRYPTION_KEY_FILE "$OTTO_FIELD_ENCRYPTION_KEY_FILE" \
+  OTTO_TELEMETRY_ENDPOINT "$OTTO_TELEMETRY_ENDPOINT" \
+  OTTO_TELEMETRY_RETENTION_DAYS "$OTTO_TELEMETRY_RETENTION_DAYS" \
+  OTTO_DATA_CONTROLLER_NAME "$OTTO_DATA_CONTROLLER_NAME" \
+  OTTO_PRIVACY_CONTACT "$OTTO_PRIVACY_CONTACT" \
+  OTTO_DATA_REGION "$OTTO_DATA_REGION" \
+  OTTO_DATA_RESIDENCY "$OTTO_DATA_RESIDENCY" \
+  OTTO_STORAGE_VOLUME_ENCRYPTED "$OTTO_STORAGE_VOLUME_ENCRYPTED" \
+  OTTO_CROSS_BORDER_DATA_ENABLED "$OTTO_CROSS_BORDER_DATA_ENABLED" \
   ALIYUN_SMS_PROVIDER "${ALIYUN_SMS_PROVIDER:-pnvs}" \
   ALIYUN_SMS_ACCESS_KEY_ID "${ALIYUN_SMS_ACCESS_KEY_ID:-}" \
   ALIYUN_SMS_ACCESS_KEY_SECRET "${ALIYUN_SMS_ACCESS_KEY_SECRET:-}" \
@@ -679,6 +777,7 @@ if [ "$OTTO_CADDY_MODE" = "managed" ]; then
   for _ in $(seq 1 30); do
     if "$NODE_PATH" "${SCRIPT_DIR}/tools/health-check.mjs" \
       "$OTTO_ENTERPRISE_PUBLIC_URL" "$RELEASE_VERSION" "$BUILD_ID" \
+      "$RELEASE_SCHEMA_TO" \
       "$([ "$OTTO_ALLOW_SMS_DISABLED" = "1" ] && printf 'allow-sms-disabled' || printf 'require-sms')" \
       >/dev/null 2>&1; then
       EDGE_OK=1

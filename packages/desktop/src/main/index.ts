@@ -105,6 +105,10 @@ import { installAppMenu } from './menu.js';
 import { UpdateService } from './update-service.js';
 import { IncrementalUpdateService } from './incremental-update-service.js';
 import {
+  checkForUpdateUsingPolicy,
+  resolveDesktopDistribution,
+} from './update-policy-adapter.js';
+import {
   EnterpriseNotificationIdentityBoundary,
   NotificationService,
   type NotificationPayload,
@@ -126,6 +130,7 @@ import {
   type AccountUpdateInput,
   type EnterpriseAccount,
   type EnterpriseDirectMessageAttachmentUpload,
+  type EnterprisePrivacyDeletionReceipt,
   type EnterpriseKnowledgeRecordInput,
   type EnterpriseModuleUpdateDescriptor,
   type EnterpriseOrganizationFeatures,
@@ -187,6 +192,7 @@ function normalizeEnterpriseMessageAttachments(
 }
 
 import { AccountDataSyncService } from './account-data-sync.js';
+import { EnterpriseSkillUsageReporter } from './enterprise-skill-usage-reporter.js';
 import {
   authenticateAndSyncEnterpriseAccount,
   clearInvalidatedEnterpriseIdentity,
@@ -235,6 +241,76 @@ function worklogRootDir(): string {
   return path.join(os.homedir(), '.otto-user', 'memory', 'worklog');
 }
 
+function userSkillsRootDir(): string {
+  const userDir = process.env['OTTO_USER_DIR']?.trim();
+  return path.join(userDir || path.join(os.homedir(), '.otto-user'), 'skills');
+}
+
+function localSkillDescription(content: string): string {
+  const frontmatter = content.match(/^---\s*[\r\n]+[\s\S]*?^description:\s*["']?([^\r\n"']+)/mu);
+  if (frontmatter?.[1]?.trim()) return frontmatter[1].trim().slice(0, 1_000);
+  const paragraph = content
+    .split(/\r?\n/u)
+    .map((line) => line.replace(/^\s*[#>*-]+\s*/u, '').trim())
+    .find((line) => line && !line.startsWith('---') && !/^name:/iu.test(line));
+  return (paragraph || '本地 Skill').slice(0, 1_000);
+}
+
+function safeLocalSkillName(value: unknown): string {
+  if (typeof value !== 'string') throw new Error('Skill 名称格式不正确');
+  const name = value.trim();
+  if (!name || name.length > 160 || name === '.' || name === '..' || /[/\\\0]/u.test(name)) {
+    throw new Error('Skill 名称格式不正确');
+  }
+  return name;
+}
+
+async function localSkillFilePath(name: string): Promise<string> {
+  const directory = path.join(userSkillsRootDir(), name);
+  const filePath = path.join(directory, 'SKILL.md');
+  const [directoryStat, fileStat] = await Promise.all([
+    fs.promises.lstat(directory).catch(() => null),
+    fs.promises.lstat(filePath).catch(() => null),
+  ]);
+  if (!directoryStat?.isDirectory() || directoryStat.isSymbolicLink()
+    || !fileStat?.isFile() || fileStat.isSymbolicLink()) {
+    throw new Error('本地 Skill 不存在或路径不安全，请刷新后重试');
+  }
+  return filePath;
+}
+
+async function replaceFileFromTemp(tempPath: string, targetPath: string): Promise<void> {
+  try {
+    await fs.promises.rename(tempPath, targetPath);
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error
+      ? String((error as { code?: unknown }).code)
+      : '';
+    if (code !== 'EEXIST' && code !== 'EPERM') throw error;
+    await fs.promises.rm(targetPath, { force: true });
+    await fs.promises.rename(tempPath, targetPath);
+  }
+}
+
+async function localMarketplaceInstallVersions(): Promise<Map<string, number>> {
+  const versions = new Map<string, number>();
+  const entries = await fs.promises.readdir(userSkillsRootDir(), { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith('market-')) continue;
+    try {
+      const metadataPath = path.join(userSkillsRootDir(), entry.name, '.otto-market.json');
+      const metadata = JSON.parse(await fs.promises.readFile(metadataPath, 'utf8')) as Record<string, unknown>;
+      if (typeof metadata.skillId === 'string' && typeof metadata.version === 'number'
+        && Number.isInteger(metadata.version) && metadata.version > 0) {
+        versions.set(metadata.skillId, metadata.version);
+      }
+    } catch {
+      // Invalid local provenance is treated as not installed on this device.
+    }
+  }
+  return versions;
+}
+
 /** 部门 Skill 共享记录（.otto/org/skill-shares.json 条目；krx 企业面板数据）。 */
 interface SkillShareRecord {
   skillName?: string;
@@ -281,6 +357,9 @@ const enterpriseNotificationIdentityBoundary = new EnterpriseNotificationIdentit
 );
 /** 当前 server 端点（发现的或拉起的）。renderer 经 IPC 取它建 WS。 */
 let endpoint: ServerEndpoint | undefined;
+let endpointEnsurePromise: Promise<void> | undefined;
+let endpointRetryTimer: ReturnType<typeof setTimeout> | undefined;
+let endpointRetryAttempt = 0;
 /** 主窗口单例引用。 */
 let mainWindow: BrowserWindow | undefined;
 /** macOS 后台提醒句柄；窗口重新聚焦时主动取消。 */
@@ -298,9 +377,12 @@ let videoEditorWindow: BrowserWindow | undefined;
 // ── IPC channel 名（与 preload 对齐）──
 const IPC = {
   getEndpoint: 'otto:get-endpoint',
+  runtimeDiagnostic: 'otto:runtime-diagnostic',
   endpointChanged: 'otto:endpoint-changed',
   openExternal: 'otto:open-external',
   openPath: 'otto:open-path',
+  inspectLocalPath: 'otto:inspect-local-path',
+  activateLocalPath: 'otto:activate-local-path',
   selectFiles: 'otto:select-files',
   grantBrowserFile: 'otto:grant-browser-file',
   authorizeMessageFiles: 'otto:authorize-message-files',
@@ -326,6 +408,13 @@ const IPC = {
   createDiagnosticBundle: 'otto:create-diagnostic-bundle',
   skillShareList: 'otto:skill-share-list',
   skillMarketplace: 'otto:skill-marketplace',
+  enterpriseSkillLocalList: 'otto:enterprise-skill-local-list',
+  enterpriseSkillList: 'otto:enterprise-skill-list',
+  enterpriseSkillSubmit: 'otto:enterprise-skill-submit',
+  enterpriseSkillReview: 'otto:enterprise-skill-review',
+  enterpriseSkillInstall: 'otto:enterprise-skill-install',
+  enterpriseSkillRate: 'otto:enterprise-skill-rate',
+  enterpriseSkillLeaderboard: 'otto:enterprise-skill-leaderboard',
   setLocalTestUrl: 'otto:set-local-test-url',
   appVersion: 'otto:app-version',
   updateCheck: 'otto:update-check',
@@ -355,10 +444,17 @@ const IPC = {
   enterpriseAccountCreate: 'otto:enterprise-account-create',
   enterpriseAccountUpdate: 'otto:enterprise-account-update',
   enterpriseAccountDelete: 'otto:enterprise-account-delete',
+  enterpriseDataGovernanceGet: 'otto:enterprise-data-governance-get',
+  enterpriseLegalAccept: 'otto:enterprise-legal-accept',
+  enterprisePrivacyExport: 'otto:enterprise-privacy-export',
+  enterprisePrivacyDelete: 'otto:enterprise-privacy-delete',
   enterprisePair: 'otto:enterprise-pair',
   enterpriseUsageRecord: 'otto:enterprise-usage-record',
   enterpriseKnowledgeRecord: 'otto:enterprise-knowledge-record',
   enterpriseKnowledgeList: 'otto:enterprise-knowledge-list',
+  enterpriseKnowledgeReview: 'otto:enterprise-knowledge-review',
+  enterpriseKnowledgeRevise: 'otto:enterprise-knowledge-revise',
+  enterpriseKnowledgeRevisions: 'otto:enterprise-knowledge-revisions',
   enterpriseOrganizationView: 'otto:enterprise-organization-view',
   enterprisePresenceHeartbeat: 'otto:enterprise-presence-heartbeat',
   enterpriseOrganizationFeaturesGet: 'otto:enterprise-organization-features-get',
@@ -413,7 +509,18 @@ const IPC = {
 
 const enterpriseFetch = createEnterpriseNetworkFetch(fetch, INTERNAL_TEST_ACCESS_ENABLED);
 const enterpriseAuthOperations = new EnterpriseAuthOperationQueue();
-const accountDataSyncService = new AccountDataSyncService();
+const accountDataSyncService = new AccountDataSyncService({
+  protectMirror(plaintext) {
+    if (!safeStorage.isEncryptionAvailable()) return null;
+    return safeStorage.encryptString(plaintext).toString('base64');
+  },
+  unprotectMirror(protectedValue) {
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error('system secure storage is unavailable');
+    }
+    return safeStorage.decryptString(Buffer.from(protectedValue, 'base64'));
+  },
+});
 
 type AuthenticatedEnterpriseAccount =
   import('./enterprise-identity.js').AuthenticatedEnterpriseAccountInput;
@@ -476,6 +583,7 @@ async function synchronizeAuthenticatedEnterpriseAccount(
     // Authentication stays available; the periodic identity refresh retries sync.
     logAccountDataSyncFailure(error);
   }
+  void enterpriseSkillUsageReporter.poll();
 }
 const enterpriseClient = new EnterpriseClient(enterpriseFetch, () => {
   resetEnterpriseModuleUpdateState();
@@ -493,6 +601,21 @@ const enterpriseClient = new EnterpriseClient(enterpriseFetch, () => {
     mainWindow.webContents.send(IPC.enterpriseSessionInvalidated);
   }
 });
+const enterpriseSkillUsageReporter = new EnterpriseSkillUsageReporter({
+  skillsRoot: userSkillsRootDir,
+  usageFile: () => path.join(worklogRootDir(), 'skill_usage.jsonl'),
+  stateFile: () => path.join(app.getPath('userData'), 'enterprise-skill-usage-state.json'),
+  identity: () => {
+    const account = enterpriseClient.authenticatedAccountSnapshot();
+    const session = enterpriseClient.snapshot();
+    return account && session.token
+      ? { serverUrl: session.serverUrl, accountId: account.id }
+      : null;
+  },
+  report: async (skillId, success, eventId) => {
+    await enterpriseClient.recordEnterpriseSkillUsage(skillId, success, eventId);
+  },
+});
 const enterpriseRegistrationIntents = new EnterpriseRegistrationIntentStore();
 let enterpriseSessionLoaded = false;
 let enterpriseIntentRendererReady = false;
@@ -502,6 +625,23 @@ let enterpriseModuleUpdateTimer: ReturnType<typeof setInterval> | undefined;
 let enterpriseModuleUpdateFingerprint = '';
 let enterpriseModuleUpdatePolling = false;
 const ENTERPRISE_MODULE_UPDATE_POLL_INTERVAL_MS = 2 * 60_000;
+let enterpriseSkillUsageTimer: ReturnType<typeof setInterval> | undefined;
+const ENTERPRISE_SKILL_USAGE_POLL_INTERVAL_MS = 30_000;
+
+function startEnterpriseSkillUsageReporting(): void {
+  if (enterpriseSkillUsageTimer) return;
+  enterpriseSkillUsageTimer = setInterval(() => {
+    if (!isQuitting) void enterpriseSkillUsageReporter.poll();
+  }, ENTERPRISE_SKILL_USAGE_POLL_INTERVAL_MS);
+  enterpriseSkillUsageTimer.unref?.();
+  void enterpriseSkillUsageReporter.poll();
+}
+
+function stopEnterpriseSkillUsageReporting(): void {
+  if (!enterpriseSkillUsageTimer) return;
+  clearInterval(enterpriseSkillUsageTimer);
+  enterpriseSkillUsageTimer = undefined;
+}
 
 function acceptEnterpriseRegistrationUrl(input: string): boolean {
   if (!enterpriseRegistrationIntents.acceptUrl(input)) return false;
@@ -626,6 +766,33 @@ const updateService = new UpdateService(
 const incrementalUpdateService = new IncrementalUpdateService(
   () => mainWindow?.webContents,
 );
+const desktopDistributionId = resolveDesktopDistribution(
+  process.env.OTTO_DISTRIBUTION_ID,
+  app.getName(),
+);
+
+async function checkDesktopUpdate() {
+  const session = enterpriseClient.snapshot();
+  return checkForUpdateUsingPolicy({
+    distributionId: desktopDistributionId,
+    currentVersion: app.getVersion(),
+    hasEnterpriseSession: Boolean(session.token),
+    resolvePolicy: () => enterpriseClient.getDeploymentUpdatePolicy({
+      distributionId: desktopDistributionId,
+      currentVersion: app.getVersion(),
+    }),
+    checkLegacy: () => updateService.checkForUpdate(),
+    checkManagedFull: (reference) => updateService.checkForUpdate({
+      manifestUrl: reference.url,
+      manifestSha256: reference.sha256,
+      releasePageUrl: reference.url,
+    }),
+    checkIncremental: (reference) => incrementalUpdateService.checkForUpdates(
+      reference.url,
+      reference.sha256,
+    ),
+  });
+}
 
 function moduleUpdateFingerprint(updates: EnterpriseModuleUpdateDescriptor[]): string {
   return updates
@@ -1353,6 +1520,7 @@ function createWindow(): BrowserWindow {
     minWidth: 720,
     minHeight: 480,
     title: 'Otto',
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const } : {}),
     // 初始底色跟随系统深浅：暗色 #181818 / 浅色 #ffffff。硬编码任一固定色会在
     // 系统主题与之相反时于内容就绪前（及窗口边缘）闪出错误底色。themeSource 已
     // 在 whenReady 里设为 'system'，故 shouldUseDarkColors 反映的即 OS 当前主题。
@@ -1540,12 +1708,15 @@ function applyCsp(): void {
     // 内嵌 server 端口，CSP 也必须从第一帧就放行同一端口，否则 WS 会被浏览器拦截、
     // UI 永久显示“正在重连”，即使 server 实际已健康监听。
     const configuredPort = Number(process.env.OTTO_SERVER_PORT);
-    const port = endpoint?.port
-      ?? (Number.isFinite(configuredPort) && configuredPort > 0
+    const configuredStartPort =
+      Number.isFinite(configuredPort) && configuredPort > 0
         ? configuredPort
-        : CSP_FALLBACK_PORT);
+        : CSP_FALLBACK_PORT;
+    const ports = endpoint
+      ? [endpoint.port]
+      : Array.from({ length: 11 }, (_, index) => configuredStartPort + index);
     // HTTPS 只用于员工头像图片；脚本和网络请求仍严格限制在自身与本地 server。
-    const csp = buildRendererCsp(host, port);
+    const csp = buildRendererCsp(host, ports);
     callback({
       responseHeaders: {
         ...details.responseHeaders,
@@ -1569,18 +1740,47 @@ function applyCsp(): void {
 // ────────────────────────────────────────────────────────────────────────
 
 /** 确保 server 可用并把端点缓存下来；失败不抛（renderer 显示「未连接」）。 */
+function scheduleEndpointRetry(): void {
+  if (isQuitting || endpointRetryTimer) return;
+  const waitMs = Math.min(30_000, 1_000 * 2 ** Math.min(endpointRetryAttempt, 5));
+  endpointRetryAttempt += 1;
+  endpointRetryTimer = setTimeout(() => {
+    endpointRetryTimer = undefined;
+    void ensureEndpoint();
+  }, waitMs);
+  endpointRetryTimer.unref();
+}
+
 async function ensureEndpoint(): Promise<void> {
+  if (endpointEnsurePromise) return endpointEnsurePromise;
+  const operation = (async () => {
+    try {
+      tracer.updateStatus('正在连接服务…');
+      const ensured = await serverManager.ensure();
+      endpoint = ensured.endpoint;
+      endpointRetryAttempt = 0;
+      if (endpointRetryTimer) {
+        clearTimeout(endpointRetryTimer);
+        endpointRetryTimer = undefined;
+      }
+      tracer.updateStatus('服务运行中');
+      console.log(
+        `[otto-desktop] server ${ensured.ownership} @ http://${endpoint.host}:${endpoint.port}`,
+      );
+      pushEndpointToRenderer();
+    } catch (e) {
+      endpoint = undefined;
+      tracer.updateStatus('服务启动失败，正在重试');
+      pushEndpointToRenderer();
+      scheduleEndpointRetry();
+      console.error('[otto-desktop] server 启动失败:', e);
+    }
+  })();
+  endpointEnsurePromise = operation;
   try {
-    tracer.updateStatus('正在连接服务…');
-    const ensured = await serverManager.ensure();
-    endpoint = ensured.endpoint;
-    tracer.updateStatus('服务运行中');
-    console.log(
-      `[otto-desktop] server ${ensured.ownership} @ http://${endpoint.host}:${endpoint.port}`,
-    );
-    pushEndpointToRenderer();
-  } catch (e) {
-    console.error('[otto-desktop] server 启动失败:', e);
+    await operation;
+  } finally {
+    if (endpointEnsurePromise === operation) endpointEnsurePromise = undefined;
   }
 }
 
@@ -1713,7 +1913,8 @@ function registerIpc(): void {
     if (!input || typeof input !== 'object') throw new Error('注册信息格式不正确');
     const body = input as Record<string, unknown>;
     if (typeof body.challengeId !== 'string' || typeof body.code !== 'string'
-      || typeof body.name !== 'string' || typeof body.password !== 'string') {
+      || typeof body.name !== 'string' || typeof body.password !== 'string'
+      || body.legalConsent !== true) {
       throw new Error('姓名、密码和验证码均为必填项');
     }
     return enterpriseAuthOperations.run(async () => {
@@ -1723,6 +1924,7 @@ function registerIpc(): void {
           code: body.code as string,
           name: body.name as string,
           password: body.password as string,
+          legalConsent: true,
         }),
         enterpriseClient,
         synchronizeAuthenticatedEnterpriseAccount,
@@ -1841,6 +2043,63 @@ function registerIpc(): void {
     if (typeof id !== 'string' || !id) throw new Error('账号 ID 不正确');
     return enterpriseClient.deleteAccount(id);
   });
+  ipcMain.handle(IPC.enterpriseDataGovernanceGet, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.getDataGovernanceProfile();
+  });
+  ipcMain.handle(IPC.enterpriseLegalAccept, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.acceptCurrentLegalDocuments();
+  });
+  ipcMain.handle(IPC.enterprisePrivacyExport, async () => {
+    loadEnterpriseSession();
+    const payload = await enterpriseClient.exportMyAccountData();
+    const account = enterpriseClient.authenticatedAccountSnapshot();
+    const suggested = `otto-personal-data-${account?.id ?? 'account'}-${new Date().toISOString().slice(0, 10)}.json`;
+    const win = BrowserWindow.getFocusedWindow() ?? mainWindow;
+    const result = win
+      ? await dialog.showSaveDialog(win, {
+        title: '导出我的 Otto 数据',
+        defaultPath: path.join(app.getPath('documents'), suggested),
+        filters: [{ name: 'JSON 数据文件', extensions: ['json'] }],
+      })
+      : await dialog.showSaveDialog({
+        title: '导出我的 Otto 数据',
+        defaultPath: path.join(app.getPath('documents'), suggested),
+        filters: [{ name: 'JSON 数据文件', extensions: ['json'] }],
+      });
+    if (result.canceled || !result.filePath) return null;
+    await fs.promises.writeFile(
+      result.filePath,
+      `${JSON.stringify(payload, null, 2)}\n`,
+      { encoding: 'utf8', mode: 0o600 },
+    );
+    return { ok: true as const, path: result.filePath };
+  });
+  ipcMain.handle(IPC.enterprisePrivacyDelete, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('注销信息格式不正确');
+    const body = input as Record<string, unknown>;
+    if (typeof body.password !== 'string' || typeof body.confirmation !== 'string') {
+      throw new Error('请输入登录密码和注销确认文字');
+    }
+    return enterpriseAuthOperations.run(async (): Promise<EnterprisePrivacyDeletionReceipt> => {
+      const account = enterpriseClient.authenticatedAccountSnapshot();
+      if (!account) throw new Error('登录已失效，请重新登录');
+      const identity = accountDataSyncIdentity(account);
+      const receipt = await enterpriseClient.deleteMyAccount({
+        password: body.password as string,
+        confirmation: body.confirmation as string,
+      });
+      if (identity) await accountDataSyncService.erase(identity);
+      await synchronizeAuthenticatedEnterpriseAccount(null);
+      saveEnterpriseSession();
+      fileAccessGrants.clear();
+      notificationService.clearAll();
+      resetEnterpriseModuleUpdateState();
+      return receipt;
+    });
+  });
   ipcMain.handle(IPC.enterpriseUsageRecord, async (_e, input: unknown) => {
     loadEnterpriseSession();
     if (!input || typeof input !== 'object') throw new Error('Token 用量格式不正确');
@@ -1871,9 +2130,34 @@ function registerIpc(): void {
     }
     const record: EnterpriseKnowledgeRecordInput = {
       sourceId: body.sourceId,
+      title: typeof body.title === 'string' ? body.title : undefined,
       category: body.category,
       content: body.content,
       confidence: Math.min(1, Math.max(0, body.confidence)),
+      sourceType: body.sourceType === 'manual'
+        || body.sourceType === 'auto_capture'
+        || body.sourceType === 'work_result'
+        || body.sourceType === 'task_log'
+        || body.sourceType === 'document'
+        || body.sourceType === 'offboarding'
+        ? body.sourceType
+        : undefined,
+      sourceLabel: typeof body.sourceLabel === 'string' ? body.sourceLabel : undefined,
+      sourceSessionId: typeof body.sourceSessionId === 'string' ? body.sourceSessionId : undefined,
+      sourceFingerprint: typeof body.sourceFingerprint === 'string' ? body.sourceFingerprint : undefined,
+      tags: Array.isArray(body.tags)
+        ? body.tags.filter((tag): tag is string => typeof tag === 'string').slice(0, 8)
+        : undefined,
+      verified: body.verified === true,
+      impactScore: typeof body.impactScore === 'number' && Number.isFinite(body.impactScore)
+        ? Math.min(1, Math.max(0, body.impactScore))
+        : undefined,
+      significanceSignals: Array.isArray(body.significanceSignals)
+        ? body.significanceSignals
+          .filter((signal): signal is string => typeof signal === 'string')
+          .slice(0, 8)
+        : undefined,
+      observedAt: typeof body.observedAt === 'string' ? body.observedAt : undefined,
     };
     return enterpriseClient.recordKnowledge(record);
   });
@@ -1883,7 +2167,56 @@ function registerIpc(): void {
     return enterpriseClient.listKnowledge({
       query: typeof body.query === 'string' ? body.query : undefined,
       department: typeof body.department === 'string' ? body.department : undefined,
+      includeReview: body.includeReview === true,
+      status: body.status === 'pending_review'
+        || body.status === 'active'
+        || body.status === 'archived'
+        ? body.status
+        : undefined,
     });
+  });
+  ipcMain.handle(IPC.enterpriseKnowledgeReview, async (_e, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('知识审核格式不正确');
+    const body = input as Record<string, unknown>;
+    if (typeof body.id !== 'string' || !/^\d+$/u.test(body.id)
+      || (body.action !== 'approve' && body.action !== 'archive')) {
+      throw new Error('知识审核字段不完整');
+    }
+    return enterpriseClient.reviewKnowledge(
+      body.id,
+      body.action,
+      typeof body.note === 'string' ? body.note : undefined,
+    );
+  });
+  ipcMain.handle(IPC.enterpriseKnowledgeRevise, async (_e, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('知识修订格式不正确');
+    const body = input as Record<string, unknown>;
+    const revision = body.input && typeof body.input === 'object'
+      ? body.input as Record<string, unknown>
+      : {};
+    if (typeof body.id !== 'string' || !/^\d+$/u.test(body.id)
+      || typeof revision.title !== 'string' || !revision.title.trim()
+      || typeof revision.category !== 'string' || !revision.category.trim()
+      || typeof revision.content !== 'string' || !revision.content.trim()) {
+      throw new Error('知识修订字段不完整');
+    }
+    return enterpriseClient.reviseKnowledge(body.id, {
+      title: revision.title,
+      category: revision.category,
+      content: revision.content,
+      confidence: typeof revision.confidence === 'number' ? revision.confidence : undefined,
+      changeNote: typeof revision.changeNote === 'string' ? revision.changeNote : undefined,
+    });
+  });
+  ipcMain.handle(IPC.enterpriseKnowledgeRevisions, async (_e, input: unknown) => {
+    loadEnterpriseSession();
+    const body = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    if (typeof body.id !== 'string' || !/^\d+$/u.test(body.id)) {
+      throw new Error('知识版本参数不正确');
+    }
+    return enterpriseClient.listKnowledgeRevisions(body.id);
   });
   ipcMain.handle(IPC.enterpriseOrganizationView, async () => {
     loadEnterpriseSession();
@@ -1904,7 +2237,7 @@ function registerIpc(): void {
     }
     const allowed = new Set([
       'enterprise_tree', 'park_service', 'feishu_auto_reply',
-      'direct_messages', 'atoa', 'knowledge',
+      'direct_messages', 'atoa', 'knowledge', 'skill_market',
     ]);
     const patch = Object.fromEntries(Object.entries(input).filter(
       (entry): entry is [keyof EnterpriseOrganizationFeatures, boolean] => (
@@ -2282,7 +2615,11 @@ function registerIpc(): void {
     return transcribeAudio(bytes, mimeType, loadVoiceConfig());
   });
   // renderer 经 preload 拉当前端点（连接前 / 重连时）。
-  ipcMain.handle(IPC.getEndpoint, () => endpoint ?? null);
+  ipcMain.handle(IPC.getEndpoint, () => {
+    if (!endpoint) void ensureEndpoint();
+    return endpoint ?? null;
+  });
+  ipcMain.handle(IPC.runtimeDiagnostic, () => serverManager.getDesktopRuntimeDiagnostic());
 
   // host-only 命令（替代 webview 的 vscode host 命令；交付文档 [WEBVIEW] §5）。
   ipcMain.handle(IPC.openExternal, (_e, url: unknown) => {
@@ -2565,6 +2902,142 @@ function registerIpc(): void {
     }
   });
 
+  ipcMain.handle(IPC.enterpriseSkillLocalList, async () => {
+    const root = userSkillsRootDir();
+    const entries = await fs.promises.readdir(root, { withFileTypes: true }).catch(() => []);
+    const result: Array<{ name: string; description: string; kind: 'auto' | 'personal' }> = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name === 'cache' || entry.name === 'backups'
+        || entry.name.startsWith('market-')) continue;
+      const filePath = path.join(root, entry.name, 'SKILL.md');
+      try {
+        const stat = await fs.promises.stat(filePath);
+        if (!stat.isFile() || stat.size > 200_000) continue;
+        const content = await fs.promises.readFile(filePath, 'utf8');
+        result.push({
+          name: entry.name,
+          description: localSkillDescription(content),
+          kind: entry.name.startsWith('auto-') ? 'auto' : 'personal',
+        });
+      } catch {
+        // A partially written or removed Skill is skipped and can be retried on refresh.
+      }
+    }
+    return result.sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'));
+  });
+
+  ipcMain.handle(IPC.enterpriseSkillList, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    const body = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    const scope = body.scope === 'company' || body.scope === 'mine' || body.scope === 'review'
+      ? body.scope
+      : 'department';
+    const sort = body.sort === 'rating' || body.sort === 'installs' || body.sort === 'usage' || body.sort === 'newest'
+      ? body.sort
+      : 'recommended';
+    const [skills, localVersions] = await Promise.all([
+      enterpriseClient.listEnterpriseSkills({
+        scope,
+        sort,
+        query: typeof body.query === 'string' ? body.query : undefined,
+      }),
+      localMarketplaceInstallVersions(),
+    ]);
+    return skills.map((skill) => ({
+      ...skill,
+      installedVersion: localVersions.get(skill.id) ?? null,
+    }));
+  });
+
+  ipcMain.handle(IPC.enterpriseSkillSubmit, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('Skill 投稿参数不正确');
+    const body = input as Record<string, unknown>;
+    const localSkillName = safeLocalSkillName(body.localSkillName);
+    const skillPath = await localSkillFilePath(localSkillName);
+    const stat = await fs.promises.stat(skillPath);
+    if (stat.size > 200_000) throw new Error('Skill 内容不能超过 200000 个字符');
+    const content = await fs.promises.readFile(skillPath, 'utf8');
+    return enterpriseClient.submitEnterpriseSkill({
+      name: localSkillName,
+      description: localSkillDescription(content),
+      content,
+      visibility: body.visibility === 'company' ? 'company' : 'department',
+    });
+  });
+
+  ipcMain.handle(IPC.enterpriseSkillReview, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('Skill 审核参数不正确');
+    const body = input as Record<string, unknown>;
+    if (typeof body.id !== 'string' || !/^[A-Za-z0-9_-]{1,120}$/u.test(body.id)
+      || (body.action !== 'approve' && body.action !== 'archive')) {
+      throw new Error('Skill 审核参数不正确');
+    }
+    return enterpriseClient.reviewEnterpriseSkill(
+      body.id,
+      body.action,
+      body.visibility === 'company' || body.visibility === 'department'
+        ? body.visibility
+        : undefined,
+    );
+  });
+
+  ipcMain.handle(IPC.enterpriseSkillInstall, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    const body = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    if (typeof body.id !== 'string' || !/^[A-Za-z0-9_-]{1,120}$/u.test(body.id)) {
+      throw new Error('Skill 安装参数不正确');
+    }
+    const skill = await enterpriseClient.installEnterpriseSkill(body.id);
+    const targetDir = path.join(userSkillsRootDir(), `market-${body.id}`);
+    const targetPath = path.join(targetDir, 'SKILL.md');
+    const tempPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
+    const metadataPath = path.join(targetDir, '.otto-market.json');
+    const metadataTempPath = `${metadataPath}.${process.pid}.${Date.now()}.tmp`;
+    const targetDirectoryStat = await fs.promises.lstat(targetDir).catch(() => null);
+    if (targetDirectoryStat?.isSymbolicLink() || (targetDirectoryStat && !targetDirectoryStat.isDirectory())) {
+      throw new Error('Skill 安装目录不安全，请移除对应目录后重试');
+    }
+    await fs.promises.mkdir(targetDir, { recursive: true, mode: 0o700 });
+    try {
+      await fs.promises.writeFile(tempPath, skill.content, { encoding: 'utf8', mode: 0o600 });
+      await replaceFileFromTemp(tempPath, targetPath);
+      await fs.promises.writeFile(
+        metadataTempPath,
+        `${JSON.stringify({
+          skillId: skill.id,
+          skillName: skill.name,
+          version: skill.version,
+          contentHash: skill.contentHash,
+          installedAt: new Date().toISOString(),
+        }, null, 2)}\n`,
+        { encoding: 'utf8', mode: 0o600 },
+      );
+      await replaceFileFromTemp(metadataTempPath, metadataPath);
+    } finally {
+      await fs.promises.rm(tempPath, { force: true }).catch(() => undefined);
+      await fs.promises.rm(metadataTempPath, { force: true }).catch(() => undefined);
+    }
+    const { content: _content, ...view } = skill;
+    return { skill: view, installedPath: targetPath };
+  });
+
+  ipcMain.handle(IPC.enterpriseSkillRate, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    const body = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    if (typeof body.id !== 'string' || !/^[A-Za-z0-9_-]{1,120}$/u.test(body.id)
+      || !Number.isInteger(body.score) || Number(body.score) < 1 || Number(body.score) > 5) {
+      throw new Error('Skill 评分参数不正确');
+    }
+    return enterpriseClient.rateEnterpriseSkill(body.id, Number(body.score));
+  });
+
+  ipcMain.handle(IPC.enterpriseSkillLeaderboard, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.getEnterpriseSkillLeaderboard();
+  });
+
   ipcMain.handle(IPC.parkConfig, async () => {
     try {
       const p = path.join(os.homedir(), '.otto-user', 'park-services.json');
@@ -2618,7 +3091,7 @@ function registerIpc(): void {
   // 结果全部结构化透传，不在这里加工：「检查失败」与「已是最新」是 UpdateService
   // 返回的两种不同 status，任何一层都不许把失败粉饰成最新。
   ipcMain.handle(IPC.appVersion, () => app.getVersion());
-  ipcMain.handle(IPC.updateCheck, () => updateService.checkForUpdate());
+  ipcMain.handle(IPC.updateCheck, () => checkDesktopUpdate());
   ipcMain.handle(IPC.updateDownload, () => updateService.downloadUpdate());
   ipcMain.handle(IPC.updateCancel, () => {
     updateService.cancelDownload();
@@ -2644,24 +3117,69 @@ function registerIpc(): void {
     return incrementalUpdateService.applyUpdate(input.kind, input.id);
   });
 
-  ipcMain.handle(IPC.openPath, (_e, p: unknown) => {
-    // 仅允许打开用户 home 目录内的绝对路径（防越界打开 /etc/passwd 等敏感文件，code review LOW）。
-    // realpath 解析符号链接后再比较前缀，防 home 内 symlink 指向外部绕过；
-    // 目标不存在（realpath 抛 ENOENT）时直接拒绝。
-    if (typeof p === 'string' && p.length > 0 && path.isAbsolute(p)) {
-      let home: string;
-      let resolved: string;
-      try {
-        home = fs.realpathSync(app.getPath('home'));
-        resolved = fs.realpathSync(path.resolve(p));
-      } catch {
-        return Promise.resolve('');
-      }
-      if (resolved === home || resolved.startsWith(home + path.sep)) {
-        return shell.openPath(resolved);
-      }
+  const resolveUserLocalPath = (candidate: unknown): string | null => {
+    // 仅允许当前用户 home 内已存在的绝对路径。realpath 同时阻止符号链接越界。
+    if (typeof candidate !== 'string' || candidate.length === 0 || !path.isAbsolute(candidate)) {
+      return null;
     }
-    return Promise.resolve('');
+    try {
+      const home = fs.realpathSync(app.getPath('home'));
+      const resolved = fs.realpathSync(path.resolve(candidate));
+      return resolved === home || resolved.startsWith(home + path.sep) ? resolved : null;
+    } catch {
+      return null;
+    }
+  };
+  const unsafeOutputExtensions = new Set([
+    '.app', '.bat', '.cjs', '.cmd', '.com', '.command', '.desktop', '.exe', '.hta',
+    '.jar', '.js', '.jse', '.lnk', '.mjs', '.msi', '.ps1', '.reg', '.scr', '.sh',
+    '.url', '.vbe', '.vbs', '.wsf', '.wsh',
+  ]);
+  const inspectUserLocalPath = (candidate: unknown): {
+    resolved: string | null;
+    exists: boolean;
+    kind: 'file' | 'directory' | 'missing';
+    canOpen: boolean;
+  } => {
+    const resolved = resolveUserLocalPath(candidate);
+    if (!resolved) {
+      return { resolved: null, exists: false, kind: 'missing', canOpen: false };
+    }
+    try {
+      const stat = fs.statSync(resolved);
+      const kind = stat.isDirectory() ? 'directory' : stat.isFile() ? 'file' : 'missing';
+      const exists = kind !== 'missing';
+      const extension = path.extname(resolved).toLowerCase();
+      const canOpen = exists && (kind === 'directory' || !unsafeOutputExtensions.has(extension));
+      return { resolved, exists, kind, canOpen };
+    } catch {
+      return { resolved: null, exists: false, kind: 'missing', canOpen: false };
+    }
+  };
+
+  ipcMain.handle(IPC.openPath, (_e, p: unknown) => {
+    const resolved = resolveUserLocalPath(p);
+    return resolved ? shell.openPath(resolved) : Promise.resolve('');
+  });
+  ipcMain.handle(IPC.inspectLocalPath, (_e, p: unknown) => {
+    const { exists, kind, canOpen } = inspectUserLocalPath(p);
+    return { exists, kind, canOpen };
+  });
+  ipcMain.handle(IPC.activateLocalPath, async (_e, p: unknown, action: unknown) => {
+    const inspected = inspectUserLocalPath(p);
+    if (!inspected.resolved || !inspected.exists) {
+      return { ok: false, error: '文件不存在，或不在当前用户目录内。' };
+    }
+    if (action === 'reveal') {
+      shell.showItemInFolder(inspected.resolved);
+      return { ok: true };
+    }
+    if (action !== 'open') return { ok: false, error: '不支持的文件操作。' };
+    if (!inspected.canOpen) {
+      return { ok: false, error: '为安全起见，可执行文件只能在文件夹中定位。' };
+    }
+    const error = await shell.openPath(inspected.resolved);
+    return error ? { ok: false, error } : { ok: true };
   });
 
   // 导出会话（对齐 CLI /export）：原生保存对话框 + 写文件。取消返回 null，
@@ -2868,6 +3386,7 @@ if (!gotLock) {
     await ensureEndpoint();
     startEnterpriseIdentityRefresh();
     startEnterpriseModuleUpdatePolling();
+    startEnterpriseSkillUsageReporting();
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
@@ -2889,8 +3408,13 @@ if (!gotLock) {
 
   app.on('before-quit', (event) => {
     isQuitting = true;
+    if (endpointRetryTimer) {
+      clearTimeout(endpointRetryTimer);
+      endpointRetryTimer = undefined;
+    }
     stopEnterpriseIdentityRefresh();
     stopEnterpriseModuleUpdatePolling();
+    stopEnterpriseSkillUsageReporting();
     if (quitCleanupFinished) return;
     event.preventDefault();
     if (quitCleanupStarted) return;

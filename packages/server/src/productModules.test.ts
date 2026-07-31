@@ -34,7 +34,7 @@ function moduleDefinition(
 }
 
 describe('product module registry', () => {
-  it('publishes the 14 stable product module ids from one registry', () => {
+  it('publishes the stable product module ids from one registry', () => {
     expect(PRODUCT_MODULES.map((module) => module.id)).toEqual(PRODUCT_MODULE_IDS);
     expect(() => validateProductModuleRegistry(PRODUCT_MODULES)).not.toThrow();
   });
@@ -46,6 +46,7 @@ describe('product module registry', () => {
       'direct_messages',
       'atoa',
       'knowledge',
+      'skill_market',
       'park_service',
       'feishu_auto_reply',
     ]);

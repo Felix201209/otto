@@ -273,3 +273,18 @@ export function getWorklogReportFromRepository<
     safePeriodDays,
   );
 }
+
+export function listWorklogsForBackup(
+  store: Pick<WorklogRepositoryStore, 'db'>,
+  organizationId: string,
+): WorklogRecord[] {
+  return store
+    .db()
+    .prepare(
+      `SELECT * FROM task_logs
+       WHERE organization_id = ?
+       ORDER BY created_at DESC
+       LIMIT 1000`,
+    )
+    .all(organizationId) as WorklogRecord[];
+}

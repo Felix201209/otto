@@ -289,6 +289,25 @@ describe('ParkServicesPlugin', () => {
     expect(dialog.getAttribute('style')).toContain('translate(45px, 25px)');
   });
 
+  it('可以同时打开多个园区服务窗口，并分别最小化和继续办理', () => {
+    render(<ParkServicesPlugin />);
+    openDialog();
+
+    fireEvent.click(within(screen.getByLabelText('园区服务列表')).getByRole('button', { name: /装修管理/ }));
+    const renovationDialog = screen.getByRole('dialog', { name: '装修管理' });
+
+    openDialog();
+    fireEvent.click(within(screen.getByLabelText('园区服务列表')).getByRole('button', { name: /停车办理/ }));
+    const parkingDialog = screen.getByRole('dialog', { name: '停车办理' });
+
+    expect(renovationDialog).toBeTruthy();
+    expect(parkingDialog).toBeTruthy();
+    fireEvent.click(within(renovationDialog).getByRole('button', { name: '最小化装修管理窗口' }));
+    expect(screen.queryByRole('dialog', { name: '装修管理' })).toBeNull();
+    expect(screen.getByRole('dialog', { name: '停车办理' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '还原装修管理窗口' })).toBeTruthy();
+  });
+
   it('中心接口返回 null 时不显示宏创园区面板，也不回退旧本机品牌', async () => {
     const enterpriseParkView = vi.fn(async () => null);
     const parkConfig = vi.fn(async () => ({ brandName: '旧本机宏创园区服务' }));
@@ -521,13 +540,13 @@ describe('ParkServicesPlugin', () => {
   it('当天过去的会议时段变灰，未来时段保持可预约', () => {
     const now = new Date('2026-07-28T06:35:00.000Z');
     expect(isMeetingSlotPast('2026-07-28', '14:30', now)).toBe(true);
-    expect(isMeetingSlotPast('2026-07-28', '14:40', now)).toBe(false);
+    expect(isMeetingSlotPast('2026-07-28', '15:00', now)).toBe(false);
     expect(effectiveMeetingSlotStatus({
       id: 'past-slot',
       roomId: 'room-1',
       date: '2026-07-28',
       slotKey: '14:30',
-      label: '14:30–14:40',
+      label: '14:30–15:00',
       status: 'available',
       updatedAt: '2026-07-28',
     }, now)).toBe('closed');
@@ -536,7 +555,7 @@ describe('ParkServicesPlugin', () => {
   it('会议日期和过去时段始终按园区北京时间判断', () => {
     const afterShanghaiMidnight = new Date('2026-07-28T16:30:00.000Z');
     expect(
-      isMeetingSlotPast('2026-07-28', '22:50', afterShanghaiMidnight),
+      isMeetingSlotPast('2026-07-28', '22:30', afterShanghaiMidnight),
     ).toBe(true);
     expect(
       isMeetingSlotPast('2026-07-29', '09:00', afterShanghaiMidnight),
@@ -547,11 +566,11 @@ describe('ParkServicesPlugin', () => {
       isMeetingSlotPast('2026-07-29', '10:00', afterTenInShanghai),
     ).toBe(true);
     expect(
-      isMeetingSlotPast('2026-07-29', '10:10', afterTenInShanghai),
+      isMeetingSlotPast('2026-07-29', '10:30', afterTenInShanghai),
     ).toBe(false);
   });
 
-  it('会议室同日可选，22:00–23:00 完整显示六段，黄色时段可再次点击取消', async () => {
+  it('会议室同日可选，22:00–23:00 完整显示两个 30 分钟时段，黄色时段可再次点击取消', async () => {
     installRepairBridge('reporter');
     const tomorrowDate = new Date();
     tomorrowDate.setDate(tomorrowDate.getDate() + 1);
@@ -560,7 +579,7 @@ describe('ParkServicesPlugin', () => {
       String(tomorrowDate.getMonth() + 1).padStart(2, '0'),
       String(tomorrowDate.getDate()).padStart(2, '0'),
     ].join('-');
-    const keys = ['22:00', '22:10', '22:20', '22:30', '22:40', '22:50'];
+    const keys = ['22:00', '22:30'];
     Object.assign(window.otto, {
       enterpriseParkResources: vi.fn(async () => ({
         settings: { parkingTotal: 10, parkingNote: null, updatedAt: tomorrow },
@@ -571,7 +590,7 @@ describe('ParkServicesPlugin', () => {
         }],
         meetingSlots: keys.map((slotKey, index) => ({
           id: `slot-${index}`, roomId: 'room-1', date: tomorrow, slotKey,
-          label: `${slotKey}–${index === 5 ? '23:00' : `22:${String((index + 1) * 10).padStart(2, '0')}`}`,
+          label: `${slotKey}–${index === 1 ? '23:00' : '22:30'}`,
           status: 'available' as const, updatedAt: tomorrow,
         })),
       })),
@@ -590,15 +609,15 @@ describe('ParkServicesPlugin', () => {
     fireEvent.change(screen.getByLabelText('使用日期'), { target: { value: tomorrow } });
 
     const timeline = await screen.findByRole('group', { name: '09:00 到 23:00 会议室预约时间轴' });
-    expect(timeline.querySelectorAll('button')).toHaveLength(6);
-    const first = screen.getByRole('button', { name: /22:00–22:10，可预约/ });
+    expect(timeline.querySelectorAll('button')).toHaveLength(2);
+    const first = screen.getByRole('button', { name: /22:00–22:30，可预约/ });
     fireEvent.click(first);
     expect(first.classList.contains('is-selected')).toBe(true);
-    expect(screen.getByText(/已选择 22:00–22:10/)).toBeTruthy();
+    expect(screen.getByText(/已选择 22:00–22:30/)).toBeTruthy();
     expect(screen.getByText(/不足半天按半天计；本次预计 400 元/)).toBeTruthy();
     fireEvent.click(first);
     expect(first.classList.contains('is-selected')).toBe(false);
-    expect(screen.queryByText(/已选择 22:00–22:10/)).toBeNull();
+    expect(screen.queryByText(/已选择 22:00–22:30/)).toBeNull();
   });
 
   it('会议预约冲突后立即刷新资源，避免继续显示已失效的绿色时段', async () => {
@@ -619,7 +638,7 @@ describe('ParkServicesPlugin', () => {
       }],
       meetingSlots: [{
         id: 'slot-1', roomId: 'room-1', date: tomorrow, slotKey: '22:00',
-        label: '22:00–22:10', status: 'available' as const, updatedAt: tomorrow,
+        label: '22:00–22:30', status: 'available' as const, updatedAt: tomorrow,
       }],
     }));
     Object.assign(window.otto, {
@@ -633,7 +652,7 @@ describe('ParkServicesPlugin', () => {
     fireEvent.click(await screen.findByText('会议室预约'));
     fireEvent.change(await screen.findByLabelText('会议室名称'), { target: { value: 'room-1' } });
     fireEvent.change(screen.getByLabelText('使用日期'), { target: { value: tomorrow } });
-    fireEvent.click(await screen.findByRole('button', { name: /22:00–22:10，可预约/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /22:00–22:30，可预约/ }));
     fireEvent.change(screen.getByLabelText('参会人数'), { target: { value: '3' } });
     fireEvent.change(screen.getByLabelText('会议内容'), { target: { value: '项目评审' } });
     fireEvent.submit(screen.getByLabelText('会议室预约申请表'));
@@ -717,7 +736,7 @@ describe('ParkServicesPlugin', () => {
       transferDepartment: '工程部',
       transferNote: '请工程部接手处理该物业报修，并在完成后记录工作结果。',
     }));
-    expect(screen.getByRole('dialog')).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
   it('登录时多个待办合并成一个汇总提醒，具体工单仍可从待办列表打开', async () => {
@@ -794,8 +813,11 @@ describe('ParkServicesPlugin', () => {
     expect(within(history).getByText(/20260720001/)).toBeTruthy();
     expect(screen.queryByText('我的办理进度')).toBeNull();
     fireEvent.click(within(history).getByRole('button', { name: /打开我的申请历史/ }));
-    expect(await screen.findByText('20260720001')).toBeTruthy();
-    expect(screen.getAllByText('预约已收到')).toHaveLength(2);
+    const detail = await screen.findByRole('dialog', { name: '物业报修' });
+    expect(within(detail).getByText('20260720001')).toBeTruthy();
+    expect(within(detail).getByText('物业报修', { selector: 'strong' })).toBeTruthy();
+    expect(within(detail).queryByText('灯坏了')).toBeNull();
+    expect(within(detail).getAllByText('预约已收到')).toHaveLength(2);
     expect(window.otto.notificationMarkRead).toHaveBeenCalledWith('park:ticket:ticket-1');
     await waitFor(() => expect(bridge.read).toHaveBeenCalledWith('ticket-1'));
 
@@ -984,7 +1006,7 @@ describe('ParkServicesPlugin', () => {
       transferDepartment: '工程部',
       transferNote: '请工程部接手处理该物业报修，并在完成后记录工作结果。',
     }));
-    expect(screen.getByRole('dialog')).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(screen.queryByPlaceholderText('输入消息')).toBeNull();
   });
 
@@ -1054,6 +1076,8 @@ describe('ParkServicesPlugin', () => {
           brandName: '星火智慧园区服务',
           services: [{ name: '自定义服务A', desc: '描述A', prompt: '模板A' }],
         }),
+      enterpriseSession: () => Promise.resolve({ serverUrl: 'https://enterprise.test', account: null }),
+      enterpriseTicketList: () => Promise.resolve([]),
     };
     (window as unknown as { otto: typeof otto }).otto = otto;
     try {
@@ -1062,6 +1086,9 @@ describe('ParkServicesPlugin', () => {
       expect(await screen.findByText('星火智慧园区服务')).toBeTruthy();
       expect(screen.getByText('自定义服务A')).toBeTruthy();
       expect(screen.queryByText('装修管理')).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: /自定义服务A/ }));
+      expect(await screen.findByText('请先登录企业账号。')).toBeTruthy();
+      expect(screen.queryByText('模板A')).toBeNull();
     } finally {
       delete (window as unknown as { otto?: typeof otto }).otto;
     }

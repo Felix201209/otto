@@ -32,7 +32,11 @@ const ADMIN_ROUTES = new Set([
   '/enterprise/usage/summary',
   '/enterprise/deployment/status',
   '/enterprise/deployment/license',
+  '/enterprise/deployment/license/lease',
   '/enterprise/deployment/telemetry',
+  '/enterprise/deployment/telemetry/flush',
+  '/enterprise/deployment/data-protection',
+  '/enterprise/deployment/data-protection/backup',
   '/enterprise/deployment/diagnostics',
   '/enterprise/modules/updates',
   '/enterprise/organizations',
@@ -44,6 +48,7 @@ const MEMBER_ROUTES = new Set([
   '/enterprise/task',
   '/enterprise/recall',
   '/enterprise/knowledge',
+  '/enterprise/skills',
   '/enterprise/credits/balance',
   '/enterprise/credits/redeem',
   '/enterprise/credits/redeem-codes',
@@ -59,7 +64,12 @@ const MEMBER_ROUTES = new Set([
   '/enterprise/park-resources',
   '/enterprise/park-statistics/inbox',
   '/enterprise/modules/updates/client',
+  '/enterprise/deployment/update-policy',
   '/enterprise/account-sync',
+  '/enterprise/privacy',
+  '/enterprise/privacy/accept',
+  '/enterprise/privacy/export',
+  '/enterprise/privacy/account',
 ]);
 
 export const FEATURE_ADMIN_PREFIX = '/admin/features';
@@ -78,6 +88,8 @@ export function isAdminRoute(path: string): boolean {
 export function isMemberRoute(path: string): boolean {
   return (
     MEMBER_ROUTES.has(path) ||
+    path.startsWith('/enterprise/skills/') ||
+    path.startsWith('/enterprise/knowledge/') ||
     path === '/enterprise/atoa/inbox' ||
     path.startsWith('/enterprise/messages/') ||
     path.startsWith('/enterprise/message-attachments/') ||
@@ -107,9 +119,17 @@ export function isLicenseMaintenanceRoute(path: string): boolean {
     path === '/enterprise/export' ||
     path === '/enterprise/deployment/status' ||
     path === '/enterprise/deployment/license' ||
+    path === '/enterprise/deployment/license/lease' ||
     path === '/enterprise/deployment/telemetry' ||
+    path === '/enterprise/deployment/telemetry/flush' ||
+    path === '/enterprise/deployment/data-protection' ||
+    path === '/enterprise/deployment/data-protection/backup' ||
     path === '/enterprise/deployment/diagnostics' ||
     path === '/enterprise/account-sync' ||
+    path === '/enterprise/privacy' ||
+    path === '/enterprise/privacy/accept' ||
+    path === '/enterprise/privacy/export' ||
+    path === '/enterprise/privacy/account' ||
     path.startsWith('/enterprise/auth/')
   );
 }

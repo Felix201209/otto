@@ -11,8 +11,8 @@ const CELL_WIDTH = 192;
 const CELL_HEIGHT = 208;
 const ATLAS_COLUMNS = 8;
 const ATLAS_ROWS = 9;
-const PANEL_DISPLAY_SCALE = 0.62;
 const LOGIN_DISPLAY_SCALE = 1.65;
+const WIDGET_DISPLAY_SCALE = 0.37;
 
 type PetStateId =
   | 'idle'
@@ -132,16 +132,17 @@ function useReducedMotion(): boolean {
 
 export function OttoPetStage({
   running,
-  variant = 'panel',
+  variant,
+  workLabel,
 }: {
   running: boolean;
-  variant?: 'panel' | 'login';
+  variant: 'login' | 'widget';
+  workLabel?: string;
 }): React.JSX.Element {
   const reducedMotion = useReducedMotion();
   const [stepIndex, setStepIndex] = useState(0);
   const [frameIndex, setFrameIndex] = useState(0);
   const [loopIndex, setLoopIndex] = useState(0);
-  const [collapsed, setCollapsed] = useState(false);
 
   const sequence = reducedMotion
     ? REDUCED_MOTION_SEQUENCE
@@ -187,7 +188,7 @@ export function OttoPetStage({
       step.loops,
     [animation, step.loops],
   );
-  const displayScale = variant === 'login' ? LOGIN_DISPLAY_SCALE : PANEL_DISPLAY_SCALE;
+  const displayScale = variant === 'login' ? LOGIN_DISPLAY_SCALE : WIDGET_DISPLAY_SCALE;
   const displayWidth = Number((CELL_WIDTH * displayScale).toFixed(2));
   const displayHeight = Number((CELL_HEIGHT * displayScale).toFixed(2));
 
@@ -211,53 +212,52 @@ export function OttoPetStage({
   const travelling =
     animation.id === 'running-right' || animation.id === 'running-left';
 
-  if (variant === 'panel' && collapsed) {
+  if (variant === 'widget') {
     return (
-      <section
-        className="otto-pet-stage otto-pet-stage--collapsed"
-        aria-label="Otto 吉祥物活动区（已折叠）"
+      <aside
+        className="otto-pet-widget"
+        aria-label="Otto 小宠物工作状态"
         data-testid="otto-pet-stage"
         data-current-state={animation.id}
         data-running={running ? 'true' : 'false'}
       >
-        <button
-          type="button"
-          className="otto-pet-stage__toggle"
-          onClick={() => setCollapsed(false)}
-          aria-label="展开小宠物"
-          title="展开小宠物"
+        <div className="otto-pet-widget__sprite" aria-hidden="true">
+          <div
+            className="otto-pet-stage__motion"
+            style={motionStyle}
+            data-state={animation.id}
+            data-frame={frameIndex}
+            data-reduced-motion={reducedMotion ? 'true' : 'false'}
+          >
+            <div className="otto-pet-stage__sprite" style={spriteStyle} />
+          </div>
+        </div>
+        <div className="otto-pet-widget__copy">
+          <span className="otto-pet-widget__name">Otto</span>
+          <strong>{workLabel ?? (running ? '正在处理当前对话' : '等待下一项工作')}</strong>
+        </div>
+        <span
+          className="otto-pet-widget__lights"
+          aria-label={running ? '工作中' : '空闲待命'}
+          title={running ? '工作中' : '空闲待命'}
         >
-          Otto
-        </button>
-      </section>
+          <i className="otto-pet-widget__light is-red" />
+          <i className={'otto-pet-widget__light is-yellow' + (running ? ' is-active' : '')} />
+          <i className={'otto-pet-widget__light is-green' + (!running ? ' is-active' : '')} />
+        </span>
+      </aside>
     );
   }
 
   return (
     <section
-      className={`otto-pet-stage${variant === 'login' ? ' otto-pet-stage--login' : ''}`}
-      aria-label={variant === 'login' ? 'Otto 像素吉祥物动画' : 'Otto 吉祥物活动区'}
+      className="otto-pet-stage otto-pet-stage--login"
+      aria-label="Otto 像素吉祥物动画"
       data-testid="otto-pet-stage"
       data-current-state={animation.id}
       data-running={running ? 'true' : 'false'}
     >
-      {variant === 'panel' ? (
-        <div className="otto-pet-stage__head">
-          <span>Otto 的小角落</span>
-          <span className="otto-pet-stage__state">{animation.label}</span>
-          <button
-            type="button"
-            className="otto-pet-stage__toggle"
-            onClick={() => setCollapsed(true)}
-            aria-label="折叠小宠物"
-            title="折叠小宠物"
-          >
-            收起
-          </button>
-        </div>
-      ) : null}
       <div className="otto-pet-stage__scene">
-        {variant === 'panel' ? <div className="otto-pet-stage__floor" aria-hidden="true" /> : null}
         <div
           key={`${animation.id}-${stepIndex}`}
           className={`otto-pet-stage__motion${

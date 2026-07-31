@@ -79,6 +79,7 @@ NODE_PATH="${INSTALL_ROOT}/runtime/current/bin/node"
 RELEASE_INFO="$("$NODE_PATH" "${SCRIPT_DIR}/tools/verify-release.mjs" "${SCRIPT_DIR}/release")"
 RELEASE_VERSION="$("$NODE_PATH" -e "const x=JSON.parse(process.argv[1]);console.log(x.version)" "$RELEASE_INFO")"
 BUILD_ID="$("$NODE_PATH" -e "const x=JSON.parse(process.argv[1]);console.log(x.buildCommit)" "$RELEASE_INFO")"
+RELEASE_SCHEMA_TO="$("$NODE_PATH" -e "const x=JSON.parse(process.argv[1]);console.log(x.database.schemaTo)" "$RELEASE_INFO")"
 RELEASE_NAME="${RELEASE_VERSION}-${BUILD_ID:0:12}"
 TARGET_RELEASE="${INSTALL_ROOT}/releases/${RELEASE_NAME}"
 
@@ -145,6 +146,7 @@ export OTTO_ENTERPRISE_ADMIN_TOKEN="${OTTO_ENTERPRISE_ADMIN_TOKEN:-upgrade-canar
 export OTTO_ENTERPRISE_TRUST_PROXY_HOPS="1"
 export OTTO_APP_VERSION="$RELEASE_VERSION"
 export OTTO_BUILD_COMMIT="$BUILD_ID"
+export OTTO_LICENSE_TRUST_FILE="${SCRIPT_DIR}/release/license-public-keys.json"
 
 "$NODE_PATH" "${SCRIPT_DIR}/tools/migrate-check.mjs" "${SCRIPT_DIR}/release" "$CANARY_DIR" >/dev/null
 otto_log "启动 127.0.0.1:17777 升级 canary"
@@ -154,6 +156,7 @@ CANARY_OK=0
 for _ in $(seq 1 30); do
   if "$NODE_PATH" "${SCRIPT_DIR}/tools/health-check.mjs" \
     http://127.0.0.1:17777 "$RELEASE_VERSION" "$BUILD_ID" \
+    "$RELEASE_SCHEMA_TO" \
     "$([ "$OTTO_ALLOW_SMS_DISABLED" = "1" ] && printf 'allow-sms-disabled' || printf 'require-sms')" \
     >/dev/null 2>&1; then
     CANARY_OK=1
@@ -194,7 +197,12 @@ mkdir -p "${INSTALL_ROOT}/deploy.next"
 cp -a "${SCRIPT_DIR}/tools" "${INSTALL_ROOT}/deploy.next/"
 cp -a "${SCRIPT_DIR}/lib" "${INSTALL_ROOT}/deploy.next/"
 cp -a "${SCRIPT_DIR}/verify.sh" "${INSTALL_ROOT}/deploy.next/verify.sh"
-chmod 755 "${INSTALL_ROOT}/deploy.next/verify.sh"
+cp -a "${SCRIPT_DIR}/backup-now.sh" "${INSTALL_ROOT}/deploy.next/backup-now.sh"
+cp -a "${SCRIPT_DIR}/restore-backup.sh" "${INSTALL_ROOT}/deploy.next/restore-backup.sh"
+chmod 755 \
+  "${INSTALL_ROOT}/deploy.next/verify.sh" \
+  "${INSTALL_ROOT}/deploy.next/backup-now.sh" \
+  "${INSTALL_ROOT}/deploy.next/restore-backup.sh"
 rm -rf "${INSTALL_ROOT}/deploy"
 mv "${INSTALL_ROOT}/deploy.next" "${INSTALL_ROOT}/deploy"
 systemctl daemon-reload

@@ -202,6 +202,9 @@ export interface SettingsDataActions {
     model?: string;
     apiKey?: string;
     clearApiKey?: boolean;
+    costPerRequestCny?: number;
+    monthlyRequestQuota?: number;
+    monthlyBudgetCny?: number;
   }): void;
   refreshMcpServers(): void;
   addMcpServer(payload: {

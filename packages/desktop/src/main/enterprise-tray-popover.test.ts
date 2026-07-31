@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  parseEnterpriseMessageTimestamp,
   positionEnterpriseTrayPopover,
   renderEnterpriseTrayPopoverHtml,
   summarizeEnterpriseTrayContacts,
@@ -25,6 +26,12 @@ function unread(input: Partial<{
 }
 
 describe('enterprise tray message popover', () => {
+  it('treats legacy SQLite timestamps without a timezone as UTC', () => {
+    expect(parseEnterpriseMessageTimestamp('2026-07-28 03:51:00')).toBe(
+      Date.parse('2026-07-28T03:51:00.000Z'),
+    );
+  });
+
   it('按发送人聚合未读数量并保留最新的真实消息', () => {
     expect(summarizeEnterpriseTrayContacts([
       unread({ id: 'older', preview: '旧消息', createdAt: '2026-07-26T07:00:00.000Z' }),

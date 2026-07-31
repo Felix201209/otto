@@ -4,6 +4,7 @@ import type {
   DeploymentTelemetrySettings,
   PrivateDeploymentStatus,
 } from './deploymentTypes.js';
+import type { DeploymentUpdatePolicyResult } from './updatePolicyClient.js';
 
 export interface DeploymentRoutePrincipal {
   organizationId: string;
@@ -11,7 +12,12 @@ export interface DeploymentRoutePrincipal {
 
 export interface DeploymentRouteServices {
   getPrivateDeploymentStatus(): PrivateDeploymentStatus;
+  getDataProtectionStatus(): unknown;
+  runDataProtectionBackup(
+    reason?: 'scheduled' | 'manual' | 'startup',
+  ): Promise<unknown>;
   importDeploymentLicense(raw: unknown): DeploymentLicenseView;
+  importDeploymentLicenseLease(raw: unknown): DeploymentLicenseView;
   updateTelemetrySettings(
     patch: Partial<DeploymentTelemetrySettings>,
   ): DeploymentTelemetrySettings;
@@ -21,6 +27,22 @@ export interface DeploymentRouteServices {
     sent: number;
     lastQueuedAt: string | null;
   };
+  flushTelemetryQueue(): Promise<{
+    attempted: number;
+    sent: number;
+    discarded: number;
+    failed: number;
+    skippedReason: string | null;
+  }>;
+  ingestTelemetryBatch(
+    raw: unknown,
+    authorization: string | undefined,
+    authentication: {
+      timestamp: string | undefined;
+      nonce: string | undefined;
+      signature: string | undefined;
+    },
+  ): { accepted: number; duplicates: number };
   recordTelemetryEvent(input: {
     organizationId?: string | null;
     eventType: string;
@@ -29,6 +51,10 @@ export interface DeploymentRouteServices {
   exportDeploymentDiagnostics(input?: {
     includeRedactedSamples?: boolean;
   }): Record<string, unknown>;
+  resolveDeploymentUpdatePolicy(input: {
+    distributionId: string;
+    currentVersion: string;
+  }): Promise<DeploymentUpdatePolicyResult>;
 }
 
 export interface DeploymentRouteDeps {
@@ -38,6 +64,7 @@ export interface DeploymentRouteDeps {
   res: ServerResponse;
   url: URL;
   principal: DeploymentRoutePrincipal | null;
+  memberPrincipal?: DeploymentRoutePrincipal | null;
   services: DeploymentRouteServices;
   readBody(req: IncomingMessage): Promise<Record<string, unknown>>;
   sendJSON(res: ServerResponse, status: number, data: unknown): void;
@@ -50,12 +77,47 @@ export async function handleDeploymentRoute({
   res,
   url,
   principal,
+  memberPrincipal,
   services,
   readBody,
   sendJSON,
 }: DeploymentRouteDeps): Promise<boolean> {
+  if (path === '/enterprise/deployment/update-policy' && method === 'POST') {
+    if (!memberPrincipal) {
+      sendJSON(res, 401, { error: 'member authentication required' });
+      return true;
+    }
+    const body = await readBody(req);
+    const distributionId = typeof body.distributionId === 'string'
+      ? body.distributionId.trim()
+      : '';
+    const currentVersion = typeof body.currentVersion === 'string'
+      ? body.currentVersion.trim()
+      : '';
+    const result = await services.resolveDeploymentUpdatePolicy({
+      distributionId,
+      currentVersion,
+    });
+    sendJSON(res, 200, result);
+    return true;
+  }
+
   if (path === '/enterprise/deployment/status' && method === 'GET') {
-    sendJSON(res, 200, services.getPrivateDeploymentStatus());
+    sendJSON(res, 200, {
+      ...services.getPrivateDeploymentStatus(),
+      dataProtection: services.getDataProtectionStatus(),
+    });
+    return true;
+  }
+
+  if (path === '/enterprise/deployment/data-protection' && method === 'GET') {
+    sendJSON(res, 200, services.getDataProtectionStatus());
+    return true;
+  }
+
+  if (path === '/enterprise/deployment/data-protection/backup' && method === 'POST') {
+    const status = await services.runDataProtectionBackup('manual');
+    sendJSON(res, 200, status);
     return true;
   }
 
@@ -83,6 +145,22 @@ export async function handleDeploymentRoute({
     return true;
   }
 
+  if (path === '/enterprise/deployment/license/lease' && method === 'POST') {
+    const body = await readBody(req);
+    try {
+      const license = services.importDeploymentLicenseLease(body);
+      sendJSON(res, 200, { license });
+    } catch (error) {
+      sendJSON(res, 400, {
+        error:
+          error instanceof Error
+            ? error.message
+            : 'license lease import failed',
+      });
+    }
+    return true;
+  }
+
   if (path === '/enterprise/deployment/telemetry' && method === 'PATCH') {
     const body = await readBody(req);
     const settings = services.updateTelemetrySettings({
@@ -95,6 +173,41 @@ export async function handleDeploymentRoute({
     sendJSON(res, 200, {
       telemetry: { ...settings, ...services.getTelemetryQueueSummary() },
     });
+    return true;
+  }
+
+  if (path === '/enterprise/deployment/telemetry/flush' && method === 'POST') {
+    sendJSON(res, 200, { result: await services.flushTelemetryQueue() });
+    return true;
+  }
+
+  if (path === '/enterprise/deployment/telemetry/ingest' && method === 'POST') {
+    const body = await readBody(req);
+    try {
+      const receipt = services.ingestTelemetryBatch(
+        body,
+        typeof req.headers.authorization === 'string'
+          ? req.headers.authorization
+          : undefined,
+        {
+          timestamp: typeof req.headers['x-otto-timestamp'] === 'string'
+            ? req.headers['x-otto-timestamp']
+            : undefined,
+          nonce: typeof req.headers['x-otto-nonce'] === 'string'
+            ? req.headers['x-otto-nonce']
+            : undefined,
+          signature: typeof req.headers['x-otto-signature'] === 'string'
+            ? req.headers['x-otto-signature']
+            : undefined,
+        },
+      );
+      sendJSON(res, 202, receipt);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      const status = message.includes('not configured') ? 404 :
+        message.includes('authorization') ? 401 : 400;
+      sendJSON(res, status, { error: message || 'telemetry ingest failed' });
+    }
     return true;
   }
 

@@ -23,6 +23,44 @@ function createIdentityPrerequisites(database: Database): void {
 }
 
 describe('collaboration schema contributor', () => {
+  it('adds encrypted message metadata before creating the A2A type index', () => {
+    const database = new Database(':memory:');
+    try {
+      createIdentityPrerequisites(database);
+      database.exec(`
+        CREATE TABLE direct_messages (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          sender_account_id TEXT NOT NULL,
+          recipient_account_id TEXT NOT NULL,
+          content TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          read_at TEXT
+        );
+      `);
+
+      applyDatabaseSchemaContributors(database, [
+        COLLABORATION_SCHEMA_CONTRIBUTOR,
+      ]);
+
+      const columns = database.prepare(
+        'PRAGMA table_info(direct_messages)',
+      ).all() as Array<{ name: string }>;
+      expect(columns.map((column) => column.name)).toEqual(expect.arrayContaining([
+        'content_ciphertext',
+        'content_iv',
+        'content_auth_tag',
+        'content_key_version',
+        'content_type',
+      ]));
+      expect(database.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_direct_messages_type'",
+      ).get()).toEqual({ name: 'idx_direct_messages_type' });
+    } finally {
+      database.close();
+    }
+  });
+
   it('creates its tables and indexes idempotently', () => {
     const database = new Database(':memory:');
     try {
@@ -43,6 +81,7 @@ describe('collaboration schema contributor', () => {
              'direct_message_attachments',
              'idx_account_presence_org_seen',
              'idx_direct_messages_conversation',
+             'idx_direct_messages_type',
              'idx_direct_message_attachments_message'
            )
            ORDER BY type, name`,
@@ -52,6 +91,7 @@ describe('collaboration schema contributor', () => {
         { type: 'index', name: 'idx_account_presence_org_seen' },
         { type: 'index', name: 'idx_direct_message_attachments_message' },
         { type: 'index', name: 'idx_direct_messages_conversation' },
+        { type: 'index', name: 'idx_direct_messages_type' },
         { type: 'table', name: 'account_presence' },
         { type: 'table', name: 'direct_message_attachments' },
         { type: 'table', name: 'direct_messages' },

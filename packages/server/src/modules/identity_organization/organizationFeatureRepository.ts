@@ -17,6 +17,7 @@ export const DEFAULT_ORGANIZATION_FEATURES: Readonly<OrganizationFeatures> = {
   direct_messages: true,
   atoa: true,
   knowledge: true,
+  skill_market: true,
 };
 
 export interface OrganizationFeatureRepositoryStore {

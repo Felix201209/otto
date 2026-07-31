@@ -4,14 +4,17 @@
  * Tests for MemorySubsystem.
  */
 
-import { describe, expect, it, beforeEach } from 'vitest';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { afterEach, describe, expect, it, beforeEach } from 'vitest';
 import {
   createMemorySubsystem,
   type MemorySubsystem,
   type MemoryEvent,
 } from './memorySubsystem.js';
 import { AutoMemoryEngine } from './autoMerge.js';
-import { KnowledgeCapturePipeline } from '../knowledge/knowledgeCapturePipeline.js';
+import { LocalKnowledgeStore } from '../knowledge/localKnowledgeStore.js';
 
 // ── Test helpers ────────────────────────────────────────────────────────
 
@@ -33,13 +36,26 @@ const tick = () => new Promise<void>(r => setTimeout(r, 0));
 
 describe('MemorySubsystem', () => {
   let subsystem: MemorySubsystem;
+  let testRoot: string;
 
   beforeEach(async () => {
-    // 每次测试用新的内部引擎（空状态）
-    const autoMerge = new AutoMemoryEngine();
+    testRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-memory-subsystem-'));
+    const memoryRoot = path.join(testRoot, 'memory');
+    const knowledgeRoot = path.join(testRoot, 'knowledge');
+    const autoMerge = new AutoMemoryEngine({
+      storageDir: memoryRoot,
+      knowledgeDir: knowledgeRoot,
+      globalMdPath: path.join(memoryRoot, 'global.md'),
+      knowledgeJsonlPath: path.join(knowledgeRoot, 'entries.jsonl'),
+    });
     await autoMerge.initialize();
-    subsystem = createMemorySubsystem({ autoMerge });
+    const knowledgeStore = new LocalKnowledgeStore(knowledgeRoot);
+    subsystem = createMemorySubsystem({ autoMerge, knowledgeStore });
     await tick();
+  });
+
+  afterEach(async () => {
+    await fs.rm(testRoot, { recursive: true, force: true });
   });
 
   // ── capture and search ──────────────────────────────────────────────
@@ -227,9 +243,10 @@ describe('MemorySubsystem', () => {
   // ── minConfidence filter ─────────────────────────────────────────────
 
   it('filters results by minConfidence', async () => {
-    // autoMerge 条目默认置信度 0.7，所以设 minConfidence 0.8 会滤掉
+    // A 0.7 event is indexed by autoMerge but is not promoted to the
+    // high-confidence knowledge store, so minConfidence 0.8 filters it out.
     await subsystem.capture(
-      makeEvent({ content: 'confidence test', confidence: 0.9 }),
+      makeEvent({ content: 'confidence test', confidence: 0.7 }),
     );
     await tick();
 

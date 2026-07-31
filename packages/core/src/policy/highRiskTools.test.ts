@@ -144,7 +144,10 @@ describe('mediumRiskTools classification', () => {
 describe('CentralPolicy — high-risk tools force AskUser', () => {
   it('high-risk tool (shell) forces AskUser in AUTO_EDIT mode', () => {
     const policy = new CentralPolicy(
-      makeMockConfig({ approvalMode: ApprovalMode.AUTO_EDIT }),
+      makeMockConfig({
+        approvalMode: ApprovalMode.AUTO_EDIT,
+        featureFlags: { shell_access: true },
+      }),
     );
     const result = policy.canExecute('shell', makeContext());
     expect(result.decision).toBe(PolicyDecision.AskUser);

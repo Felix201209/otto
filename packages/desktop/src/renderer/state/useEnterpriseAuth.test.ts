@@ -148,7 +148,7 @@ describe('企业注册链接进入中心注册', () => {
 
     await act(async () => {
       await view.result.current.actions.register({
-        challengeId: 'sms_1', code: '123456', name: '员工一号', password: 'password-1',
+        challengeId: 'sms_1', code: '123456', name: '员工一号', password: 'password-1', legalConsent: true,
       });
     });
     expect(view.result.current.state.registrationIntent).toBeNull();

@@ -29,7 +29,8 @@ function makePdf(text: string): Buffer {
   return Buffer.from(pdf, 'latin1');
 }
 function hasBin(name: string): boolean {
-  try { execSync('command -v ' + name, { stdio: 'ignore' }); return true; } catch { return false; }
+  const lookup = process.platform === 'win32' ? 'where ' : 'command -v ';
+  try { execSync(lookup + name, { stdio: 'ignore' }); return true; } catch { return false; }
 }
 
 describe('ConvertDocumentTool', () => {
@@ -159,7 +160,11 @@ describe('ConvertDocumentTool', () => {
     const r = await tool.execute({ input_path: f, output_format: 'docx', engine: 'libreoffice', output_path: out }, new AbortController().signal);
     expect(r.llmContent).toContain('FAIL');
     expect(r.llmContent.toLowerCase()).toContain('libreoffice');
-    expect(r.llmContent).toContain('brew install --cask libreoffice');
+    expect(r.llmContent).toContain(
+      process.platform === 'darwin'
+        ? 'brew install --cask libreoffice'
+        : 'winget install pandoc LibreOffice',
+    );
   });
 
   // NOTE: pure PDF compression (pdf->pdf + compress) first runs the libreoffice

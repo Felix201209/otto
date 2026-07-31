@@ -97,6 +97,8 @@ export interface OttoState {
     previousModel: string | null;
     previousSessionModel?: string;
   };
+  /** Latest versioned lifecycle event; the protocol is the source of truth. */
+  runtimeActivity?: Extract<ServerToClient, { type: 'runtime_activity' }>['payload'];
 }
 
 const initialState: OttoState = {
@@ -600,6 +602,9 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
       return upsertSession(nextState, { ...s, status });
     }
 
+    case 'runtime_activity':
+      return { ...state, runtimeActivity: frame.payload };
+
     case 'models_list': {
       const pending = state.pendingModelSwitch;
       if (pending) {
@@ -756,6 +761,7 @@ export interface OttoActions {
     source?: MessageSource,
     attachments?: Attachment[],
     queueAction?: 'merge' | 'next_turn' | 'new_session',
+    authorizedContext?: string,
   ): void;
   setModel(model: string): void;
   cancel(): void;
@@ -852,20 +858,43 @@ export function useOttoStore(
         }
       }
       if (frame.type === 'knowledge_activity' && frame.payload.action === 'auto_capture') {
-        const captured = frame.payload.captured ?? [];
+        const sourceSessionId = frame.payload.sessionId?.trim() || 'unknown-session';
+        const observations = frame.payload.observations?.length
+          ? frame.payload.observations
+          : (frame.payload.captured ?? []).map((entry) => ({
+              category: entry.category,
+              content: entry.content,
+              tags: entry.tags,
+              sourceSessionId,
+              confidence: entry.confidence ?? 0.8,
+              fingerprint: entry.id,
+              verified: false,
+              impactScore: 0.5,
+              significanceSignals: [] as string[],
+              observedAt: entry.createdAt,
+            }));
         const organizationId = enterpriseOrganizationIdRef.current;
-        if (organizationId && captured.length > 0) {
+        if (organizationId && observations.length > 0) {
           // 写前强制刷新中心组织功能开关：knowledge=false 时客户端不发起任何组织知识写入。
           // 获取失败也 fail closed，但 reducer 已保留 core 的个人本地捕获结果。
           void getEnterpriseOrganizationFeatures(organizationId, { force: true })
             .then((features) => {
               if (!features.knowledge) return;
-              for (const entry of captured) {
+              for (const entry of observations) {
                 void window.otto.enterpriseKnowledgeRecord({
-                  sourceId: entry.id,
+                  sourceId: `auto:${sourceSessionId}:${entry.fingerprint}`.slice(0, 180),
+                  sourceSessionId: entry.sourceSessionId || sourceSessionId,
+                  sourceFingerprint: entry.fingerprint,
                   category: entry.category,
                   content: entry.content,
                   confidence: entry.confidence ?? 0.8,
+                  sourceType: 'auto_capture',
+                  sourceLabel: 'Otto 对话知识观察',
+                  tags: entry.tags,
+                  verified: entry.verified,
+                  impactScore: entry.impactScore,
+                  significanceSignals: entry.significanceSignals,
+                  observedAt: entry.observedAt,
                 }).catch(() => undefined);
               }
             })
@@ -1127,6 +1156,7 @@ export function useOttoStore(
       source: MessageSource = 'local',
       attachments: Attachment[] = [],
       queueAction?: 'merge' | 'next_turn' | 'new_session',
+      authorizedContext?: string,
     ) => {
       const sessionId = activeRef.current;
       const trimmed = text.trim();
@@ -1158,7 +1188,16 @@ export function useOttoStore(
       });
       transport.send({
         type: 'send_user_message',
-        payload: { sessionId, content, source, clientMessageId, ...(queueAction ? { queueAction } : {}) },
+        payload: {
+          sessionId,
+          content,
+          source,
+          clientMessageId,
+          ...(queueAction ? { queueAction } : {}),
+          ...(authorizedContext?.trim()
+            ? { authorizedContext: authorizedContext.trim().slice(0, 12_000) }
+            : {}),
+        },
       });
     },
     [],

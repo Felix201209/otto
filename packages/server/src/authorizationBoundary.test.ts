@@ -23,6 +23,21 @@ function productionTypeScriptFiles(directory: string): string[] {
 }
 
 describe('authorization module boundary', () => {
+  it('publishes one fail-closed authorization composition entrypoint', () => {
+    expect(authorization.createAuthorizationComposition).toBeTypeOf(
+      'function',
+    );
+    const databaseFacade = fs.readFileSync(
+      path.join(sourceRoot, 'enterprise', 'db.ts'),
+      'utf8',
+    );
+    expect(databaseFacade).toContain('createAuthorizationComposition');
+    expect(databaseFacade).not.toContain(
+      'createOrganizationFeatureAccessFacade',
+    );
+    expect(databaseFacade).not.toContain('createOrganizationFeatureFacade');
+  });
+
   it('keeps mandatory tool confirmations fail-closed in automatic mode', () => {
     expect(authorization.shouldRequestConfirmation('auto', { type: 'edit' })).toBe(false);
     expect(authorization.shouldRequestConfirmation('auto', {
@@ -78,6 +93,12 @@ describe('authorization module boundary', () => {
     expect(authorization.isMemberRoute('/enterprise/messages/member-1')).toBe(true);
     expect(authorization.isMemberRoute('/enterprise/account-sync')).toBe(true);
     expect(authorization.isLicenseMaintenanceRoute('/enterprise/account-sync')).toBe(true);
+    expect(authorization.isAdminRoute('/enterprise/deployment/data-protection')).toBe(true);
+    expect(
+      authorization.isLicenseMaintenanceRoute(
+        '/enterprise/deployment/data-protection/backup',
+      ),
+    ).toBe(true);
     expect(authorization.isLicenseMaintenanceRoute('/enterprise/auth/login')).toBe(true);
     expect(authorization.isLicenseMaintenanceRoute('/enterprise/messages/member-1')).toBe(false);
   });

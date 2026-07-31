@@ -23,6 +23,12 @@ afterEach(() => {
     'enterpriseParkSpecialists',
     'enterpriseParkSpecialistSet',
     'enterpriseParkSpecialistRemove',
+    'enterpriseOrganizationDepartmentCreate',
+    'enterpriseOrganizationDepartmentUpdate',
+    'enterpriseOrganizationDepartmentDelete',
+    'enterpriseOrganizationPositionCreate',
+    'enterpriseOrganizationPositionUpdate',
+    'enterpriseOrganizationPositionDelete',
   ]) {
     delete (window.otto as unknown as Record<string, unknown>)[key];
   }
@@ -35,6 +41,7 @@ const features: EnterpriseOrganizationFeatures = {
   direct_messages: false,
   atoa: false,
   knowledge: false,
+  skill_market: false,
 };
 
 const park: EnterprisePark = {
@@ -130,5 +137,86 @@ describe('park service specialist assignments', () => {
     await waitFor(() => expect(within(screen.getByLabelText(assignedLabel)).queryByText('Alice')).toBeNull());
     expect(within(screen.getByLabelText(assignedLabel)).getByText('Bob')).toBeTruthy();
     expect(within(screen.getByLabelText(assignedLabel)).getByText('Carol')).toBeTruthy();
+  });
+});
+
+describe('organization structure editor', () => {
+  it('keeps each department and its positions in one editable group', async () => {
+    const organizationFeatures: EnterpriseOrganizationFeatures = {
+      ...features,
+      enterprise_tree: true,
+      park_service: false,
+    };
+    const departments = [{
+      id: 'dept-party',
+      organizationId: 'org-1',
+      name: '党群工作部',
+      memberCount: 2,
+      positions: [{
+        id: 'position-organizer',
+        organizationId: 'org-1',
+        departmentId: 'dept-party',
+        title: '组织干事',
+        roleMapping: 'member' as const,
+        createdAt: '2026-07-20',
+        updatedAt: '2026-07-20',
+      }],
+      createdAt: '2026-07-20',
+      updatedAt: '2026-07-20',
+    }, {
+      id: 'dept-incubator',
+      organizationId: 'org-1',
+      name: '孵化服务部',
+      memberCount: 3,
+      positions: [{
+        id: 'position-specialist',
+        organizationId: 'org-1',
+        departmentId: 'dept-incubator',
+        title: '专员',
+        roleMapping: 'member' as const,
+        createdAt: '2026-07-20',
+        updatedAt: '2026-07-20',
+      }],
+      createdAt: '2026-07-20',
+      updatedAt: '2026-07-20',
+    }];
+    const createPosition = vi.fn(async () => departments[0].positions[0]);
+    const updatePosition = vi.fn(async () => departments[0].positions[0]);
+    Object.assign(window.otto, {
+      enterpriseOrganizationFeaturesGet: vi.fn(async () => organizationFeatures),
+      enterpriseOrganizationDepartments: vi.fn(async () => departments),
+      enterpriseOrganizationPositionCreate: createPosition,
+      enterpriseOrganizationPositionUpdate: updatePosition,
+      enterpriseOrganizationPositionDelete: vi.fn(async () => true),
+      enterpriseOrganizationDepartmentCreate: vi.fn(async () => departments[0]),
+      enterpriseOrganizationDepartmentUpdate: vi.fn(async () => departments[0]),
+      enterpriseOrganizationDepartmentDelete: vi.fn(async () => true),
+    });
+
+    render(<EnterpriseAdministrationPanel accounts={[]} />);
+
+    const partyDepartment = await screen.findByRole('region', { name: '党群工作部部门设置' });
+    const incubatorDepartment = screen.getByRole('region', { name: '孵化服务部部门设置' });
+    expect(within(partyDepartment).getByDisplayValue('组织干事')).toBeTruthy();
+    expect(within(partyDepartment).queryByDisplayValue('专员')).toBeNull();
+    expect(within(incubatorDepartment).getByDisplayValue('专员')).toBeTruthy();
+    expect(within(partyDepartment).getByText('2 名在职成员 · 1 个职位')).toBeTruthy();
+
+    fireEvent.click(within(partyDepartment).getByRole('button', { name: '保存职位' }));
+    await waitFor(() => expect(updatePosition).toHaveBeenCalledWith('position-organizer', {
+      title: '组织干事',
+      roleMapping: 'member',
+    }));
+
+    const form = within(partyDepartment).getByRole('form', { name: '为党群工作部新增职位' });
+    fireEvent.change(within(form).getByPlaceholderText('例如：产品经理'), {
+      target: { value: '宣传主管' },
+    });
+    fireEvent.submit(form);
+    await waitFor(() => expect(createPosition).toHaveBeenCalledWith({
+      departmentId: 'dept-party',
+      title: '宣传主管',
+      roleMapping: 'member',
+    }));
   });
 });

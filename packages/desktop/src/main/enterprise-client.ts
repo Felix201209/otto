@@ -103,36 +103,218 @@ export interface TokenUsageRecordInput {
 
 export interface EnterpriseKnowledgeRecordInput {
   sourceId: string;
+  title?: string;
   category: string;
   content: string;
   confidence: number;
+  sourceType?: 'manual' | 'auto_capture' | 'work_result' | 'task_log' | 'document' | 'offboarding';
+  sourceLabel?: string;
+  sourceSessionId?: string;
+  sourceFingerprint?: string;
+  tags?: string[];
+  verified?: boolean;
+  impactScore?: number;
+  significanceSignals?: string[];
+  observedAt?: string;
+}
+
+export interface EnterpriseKnowledgeRecordResult {
+  status: 'added' | 'exists' | 'observed' | 'duplicate' | 'promoted';
+  added: boolean;
+  outcome?: 'added' | 'updated' | 'unchanged' | 'observed' | 'duplicate' | 'promoted';
+  reviewStatus?: EnterpriseKnowledgeItem['status'];
+  knowledgeId?: number;
+  retention?: {
+    promoted: boolean;
+    reason: 'incubating' | 'long_term_recurrence' | 'cross_member_corroboration' | 'high_impact_verified';
+    evidenceCount: number;
+    distinctSessionCount: number;
+    distinctContributorCount: number;
+    spanDays: number;
+    impactScore: number;
+  };
 }
 
 export interface EnterpriseKnowledgeItem {
   id: string;
   organizationId: string;
   sourceId: string | null;
+  title: string;
   department: string | null;
   category: string;
   content: string;
   contributor: string | null;
   confidence: number;
+  sourceType: 'manual' | 'auto_capture' | 'work_result' | 'task_log' | 'document' | 'offboarding';
+  sourceLabel: string | null;
+  status: 'pending_review' | 'active' | 'archived';
+  version: number;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  evidenceCount?: number;
+  distinctSessionCount?: number;
+  distinctContributorCount?: number;
+  firstObservedAt?: string | null;
+  lastObservedAt?: string | null;
+}
+
+export interface EnterpriseKnowledgeRevision {
+  id: string;
+  knowledgeId: string;
+  version: number;
+  title: string;
+  category: string;
+  content: string;
+  status: EnterpriseKnowledgeItem['status'];
+  changedBy: string | null;
+  changeNote: string | null;
   createdAt: string;
 }
 
-interface EnterpriseKnowledgeRow {
+export type EnterpriseSkillVisibility = 'department' | 'company';
+export type EnterpriseSkillStatus = 'pending_review' | 'active' | 'archived';
+export type EnterpriseSkillScope = 'department' | 'company' | 'mine' | 'review';
+export type EnterpriseSkillSort = 'recommended' | 'rating' | 'installs' | 'usage' | 'newest';
+
+export interface EnterpriseSkillMarketItem {
   id: string;
+  organizationId: string;
+  slug: string;
+  name: string;
+  description: string;
+  department: string | null;
+  visibility: EnterpriseSkillVisibility;
+  status: EnterpriseSkillStatus;
+  authorAccountId: string | null;
+  authorName: string;
+  contentHash: string;
+  version: number;
+  installCount: number;
+  usageCount: number;
+  successCount: number;
+  failureCount: number;
+  rating: number;
+  ratingCount: number;
+  installedVersion: number | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EnterpriseSkillLeaderboard {
+  skills: Array<EnterpriseSkillMarketItem & {
+    rank: number;
+    score: number;
+    successRate: number;
+  }>;
+  contributors: Array<{
+    rank: number;
+    accountId: string | null;
+    name: string;
+    skillCount: number;
+    installCount: number;
+    usageCount: number;
+    score: number;
+  }>;
+  generatedAt: string;
+}
+
+interface EnterpriseKnowledgeRow {
+  id: string | number;
   organization_id?: string;
   organizationId?: string;
   source_id?: string | null;
   sourceId?: string | null;
+  title?: string;
   department?: string | null;
   category: string;
   content: string;
   contributor?: string | null;
   confidence?: number;
+  source_type?: EnterpriseKnowledgeItem['sourceType'];
+  sourceType?: EnterpriseKnowledgeItem['sourceType'];
+  source_label?: string | null;
+  sourceLabel?: string | null;
+  status?: EnterpriseKnowledgeItem['status'];
+  version?: number;
+  reviewed_by?: string | null;
+  reviewedBy?: string | null;
+  reviewed_at?: string | null;
+  reviewedAt?: string | null;
   created_at?: string;
   createdAt?: string;
+  updated_at?: string;
+  updatedAt?: string;
+  evidence_count?: number;
+  evidenceCount?: number;
+  distinct_session_count?: number;
+  distinctSessionCount?: number;
+  distinct_contributor_count?: number;
+  distinctContributorCount?: number;
+  first_observed_at?: string | null;
+  firstObservedAt?: string | null;
+  last_observed_at?: string | null;
+  lastObservedAt?: string | null;
+}
+
+interface EnterpriseKnowledgeRevisionRow {
+  id: string | number;
+  knowledge_id?: string | number;
+  knowledgeId?: string | number;
+  version?: number;
+  title?: string;
+  category: string;
+  content: string;
+  status?: EnterpriseKnowledgeItem['status'];
+  changed_by?: string | null;
+  changedBy?: string | null;
+  change_note?: string | null;
+  changeNote?: string | null;
+  created_at?: string;
+  createdAt?: string;
+}
+
+function mapEnterpriseKnowledgeItem(item: EnterpriseKnowledgeRow): EnterpriseKnowledgeItem {
+  return {
+    id: String(item.id),
+    organizationId: item.organizationId || item.organization_id || '',
+    sourceId: item.sourceId ?? item.source_id ?? null,
+    title: item.title?.trim() || item.category,
+    department: item.department ?? null,
+    category: item.category,
+    content: item.content,
+    contributor: item.contributor ?? null,
+    confidence: typeof item.confidence === 'number' ? item.confidence : 0.5,
+    sourceType: item.sourceType || item.source_type || 'manual',
+    sourceLabel: item.sourceLabel ?? item.source_label ?? null,
+    status: item.status || 'active',
+    version: typeof item.version === 'number' ? item.version : 1,
+    reviewedBy: item.reviewedBy ?? item.reviewed_by ?? null,
+    reviewedAt: item.reviewedAt ?? item.reviewed_at ?? null,
+    createdAt: item.createdAt || item.created_at || '',
+    updatedAt: item.updatedAt || item.updated_at || item.createdAt || item.created_at || '',
+    ...((item.evidenceCount ?? item.evidence_count) !== undefined
+      ? { evidenceCount: item.evidenceCount ?? item.evidence_count }
+      : {}),
+    ...((item.distinctSessionCount ?? item.distinct_session_count) !== undefined
+      ? { distinctSessionCount: item.distinctSessionCount ?? item.distinct_session_count }
+      : {}),
+    ...((item.distinctContributorCount ?? item.distinct_contributor_count) !== undefined
+      ? {
+        distinctContributorCount:
+          item.distinctContributorCount ?? item.distinct_contributor_count,
+      }
+      : {}),
+    ...((item.firstObservedAt ?? item.first_observed_at) !== undefined
+      ? { firstObservedAt: item.firstObservedAt ?? item.first_observed_at }
+      : {}),
+    ...((item.lastObservedAt ?? item.last_observed_at) !== undefined
+      ? { lastObservedAt: item.lastObservedAt ?? item.last_observed_at }
+      : {}),
+  };
 }
 
 export interface EnterpriseOrganizationInvite {
@@ -165,6 +347,7 @@ export interface EnterpriseOrganizationFeatures {
   direct_messages: boolean;
   atoa: boolean;
   knowledge: boolean;
+  skill_market: boolean;
 }
 
 export type EnterpriseModuleUpdateRollout = 'off' | 'canary' | 'stable' | 'required';
@@ -188,6 +371,42 @@ export interface EnterpriseModuleUpdateManifest {
   modules: EnterpriseModuleUpdateDescriptor[];
   catalog: Array<{ module: string; features: string[] }>;
 }
+
+export interface EnterpriseUpdateManifestReference {
+  url: string;
+  sha256: string;
+}
+
+export interface EnterpriseResolvedUpdatePolicy {
+  version: 1;
+  deploymentId: string;
+  distributionId: string;
+  currentVersion: string;
+  decision: 'update' | 'none';
+  reason: 'update_available' | 'up_to_date' | 'outside_rollout' | 'no_active_release';
+  release: {
+    id: string;
+    version: string;
+    sourceCommit: string;
+    channel: 'canary' | 'stable' | 'required';
+    mandatory: boolean;
+    rolloutPercent: number;
+    notes: string;
+    fullManifest: EnterpriseUpdateManifestReference | null;
+    incrementalManifest: EnterpriseUpdateManifestReference | null;
+    publishedAt: string;
+  } | null;
+  issuedAtMs: number;
+  expiresAtMs: number;
+}
+
+export type EnterpriseUpdatePolicyResult =
+  | { status: 'resolved'; policy: EnterpriseResolvedUpdatePolicy; verifiedKeyId: string }
+  | {
+      status: 'not_configured';
+      reason: 'online_license_required' | 'verification_key_missing';
+    }
+  | { status: 'unavailable'; error: string };
 
 export type EnterprisePositionRoleMapping = 'member' | 'department_admin' | 'enterprise_admin';
 
@@ -548,6 +767,76 @@ export interface EnterpriseSessionResult {
   connectionError?: string;
 }
 
+export interface EnterpriseDataGovernanceProfile {
+  controller: { name: string; privacyContact: string; configured: boolean };
+  residency: {
+    mode: string;
+    region: string;
+    crossBorderEnabled: boolean;
+    localizationReady: boolean;
+  };
+  security: {
+    publicTransport: string;
+    database: string;
+    encryptedData: string[];
+    hashedData: string[];
+    plaintextData: string[];
+  };
+  retention: {
+    securityAuditMinimumDays: number;
+    encryptedBackupDefaultDays: number;
+    healthTelemetryDefaultDays: number;
+  };
+  readiness: { configured: boolean; warnings: string[] };
+  documents: Array<{
+    id: 'terms' | 'privacy';
+    title: string;
+    version: string;
+    effectiveAt: string;
+    required: true;
+    summary: string[];
+    sourceUrls: string[];
+    hash: string;
+    accepted: boolean;
+    acceptedAt: number | null;
+  }>;
+  processingActivities: Array<{
+    id: string;
+    category: string;
+    purpose: string;
+    sensitivity: 'ordinary' | 'sensitive' | 'security';
+    storage: 'user_device' | 'enterprise_server' | 'configured_provider';
+    atRest: string;
+    transport: string;
+    retention: string;
+    deletion: string;
+    recipients: string[];
+    crossBorder: boolean;
+  }>;
+  rights: string[];
+  currentConsentComplete: boolean;
+  authorization: {
+    deploymentId: string;
+    license: {
+      status: string; plan: string; expiresAt: string; seatLimit: number;
+      activeSeatCount: number; modules: string[]; offline: boolean; enforce: boolean;
+    };
+    telemetry: { enabled: boolean; contentMode: string };
+    dataBoundary: Record<string, unknown>;
+  };
+}
+
+export interface EnterprisePrivacyDeletionReceipt {
+  requestId: string;
+  accountId: string;
+  organizationId: string;
+  completedAt: string;
+  deleted: string[];
+  anonymized: string[];
+  retained: Array<{ category: string; reason: string; restriction: string }>;
+  backupExpiry: string;
+}
+
 interface EnterpriseServerHealth {
   status?: unknown;
   apiVersion?: unknown;
@@ -799,6 +1088,7 @@ export class EnterpriseClient {
     code: string;
     name: string;
     password: string;
+    legalConsent: true;
   }): Promise<{
     account: EnterpriseAccount;
     expiresAt: string;
@@ -1026,6 +1316,38 @@ export class EnterpriseClient {
     });
   }
 
+  async getDataGovernanceProfile(): Promise<EnterpriseDataGovernanceProfile> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['data_governance_v1']);
+    return this.request('/enterprise/privacy');
+  }
+
+  async acceptCurrentLegalDocuments(): Promise<EnterpriseDataGovernanceProfile> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    return this.request('/enterprise/privacy/accept', {
+      method: 'POST',
+      body: JSON.stringify({ accepted: true }),
+    });
+  }
+
+  async exportMyAccountData(): Promise<Record<string, unknown>> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    return this.request('/enterprise/privacy/export', { method: 'GET' });
+  }
+
+  async deleteMyAccount(input: {
+    password: string;
+    confirmation: string;
+  }): Promise<EnterprisePrivacyDeletionReceipt> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    const result = await this.request<EnterprisePrivacyDeletionReceipt>(
+      '/enterprise/privacy/account',
+      { method: 'DELETE', body: JSON.stringify(input) },
+    );
+    this.invalidateSession();
+    return result;
+  }
+
   async recordTokenUsage(input: TokenUsageRecordInput): Promise<{
     recorded: boolean;
     source: 'client_reported';
@@ -1037,10 +1359,7 @@ export class EnterpriseClient {
     });
   }
 
-  async recordKnowledge(input: EnterpriseKnowledgeRecordInput): Promise<{
-    status: 'added' | 'exists';
-    added: boolean;
-  }> {
+  async recordKnowledge(input: EnterpriseKnowledgeRecordInput): Promise<EnterpriseKnowledgeRecordResult> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     return this.request('/enterprise/knowledge', {
       method: 'POST',
@@ -1051,26 +1370,155 @@ export class EnterpriseClient {
   async listKnowledge(input: {
     query?: string;
     department?: string;
+    includeReview?: boolean;
+    status?: EnterpriseKnowledgeItem['status'];
   } = {}): Promise<EnterpriseKnowledgeItem[]> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     const params = new URLSearchParams();
     if (input.query?.trim()) params.set('q', input.query.trim());
     if (input.department?.trim()) params.set('department', input.department.trim());
+    if (input.includeReview) params.set('includeReview', 'true');
+    if (input.status) params.set('status', input.status);
     const suffix = params.toString() ? `?${params}` : '';
     const response = await this.request<{ knowledge: EnterpriseKnowledgeRow[] }>(
       `/enterprise/knowledge${suffix}`,
     );
-    return response.knowledge.map((item) => ({
-      id: item.id,
-      organizationId: item.organizationId || item.organization_id || '',
-      sourceId: item.sourceId ?? item.source_id ?? null,
-      department: item.department ?? null,
+    return response.knowledge.map(mapEnterpriseKnowledgeItem);
+  }
+
+  async reviewKnowledge(
+    id: string,
+    action: 'approve' | 'archive',
+    note?: string,
+  ): Promise<EnterpriseKnowledgeItem> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    const response = await this.request<{ knowledge: EnterpriseKnowledgeRow }>(
+      `/enterprise/knowledge/${encodeURIComponent(id)}/review`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ action, ...(note?.trim() ? { note: note.trim() } : {}) }),
+      },
+    );
+    return mapEnterpriseKnowledgeItem(response.knowledge);
+  }
+
+  async reviseKnowledge(id: string, input: {
+    title: string;
+    category: string;
+    content: string;
+    confidence?: number;
+    changeNote?: string;
+  }): Promise<EnterpriseKnowledgeItem> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    const response = await this.request<{ knowledge: EnterpriseKnowledgeRow }>(
+      `/enterprise/knowledge/${encodeURIComponent(id)}`,
+      { method: 'PATCH', body: JSON.stringify(input) },
+    );
+    return mapEnterpriseKnowledgeItem(response.knowledge);
+  }
+
+  async listKnowledgeRevisions(id: string): Promise<EnterpriseKnowledgeRevision[]> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    const response = await this.request<{ revisions: EnterpriseKnowledgeRevisionRow[] }>(
+      `/enterprise/knowledge/${encodeURIComponent(id)}/revisions`,
+    );
+    return response.revisions.map((item) => ({
+      id: String(item.id),
+      knowledgeId: String(item.knowledgeId ?? item.knowledge_id ?? id),
+      version: typeof item.version === 'number' ? item.version : 1,
+      title: item.title?.trim() || item.category,
       category: item.category,
       content: item.content,
-      contributor: item.contributor ?? null,
-      confidence: typeof item.confidence === 'number' ? item.confidence : 0.5,
+      status: item.status || 'active',
+      changedBy: item.changedBy ?? item.changed_by ?? null,
+      changeNote: item.changeNote ?? item.change_note ?? null,
       createdAt: item.createdAt || item.created_at || '',
     }));
+  }
+
+  async listEnterpriseSkills(input: {
+    scope?: EnterpriseSkillScope;
+    query?: string;
+    sort?: EnterpriseSkillSort;
+  } = {}): Promise<EnterpriseSkillMarketItem[]> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['enterprise_skill_market_v1']);
+    const params = new URLSearchParams();
+    if (input.scope) params.set('scope', input.scope);
+    if (input.query?.trim()) params.set('q', input.query.trim());
+    if (input.sort) params.set('sort', input.sort);
+    const response = await this.request<{ skills: EnterpriseSkillMarketItem[] }>(
+      `/enterprise/skills${params.size > 0 ? `?${params}` : ''}`,
+    );
+    return response.skills;
+  }
+
+  async submitEnterpriseSkill(input: {
+    name: string;
+    description: string;
+    content: string;
+    visibility: EnterpriseSkillVisibility;
+  }): Promise<{ outcome: 'submitted' | 'exists'; skill: EnterpriseSkillMarketItem }> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['enterprise_skill_market_v1']);
+    return this.request('/enterprise/skills', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  }
+
+  async reviewEnterpriseSkill(
+    id: string,
+    action: 'approve' | 'archive',
+    visibility?: EnterpriseSkillVisibility,
+  ): Promise<EnterpriseSkillMarketItem> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['enterprise_skill_market_v1']);
+    const response = await this.request<{ skill: EnterpriseSkillMarketItem }>(
+      `/enterprise/skills/${encodeURIComponent(id)}/review`,
+      { method: 'POST', body: JSON.stringify({ action, visibility }) },
+    );
+    return response.skill;
+  }
+
+  async installEnterpriseSkill(id: string): Promise<EnterpriseSkillMarketItem & { content: string }> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['enterprise_skill_market_v1']);
+    const response = await this.request<{ skill: EnterpriseSkillMarketItem & { content: string } }>(
+      `/enterprise/skills/${encodeURIComponent(id)}/install`,
+      { method: 'POST', body: '{}' },
+    );
+    return response.skill;
+  }
+
+  async rateEnterpriseSkill(id: string, score: number): Promise<EnterpriseSkillMarketItem> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['enterprise_skill_market_v1']);
+    const response = await this.request<{ skill: EnterpriseSkillMarketItem }>(
+      `/enterprise/skills/${encodeURIComponent(id)}/rating`,
+      { method: 'POST', body: JSON.stringify({ score }) },
+    );
+    return response.skill;
+  }
+
+  async recordEnterpriseSkillUsage(
+    id: string,
+    success: boolean,
+    eventId: string,
+  ): Promise<EnterpriseSkillMarketItem> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['enterprise_skill_market_v1']);
+    const response = await this.request<{ skill: EnterpriseSkillMarketItem }>(
+      `/enterprise/skills/${encodeURIComponent(id)}/usage`,
+      { method: 'POST', body: JSON.stringify({ success, eventId }) },
+    );
+    return response.skill;
+  }
+
+  async getEnterpriseSkillLeaderboard(): Promise<EnterpriseSkillLeaderboard> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['enterprise_skill_market_v1']);
+    return this.request('/enterprise/skills/leaderboard');
   }
 
   async listAccountSyncSnapshots(): Promise<EnterpriseAccountSyncSnapshot[]> {
@@ -1128,6 +1576,18 @@ export class EnterpriseClient {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     await this.assertCompatibleServer(this.serverUrl, ['modular_update_push_v1']);
     return this.request('/enterprise/modules/updates/client');
+  }
+
+  async getDeploymentUpdatePolicy(input: {
+    distributionId: string;
+    currentVersion: string;
+  }): Promise<EnterpriseUpdatePolicyResult> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['signed_update_policy_v1']);
+    return this.request('/enterprise/deployment/update-policy', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
   }
 
   async updateOrganizationFeatures(

@@ -71,7 +71,7 @@ function updateAllPackageVersions(newVersion) {
       packageJson.version = newVersion;
       writeFileSync(fullPath, JSON.stringify(packageJson, null, 2) + '\n');
       console.log(chalk.green(`   ✅ ${packagePath}: ${oldVersion} → ${newVersion}`));
-    } catch (error) {
+    } catch {
       console.log(chalk.yellow(`   ⚠️  Skipped ${packagePath} (file not found or unreadable)`));
     }
   });
@@ -186,7 +186,7 @@ async function main() {
     try {
       run('node scripts/restore-after-publish.js', { stdio: 'pipe' });
       restoreSpinner.succeed(chalk.green('✅ Cleanup completed'));
-    } catch (error) {
+    } catch {
       restoreSpinner.warn(chalk.yellow('⚠️  Cleanup warning (non-critical)'));
     }
 
@@ -200,7 +200,7 @@ async function main() {
       try {
         run('npm uninstall -g otto-ai', { stdio: 'pipe' });
         uninstallSpinner.succeed(chalk.green('✅ Old version uninstalled'));
-      } catch (error) {
+      } catch {
         uninstallSpinner.info(chalk.cyan('ℹ️ No previously installed version found'));
       }
 
@@ -223,7 +223,7 @@ async function main() {
 
         run(command);
         authSpinner.succeed(chalk.green('✅ Authentication reset'));
-      } catch (error) {
+      } catch {
         authSpinner.info(chalk.cyan('ℹ️ Skipped auth reset (script not found or execution failed)'));
       }
 
@@ -232,7 +232,7 @@ async function main() {
       try {
         run('otto --version');
         testSpinner.succeed(chalk.green('✅ otto startup successful!'));
-      } catch (error) {
+      } catch {
         testSpinner.warn(chalk.yellow('⚠️ otto startup failed, please test manually'));
       }
 

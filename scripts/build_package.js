@@ -28,7 +28,7 @@ let packageName = 'Package';
 try {
   const pkgJson = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'));
   packageName = pkgJson.name || 'Package';
-} catch (e) {
+} catch {
   // Fallback to folder name
   packageName = process.cwd().split(/[\\/]/).pop();
 }

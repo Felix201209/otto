@@ -6,3 +6,4 @@ export * from './modelUsageFacade.js';
 export * from './modelUsageRepository.js';
 export * from './modelUsageTypes.js';
 export * from './modelGatewaySchema.js';
+export * from './modelGatewayComposition.js';

@@ -25,12 +25,13 @@ describe('企业首次注册输入规则', () => {
   it('普通注册不需要邀请码，加入企业时才校验邀请码', () => {
     expect(sanitizeSmsCode('04a27 319')).toBe('042731');
     expect(sanitizeOrganizationInviteCode('ab3D k9Pq z7xY<script>')).toBe('ab3D-k9Pq-z7xY');
-    expect(isRegistrationReady({ inviteCode: '', name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731' })).toBe(true);
-    expect(isRegistrationReady({ inviteCode: '', inviteRequired: true, name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731' })).toBe(false);
-    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: '', code: '042731' })).toBe(false);
-    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', name: '小明', password: 'short', confirmPassword: 'short', challengeId: 'sms_1', code: '042731' })).toBe(false);
-    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', name: '小明', password: 'password-1', confirmPassword: 'different', challengeId: 'sms_1', code: '042731' })).toBe(false);
-    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', inviteRequired: true, name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731' })).toBe(true);
+    expect(isRegistrationReady({ inviteCode: '', name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731', legalConsent: true })).toBe(true);
+    expect(isRegistrationReady({ inviteCode: '', name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731', legalConsent: false })).toBe(false);
+    expect(isRegistrationReady({ inviteCode: '', inviteRequired: true, name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731', legalConsent: true })).toBe(false);
+    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: '', code: '042731', legalConsent: true })).toBe(false);
+    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', name: '小明', password: 'short', confirmPassword: 'short', challengeId: 'sms_1', code: '042731', legalConsent: true })).toBe(false);
+    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', name: '小明', password: 'password-1', confirmPassword: 'different', challengeId: 'sms_1', code: '042731', legalConsent: true })).toBe(false);
+    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', inviteRequired: true, name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731', legalConsent: true })).toBe(true);
   });
 });
 
@@ -226,6 +227,7 @@ describe('专业登录入口', () => {
     fireEvent.change(screen.getByLabelText('设置登录密码'), { target: { value: 'password-1' } });
     fireEvent.change(screen.getByLabelText('确认登录密码'), { target: { value: 'password-1' } });
     fireEvent.change(screen.getByLabelText('短信验证码'), { target: { value: '042731' } });
+    fireEvent.click(screen.getByRole('checkbox'));
     expect((screen.getByRole('button', { name: '加入企业并进入' }) as HTMLButtonElement).disabled).toBe(false);
 
     fireEvent.change(screen.getByLabelText('企业邀请码'), { target: { value: 'Wz8Y-m3Na-Q5pB' } });

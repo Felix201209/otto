@@ -27,6 +27,13 @@ export interface CreateEmployeeInput {
   organizationId?: string;
 }
 
+export interface UpdateEmployeeOnboardingProfileInput {
+  employeeId: string;
+  organizationId: string;
+  role: string | null;
+  personality: string;
+}
+
 export interface EmployeeRecord {
   [key: string]: unknown;
   id: string;
@@ -237,6 +244,36 @@ export function listEmployeesFromRepository(
   return [...local, ...legacy];
 }
 
+export function updateEmployeeOnboardingProfileInRepository(
+  store: MemberRepositoryStore,
+  input: UpdateEmployeeOnboardingProfileInput,
+): EmployeeRecord | null {
+  const result = store
+    .db()
+    .prepare(
+      `UPDATE employees SET role = ?, personality = ?
+       WHERE id = ? AND organization_id = ?`,
+    )
+    .run(
+      input.role,
+      input.personality,
+      input.employeeId,
+      input.organizationId,
+    ) as { changes?: number | bigint };
+  if (Number(result.changes ?? 0) === 0) return null;
+  store.audit(
+    'onboarding_profile_updated',
+    input.employeeId,
+    'Employee onboarding profile updated',
+    input.organizationId,
+  );
+  return getEmployeeFromRepository(
+    store,
+    input.employeeId,
+    input.organizationId,
+  );
+}
+
 export function offboardEmployeeInRepository(
   store: MemberRepositoryStore,
   id: string,
@@ -264,4 +301,19 @@ export function offboardEmployeeInRepository(
     );
   }
   return changed;
+}
+
+/** Includes offboarded employees so backups preserve historical ownership. */
+export function listEmployeesForBackup(
+  store: Pick<MemberRepositoryStore, 'db'>,
+  organizationId: string,
+): EmployeeRecord[] {
+  return store
+    .db()
+    .prepare(
+      `SELECT * FROM employees
+       WHERE organization_id = ?
+       ORDER BY onboarded_at`,
+    )
+    .all(organizationId) as EmployeeRecord[];
 }

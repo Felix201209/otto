@@ -31,17 +31,100 @@ export interface KnowledgeEntry {
   fingerprint?: string;
   /** 自动捕获置信度；手动条目及旧条目可为空。 */
   confidence?: number;
+  /** 最近一次内容或元数据发生变化的时间。 */
+  updatedAt?: string;
+  /** 同一知识被独立观察到的次数；旧条目按 1 次处理。 */
+  reinforcementCount?: number;
+  /** 最近一次被重复验证的时间。 */
+  lastReinforcedAt?: string;
+  /** 提供过相同证据的会话，限制长度以避免条目无限膨胀。 */
+  sourceSessionIds?: string[];
+  /** 被检索并用于回答的次数。 */
+  useCount?: number;
+  /** 最近一次被检索使用的时间。 */
+  lastUsedAt?: string;
 }
 
 /** 检索结果：条目 + 相关度分（越大越相关） */
 export interface KnowledgeSearchResult extends KnowledgeEntry {
   score: number;
+  strength: number;
+  freshness: 'current' | 'aging' | 'needs_review';
 }
 
 const KNOWLEDGE_DIR_NAME = 'knowledge';
 const ENTRIES_FILE_NAME = 'entries.jsonl';
 const DEFAULT_SEARCH_LIMIT = 20;
 const DEFAULT_LIST_LIMIT = 20;
+const MAX_SOURCE_SESSION_IDS = 24;
+
+export interface ReinforceKnowledgeOptions {
+  sourceSessionId?: string;
+  confidence?: number;
+  tags?: string[];
+  content?: string;
+  category?: string;
+}
+
+function normalizedStrings(values: unknown, maximum = Number.POSITIVE_INFINITY): string[] {
+  if (!Array.isArray(values)) return [];
+  return [...new Set(values
+    .filter((value): value is string => typeof value === 'string')
+    .map((value) => value.trim())
+    .filter(Boolean))]
+    .slice(-maximum);
+}
+
+function normalizeEntry(entry: KnowledgeEntry): KnowledgeEntry {
+  const createdAt = typeof entry.createdAt === 'string' ? entry.createdAt : '';
+  return {
+    ...entry,
+    tags: normalizedStrings(entry.tags),
+    createdAt,
+    updatedAt: typeof entry.updatedAt === 'string' ? entry.updatedAt : createdAt,
+    reinforcementCount: Math.max(1, Math.floor(entry.reinforcementCount ?? 1)),
+    sourceSessionIds: normalizedStrings(entry.sourceSessionIds, MAX_SOURCE_SESSION_IDS),
+    useCount: Math.max(0, Math.floor(entry.useCount ?? 0)),
+  };
+}
+
+/**
+ * 个人知识强度只由本地可核验证据计算，不使用模型自评。
+ * 重复验证、跨会话来源、实际使用和置信度都会提高强度。
+ */
+export function personalKnowledgeStrength(entry: KnowledgeEntry): number {
+  const confidence = Math.min(1, Math.max(0, entry.confidence ?? 0.75));
+  const repetitions = Math.min(1, Math.max(1, entry.reinforcementCount ?? 1) / 5);
+  const sessions = Math.min(1, (entry.sourceSessionIds?.length ?? 0) / 4);
+  const uses = Math.min(1, (entry.useCount ?? 0) / 6);
+  const freshness = personalKnowledgeFreshness(entry);
+  const freshnessFactor = freshness === 'needs_review' ? 0.62 : freshness === 'aging' ? 0.84 : 1;
+  return Math.round(
+    (confidence * 0.45 + repetitions * 0.3 + sessions * 0.15 + uses * 0.1)
+      * freshnessFactor
+      * 100,
+  ) / 100;
+}
+
+function isTimeSensitiveKnowledge(entry: KnowledgeEntry): boolean {
+  const searchable = `${entry.category} ${entry.tags.join(' ')} ${entry.content}`.toLowerCase();
+  return /(价格|费用|政策|制度|版本|配置|地址|电话|联系人|排期|库存|license|price|policy|version|config|contact)/iu
+    .test(searchable);
+}
+
+export function personalKnowledgeFreshness(
+  entry: KnowledgeEntry,
+): 'current' | 'aging' | 'needs_review' {
+  const timestamp = Date.parse(
+    entry.lastReinforcedAt || entry.updatedAt || entry.createdAt,
+  );
+  if (!Number.isFinite(timestamp)) return 'needs_review';
+  const ageDays = Math.max(0, (Date.now() - timestamp) / 86_400_000);
+  const timeSensitive = isTimeSensitiveKnowledge(entry);
+  if (ageDays > (timeSensitive ? 90 : 365)) return 'needs_review';
+  if (ageDays > (timeSensitive ? 45 : 180)) return 'aging';
+  return 'current';
+}
 
 /**
  * 配置根目录：默认 ~/.otto-user；OTTO_USER_DIR 可覆盖（测试隔离用）。
@@ -86,7 +169,8 @@ function scoreEntry(entry: KnowledgeEntry, query: string): number {
     if (tags.some((tag) => tag.includes(token))) score += 2;
     if (category.includes(token)) score += 1;
   }
-  return score;
+  if (score <= 0) return 0;
+  return score * 10 + Math.round(personalKnowledgeStrength(entry) * 8);
 }
 
 /**
@@ -112,6 +196,15 @@ export class LocalKnowledgeStore {
     const run = this.writeChain.catch(() => undefined).then(op);
     this.writeChain = run;
     return run;
+  }
+
+  private async rewriteEntries(entries: KnowledgeEntry[]): Promise<void> {
+    const tmpPath = `${this.filePath}.tmp`;
+    await fs.mkdir(path.dirname(this.filePath), { recursive: true });
+    const body = entries.map((entry) => JSON.stringify(normalizeEntry(entry))).join('\n')
+      + (entries.length > 0 ? '\n' : '');
+    await fs.writeFile(tmpPath, body, 'utf-8');
+    await fs.rename(tmpPath, this.filePath);
   }
 
   /**
@@ -142,12 +235,12 @@ export class LocalKnowledgeStore {
           typeof parsed.content === 'string' &&
           typeof parsed.category === 'string'
         ) {
-          entries.push({
+          entries.push(normalizeEntry({
             ...parsed,
             tags: Array.isArray(parsed.tags) ? parsed.tags : [],
             createdAt:
               typeof parsed.createdAt === 'string' ? parsed.createdAt : '',
-          });
+          }));
         } else {
           corrupted++;
         }
@@ -170,17 +263,24 @@ export class LocalKnowledgeStore {
     tags: string[] = [],
     fingerprint?: string,
     confidence?: number,
+    sourceSessionId?: string,
   ): Promise<KnowledgeEntry> {
     const trimmedContent = (content ?? '').trim();
     if (!trimmedContent) {
       throw new Error('knowledge content cannot be empty');
     }
+    const now = new Date().toISOString();
     const entry: KnowledgeEntry = {
       id: generateId(),
       category: (category ?? '').trim() || 'general',
       content: trimmedContent,
       tags: (tags ?? []).map((tag) => String(tag).trim()).filter(Boolean),
-      createdAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
+      reinforcementCount: 1,
+      lastReinforcedAt: now,
+      sourceSessionIds: sourceSessionId?.trim() ? [sourceSessionId.trim()] : [],
+      useCount: 0,
       ...(fingerprint ? { fingerprint } : {}),
       ...(confidence !== undefined ? { confidence } : {}),
     };
@@ -215,7 +315,12 @@ export class LocalKnowledgeStore {
         (entry) =>
           !categoryFilter || entry.category.toLowerCase() === categoryFilter,
       )
-      .map((entry) => ({ ...entry, score: scoreEntry(entry, q) }))
+      .map((entry) => ({
+        ...entry,
+        score: scoreEntry(entry, q),
+        strength: personalKnowledgeStrength(entry),
+        freshness: personalKnowledgeFreshness(entry),
+      }))
       .filter((result) => result.score > 0)
       .sort(
         (a, b) =>
@@ -243,13 +348,7 @@ export class LocalKnowledgeStore {
       if (remaining.length === entries.length) {
         return false;
       }
-      const tmpPath = `${this.filePath}.tmp`;
-      await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-      const body =
-        remaining.map((entry) => JSON.stringify(entry)).join('\n') +
-        (remaining.length > 0 ? '\n' : '');
-      await fs.writeFile(tmpPath, body, 'utf-8');
-      await fs.rename(tmpPath, this.filePath);
+      await this.rewriteEntries(remaining);
       return true;
     });
   }
@@ -264,6 +363,64 @@ export class LocalKnowledgeStore {
     return entries.find((e) => e.fingerprint === fingerprint) ?? null;
   }
 
+  /** 把重复出现变成证据，而不是简单丢弃。 */
+  async reinforceByFingerprint(
+    fingerprint: string,
+    options: ReinforceKnowledgeOptions = {},
+  ): Promise<KnowledgeEntry | null> {
+    if (!fingerprint) return null;
+    return this.enqueue(async () => {
+      const entries = await this.loadAll();
+      const index = entries.findIndex((entry) => entry.fingerprint === fingerprint);
+      if (index < 0) return null;
+      const current = entries[index];
+      const now = new Date().toISOString();
+      const sourceSessionIds = normalizedStrings([
+        ...(current.sourceSessionIds ?? []),
+        options.sourceSessionId,
+      ], MAX_SOURCE_SESSION_IDS);
+      const tags = normalizedStrings([...(current.tags ?? []), ...(options.tags ?? [])]);
+      const next: KnowledgeEntry = normalizeEntry({
+        ...current,
+        category: options.category?.trim() || current.category,
+        content: options.content?.trim() || current.content,
+        tags,
+        confidence: options.confidence === undefined
+          ? current.confidence
+          : Math.max(current.confidence ?? 0, Math.min(1, Math.max(0, options.confidence))),
+        updatedAt: now,
+        lastReinforcedAt: now,
+        reinforcementCount: (current.reinforcementCount ?? 1) + 1,
+        sourceSessionIds,
+      });
+      entries[index] = next;
+      await this.rewriteEntries(entries);
+      return next;
+    });
+  }
+
+  /** 记录真正进入回答上下文的知识，供后续排序与 Skill 提炼使用。 */
+  async markUsed(ids: string[]): Promise<void> {
+    const wanted = new Set(ids.filter(Boolean));
+    if (wanted.size === 0) return;
+    await this.enqueue(async () => {
+      const entries = await this.loadAll();
+      const now = new Date().toISOString();
+      let changed = false;
+      for (let index = 0; index < entries.length; index++) {
+        if (!wanted.has(entries[index].id)) continue;
+        entries[index] = normalizeEntry({
+          ...entries[index],
+          useCount: (entries[index].useCount ?? 0) + 1,
+          lastUsedAt: now,
+          updatedAt: entries[index].updatedAt || entries[index].createdAt,
+        });
+        changed = true;
+      }
+      if (changed) await this.rewriteEntries(entries);
+    });
+  }
+
   /**
    * Upsert：按指纹查找，存在则更新内容/标签/时间，不存在则新增。
    * 新增走 JSONL 追加；更新需要重写文件。
@@ -275,6 +432,7 @@ export class LocalKnowledgeStore {
     tags: string[] = [],
     fingerprint?: string,
     confidence?: number,
+    sourceSessionId?: string,
   ): Promise<KnowledgeEntry> {
     const trimmedContent = (content ?? '').trim();
     if (!trimmedContent) {
@@ -283,41 +441,21 @@ export class LocalKnowledgeStore {
 
     // 无指纹走新增
     if (!fingerprint) {
-      return this.add(category, trimmedContent, tags, undefined, confidence);
+      return this.add(category, trimmedContent, tags, undefined, confidence, sourceSessionId);
     }
 
     const existing = await this.findByFingerprint(fingerprint);
     if (!existing) {
-      return this.add(category, trimmedContent, tags, fingerprint, confidence);
+      return this.add(category, trimmedContent, tags, fingerprint, confidence, sourceSessionId);
     }
 
-    // 存在则更新
-    const updated: KnowledgeEntry = {
-      ...existing,
-      category: (category ?? '').trim() || existing.category,
+    return (await this.reinforceByFingerprint(fingerprint, {
+      category,
       content: trimmedContent,
-      tags: (tags ?? []).map((t) => String(t).trim()).filter(Boolean).length > 0
-        ? (tags ?? []).map((t) => String(t).trim()).filter(Boolean)
-        : existing.tags,
-      createdAt: new Date().toISOString(),
-      ...(confidence !== undefined ? { confidence } : {}),
-    };
-
-    await this.enqueue(async () => {
-      const entries = await this.loadAll();
-      const idx = entries.findIndex((e) => e.id === existing.id);
-      if (idx === -1) return;
-      entries[idx] = updated;
-      const tmpPath = `${this.filePath}.tmp`;
-      await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-      const body =
-        entries.map((entry) => JSON.stringify(entry)).join('\n') +
-        (entries.length > 0 ? '\n' : '');
-      await fs.writeFile(tmpPath, body, 'utf-8');
-      await fs.rename(tmpPath, this.filePath);
-    });
-
-    return updated;
+      tags,
+      confidence,
+      sourceSessionId,
+    })) ?? existing;
   }
 
   /**
@@ -336,15 +474,35 @@ export class LocalKnowledgeStore {
     const sorted = [...entries].sort(
       (a, b) => b.createdAt.localeCompare(a.createdAt),
     );
+    const mergedById = new Map(sorted.map((entry) => [entry.id, { ...entry }]));
 
     for (let i = 0; i < sorted.length; i++) {
       if (removed.has(sorted[i].id)) continue;
       for (let j = i + 1; j < sorted.length; j++) {
         if (removed.has(sorted[j].id)) continue;
+        if (this.hasPolarityConflict(sorted[i].content, sorted[j].content)) continue;
         const sim = this.textSimilarity(sorted[i].content, sorted[j].content);
         if (sim >= threshold) {
-          // 标记较旧（j，因为 sorted 已按时间倒序）的删除
-          removed.add(sorted[j].id);
+          const keeper = mergedById.get(sorted[i].id)!;
+          const duplicate = mergedById.get(sorted[j].id)!;
+          mergedById.set(keeper.id, normalizeEntry({
+            ...keeper,
+            tags: normalizedStrings([...keeper.tags, ...duplicate.tags]),
+            createdAt: [keeper.createdAt, duplicate.createdAt].filter(Boolean).sort()[0] || keeper.createdAt,
+            updatedAt: [keeper.updatedAt, duplicate.updatedAt].filter(Boolean).sort().at(-1),
+            lastReinforcedAt: [keeper.lastReinforcedAt, duplicate.lastReinforcedAt]
+              .filter((value): value is string => Boolean(value)).sort().at(-1),
+            reinforcementCount: (keeper.reinforcementCount ?? 1) + (duplicate.reinforcementCount ?? 1),
+            sourceSessionIds: normalizedStrings([
+              ...(keeper.sourceSessionIds ?? []),
+              ...(duplicate.sourceSessionIds ?? []),
+            ], MAX_SOURCE_SESSION_IDS),
+            useCount: (keeper.useCount ?? 0) + (duplicate.useCount ?? 0),
+            lastUsedAt: [keeper.lastUsedAt, duplicate.lastUsedAt]
+              .filter((value): value is string => Boolean(value)).sort().at(-1),
+            confidence: Math.max(keeper.confidence ?? 0, duplicate.confidence ?? 0) || undefined,
+          }));
+          removed.add(duplicate.id);
         }
       }
     }
@@ -354,14 +512,10 @@ export class LocalKnowledgeStore {
     // 重写文件：去掉被标记的条目
     await this.enqueue(async () => {
       const current = await this.loadAll();
-      const remaining = current.filter((e) => !removed.has(e.id));
-      const tmpPath = `${this.filePath}.tmp`;
-      await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-      const body =
-        remaining.map((entry) => JSON.stringify(entry)).join('\n') +
-        (remaining.length > 0 ? '\n' : '');
-      await fs.writeFile(tmpPath, body, 'utf-8');
-      await fs.rename(tmpPath, this.filePath);
+      const remaining = current
+        .filter((entry) => !removed.has(entry.id))
+        .map((entry) => mergedById.get(entry.id) ?? entry);
+      await this.rewriteEntries(remaining);
     });
 
     return removed.size;
@@ -393,5 +547,21 @@ export class LocalKnowledgeStore {
     }
     const union = ga.size + gb.size - intersection;
     return union === 0 ? 0 : intersection / union;
+  }
+
+  /** 相反结论宁可并存等待用户复核，也不能被“文本很像”误合并。 */
+  private hasPolarityConflict(a: string, b: string): boolean {
+    const normalize = (value: string): string => value.toLowerCase().replace(/\s+/gu, '');
+    const negation = /(?:不能|不必|无需|禁止|不得|mustn't|shouldn't|never|not|未|否|不)/giu;
+    const negationCount = (value: string): number => value.match(negation)?.length ?? 0;
+    const left = normalize(a);
+    const right = normalize(b);
+    const polarityDiffers = Math.abs(negationCount(left) - negationCount(right)) % 2 === 1;
+    if (!polarityDiffers) return false;
+    return this.textSimilarity(left, right) >= 0.55
+      || this.textSimilarity(
+        left.replace(negation, ''),
+        right.replace(negation, ''),
+      ) >= 0.55;
   }
 }

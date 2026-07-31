@@ -13,20 +13,20 @@
 :root {
   /* —— 表面 / 文字 —— */
   --otto-bg: #ffffff;
-  --otto-sidebar-bg: #f7f7f8;
+  --otto-sidebar-bg: #f5f5f7;
   --otto-surface: #ffffff;
   --otto-surface-raised: #fbfbfc;
   --otto-text: #1d1d1f;
   --otto-text-secondary: #8a8a8e;
   --otto-text-tertiary: #aeaeb2;
-  --otto-border: #ececec;
-  --otto-border-strong: #e0e0e2;
+  --otto-border: #e5e5ea;
+  --otto-border-strong: #d1d1d6;
 
   /* —— amber 强调 —— */
-  --otto-accent: #38bdf8;
-  --otto-accent-hover: #0ea5e9;
-  --otto-accent-soft: #e0f2fe; /* 选中态 cream 底 */
-  --otto-accent-gradient: linear-gradient(135deg, #7dd3fc 0%, #38bdf8 100%);
+  --otto-accent: #007aff;
+  --otto-accent-hover: #0066d6;
+  --otto-accent-soft: rgba(0, 122, 255, 0.1);
+  --otto-accent-gradient: var(--otto-accent);
 
   /* —— 语义来源徽章 —— */
   --otto-feishu-fg: #0284c7;
@@ -61,9 +61,9 @@
   --otto-code-text: #4b4b4f;
 
   /* —— 半径 —— */
-  --otto-radius-sm: 8px;
-  --otto-radius: 16px;
-  --otto-radius-lg: 24px;
+  --otto-radius-sm: 7px;
+  --otto-radius: 11px;
+  --otto-radius-lg: 16px;
   --otto-radius-pill: 999px;
 
   /* —— 阴影（分层景深：卡片轻浮 < 浮层 < 弹层）—— */
@@ -78,7 +78,8 @@
 
   /* —— 字体 —— */
   --otto-font:
-    -apple-system, 'Inter', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    'SF Pro Rounded', 'Hiragino Maru Gothic ProN', ui-rounded, -apple-system,
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   --otto-font-mono:
     'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, Consolas, 'Liberation Mono',
     monospace;
@@ -106,21 +107,21 @@
 @media (prefers-color-scheme: dark) {
   :root {
     /* —— 表面 / 文字 —— */
-    --otto-bg: #1a1918; /* 主背景：暖中性深灰，非纯黑 */
-    --otto-sidebar-bg: #171615; /* 侧栏比主区再压深半档 */
-    --otto-surface: #201f1d; /* 卡片/浮层表面，浮在 bg 之上 */
-    --otto-surface-raised: #262523; /* 更高一层（代码头/统计条等） */
-    --otto-text: #ededec; /* 主文字：暖白，不用纯白防刺眼 */
-    --otto-text-secondary: #a3a29d; /* 次级文字，约 6:1 */
-    --otto-text-tertiary: #706f6a; /* 时间戳/占位等弱文字 */
-    --otto-border: #322f2c; /* 常规分隔线 */
-    --otto-border-strong: #423f3b; /* 强描边（输入框/按钮） */
+    --otto-bg: #1c1c1e;
+    --otto-sidebar-bg: #242426;
+    --otto-surface: #2c2c2e;
+    --otto-surface-raised: #363638;
+    --otto-text: #f5f5f7;
+    --otto-text-secondary: #b8b8bd;
+    --otto-text-tertiary: #8e8e93;
+    --otto-border: #3a3a3c;
+    --otto-border-strong: #636366;
 
     /* —— amber 强调（暗底略提亮，防橙色发闷）—— */
-    --otto-accent: #7dd3fc;
-    --otto-accent-hover: #38bdf8;
-    --otto-accent-soft: rgba(163, 162, 157, 0.16); /* 选中态：低透明暖橙叠加 */
-    --otto-accent-gradient: linear-gradient(135deg, #7dd3fc 0%, #38bdf8 100%);
+    --otto-accent: #0a84ff;
+    --otto-accent-hover: #409cff;
+    --otto-accent-soft: rgba(10, 132, 255, 0.18);
+    --otto-accent-gradient: var(--otto-accent);
 
     /* —— 语义来源徽章（暗底低饱和底 + 提亮前景）—— */
     --otto-feishu-fg: #7dd3fc;

@@ -20,6 +20,7 @@ const legacyMessageRepositoryPath = path.join(
 describe('collaboration module boundary', () => {
   it('publishes presence through the collaboration public entrypoint', () => {
     expect(collaboration.createAccountPresenceFacade).toBeTypeOf('function');
+    expect(collaboration.createCollaborationComposition).toBeTypeOf('function');
     expect(collaboration.touchAccountPresenceInRepository).toBeTypeOf(
       'function',
     );
@@ -75,9 +76,17 @@ describe('collaboration module boundary', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('composes messaging and presence behind one module factory', () => {
+    const databaseFacade = fs.readFileSync(databaseFacadePath, 'utf8');
+    expect(databaseFacade).toContain('createCollaborationComposition');
+    expect(databaseFacade).not.toContain('createDirectMessageFacade');
+    expect(databaseFacade).not.toContain('createAccountPresenceFacade');
+  });
+
   it('keeps presence SQL and policy behind the collaboration facade', () => {
     const databaseFacade = fs.readFileSync(databaseFacadePath, 'utf8');
-    expect(databaseFacade).toContain('createAccountPresenceFacade');
+    expect(databaseFacade).toContain('createCollaborationComposition');
+    expect(databaseFacade).not.toContain('createAccountPresenceFacade');
     expect(databaseFacade).not.toMatch(
       /export function (?:touchAccountPresence|listAccountPresence)\s*\(/,
     );
@@ -90,7 +99,8 @@ describe('collaboration module boundary', () => {
   it('removes the legacy message repository and injects the collaboration facade', () => {
     const databaseFacade = fs.readFileSync(databaseFacadePath, 'utf8');
     expect(fs.existsSync(legacyMessageRepositoryPath)).toBe(false);
-    expect(databaseFacade).toContain('createDirectMessageFacade');
+    expect(databaseFacade).toContain('createCollaborationComposition');
+    expect(databaseFacade).not.toContain('createDirectMessageFacade');
     expect(databaseFacade).not.toContain("from './directMessageRepository.js'");
     expect(databaseFacade).not.toContain('INSERT INTO direct_messages');
     expect(databaseFacade).toContain('COLLABORATION_SCHEMA_CONTRIBUTOR');

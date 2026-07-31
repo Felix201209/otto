@@ -138,6 +138,22 @@ function embeddedMainModule(setAuthenticatedEnterpriseAccount: ReturnType<typeof
   } as unknown as Awaited<ReturnType<ServerManagerDependencies['loadOttoServer']>>;
 }
 
+describe('ServerManager desktop runtime diagnostics', () => {
+  it('reports the real selected server ownership without exposing endpoint credentials', async () => {
+    const manager = new ServerManager({ dependencies: dependencies() });
+
+    expect(manager.getDesktopRuntimeDiagnostic().server.status).toBe('unavailable');
+    await manager.ensure();
+
+    expect(manager.getDesktopRuntimeDiagnostic()).toMatchObject({
+      contractVersion: 1,
+      server: { status: 'ready', ownership: 'discovered' },
+      nativeCore: { mode: 'auto', status: 'not_probed' },
+    });
+    expect(JSON.stringify(manager.getDesktopRuntimeDiagnostic())).not.toContain('discovered-client-token');
+  });
+});
+
 describe('ServerManager trusted enterprise identity bridge', () => {
   it('内嵌 server 直接应用中心认证账号，且 renderer 端点不泄露 control token', async () => {
     const setAuthenticatedEnterpriseAccount = vi.fn();
@@ -457,7 +473,7 @@ export class OttoServer {
 }
 `).toString('base64'),
         },
-        { path: 'dist/bin.js', contentBase64: Buffer.from('import \"./index.js\";\n').toString('base64') },
+        { path: 'dist/bin.js', contentBase64: Buffer.from('import "./index.js";\n').toString('base64') },
       ],
     });
     const source = path.join(root, 'overlay.bundle.json');

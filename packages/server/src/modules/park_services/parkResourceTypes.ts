@@ -69,7 +69,7 @@ export interface ParkSettingsInput {
   parkingNote?: string | null;
 }
 
-export const PARK_MEETING_SLOT_MINUTES = 10;
+export const PARK_MEETING_SLOT_MINUTES = 30;
 export const PARK_MEETING_OPEN_MINUTES = 9 * 60;
 export const PARK_MEETING_CLOSE_MINUTES = 23 * 60;
 

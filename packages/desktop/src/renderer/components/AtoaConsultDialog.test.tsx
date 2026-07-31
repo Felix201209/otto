@@ -2,7 +2,6 @@
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { parseAtoaMessage } from '../atoaProtocol.js';

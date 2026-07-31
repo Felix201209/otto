@@ -155,7 +155,12 @@ DEPENDENCIES: pandoc + libreoffice. macOS: brew install pandoc libreoffice. Wind
       return await this.doSingle(p);
     } catch (e: unknown) {
       const m = e instanceof Error ? e.message : String(e);
-      if (m.includes('not found') || m.includes('command not found')) {
+      if (
+        m.includes('not found')
+        || m.includes('command not found')
+        || m.includes('not recognized')
+        || m.includes('无法将')
+      ) {
         const isMac = process.platform === 'darwin';
         return { llmContent: 'convert_document FAIL: '+m+'. Install: '+(isMac?'brew install pandoc libreoffice':'winget install pandoc LibreOffice'), returnDisplay: 'convert_document FAIL: tool not installed' };
       }

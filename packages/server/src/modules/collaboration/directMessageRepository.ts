@@ -5,7 +5,11 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
-import type { Database } from '../data_platform/index.js';
+import type {
+  Database,
+  EncryptedFieldCipher,
+  EncryptedObjectStore,
+} from '../data_platform/index.js';
 
 export interface CollaborationActiveAccount {
   id: string;
@@ -15,6 +19,8 @@ export interface CollaborationActiveAccount {
 export interface DirectMessageRepositoryStore {
   db(): Database;
   createId(): string;
+  fieldCipher?: EncryptedFieldCipher;
+  attachmentObjectStore?: EncryptedObjectStore;
   getActiveAccountInOrganization(
     accountId: string,
     organizationId: string,
@@ -86,11 +92,40 @@ export interface AtoaInboxMessageView extends DirectMessageView {
 
 interface DirectMessageRow {
   id: string;
+  organization_id: string;
   sender_account_id: string;
   recipient_account_id: string;
   content: string;
+  content_ciphertext?: string | null;
+  content_iv?: string | null;
+  content_auth_tag?: string | null;
+  content_key_version?: number | null;
+  content_type?: 'message' | 'atoa_request' | 'atoa_response';
   created_at: string;
   read_at: string | null;
+}
+
+function sqliteUtcTimestamp(value: string | null): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  const normalized = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(
+    trimmed,
+  )
+    ? `${trimmed.replace(' ', 'T')}Z`
+    : trimmed;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? value : date.toISOString();
+}
+
+const ATOA_REQUEST_CONTENT_PREFIX = 'OTTO_ATOA_REQUEST ';
+const ATOA_RESPONSE_CONTENT_PREFIX = 'OTTO_ATOA_RESPONSE ';
+
+function directMessageContentType(
+  content: string,
+): 'message' | 'atoa_request' | 'atoa_response' {
+  if (content.startsWith(ATOA_REQUEST_CONTENT_PREFIX)) return 'atoa_request';
+  if (content.startsWith(ATOA_RESPONSE_CONTENT_PREFIX)) return 'atoa_response';
+  return 'message';
 }
 
 interface DirectMessageAttachmentRow {
@@ -106,6 +141,8 @@ interface DirectMessageAttachmentMessageRow extends DirectMessageAttachmentRow {
 
 interface DirectMessageAttachmentContentRow extends DirectMessageAttachmentRow {
   content: Uint8Array;
+  storage_backend: string;
+  storage_key: string | null;
 }
 
 interface NormalizedDirectMessageAttachment {
@@ -256,20 +293,94 @@ function listDirectMessageAttachmentMap(
   return result;
 }
 
-function toDirectMessageView(
-  database: Database,
+function directMessageEncryptionContext(row: Pick<DirectMessageRow, 'id' | 'organization_id'>): string {
+  return `direct-message:${row.organization_id}:${row.id}`;
+}
+
+export function directMessageContentFromRepository(
+  store: Pick<DirectMessageRepositoryStore, 'fieldCipher'>,
   row: DirectMessageRow,
-  attachments = listDirectMessageAttachmentViews(database, row.id),
+): string {
+  const encrypted = row.content_ciphertext;
+  if (!encrypted) return row.content;
+  if (
+    !store.fieldCipher ||
+    !row.content_iv ||
+    !row.content_auth_tag ||
+    row.content_key_version == null
+  ) {
+    throw new Error('direct message encryption metadata is unavailable');
+  }
+  return store.fieldCipher.decryptText({
+    ciphertext: encrypted,
+    iv: row.content_iv,
+    authTag: row.content_auth_tag,
+    keyVersion: Number(row.content_key_version),
+  }, directMessageEncryptionContext(row));
+}
+
+function toDirectMessageView(
+  store: DirectMessageRepositoryStore,
+  row: DirectMessageRow,
+  attachments = listDirectMessageAttachmentViews(store.db(), row.id),
 ): DirectMessageView {
   return {
     id: row.id,
     senderAccountId: row.sender_account_id,
     recipientAccountId: row.recipient_account_id,
-    content: row.content,
-    createdAt: row.created_at,
-    readAt: row.read_at,
+    content: directMessageContentFromRepository(store, row),
+    createdAt: sqliteUtcTimestamp(row.created_at) ?? row.created_at,
+    readAt: sqliteUtcTimestamp(row.read_at),
     attachments,
   };
+}
+
+/** Converts legacy plaintext rows in-place after the encryption columns exist. */
+export function migrateDirectMessageContentEncryption(
+  store: DirectMessageRepositoryStore,
+): number {
+  if (!store.fieldCipher) return 0;
+  const database = store.db();
+  const selectBatch = database.prepare(
+    `SELECT * FROM direct_messages
+     WHERE content_ciphertext IS NULL
+     ORDER BY created_at, id
+     LIMIT 500`,
+  );
+  const update = database.prepare(
+    `UPDATE direct_messages
+     SET content = '[encrypted:v1]', content_ciphertext = ?, content_iv = ?,
+         content_auth_tag = ?, content_key_version = ?, content_type = ?
+     WHERE id = ? AND organization_id = ? AND content_ciphertext IS NULL`,
+  );
+  let migrated = 0;
+  while (true) {
+    const rows = selectBatch.all() as DirectMessageRow[];
+    if (rows.length === 0) return migrated;
+    database.exec('BEGIN IMMEDIATE');
+    try {
+      for (const row of rows) {
+        const encrypted = store.fieldCipher.encryptText(
+          row.content,
+          directMessageEncryptionContext(row),
+        );
+        const result = update.run(
+          encrypted.ciphertext,
+          encrypted.iv,
+          encrypted.authTag,
+          encrypted.keyVersion,
+          directMessageContentType(row.content),
+          row.id,
+          row.organization_id,
+        );
+        migrated += Number(result.changes);
+      }
+      database.exec('COMMIT');
+    } catch (error) {
+      database.exec('ROLLBACK');
+      throw error;
+    }
+  }
 }
 
 export interface SendDirectMessageInput {
@@ -313,21 +424,53 @@ export function sendDirectMessageInRepository(
   if (!recipient) throw new Error('接收成员不存在或已停用');
   const id = store.createId();
   const database = store.db();
+  const encryptedContent = store.fieldCipher?.encryptText(content, `direct-message:${organizationId}:${id}`);
+  const contentType = directMessageContentType(content);
+  const storedObjectKeys: string[] = [];
   database.exec('BEGIN IMMEDIATE');
   try {
-    database
-      .prepare(
-        `INSERT INTO direct_messages
-      (id, organization_id, sender_account_id, recipient_account_id, content)
-      VALUES (?, ?, ?, ?, ?)`,
-      )
-      .run(id, organizationId, senderAccountId, recipientAccountId, content);
+    if (encryptedContent) {
+      database
+        .prepare(
+          `INSERT INTO direct_messages
+        (id, organization_id, sender_account_id, recipient_account_id, content,
+         content_ciphertext, content_iv, content_auth_tag, content_key_version,
+         content_type)
+        VALUES (?, ?, ?, ?, '[encrypted:v1]', ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          id,
+          organizationId,
+          senderAccountId,
+          recipientAccountId,
+          encryptedContent.ciphertext,
+          encryptedContent.iv,
+          encryptedContent.authTag,
+          encryptedContent.keyVersion,
+          contentType,
+        );
+    } else {
+      database
+        .prepare(
+          `INSERT INTO direct_messages
+        (id, organization_id, sender_account_id, recipient_account_id, content, content_type)
+        VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(id, organizationId, senderAccountId, recipientAccountId, content, contentType);
+    }
     const insertAttachment = database.prepare(
       `INSERT INTO direct_message_attachments
-      (id, message_id, organization_id, ordinal, file_name, mime_type, byte_size, content)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, message_id, organization_id, ordinal, file_name, mime_type, byte_size,
+       content, storage_backend, storage_key)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     attachments.forEach((attachment, index) => {
+      const stored = store.attachmentObjectStore?.put({
+        namespace: organizationId,
+        objectId: attachment.id,
+        content: attachment.content,
+      });
+      if (stored) storedObjectKeys.push(stored.key);
       insertAttachment.run(
         attachment.id,
         id,
@@ -336,7 +479,9 @@ export function sendDirectMessageInRepository(
         attachment.fileName,
         attachment.mimeType,
         attachment.size,
-        attachment.content,
+        stored ? Buffer.alloc(0) : attachment.content,
+        stored?.backend ?? 'sqlite',
+        stored?.key ?? null,
       );
     });
     database.exec('COMMIT');
@@ -346,12 +491,19 @@ export function sendDirectMessageInRepository(
     } catch {
       /* preserve original error */
     }
+    for (const key of storedObjectKeys) {
+      try {
+        store.attachmentObjectStore?.delete(key);
+      } catch {
+        // A later orphan sweep removes an object that could not be cleaned up.
+      }
+    }
     throw error;
   }
   const row = database
     .prepare('SELECT * FROM direct_messages WHERE id = ?')
     .get(id) as DirectMessageRow;
-  return toDirectMessageView(database, row);
+  return toDirectMessageView(store, row);
 }
 
 export interface ListDirectMessagesInput {
@@ -405,7 +557,7 @@ export function listDirectMessagesFromRepository(
     rows.map((row) => row.id),
   );
   return rows.map((row) =>
-    toDirectMessageView(database, row, attachmentsByMessage.get(row.id) ?? []),
+    toDirectMessageView(store, row, attachmentsByMessage.get(row.id) ?? []),
   );
 }
 
@@ -428,7 +580,8 @@ export function getDirectMessageAttachmentFromRepository(
   const row = store
     .db()
     .prepare(
-      'SELECT a.id, a.file_name, a.mime_type, a.byte_size, a.content ' +
+      'SELECT a.id, a.file_name, a.mime_type, a.byte_size, a.content, ' +
+        'a.storage_backend, a.storage_key ' +
         'FROM direct_message_attachments a ' +
         'JOIN direct_messages m ON m.id = a.message_id AND m.organization_id = a.organization_id ' +
         'WHERE a.id = ? AND a.organization_id = ? ' +
@@ -437,12 +590,26 @@ export function getDirectMessageAttachmentFromRepository(
     .get(attachmentId, organizationId, accountId, accountId) as
     DirectMessageAttachmentContentRow | undefined;
   if (!row) throw new Error('附件不存在或无权访问');
+  let content: Buffer;
+  if (row.storage_backend === 'encrypted-filesystem') {
+    if (!row.storage_key || !store.attachmentObjectStore) {
+      throw new Error('attachment object storage is unavailable');
+    }
+    content = store.attachmentObjectStore.read(row.storage_key);
+  } else if (row.storage_backend === 'sqlite') {
+    content = Buffer.from(row.content);
+  } else {
+    throw new Error('attachment storage backend is unsupported');
+  }
+  if (content.length !== Number(row.byte_size)) {
+    throw new Error('attachment content size mismatch');
+  }
   return {
     id: row.id,
     fileName: row.file_name,
     mimeType: row.mime_type,
     size: Number(row.byte_size),
-    data: Buffer.from(row.content).toString('base64'),
+    data: content.toString('base64'),
   };
 }
 
@@ -481,7 +648,7 @@ export function listUnreadDirectMessageNotificationsFromRepository(
   const rows = store
     .db()
     .prepare(
-      `SELECT m.id, m.sender_account_id, m.content, m.created_at, a.name AS sender_name
+      `SELECT m.*, a.name AS sender_name
      FROM direct_messages m
      JOIN accounts a ON a.id = m.sender_account_id
        AND a.organization_id = m.organization_id
@@ -490,13 +657,12 @@ export function listUnreadDirectMessageNotificationsFromRepository(
        AND m.read_at IS NULL
      ORDER BY m.created_at DESC, m.id DESC LIMIT ?`,
     )
-    .all(organizationId, accountId, limit) as Array<{
-    id: string;
-    sender_account_id: string;
-    content: string;
-    created_at: string;
-    sender_name: string;
-  }>;
+  .all(organizationId, accountId, limit) as Array<
+    DirectMessageRow & { sender_name: string }
+  >;
+  for (const row of rows) {
+    row.content = directMessageContentFromRepository(store, row);
+  }
   return rows.reverse().map((row) => ({
     id: row.id,
     source: 'enterprise' as const,
@@ -535,35 +701,37 @@ export function listPendingAtoaRequestsFromRepository(
   }
   const limit = normalizeResultLimit(input.limit, 50, 100);
   const database = store.db();
-  const requests = database
+  const requestCandidates = database
     .prepare(
       `SELECT * FROM direct_messages
      WHERE organization_id = ?
        AND recipient_account_id = ?
-       AND content LIKE ?
+       AND content_type = 'atoa_request'
      ORDER BY created_at DESC, id DESC
      LIMIT ?`,
     )
-    .all(
-      organizationId,
-      accountId,
-      `${input.requestPrefix}%`,
-      limit,
-    ) as DirectMessageRow[];
-  const responses = database
+    .all(organizationId, accountId, limit) as DirectMessageRow[];
+  const requests = requestCandidates.filter((row) =>
+    directMessageContentFromRepository(store, row).startsWith(
+      input.requestPrefix,
+    ),
+  ).slice(0, limit);
+  const responseCandidates = database
     .prepare(
-      `SELECT sender_account_id, recipient_account_id, content FROM direct_messages
+      `SELECT * FROM direct_messages
      WHERE organization_id = ?
        AND sender_account_id = ?
-       AND content LIKE ?
+       AND content_type = 'atoa_response'
      ORDER BY created_at DESC, id DESC
      LIMIT 300`,
     )
-    .all(organizationId, accountId, `${input.responsePrefix}%`) as Array<{
-    sender_account_id: string;
-    recipient_account_id: string;
-    content: string;
-  }>;
+    .all(organizationId, accountId) as DirectMessageRow[];
+  const responses = responseCandidates
+    .map((row) => ({
+      ...row,
+      decryptedContent: directMessageContentFromRepository(store, row),
+    }))
+    .filter((row) => row.decryptedContent.startsWith(input.responsePrefix));
   return requests
     .filter(
       (request) =>
@@ -572,14 +740,14 @@ export function listPendingAtoaRequestsFromRepository(
             response.sender_account_id === accountId &&
             response.recipient_account_id === request.sender_account_id &&
             parseAtoaResponseRequestId(
-              response.content,
+              response.decryptedContent,
               input.responsePrefix,
             ) === request.id,
         ),
     )
     .reverse()
     .map((request) => ({
-      ...toDirectMessageView(database, request),
+      ...toDirectMessageView(store, request),
       peerAccountId: request.sender_account_id,
     }));
 }
@@ -677,20 +845,40 @@ export function markAtoaRequestReadFromResponseInRepository(
     input.responsePrefix,
   );
   if (!requestId) return null;
-  const changed = store
-    .db()
+  const database = store.db();
+  const request = database
+    .prepare(
+      `SELECT * FROM direct_messages
+       WHERE id = ? AND organization_id = ?
+         AND sender_account_id = ? AND recipient_account_id = ?
+         AND read_at IS NULL`,
+    )
+    .get(
+      requestId,
+      organizationId,
+      peerAccountId,
+      responderAccountId,
+    ) as DirectMessageRow | undefined;
+  if (
+    !request ||
+    !directMessageContentFromRepository(store, request).startsWith(
+      input.requestPrefix,
+    )
+  ) {
+    return null;
+  }
+  const changed = database
     .prepare(
       `UPDATE direct_messages SET read_at = COALESCE(read_at, datetime('now'))
      WHERE id = ? AND organization_id = ?
        AND sender_account_id = ? AND recipient_account_id = ?
-       AND read_at IS NULL AND content LIKE ?`,
+       AND read_at IS NULL`,
     )
     .run(
       requestId,
       organizationId,
       peerAccountId,
       responderAccountId,
-      `${input.requestPrefix}%`,
     );
   return Number(changed.changes) === 1 ? requestId : null;
 }

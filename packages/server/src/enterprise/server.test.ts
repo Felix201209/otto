@@ -9,10 +9,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import { request as httpRequest, type Server } from 'node:http';
-import { createHash, createHmac } from 'node:crypto';
+import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { canonicalJson } from '../modules/commercial_control/signedEnvelope.js';
 import {
   buildAtoaRequest,
   buildAtoaResponse,
@@ -42,15 +43,31 @@ const ENV_KEYS = [
   'OTTO_ENTERPRISE_FEISHU_APP_SECRET',
   'OTTO_ENTERPRISE_FEISHU_DOMAIN',
   'OTTO_LICENSE_ENFORCE',
-  'OTTO_LICENSE_SIGNING_SECRET',
+  'OTTO_LICENSE_PUBLIC_KEY',
+  'OTTO_LICENSE_PUBLIC_KEYS',
+  'OTTO_LICENSE_REVOKED_KEY_IDS',
   'OTTO_TELEMETRY_ENDPOINT',
+  'OTTO_DATA_CONTROLLER_NAME',
+  'OTTO_PRIVACY_CONTACT',
+  'OTTO_DATA_REGION',
+  'OTTO_DATA_RESIDENCY',
+  'OTTO_CROSS_BORDER_DATA_ENABLED',
+  'OTTO_TELEMETRY_RETENTION_DAYS',
 ] as const;
 
 const ADMIN_TOKEN = 'test-admin-token-abc123';
-const LICENSE_SECRET = 'test-license-secret';
+const LICENSE_KEY_PAIR = generateKeyPairSync('ed25519');
+const LICENSE_PUBLIC_KEY = LICENSE_KEY_PAIR.publicKey.export({
+  format: 'pem',
+  type: 'spki',
+}).toString();
 
 function signLicensePayload(payload: Record<string, unknown>): string {
-  return createHmac('sha256', LICENSE_SECRET).update(JSON.stringify(payload)).digest('base64url');
+  return `ed25519:${sign(
+    null,
+    Buffer.from(canonicalJson(payload)),
+    LICENSE_KEY_PAIR.privateKey,
+  ).toString('base64url')}`;
 }
 
 /** 起一个隔离的企业服务端（临时端口），返回 baseUrl + 关闭句柄。 */
@@ -85,6 +102,64 @@ beforeEach(() => {
   process.env.OTTO_ENTERPRISE_DIR = tmpDir;
   servers = [];
   closeDatabases = [];
+});
+
+describe('数据治理自助闭环', { timeout: 30_000 }, () => {
+  it('License 受限时仍允许查看规则、导出和注销本人数据', async () => {
+    process.env.OTTO_LICENSE_ENFORCE = 'true';
+    process.env.OTTO_DATA_CONTROLLER_NAME = '星河科技有限公司';
+    process.env.OTTO_PRIVACY_CONTACT = 'privacy@example.test';
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const database: DatabaseModule = await import('./db.js');
+    const account = database.createPersonalRegisteredAccount({
+      phone: '13800138001',
+      name: '隐私测试用户',
+      password: 'privacy-password-1',
+    });
+    const token = database.createAuthSession(account.id).token;
+    const auth = { authorization: `Bearer ${token}` };
+
+    const publicLegal = await fetch(`${base}/enterprise/legal`, {
+      headers: { accept: 'text/html' },
+    });
+    expect(publicLegal.status).toBe(200);
+    expect(publicLegal.headers.get('content-type')).toContain('text/html');
+    expect(await publicLegal.text()).toContain('Otto 用户协议与隐私规则');
+
+    const profile = await fetch(`${base}/enterprise/privacy`, { headers: auth });
+    expect(profile.status).toBe(200);
+    await expect(profile.json()).resolves.toMatchObject({
+      controller: { configured: true },
+      authorization: { license: { status: 'missing', enforce: true } },
+      currentConsentComplete: false,
+    });
+
+    const accept = await fetch(`${base}/enterprise/privacy/accept`, {
+      method: 'POST',
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ accepted: true }),
+    });
+    expect(accept.status).toBe(200);
+    await expect(accept.json()).resolves.toMatchObject({ currentConsentComplete: true });
+
+    const exported = await fetch(`${base}/enterprise/privacy/export`, { headers: auth });
+    expect(exported.status).toBe(200);
+    await expect(exported.json()).resolves.toMatchObject({
+      account: { id: account.id, phone: '+8613800138001' },
+    });
+
+    const deleted = await fetch(`${base}/enterprise/privacy/account`, {
+      method: 'DELETE',
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        password: 'privacy-password-1',
+        confirmation: '注销我的 Otto 账号',
+      }),
+    });
+    expect(deleted.status).toBe(200);
+    await expect(deleted.json()).resolves.toMatchObject({ accountId: account.id });
+    expect(database.getAccountBySession(token)).toBeNull();
+  });
 });
 
 afterEach(async () => {
@@ -469,6 +544,9 @@ describe('受保护 vs 公开路由边界', () => {
       'usage_summary',
       'admin_console',
       'account_deletion',
+      'data_governance_v1',
+      'signed_update_policy_v1',
+      'privacy_self_service',
       'multi_organization',
       'direct_messages',
       'atoa',
@@ -478,6 +556,7 @@ describe('受保护 vs 公开路由边界', () => {
       'park_services_v2',
       'organization_structure_v1',
       'organization_feature_switches_v1',
+      'enterprise_skill_market_v1',
       'park_membership_v1',
       'park_specialist_routing_v1',
       'unread_message_notifications_v1',
@@ -488,14 +567,18 @@ describe('受保护 vs 公开路由边界', () => {
       'private_deployment_v1',
       'license_enforcement_v1',
       'encrypted_telemetry_queue_v1',
+      'signed_telemetry_transport_v1',
       'diagnostic_bundle_v1',
+      'data_protection_v1',
+      'encrypted_attachment_storage_v1',
+      'encrypted_message_storage_v1',
     ]));
     expect(body.uptime).toEqual(expect.any(Number));
   });
 
   it('private deployment license enforcement keeps only maintenance routes open', async () => {
     process.env.OTTO_LICENSE_ENFORCE = 'true';
-    process.env.OTTO_LICENSE_SIGNING_SECRET = LICENSE_SECRET;
+    process.env.OTTO_LICENSE_PUBLIC_KEY = LICENSE_PUBLIC_KEY;
     const { base } = await startIsolated(ADMIN_TOKEN);
     const headers = { 'x-otto-admin-token': ADMIN_TOKEN };
 
@@ -514,6 +597,18 @@ describe('受保护 vs 公开路由边界', () => {
     await expect(status.json()).resolves.toMatchObject({
       license: { status: 'missing', enforce: true },
       dataBoundary: { includesUserMessages: false, includesFiles: false, includesMeetingAudio: false },
+      dataProtection: { enabled: true, retentionDays: 30, minimumRetained: 3 },
+    });
+
+    const backup = await fetch(
+      `${base}/enterprise/deployment/data-protection/backup`,
+      { method: 'POST', headers },
+    );
+    expect(backup.status).toBe(200);
+    await expect(backup.json()).resolves.toMatchObject({
+      lastError: null,
+      backupCount: 1,
+      latestSchemaVersion: 18,
     });
 
     const telemetry = await fetch(`${base}/enterprise/deployment/telemetry`, {
@@ -530,11 +625,11 @@ describe('受保护 vs 公开路由边界', () => {
       redactedSamplesIncluded: false,
       deployment: { license: { status: 'missing' } },
     });
-  });
+  }, 15_000);
 
   it('signed private deployment license reopens business routes and limits server-side modules', async () => {
     process.env.OTTO_LICENSE_ENFORCE = 'true';
-    process.env.OTTO_LICENSE_SIGNING_SECRET = LICENSE_SECRET;
+    process.env.OTTO_LICENSE_PUBLIC_KEY = LICENSE_PUBLIC_KEY;
     const { base } = await startIsolated(ADMIN_TOKEN);
     const headers = { 'x-otto-admin-token': ADMIN_TOKEN };
 
@@ -543,6 +638,8 @@ describe('受保护 vs 公开路由边界', () => {
     const payload = {
       id: 'lic_test_enterprise',
       deploymentId: deployment.deploymentId,
+      organizationId: 'org_default',
+      machineFingerprint: deployment.machineFingerprint,
       customerName: 'Private Customer',
       plan: 'enterprise',
       expiresAtMs: Date.now() + 90 * 24 * 60 * 60 * 1000,
@@ -550,6 +647,7 @@ describe('受保护 vs 公开路由边界', () => {
       modules: ['enterprise_tree', 'direct_messages'],
       offline: true,
       telemetryAllowed: true,
+      telemetryToken: 'test-telemetry-token-at-least-32-characters',
       issuedAtMs: Date.now(),
     };
 
@@ -926,9 +1024,9 @@ describe('园区资源后台与用户端资源接口', () => {
     const daySlots = database.listParkMeetingSlots(
       park.adminOrganizationId, tomorrow, tomorrow,
     ).filter((slot) => slot.roomId === createdBody.meetingRoom.id);
-    expect(daySlots).toHaveLength(84);
+    expect(daySlots).toHaveLength(28);
     expect(daySlots[0]).toMatchObject({ slotKey: '09:00', status: 'available' });
-    expect(daySlots.at(-1)).toMatchObject({ slotKey: '22:50', status: 'available' });
+    expect(daySlots.at(-1)).toMatchObject({ slotKey: '22:30', status: 'available' });
 
     const member = database.createAccount({
       organizationId: tenantOrganization.id,
@@ -1140,6 +1238,10 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('data-delete-id');
     expect(html).toContain('deleteAccountFromRow');
     expect(html).toContain('href="/enterprise/admin/platform"');
+    expect(html).toContain('id="telemetryEnabled"');
+    expect(html).toContain('/enterprise/deployment/telemetry');
+    expect(html).toContain('id="backupNow"');
+    expect(html).toContain('/enterprise/deployment/data-protection/backup');
     expect(html).toContain('多企业管理');
     expect(html).not.toContain(ADMIN_TOKEN);
   });
@@ -1869,6 +1971,20 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     });
     expect(incomplete.status).toBe(400);
 
+    const withoutConsent = await fetch(`${base}/enterprise/auth/register/sms/verify`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        challengeId: registrationChallenge.challengeId,
+        code: sent[0]?.code,
+        name: '王小明',
+        password: 'registered-password-1',
+      }),
+    });
+    expect(withoutConsent.status).toBe(400);
+    await expect(withoutConsent.json()).resolves.toEqual({
+      error: '请先阅读并同意用户协议和隐私规则',
+    });
+
     const register = await fetch(`${base}/enterprise/auth/register/sms/verify`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -1876,6 +1992,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         code: sent[0]?.code,
         name: '王小明',
         password: 'registered-password-1',
+        legalConsent: true,
       }),
     });
     expect(register.status).toBe(200);
@@ -2016,6 +2133,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
           code: sentCode,
           name,
           password: 'personal-password-1',
+          legalConsent: true,
         }),
       });
       expect(verify.status).toBe(200);
@@ -3177,6 +3295,11 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     expect(await conflict.json()).toEqual({
       error: expect.stringContaining('已被预约'),
     });
+    expect(
+      db
+        .listTicketsForAccount(user.id)
+        .filter((item) => item.serviceId === 'meeting-room'),
+    ).toHaveLength(1);
 
     db.setParkMeetingSlotAvailability(park.adminOrganizationId, {
       roomId: meetingRoom.id,
@@ -3192,7 +3315,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         formData: {
           ...meetingRequestBody.formData,
           startTime: '16:00',
-          endTime: '16:10',
+          endTime: '16:30',
         },
       }),
     });
@@ -3451,6 +3574,7 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
         code: sent[0]?.code,
         name: 'Alpha 新员工',
         password: 'alpha-member-password',
+        legalConsent: true,
       }),
     });
     expect(register.status).toBe(200);
@@ -3915,6 +4039,9 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
 
     const autoKnowledgeBody = {
       sourceId: 'kb_auto_1',
+      sourceType: 'auto_capture',
+      sourceSessionId: 'alpha-session-1',
+      sourceFingerprint: 'deployment-health-check',
       category: 'solution',
       content: '部署完成后先检查健康端点。',
       confidence: 0.9,
@@ -3927,23 +4054,85 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       body: JSON.stringify(autoKnowledgeBody),
     });
     expect(firstCapture.status).toBe(200);
-    expect(await firstCapture.json()).toEqual({ status: 'added', added: true });
+    const firstCapturePayload = await firstCapture.json() as {
+      status: string;
+      added: boolean;
+      outcome: string;
+      retention: { promoted: boolean; evidenceCount: number };
+    };
+    expect(firstCapturePayload).toMatchObject({
+      status: 'observed',
+      added: false,
+      outcome: 'observed',
+      retention: { promoted: false, evidenceCount: 1 },
+    });
 
     const duplicateCapture = await fetch(`${base}/enterprise/knowledge`, {
       method: 'POST',
       headers: { authorization: `Bearer ${alphaToken}`, 'content-type': 'application/json' },
       body: JSON.stringify(autoKnowledgeBody),
     });
-    expect(await duplicateCapture.json()).toEqual({ status: 'exists', added: false });
+    expect(await duplicateCapture.json()).toMatchObject({
+      status: 'duplicate',
+      added: false,
+      outcome: 'duplicate',
+      retention: { promoted: false, evidenceCount: 1 },
+    });
 
-    const captured = db.getKnowledge('研发部', 'solution', alpha.id)
+    expect(JSON.stringify(db.getKnowledge('研发部', 'solution', alpha.id)))
+      .not.toContain(autoKnowledgeBody.content);
+    const incubating = db.getKnowledgeForAdministration(
+      '',
+      '研发部',
+      alpha.id,
+      'pending_review',
+    )
       .filter((item: { content: string }) => item.content === autoKnowledgeBody.content);
+    expect(incubating).toHaveLength(0);
+
+    const highImpactBody = {
+      ...autoKnowledgeBody,
+      sourceId: 'kb_auto_incident_1',
+      sourceSessionId: 'alpha-incident-session-1',
+      sourceFingerprint: 'production-health-incident',
+      content: '重大生产事故的根因是缺少健康检查，加入健康端点校验后验证通过。',
+      confidence: 0.95,
+      verified: true,
+    };
+    const highImpactCapture = await fetch(`${base}/enterprise/knowledge`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${alphaToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify(highImpactBody),
+    });
+    expect(highImpactCapture.status).toBe(200);
+    const highImpactPayload = await highImpactCapture.json() as { knowledgeId: number };
+    expect(highImpactPayload).toMatchObject({
+      status: 'promoted',
+      added: true,
+      outcome: 'promoted',
+      reviewStatus: 'pending_review',
+      retention: { promoted: true, reason: 'high_impact_verified' },
+    });
+    expect(highImpactPayload.knowledgeId).toBeGreaterThan(0);
+    const captured = db.getKnowledgeForAdministration(
+      '',
+      '研发部',
+      alpha.id,
+      'pending_review',
+    ).filter((item: { content: string }) => item.content === highImpactBody.content);
     expect(captured).toHaveLength(1);
     expect(captured[0]).toMatchObject({
       department: '研发部',
       contributor: 'Alpha 员工',
-      confidence: 0.9,
+      confidence: 0.95,
     });
+
+    const ownReviewQueue = await fetch(`${base}/enterprise/knowledge?includeReview=true`, {
+      headers: { authorization: `Bearer ${alphaToken}` },
+    });
+    const ownReviewPayload = JSON.stringify(await ownReviewQueue.json());
+    expect(ownReviewPayload).toContain(highImpactBody.content);
+    expect(ownReviewPayload).not.toContain(autoKnowledgeBody.content);
   });
 
   it('普通成员只能读取全局知识和本人部门知识，department query 不能跨部门越权', async () => {
@@ -4015,6 +4204,81 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     expect(adminPayload).toContain('全员可见制度');
     expect(adminPayload).toContain('法务部合同底线');
     expect(adminPayload).toContain('销售部客户名单');
+
+    const pendingCapture = await fetch(`${base}/enterprise/knowledge`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${legalToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sourceId: 'legal-checklist-1',
+        title: '合同复核清单',
+        category: 'legal',
+        content: '签署前必须核对主体、金额和违约责任。',
+        sourceType: 'work_result',
+      }),
+    });
+    const pendingPayload = await pendingCapture.json() as {
+      knowledgeId: number;
+      reviewStatus: string;
+    };
+    expect(pendingPayload.reviewStatus).toBe('pending_review');
+
+    const memberReviewAttempt = await fetch(
+      `${base}/enterprise/knowledge/${pendingPayload.knowledgeId}/review`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${legalToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'approve' }),
+      },
+    );
+    expect(memberReviewAttempt.status).toBe(403);
+
+    const review = await fetch(
+      `${base}/enterprise/knowledge/${pendingPayload.knowledgeId}/review`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'approve', note: '已核验' }),
+      },
+    );
+    expect(review.status).toBe(200);
+    await expect(review.json()).resolves.toMatchObject({
+      knowledge: { status: 'active', reviewed_by: '企业管理员' },
+    });
+
+    const revision = await fetch(
+      `${base}/enterprise/knowledge/${pendingPayload.knowledgeId}`,
+      {
+        method: 'PATCH',
+        headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          title: '合同复核清单',
+          category: 'legal',
+          content: '签署前必须核对主体、金额、违约责任和授权文件。',
+          changeNote: '补充授权文件',
+        }),
+      },
+    );
+    expect(revision.status).toBe(200);
+    await expect(revision.json()).resolves.toMatchObject({ knowledge: { version: 3 } });
+
+    const history = await fetch(
+      `${base}/enterprise/knowledge/${pendingPayload.knowledgeId}/revisions`,
+      { headers: { authorization: `Bearer ${adminToken}` } },
+    );
+    expect(history.status).toBe(200);
+    expect(JSON.stringify(await history.json())).toContain('补充授权文件');
+    const memberHistory = await fetch(
+      `${base}/enterprise/knowledge/${pendingPayload.knowledgeId}/revisions`,
+      { headers: { authorization: `Bearer ${legalToken}` } },
+    );
+    expect(memberHistory.status).toBe(403);
+
+    const memberAfterReview = await fetch(
+      `${base}/enterprise/knowledge?q=${encodeURIComponent('合同复核')}`,
+      { headers: { authorization: `Bearer ${legalToken}` } },
+    );
+    expect(JSON.stringify(await memberAfterReview.json()))
+      .toContain('签署前必须核对主体、金额、违约责任和授权文件。');
   }, 30_000);
 
   it('关闭企业知识功能后禁止知识读写，入职与召回也不泄露知识但保留任务历史', async () => {
@@ -4077,6 +4341,12 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       inherited_knowledge: [],
       total_knowledge_items: 0,
     });
+    const onboardedEmployee = db.getEmployee(
+      member.employeeId!,
+      organization.id,
+    );
+    expect(onboardedEmployee?.role).toBeTruthy();
+    expect(String(onboardedEmployee?.personality)).toContain('onboarded_at');
 
     const recall = await fetch(
       `${base}/enterprise/recall?employee_id=${encodeURIComponent(member.employeeId!)}&task_type=${encodeURIComponent('部署')}`,
@@ -4766,5 +5036,109 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
         expect.objectContaining({ id: platformTenantProvisioned.organization.id }),
       ]),
     );
+  }, 30_000);
+});
+
+describe('企业 Skill 市场 HTTP 闭环', () => {
+  async function login(base: string, identifier: string, password: string): Promise<string> {
+    const response = await fetch(`${base}/enterprise/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ identifier, password }),
+    });
+    expect(response.status).toBe(200);
+    return (await response.json()).token;
+  }
+
+  it('由成员投稿、管理员审核，同部门成员安装和评价', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const database = await import('./db.js');
+    const author = database.createAccount({
+      username: 'skill.author', password: 'skill-author-password', name: '分享者', department: '财务部',
+    });
+    const buyer = database.createAccount({
+      username: 'skill.buyer', password: 'skill-buyer-password', name: '使用者', department: '财务部',
+    });
+    const outsider = database.createAccount({
+      username: 'skill.outsider', password: 'skill-outsider-password', name: '其他部门', department: '研发部',
+    });
+    const admin = database.createAccount({
+      username: 'skill.admin', password: 'skill-admin-password', name: '审核员', department: '管理层', isAdmin: true,
+    });
+    const authorToken = await login(base, author.username, 'skill-author-password');
+    const buyerToken = await login(base, buyer.username, 'skill-buyer-password');
+    const outsiderToken = await login(base, outsider.username, 'skill-outsider-password');
+    const adminToken = await login(base, admin.username, 'skill-admin-password');
+    const auth = (token: string) => ({
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    });
+
+    const submitted = await fetch(`${base}/enterprise/skills`, {
+      method: 'POST',
+      headers: auth(authorToken),
+      body: JSON.stringify({
+        name: '月报整理',
+        description: '根据工作日志生成月报。',
+        content: '# 月报整理\n\n先核对事实，再生成月报。',
+        visibility: 'department',
+      }),
+    });
+    expect(submitted.status).toBe(201);
+    const submittedBody = await submitted.json();
+    expect(submittedBody.skill).toMatchObject({ status: 'pending_review', department: '财务部' });
+    const skillId = submittedBody.skill.id as string;
+
+    const memberReview = await fetch(`${base}/enterprise/skills?scope=review`, { headers: auth(buyerToken) });
+    expect(memberReview.status).toBe(403);
+    const beforeReview = await fetch(`${base}/enterprise/skills`, { headers: auth(buyerToken) });
+    expect((await beforeReview.json()).skills).toEqual([]);
+
+    const reviewed = await fetch(`${base}/enterprise/skills/${skillId}/review`, {
+      method: 'POST',
+      headers: auth(adminToken),
+      body: JSON.stringify({ action: 'approve', visibility: 'department' }),
+    });
+    expect(reviewed.status).toBe(200);
+    const buyerMarket = await fetch(`${base}/enterprise/skills`, { headers: auth(buyerToken) });
+    expect((await buyerMarket.json()).skills).toHaveLength(1);
+    const outsiderMarket = await fetch(`${base}/enterprise/skills`, { headers: auth(outsiderToken) });
+    expect((await outsiderMarket.json()).skills).toEqual([]);
+
+    const install = await fetch(`${base}/enterprise/skills/${skillId}/install`, {
+      method: 'POST', headers: auth(buyerToken), body: '{}',
+    });
+    expect(install.status).toBe(200);
+    expect((await install.json()).skill).toMatchObject({
+      content: expect.stringContaining('先核对事实'),
+      installedVersion: 1,
+    });
+    const rated = await fetch(`${base}/enterprise/skills/${skillId}/rating`, {
+      method: 'POST', headers: auth(buyerToken), body: JSON.stringify({ score: 5 }),
+    });
+    expect(rated.status).toBe(200);
+    expect((await rated.json()).skill).toMatchObject({ rating: 5, ratingCount: 1 });
+
+    const usageEvent = 'b'.repeat(64);
+    for (const success of [true, true]) {
+      const usage = await fetch(`${base}/enterprise/skills/${skillId}/usage`, {
+        method: 'POST', headers: auth(buyerToken), body: JSON.stringify({ success, eventId: usageEvent }),
+      });
+      expect(usage.status).toBe(200);
+    }
+    const invalidUsage = await fetch(`${base}/enterprise/skills/${skillId}/usage`, {
+      method: 'POST', headers: auth(buyerToken), body: '{}',
+    });
+    expect(invalidUsage.status).toBe(400);
+
+    const leaderboard = await fetch(`${base}/enterprise/skills/leaderboard`, { headers: auth(buyerToken) });
+    expect(leaderboard.status).toBe(200);
+    expect((await leaderboard.json()).skills[0]).toMatchObject({
+      id: skillId, rank: 1, usageCount: 1, successCount: 1,
+    });
+
+    database.updateOrganizationFeatures(database.DEFAULT_ORGANIZATION_ID, { skill_market: false });
+    const disabledMarket = await fetch(`${base}/enterprise/skills`, { headers: auth(buyerToken) });
+    expect(disabledMarket.status).toBe(403);
   }, 30_000);
 });

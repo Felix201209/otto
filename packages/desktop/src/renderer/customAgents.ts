@@ -36,15 +36,15 @@ export function createCustomAgent(
 ): CustomAgentDefinition {
   const name = draft.name.trim();
   const instructions = draft.instructions.trim();
-  if (!name) throw new Error('请输入智能体名称');
+  if (!name) throw new Error('请输入专家名称');
   if (name.length > MAX_NAME_LENGTH) {
-    throw new Error(`智能体名称不能超过 ${MAX_NAME_LENGTH} 个字符`);
+    throw new Error(`专家名称不能超过 ${MAX_NAME_LENGTH} 个字符`);
   }
   if (!instructions) throw new Error('请输入职责说明');
   if (instructions.length > MAX_INSTRUCTIONS_LENGTH) {
     throw new Error(`职责说明不能超过 ${MAX_INSTRUCTIONS_LENGTH} 个字符`);
   }
-  if (!SAFE_ID.test(options.id)) throw new Error('智能体编号格式不正确');
+  if (!SAFE_ID.test(options.id)) throw new Error('专家编号格式不正确');
   if (!Number.isFinite(Date.parse(options.now))) throw new Error('创建时间格式不正确');
   return {
     id: options.id,
@@ -112,7 +112,7 @@ export function buildCustomAgentKickoff(
     ]
     : ['身份：当前个人账号'];
   return [
-    `请在本会话中作为用户创建的工作智能体「${agent.name}」协助完成任务。`,
+    `请在本会话中作为用户创建的工作专家「${agent.name}」协助完成任务。`,
     '',
     '职责说明：',
     agent.instructions,

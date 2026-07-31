@@ -7,7 +7,13 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { WebSearchTool, parseBingResults } from './web-search.js';
+import {
+  WebSearchTool,
+  parseBingResults,
+  parseBingRssResults,
+  rankWebSearchResults,
+} from './web-search.js';
+import { resetWebSearchRuntimeForTests } from './web-search-runtime.js';
 import { Config } from '../config/config.js';
 
 /** 构造只带 web_search 所需方法的 mock config */
@@ -37,6 +43,12 @@ const BING_HTML_FIXTURE = `
 </ol>
 </body></html>`;
 
+const BING_RSS_FIXTURE = `<?xml version="1.0" encoding="utf-8" ?>
+<rss version="2.0"><channel>
+<item><title><![CDATA[RSS First &amp; Best]]></title><link>https://example.com/rss?a=1&amp;b=2</link><description><![CDATA[RSS <strong>摘要</strong> A]]></description></item>
+<item><title>RSS Second</title><link>https://example.org/rss-second</link><description>第二条 RSS 摘要。</description></item>
+</channel></rss>`;
+
 describe('parseBingResults', () => {
   it('解析 b_algo 条目的标题/链接/摘要，并解码实体、跳过非结果块', () => {
     const items = parseBingResults(BING_HTML_FIXTURE);
@@ -55,10 +67,32 @@ describe('parseBingResults', () => {
   });
 });
 
+describe('parseBingRssResults', () => {
+  it('解析 RSS 条目的标题、链接和 HTML 摘要', () => {
+    expect(parseBingRssResults(BING_RSS_FIXTURE)).toEqual([
+      {
+        title: 'RSS First & Best',
+        url: 'https://example.com/rss?a=1&b=2',
+        snippet: 'RSS 摘要 A',
+      },
+      {
+        title: 'RSS Second',
+        url: 'https://example.org/rss-second',
+        snippet: '第二条 RSS 摘要。',
+      },
+    ]);
+  });
+
+  it('验证码 HTML 不会被误解析为 RSS 结果', () => {
+    expect(parseBingRssResults('<html>captcha</html>')).toEqual([]);
+  });
+});
+
 describe('WebSearchTool', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
+    resetWebSearchRuntimeForTests();
   });
 
   it('工具名已改为 web_search', () => {
@@ -105,14 +139,14 @@ describe('WebSearchTool', () => {
       );
     });
 
-    it('首条内置线路被拦截时自动切到下一条，不把线路错误丢给用户', async () => {
+    it('HTML 线路被验证码拦截时自动切到 RSS，不把线路错误丢给用户', async () => {
       const fetchMock = vi
         .fn()
         .mockResolvedValueOnce(
           new Response('<html><body>captcha</body></html>', { status: 200 }),
         )
         .mockResolvedValueOnce(
-          new Response(BING_HTML_FIXTURE, { status: 200 }),
+          new Response(BING_RSS_FIXTURE, { status: 200 }),
         );
       vi.stubGlobal('fetch', fetchMock);
 
@@ -123,16 +157,21 @@ describe('WebSearchTool', () => {
       );
 
       expect(fetchMock).toHaveBeenCalledTimes(2);
-      expect(String(result.llmContent)).toContain('1. First & Best Result');
+      expect(fetchMock.mock.calls[1][0]).toContain('format=rss');
+      expect(String(result.llmContent)).toContain('1. RSS First & Best');
       expect(String(result.llmContent)).not.toContain('Error:');
     });
 
     it('页面结构不认识时 fail-loud 返回明确错误，而不是静默空结果', async () => {
       vi.stubGlobal(
         'fetch',
-        vi.fn().mockResolvedValue(
-          new Response('<html><body>captcha</body></html>', { status: 200 }),
-        ),
+        vi
+          .fn()
+          .mockImplementation(() =>
+            Promise.resolve(
+              new Response('<html><body>captcha</body></html>', { status: 200 }),
+            ),
+          ),
       );
       const tool = new WebSearchTool(makeConfig());
       const result = await tool.execute(
@@ -141,13 +180,22 @@ describe('WebSearchTool', () => {
       );
       const content = String(result.llmContent);
       expect(content).toContain('Error');
-      expect(content).toContain('structure');
+      expect(content).toContain('RSS response contained no parseable results');
     });
 
     it('HTTP 非 200 时 fail-loud 报状态码', async () => {
       vi.stubGlobal(
         'fetch',
-        vi.fn().mockResolvedValue(new Response('nope', { status: 429, statusText: 'Too Many Requests' })),
+        vi
+          .fn()
+          .mockImplementation(() =>
+            Promise.resolve(
+              new Response('nope', {
+                status: 429,
+                statusText: 'Too Many Requests',
+              }),
+            ),
+          ),
       );
       const tool = new WebSearchTool(makeConfig());
       const result = await tool.execute(
@@ -155,6 +203,7 @@ describe('WebSearchTool', () => {
         new AbortController().signal,
       );
       expect(String(result.llmContent)).toContain('429');
+      expect(String(result.returnDisplay)).toContain('429');
     });
 
     it('15 秒无响应则超时并报明确错误', async () => {
@@ -263,6 +312,117 @@ describe('WebSearchTool', () => {
       expect(content).toContain('provider: bing');
       expect(content).toContain('First & Best Result');
       expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('博查失败后自动切到已配置的火山方舟', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response('bocha unavailable', { status: 503 }),
+        )
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              output: [
+                {
+                  content: [
+                    {
+                      type: 'output_text',
+                      text: '火山备用线路返回结果。',
+                      annotations: [],
+                    },
+                  ],
+                },
+              ],
+            }),
+            { status: 200 },
+          ),
+        );
+      vi.stubGlobal('fetch', fetchMock);
+      const tool = new WebSearchTool(
+        makeConfig({
+          getSearchProvider: vi.fn().mockReturnValue('bocha'),
+          getSearchApiKey: vi.fn((provider: string) =>
+            provider === 'bocha'
+              ? 'bocha-key'
+              : provider === 'volcengine'
+                ? 'ark-key'
+                : undefined,
+          ),
+          getSearchApiUrl: vi
+            .fn()
+            .mockReturnValue('https://ark.example.com/responses'),
+          getSearchModel: vi.fn().mockReturnValue('doubao-search'),
+        }),
+      );
+
+      const result = await tool.execute(
+        { query: '多引擎自动切换' },
+        new AbortController().signal,
+      );
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        'https://api.bochaai.com/v1/web-search',
+      );
+      expect(fetchMock.mock.calls[1][0]).toBe(
+        'https://ark.example.com/responses',
+      );
+      expect(String(result.llmContent)).toContain('provider: volcengine');
+    });
+
+    it('博查和火山均失败后继续切到 Bing', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response('bocha unavailable', { status: 503 }),
+        )
+        .mockResolvedValueOnce(new Response('ark unavailable', { status: 503 }))
+        .mockResolvedValueOnce(
+          new Response(BING_HTML_FIXTURE, { status: 200 }),
+        );
+      vi.stubGlobal('fetch', fetchMock);
+      const tool = new WebSearchTool(
+        makeConfig({
+          getSearchProvider: vi.fn().mockReturnValue('bocha'),
+          getSearchApiKey: vi.fn((provider: string) =>
+            provider === 'bocha'
+              ? 'bocha-key'
+              : provider === 'volcengine'
+                ? 'ark-key'
+                : undefined,
+          ),
+          getSearchApiUrl: vi
+            .fn()
+            .mockReturnValue('https://ark.example.com/responses'),
+          getSearchModel: vi.fn().mockReturnValue('doubao-search'),
+        }),
+      );
+
+      const result = await tool.execute(
+        { query: '三段回退' },
+        new AbortController().signal,
+      );
+
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(String(result.llmContent)).toContain('provider: bing');
+    });
+
+    it('相同查询短时间内直接命中缓存', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(new Response(BING_HTML_FIXTURE, { status: 200 }));
+      vi.stubGlobal('fetch', fetchMock);
+      const tool = new WebSearchTool(makeConfig());
+
+      await tool.execute({ query: '缓存查询' }, new AbortController().signal);
+      const cached = await tool.execute(
+        { query: '  缓存查询  ' },
+        new AbortController().signal,
+      );
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(String(cached.returnDisplay)).toContain('近期搜索缓存');
     });
 
     it('响应结构不对时 fail-loud', async () => {
@@ -407,5 +567,31 @@ describe('WebSearchTool', () => {
       expect(setTools).toHaveBeenCalledWith([{ googleSearch: {} }]);
       expect(String(result.llmContent)).toContain('grounded answer');
     });
+  });
+});
+
+describe('rankWebSearchResults', () => {
+  it('deduplicates tracking URLs and prioritizes official sources', () => {
+    const ranked = rankWebSearchResults([
+      {
+        title: '普通文章',
+        url: 'https://blog.csdn.net/a?utm_source=x',
+        snippet: '',
+      },
+      {
+        title: '政策公告',
+        url: 'https://service.gov.cn/policy?from=search',
+        snippet: '官方公告',
+      },
+      { title: '重复政策', url: 'https://service.gov.cn/policy', snippet: '' },
+      {
+        title: '广告 推广',
+        url: 'https://ads.example.com/product',
+        snippet: '',
+      },
+      { title: '损坏链接', url: 'https://', snippet: '' },
+    ]);
+    expect(ranked[0].url).toBe('https://service.gov.cn/policy');
+    expect(ranked).toHaveLength(1);
   });
 });

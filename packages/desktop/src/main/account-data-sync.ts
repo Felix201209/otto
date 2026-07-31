@@ -65,6 +65,14 @@ interface AccountDataSyncServiceOptions {
   worklogRoot?: string;
   now?: () => Date;
   deviceId?: string;
+  protectMirror?: (plaintext: string) => string | null;
+  unprotectMirror?: (protectedValue: string) => string;
+}
+
+interface ProtectedAccountSyncMirror {
+  schemaVersion: 1;
+  protection: 'electron-safe-storage';
+  sealed: string;
 }
 
 function defaultUserRoot(): string {
@@ -599,6 +607,8 @@ export class AccountDataSyncService {
   private readonly syncRoot: string;
   private readonly now: () => Date;
   private readonly fixedDeviceId?: string;
+  private readonly protectMirror?: (plaintext: string) => string | null;
+  private readonly unprotectMirror?: (protectedValue: string) => string;
   private queue: Promise<void> = Promise.resolve();
 
   constructor(options: AccountDataSyncServiceOptions = {}) {
@@ -607,6 +617,8 @@ export class AccountDataSyncService {
     this.syncRoot = path.join(this.userRoot, 'account-sync');
     this.now = options.now ?? (() => new Date());
     this.fixedDeviceId = options.deviceId;
+    this.protectMirror = options.protectMirror;
+    this.unprotectMirror = options.unprotectMirror;
   }
 
   activate(identity: AccountDataSyncIdentity): Promise<string> {
@@ -624,6 +636,25 @@ export class AccountDataSyncService {
     identity: AccountDataSyncIdentity,
   ): Promise<AccountDataSyncSummary> {
     const run = this.queue.then(() => this.syncInternal(remote, identity));
+    this.queue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  erase(identity: AccountDataSyncIdentity): Promise<void> {
+    const identityKey = accountDataSyncIdentityKey(identity);
+    const run = this.queue.then(async () => {
+      for (const scope of ACCOUNT_SYNC_SCOPES) {
+        await clearManagedScope(scope, this.userRoot, this.worklogRoot);
+      }
+      await fs.rm(path.join(this.syncRoot, 'profiles', identityKey), {
+        recursive: true,
+        force: true,
+      });
+      const state = await readJson<AccountDataSyncState>(this.statePath());
+      if (state?.schemaVersion === 1 && state.activeIdentityKey === identityKey) {
+        await fs.rm(this.statePath(), { force: true });
+      }
+    });
     this.queue = run.then(() => undefined, () => undefined);
     return run;
   }
@@ -654,10 +685,37 @@ export class AccountDataSyncService {
     identityKey: string,
     scope: EnterpriseAccountSyncScope,
   ): Promise<EnterpriseAccountSyncPayload | null> {
-    const payload = await readJson<EnterpriseAccountSyncPayload>(this.mirrorPath(identityKey, scope));
-    if (!payload) return null;
+    const mirrorPath = this.mirrorPath(identityKey, scope);
+    let raw: string;
     try {
-      return normalizePayload(scope, payload);
+      raw = await fs.readFile(mirrorPath, 'utf8');
+    } catch {
+      return null;
+    }
+    let payload: EnterpriseAccountSyncPayload;
+    let legacyPlaintext = false;
+    try {
+      const parsed = JSON.parse(raw) as EnterpriseAccountSyncPayload | ProtectedAccountSyncMirror;
+      if (
+        'protection' in parsed &&
+        parsed.protection === 'electron-safe-storage' &&
+        typeof parsed.sealed === 'string'
+      ) {
+        if (!this.unprotectMirror) return null;
+        payload = JSON.parse(this.unprotectMirror(parsed.sealed)) as EnterpriseAccountSyncPayload;
+      } else {
+        payload = parsed as EnterpriseAccountSyncPayload;
+        legacyPlaintext = true;
+      }
+    } catch {
+      return null;
+    }
+    try {
+      const normalized = normalizePayload(scope, payload);
+      if (legacyPlaintext && this.protectMirror) {
+        await this.saveMirror(identityKey, scope, normalized);
+      }
+      return normalized;
     } catch {
       return null;
     }
@@ -668,7 +726,23 @@ export class AccountDataSyncService {
     scope: EnterpriseAccountSyncScope,
     payload: EnterpriseAccountSyncPayload,
   ): Promise<void> {
-    await writeJsonAtomic(this.mirrorPath(identityKey, scope), normalizePayload(scope, payload));
+    const normalized = normalizePayload(scope, payload);
+    const plaintext = `${JSON.stringify(normalized)}\n`;
+    const sealed = this.protectMirror?.(plaintext) ?? null;
+    if (this.protectMirror && !sealed) {
+      await fs.rm(this.mirrorPath(identityKey, scope), { force: true });
+      return;
+    }
+    await writeJsonAtomic(
+      this.mirrorPath(identityKey, scope),
+      sealed
+        ? {
+          schemaVersion: 1,
+          protection: 'electron-safe-storage',
+          sealed,
+        } satisfies ProtectedAccountSyncMirror
+        : normalized,
+    );
   }
 
   private async activateIdentity(identityKey: string): Promise<void> {

@@ -28,10 +28,9 @@ import { SourceBadge } from './SourceBadge.js';
 import {
   IconPlus,
   IconList,
-  IconChevron,
   IconChevronDown,
-  IconSparkle,
   IconSettings,
+  IconUserAvatar,
 } from './icons.js';
 import {
   OrganizationTree,
@@ -163,10 +162,7 @@ export function Sidebar({
       <div className="otto-sidebar__traffic" />
 
       <div className="otto-sidebar__brandrow">
-        <span className="otto-brand">
-          Otto
-          <IconSparkle size={12} className="otto-brand__sparkle" />
-        </span>
+        <span className="otto-brand">Otto</span>
         {unreadCount > 0 ? (
           <span
             className="otto-brand__unread"
@@ -285,13 +281,11 @@ export function Sidebar({
           >
             <span className="otto-viewall__accounticon" aria-hidden>◎</span>
             CEO 管理
-            <IconChevron size={15} className="otto-viewall__chev" />
           </button>
         ) : null}
         <button type="button" className="otto-viewall" onClick={onViewAll}>
           <IconList size={16} />
           查看全部对话
-          <IconChevron size={15} className="otto-viewall__chev" />
         </button>
         {/* 设置与诊断中心常驻入口：常见任务区已迁右面板，设置类入口按惯例落左下角。 */}
         <button
@@ -311,7 +305,6 @@ export function Sidebar({
               title="发现新版本，进入「软件更新」查看"
             />
           ) : null}
-          <IconChevron size={15} className="otto-viewall__chev" />
         </button>
         {enterpriseAccount?.accountType === 'personal' && onJoinEnterprise ? (
           <button
@@ -322,17 +315,16 @@ export function Sidebar({
           >
             <span className="otto-viewall__accounticon" aria-hidden>↗</span>
             升级企业版
-            <IconChevron size={15} className="otto-viewall__chev" />
           </button>
         ) : null}
         {enterpriseAccount ? (
           <div className="otto-sidebar-account">
-            <span className="otto-sidebar-account__avatar">
-              {enterpriseAccount.name.slice(0, 1).toUpperCase()}
+            <span className="otto-sidebar-account__avatar" aria-hidden>
+              <IconUserAvatar size={34} />
             </span>
             <span className="otto-sidebar-account__copy">
               <strong>{enterpriseAccount.name}</strong>
-              <small>{enterpriseAccount.department || `@${enterpriseAccount.username}`}</small>
+              <small>{enterpriseAccount.department || '个人空间'}</small>
             </span>
             {onLogout ? (
               <button
@@ -526,9 +518,11 @@ function SessionItem({
       {session.lastMessagePreview ? (
         <div className="otto-session__preview">{session.lastMessagePreview}</div>
       ) : null}
-      <div className="otto-session__meta">
-        <SourceBadge source={session.source} />
-      </div>
+      {session.source !== 'local' ? (
+        <div className="otto-session__meta">
+          <SourceBadge source={session.source} />
+        </div>
+      ) : null}
 
       {mode === 'menu' ? (
         <div

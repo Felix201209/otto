@@ -41,12 +41,18 @@ describe('搜索 API 配置持久化', () => {
       apiUrl: 'https://ark.cn-beijing.volces.com/api/v3/responses',
       model: 'doubao-seed-2-0-lite-260215',
       hasApiKey: true,
+      costPerRequestCny: undefined,
+      configuredProviders: ['bing', 'volcengine', 'gemini'],
+      monthlyRequestQuota: undefined,
+      monthlyBudgetCny: undefined,
     });
     expect(view).not.toHaveProperty('apiKey');
     expect(loadSearchRuntimeConfig(home).apiKey).toBe('ark-secret-key');
 
     const secretPath = searchApiKeyFilePath('volcengine', home);
-    expect(fs.statSync(secretPath).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') {
+      expect(fs.statSync(secretPath).mode & 0o777).toBe(0o600);
+    }
     expect(fs.readFileSync(path.join(home, '.otto-user', 'settings.json'), 'utf8'))
       .not.toContain('ark-secret-key');
   });

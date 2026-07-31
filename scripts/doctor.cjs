@@ -80,7 +80,7 @@ function commandVersion(command, args = ['--version']) {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
-  } catch (error) {
+  } catch {
     return null;
   }
 }

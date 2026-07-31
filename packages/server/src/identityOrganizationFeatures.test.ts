@@ -67,6 +67,7 @@ describe('identity_organization feature configuration kernel', () => {
         direct_messages: true,
         atoa: true,
         knowledge: false,
+        skill_market: true,
       });
       expect(
         features.getConfiguredOrganizationFeatures('org-a'),
@@ -173,6 +174,7 @@ describe('authorization organization feature access policy', () => {
         direct_messages: true,
         atoa: true,
         knowledge: true,
+        skill_market: false,
       });
       expect(access.isOrganizationFeatureEnabled('org-a', 'park_service')).toBe(
         false,

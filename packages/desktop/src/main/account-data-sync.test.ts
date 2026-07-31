@@ -14,6 +14,7 @@ import type {
 } from './enterprise-client.js';
 import {
   AccountDataSyncService,
+  accountDataSyncIdentityKey,
   type AccountDataSyncIdentity,
   type AccountDataSyncRemote,
 } from './account-data-sync.js';
@@ -127,6 +128,58 @@ afterEach(async () => {
 });
 
 describe('account data sync', () => {
+  it('protects account mirrors and never writes plaintext when protection is unavailable', async () => {
+    const device = await makeDevice('protected-mirror');
+    const memoryPath = path.join(device.userRoot, 'memory', 'global.md');
+    await writeText(memoryPath, '- Sensitive account memory\n');
+    const protectMirror = (plaintext: string) => Buffer.from(plaintext, 'utf8').toString('base64');
+    const unprotectMirror = (sealed: string) => Buffer.from(sealed, 'base64').toString('utf8');
+    const remote = new MemoryAccountSyncRemote();
+    const protectedService = new AccountDataSyncService({
+      userRoot: device.userRoot,
+      worklogRoot: device.worklogRoot,
+      deviceId: 'protected-device',
+      protectMirror,
+      unprotectMirror,
+    });
+
+    await protectedService.sync(remote, IDENTITY);
+    const mirrorPath = path.join(
+      device.userRoot,
+      'account-sync',
+      'profiles',
+      accountDataSyncIdentityKey(IDENTITY),
+      'personal_memory.json',
+    );
+    const storedMirror = await fs.readFile(mirrorPath, 'utf8');
+    expect(storedMirror).not.toContain('Sensitive account memory');
+    expect(JSON.parse(storedMirror)).toMatchObject({
+      schemaVersion: 1,
+      protection: 'electron-safe-storage',
+    });
+
+    const unavailableDevice = await makeDevice('unavailable-protection');
+    await writeText(
+      path.join(unavailableDevice.userRoot, 'memory', 'global.md'),
+      '- Must not reach a plaintext mirror\n',
+    );
+    const unavailableService = new AccountDataSyncService({
+      userRoot: unavailableDevice.userRoot,
+      worklogRoot: unavailableDevice.worklogRoot,
+      deviceId: 'unavailable-device',
+      protectMirror: () => null,
+      unprotectMirror,
+    });
+    await unavailableService.sync(new MemoryAccountSyncRemote(), IDENTITY);
+    await expect(fs.stat(path.join(
+      unavailableDevice.userRoot,
+      'account-sync',
+      'profiles',
+      accountDataSyncIdentityKey(IDENTITY),
+      'personal_memory.json',
+    ))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('restores personal memory, worklogs and generated skills on a new device', async () => {
     const first = await makeDevice('source');
     await writeText(
@@ -236,6 +289,49 @@ describe('account data sync', () => {
     await service.activate(identityB);
     expect(await fs.readFile(memoryPath, 'utf8')).toContain('Account B private preference');
     expect(await fs.readFile(memoryPath, 'utf8')).not.toContain('Account A private preference');
+  });
+
+  it('erases managed personal data and the account mirror after account deletion', async () => {
+    const device = await makeDevice('erase');
+    const service = new AccountDataSyncService({
+      userRoot: device.userRoot,
+      worklogRoot: device.worklogRoot,
+      deviceId: 'erase-device',
+      now: () => new Date('2026-07-26T09:05:00.000Z'),
+    });
+    await writeText(
+      path.join(device.userRoot, 'memory', 'global.md'),
+      '- Private memory to delete\n',
+    );
+    await writeText(
+      path.join(device.worklogRoot, '2026', '07', '26.jsonl'),
+      '{"summary":"Private worklog to delete"}\n',
+    );
+    await writeText(
+      path.join(device.userRoot, 'skills', 'auto-private', 'SKILL.md'),
+      '# Private generated skill\n',
+    );
+
+    const remote = new MemoryAccountSyncRemote();
+    await service.sync(remote, IDENTITY);
+    const identityKey = accountDataSyncIdentityKey(IDENTITY);
+    const mirrorRoot = path.join(
+      device.userRoot,
+      'account-sync',
+      'profiles',
+      identityKey,
+    );
+    expect((await fs.readdir(mirrorRoot)).length).toBeGreaterThan(0);
+
+    await service.erase(IDENTITY);
+
+    await expect(fs.stat(path.join(device.userRoot, 'memory', 'global.md')))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.stat(path.join(device.worklogRoot, '2026', '07', '26.jsonl')))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.stat(path.join(device.userRoot, 'skills', 'auto-private', 'SKILL.md')))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.stat(mirrorRoot)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('merges a concurrent remote memory update and retries with the latest version', async () => {

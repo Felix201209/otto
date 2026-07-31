@@ -16,12 +16,14 @@ import { Type } from '@google/genai';
 import { getErrorMessage } from '../utils/errors.js';
 import { Config, ApprovalMode } from '../config/config.js';
 import { getResponseText } from '../utils/generateContentResponseUtilities.js';
-import { fetchWithTimeout, isPrivateIp } from '../utils/fetch.js';
 import { SceneType } from '../core/sceneManager.js';
 import { convert } from 'html-to-text';
 import { ProxyAgent, setGlobalDispatcher } from 'undici';
-import { proxyAuthManager } from '../core/proxyAuth.js';
 import { isCustomModel, generateCustomModelId } from '../types/customModel.js';
+import {
+  assertPublicWebUrl,
+  safeFetchPublicUrl,
+} from './web-fetch-security.js';
 
 const URL_FETCH_TIMEOUT_MS = 10000;
 // 最大内容长度限制（10K字符），防止token爆炸
@@ -74,7 +76,7 @@ export class WebFetchTool extends BaseTool<WebFetchToolParams, ToolResult> {
     super(
       WebFetchTool.Name,
       'WebFetch',
-      "Processes content from URL(s), including local and private network addresses (e.g., localhost), embedded in a prompt. Include up to 20 URLs and instructions (e.g., summarize, extract specific data) directly in the 'prompt' parameter.",
+      "Processes content from public HTTP/HTTPS URL(s) embedded in a prompt. Private, local and cloud metadata addresses are blocked. Include up to 20 URLs and instructions directly in the 'prompt' parameter.",
       Icon.Globe,
       {
         properties: {
@@ -117,7 +119,10 @@ export class WebFetchTool extends BaseTool<WebFetchToolParams, ToolResult> {
     }
 
     try {
-      const response = await fetchWithTimeout(url, URL_FETCH_TIMEOUT_MS);
+      const response = await safeFetchPublicUrl(url, {
+        signal,
+        timeoutMs: URL_FETCH_TIMEOUT_MS,
+      });
       if (!response.ok) {
         throw new Error(
           `Request failed with status code ${response.status} ${response.statusText}`,
@@ -131,6 +136,27 @@ export class WebFetchTool extends BaseTool<WebFetchToolParams, ToolResult> {
           { selector: 'img', format: 'skip' },
         ],
       }).substring(0, MAX_CONTENT_LENGTH);
+
+      // 自定义模型（DeepSeek、豆包、Qwen 等）不需要额外安装 Gemini
+      // 才能读取网页。把提取后的正文直接作为工具结果交回当前主模型，
+      // 主模型会依据原始 prompt 完成总结或字段提取。
+      const currentModel =
+        typeof this.config.getModel === 'function'
+          ? this.config.getModel()
+          : undefined;
+      if (!resolvedModel && currentModel && isCustomModel(currentModel)) {
+        return {
+          llmContent: `Web content fetched successfully for the current model.
+
+Original request: ${params.prompt}
+Source URL: ${url}
+
+--- BEGIN FETCHED CONTENT ---
+${textContent}
+--- END FETCHED CONTENT ---`,
+          returnDisplay: `已读取网页内容：${url}`,
+        };
+      }
 
       // 使用统一的 generateContent 接口进行 fallback 处理
       const geminiClient = this.config.getOttoClient();
@@ -262,6 +288,23 @@ ${textContent}
       };
     }
 
+    const requestedUrls = extractUrls(params.prompt);
+    if (requestedUrls.length > 20) {
+      return {
+        llmContent: 'Error: web_fetch accepts at most 20 URLs per request.',
+        returnDisplay: '一次最多读取 20 个网页。',
+      };
+    }
+    try {
+      await Promise.all(requestedUrls.map((url) => assertPublicWebUrl(url)));
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return {
+        llmContent: `Error: ${message}`,
+        returnDisplay: `网页访问已被安全策略拦截：${message}`,
+      };
+    }
+
     // Check if using a custom model
     const currentModel = typeof this.config.getModel === 'function' ? this.config.getModel() : undefined;
     const isUsingCustomModel = currentModel ? isCustomModel(currentModel) : false;
@@ -278,22 +321,12 @@ ${textContent}
       });
 
       if (!geminiFlashModel) {
-        return {
-          llmContent: `This tool (${WebFetchTool.Name}) is currently unavailable because you are using custom models, but no custom Gemini Flash model (e.g., gemini-2.5-flash) was found in your custom models list to execute this tool. Please configure a custom Gemini Flash model to use this feature.`,
-          returnDisplay: `Tool unavailable: Gemini Flash required`
-        };
+        return this.executeFallback(params, signal);
       }
       resolvedModel = generateCustomModelId(geminiFlashModel);
     }
 
     const userPrompt = params.prompt;
-    const urls = extractUrls(userPrompt);
-    const url = urls[0];
-    const isPrivate = isPrivateIp(url);
-
-    if (isPrivate) {
-      return this.executeFallback(params, signal, resolvedModel);
-    }
 
     try {
       // 使用临时Chat获得完整的API监控和错误处理
@@ -348,9 +381,13 @@ ${textContent}
         urlContextMeta.urlMetadata.length > 0
       ) {
         const allStatuses = urlContextMeta.urlMetadata.map(
-          (m: any) => m.urlRetrievalStatus,
+          (m: { urlRetrievalStatus?: string }) => m.urlRetrievalStatus,
         );
-        if (allStatuses.every((s: string) => s !== 'URL_RETRIEVAL_STATUS_SUCCESS')) {
+        if (
+          allStatuses.every(
+            (status) => status !== 'URL_RETRIEVAL_STATUS_SUCCESS',
+          )
+        ) {
           processingError = true;
         }
       } else if (!responseText.trim() && !sources?.length) {

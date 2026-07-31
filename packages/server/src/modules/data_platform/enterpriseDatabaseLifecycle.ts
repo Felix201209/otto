@@ -89,6 +89,7 @@ export function createEnterpriseDatabaseLifecycle(
       options.beforeForeignKeys?.(candidate);
       candidate.pragma('foreign_keys = ON');
       options.initializeSchema(candidate);
+      candidate.exec(`PRAGMA user_version = ${options.schemaVersion};`);
       database = candidate;
       return candidate;
     } catch (error) {

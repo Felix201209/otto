@@ -101,14 +101,15 @@ export async function handleMemberWorkflowRoute({
       return true;
     }
 
-    db.getDB()
-      .prepare(
-        'UPDATE employees SET role = ?, personality = ? WHERE id = ? AND organization_id = ?',
-      )
-      .run((role as string) || emp.role, personalityJson, employee_id, emp.organization_id);
+    db.updateEmployeeOnboardingProfile({
+      employeeId: employee_id,
+      organizationId: emp.organization_id!,
+      role: (role as string) || emp.role || null,
+      personality: personalityJson,
+    });
 
     const knowledge = db.getOrganizationFeatures(memberAccount!.organizationId).knowledge
-      ? db.getKnowledge(emp.department, undefined, emp.organization_id)
+      ? db.getMemberKnowledge(emp.department, '', emp.organization_id)
       : [];
 
     sendJSON(res, 200, {
@@ -172,7 +173,7 @@ export async function handleMemberWorkflowRoute({
       return true;
     }
     const knowledge = db.getOrganizationFeatures(memberAccount!.organizationId).knowledge
-      ? db.searchKnowledge(task_type, emp.department, emp.organization_id)
+      ? db.getMemberKnowledge(emp.department, task_type, emp.organization_id)
       : [];
     const history = db.getTaskHistory(employee_id, 5, emp.organization_id);
     sendJSON(res, 200, { knowledge: knowledge.slice(0, 5), history, department: emp.department });
@@ -195,25 +196,57 @@ export async function handleMemberWorkflowRoute({
       sendJSON(res, 404, { error: 'Employee not found' });
       return true;
     }
-    const tasks = db.getTaskHistory(employee_id, 50, organizationId) as Array<{ task_type: string }>;
-    const byType: Record<string, number> = {};
-    for (const t of tasks) byType[t.task_type] = (byType[t.task_type] || 0) + 1;
-    for (const [type, count] of Object.entries(byType)) {
-      db.addKnowledge({
+    const tasks = db.getTaskHistory(employee_id, 50, organizationId) as Array<{
+      task_type: string;
+      context: string | null;
+      result: string | null;
+      created_at: string;
+    }>;
+    const byType = new Map<string, typeof tasks>();
+    for (const task of tasks) {
+      const current = byType.get(task.task_type) ?? [];
+      current.push(task);
+      byType.set(task.task_type, current);
+    }
+    let handoverCandidates = 0;
+    for (const [type, entries] of byType.entries()) {
+      const reusableResults = entries
+        .map((entry) => entry.result?.replace(/\s+/g, ' ').trim())
+        .filter((result): result is string => Boolean(result))
+        .slice(0, 3);
+      if (reusableResults.length === 0) continue;
+      const content = [
+        `${emp.name || '离职员工'}在“${type}”事项中留有 ${entries.length} 条工作记录。`,
+        '近期可复用结果：',
+        ...reusableResults.map((result) => `- ${result.slice(0, 600)}`),
+        '发布前请核验适用范围、时效性与敏感信息。',
+      ].join('\n');
+      db.saveKnowledge({
         organizationId,
         department: emp.department,
         category: 'offboarded_experience',
-        content: `Task "${type}" executed ${count} times by ${emp.name}. Average patterns preserved.`,
+        title: `${type}离职交接候选`,
+        content,
         contributor: emp.name,
+        contributorAccountId: adminPrincipal!.kind === 'account'
+          ? adminPrincipal!.account.id
+          : undefined,
         confidence: 0.8,
+        sourceId: `offboarding:${employee_id}:${type}`.slice(0, 200),
+        sourceType: 'offboarding',
+        sourceLabel: `${emp.name || employee_id} 离职工作记录`,
+        status: 'pending_review',
       });
+      handoverCandidates += 1;
     }
     db.offboardEmployee(employee_id, organizationId);
     sendJSON(res, 200, {
       status: 'offboarded',
       merged_tasks: tasks.length,
-      merged_patterns: Object.keys(byType).length,
-      message: 'Experience merged to department. No manual handover needed.',
+      merged_patterns: handoverCandidates,
+      message: handoverCandidates > 0
+        ? `已生成 ${handoverCandidates} 条离职交接候选，请管理员审核后发布。`
+        : '没有找到可复用的任务结果，请补充人工交接材料。',
     });
     return true;
   }
@@ -244,6 +277,7 @@ export async function handleMemberWorkflowRoute({
     }
     const query = url.searchParams.get('q') || '';
     const requestedDepartment = url.searchParams.get('department')?.trim() || undefined;
+    const includeReview = url.searchParams.get('includeReview') === 'true';
     if (
       !memberAccount!.isAdmin
       && requestedDepartment
@@ -252,11 +286,32 @@ export async function handleMemberWorkflowRoute({
       sendJSON(res, 403, { error: '无权读取其他部门知识' });
       return true;
     }
-    const result = memberAccount!.isAdmin
-      ? query
-        ? db.searchKnowledge(query, requestedDepartment, organizationId)
-        : db.getKnowledge(requestedDepartment, undefined, organizationId)
-      : db.getMemberKnowledge(memberAccount!.department, query, organizationId);
+    const requestedStatus = url.searchParams.get('status');
+    const status = requestedStatus === 'pending_review'
+      || requestedStatus === 'active'
+      || requestedStatus === 'archived'
+      ? requestedStatus
+      : undefined;
+    const result = memberAccount!.isAdmin && includeReview
+      ? db.getKnowledgeForAdministration(
+          query,
+          requestedDepartment,
+          organizationId,
+          status,
+        )
+      : memberAccount!.isAdmin
+        ? query
+          ? db.searchKnowledge(query, requestedDepartment, organizationId)
+          : db.getKnowledge(requestedDepartment, undefined, organizationId)
+        : db.getMemberKnowledge(
+            memberAccount!.department,
+            query,
+            organizationId,
+            {
+              includeOwnPending: includeReview,
+              contributorAccountId: memberAccount!.id,
+            },
+          );
     sendJSON(res, 200, { knowledge: result });
     return true;
   }
@@ -282,18 +337,172 @@ export async function handleMemberWorkflowRoute({
     const sourceId = typeof body.sourceId === 'string'
       ? body.sourceId.trim().slice(0, 200)
       : undefined;
-    const added = db.addKnowledge({
+    const sourceType = body.sourceType === 'auto_capture'
+      || body.sourceType === 'work_result'
+      || body.sourceType === 'task_log'
+      || body.sourceType === 'document'
+      || body.sourceType === 'offboarding'
+      ? body.sourceType
+      : 'manual';
+    const reviewStatus = memberAccount!.isAdmin && sourceType === 'manual'
+      ? 'active'
+      : 'pending_review';
+    const scopedSourceId = sourceId && !memberAccount!.isAdmin
+      ? `account:${memberAccount!.id}:${sourceId}`.slice(0, 200)
+      : sourceId;
+    if (sourceType === 'auto_capture') {
+      const sourceSessionId = typeof body.sourceSessionId === 'string'
+        ? body.sourceSessionId.trim().slice(0, 200)
+        : '';
+      if (!sourceSessionId || !scopedSourceId) {
+        sendJSON(res, 400, { error: '自动知识观察缺少来源会话或来源编号' });
+        return true;
+      }
+      const observed = db.observeKnowledge({
+        organizationId,
+        department: memberAccount!.department,
+        category: (body.category as string) || 'general',
+        content,
+        tags: Array.isArray(body.tags) ? body.tags as string[] : undefined,
+        contributor: memberAccount!.name,
+        contributorAccountId: memberAccount!.id,
+        sourceId: scopedSourceId,
+        sourceSessionId,
+        sourceFingerprint: typeof body.sourceFingerprint === 'string'
+          ? body.sourceFingerprint
+          : undefined,
+        confidence,
+        verified: body.verified === true,
+        impactScore: typeof body.impactScore === 'number' ? body.impactScore : undefined,
+        significanceSignals: Array.isArray(body.significanceSignals)
+          ? body.significanceSignals as string[]
+          : undefined,
+        observedAt: typeof body.observedAt === 'string' ? body.observedAt : undefined,
+      });
+      sendJSON(res, 200, {
+        status: observed.outcome,
+        added: observed.promoted,
+        outcome: observed.outcome,
+        reviewStatus: observed.knowledge?.status,
+        knowledgeId: observed.knowledge?.id,
+        retention: {
+          promoted: observed.promoted,
+          reason: observed.reason,
+          evidenceCount: observed.evidenceCount,
+          distinctSessionCount: observed.distinctSessionCount,
+          distinctContributorCount: observed.distinctContributorCount,
+          spanDays: observed.spanDays,
+          impactScore: observed.impactScore,
+        },
+      });
+      return true;
+    }
+    const saved = db.saveKnowledge({
       organizationId,
-      sourceId: sourceId || undefined,
+      sourceId: scopedSourceId || undefined,
       department: memberAccount!.isAdmin && typeof body.department === 'string'
         ? body.department
         : memberAccount!.department || undefined,
+      title: typeof body.title === 'string' ? body.title : undefined,
       category: (body.category as string) || 'general',
       content,
       contributor: memberAccount!.name,
+      contributorAccountId: memberAccount!.id,
       confidence,
+      sourceType,
+      sourceLabel: typeof body.sourceLabel === 'string' ? body.sourceLabel : undefined,
+      status: reviewStatus,
+      reviewedBy: reviewStatus === 'active' ? memberAccount!.name : undefined,
     });
-    sendJSON(res, 200, { status: added ? 'added' : 'exists', added });
+    const added = saved.outcome !== 'unchanged';
+    sendJSON(res, 200, {
+      status: added ? 'added' : 'exists',
+      added,
+      outcome: saved.outcome,
+      reviewStatus: saved.entry.status,
+      knowledgeId: saved.entry.id,
+    });
+    return true;
+  }
+
+  const reviewMatch = path.match(/^\/enterprise\/knowledge\/(\d+)\/review$/u);
+  if (reviewMatch && method === 'POST') {
+    if (!db.getOrganizationFeatures(memberAccount!.organizationId).knowledge) {
+      sendJSON(res, 403, { error: '企业知识功能已由管理员关闭' });
+      return true;
+    }
+    if (!memberAccount!.isAdmin) {
+      sendJSON(res, 403, { error: '只有企业管理员可以审核知识' });
+      return true;
+    }
+    const body = await readBody(req);
+    if (body.action !== 'approve' && body.action !== 'archive') {
+      sendJSON(res, 400, { error: 'action must be approve or archive' });
+      return true;
+    }
+    const knowledge = db.reviewKnowledge({
+      id: Number(reviewMatch[1]),
+      organizationId: memberAccount!.organizationId,
+      action: body.action,
+      reviewer: memberAccount!.name,
+      note: typeof body.note === 'string' ? body.note : undefined,
+    });
+    if (!knowledge) {
+      sendJSON(res, 404, { error: 'knowledge not found' });
+      return true;
+    }
+    sendJSON(res, 200, { knowledge });
+    return true;
+  }
+
+  const knowledgeMatch = path.match(/^\/enterprise\/knowledge\/(\d+)$/u);
+  if (knowledgeMatch && method === 'PATCH') {
+    if (!db.getOrganizationFeatures(memberAccount!.organizationId).knowledge) {
+      sendJSON(res, 403, { error: '企业知识功能已由管理员关闭' });
+      return true;
+    }
+    if (!memberAccount!.isAdmin) {
+      sendJSON(res, 403, { error: '只有企业管理员可以修订知识' });
+      return true;
+    }
+    const body = await readBody(req);
+    const knowledge = db.reviseKnowledge({
+      id: Number(knowledgeMatch[1]),
+      organizationId: memberAccount!.organizationId,
+      title: typeof body.title === 'string' ? body.title : undefined,
+      category: typeof body.category === 'string' ? body.category : undefined,
+      content: typeof body.content === 'string' ? body.content : undefined,
+      confidence: typeof body.confidence === 'number' ? body.confidence : undefined,
+      sourceLabel: body.sourceLabel === null || typeof body.sourceLabel === 'string'
+        ? body.sourceLabel
+        : undefined,
+      changedBy: memberAccount!.name,
+      changeNote: typeof body.changeNote === 'string' ? body.changeNote : undefined,
+    });
+    if (!knowledge) {
+      sendJSON(res, 404, { error: 'knowledge not found' });
+      return true;
+    }
+    sendJSON(res, 200, { knowledge });
+    return true;
+  }
+
+  const revisionsMatch = path.match(/^\/enterprise\/knowledge\/(\d+)\/revisions$/u);
+  if (revisionsMatch && method === 'GET') {
+    if (!db.getOrganizationFeatures(memberAccount!.organizationId).knowledge) {
+      sendJSON(res, 403, { error: '企业知识功能已由管理员关闭' });
+      return true;
+    }
+    if (!memberAccount!.isAdmin) {
+      sendJSON(res, 403, { error: '只有企业管理员可以查看修订历史' });
+      return true;
+    }
+    sendJSON(res, 200, {
+      revisions: db.getKnowledgeRevisions(
+        Number(revisionsMatch[1]),
+        memberAccount!.organizationId,
+      ),
+    });
     return true;
   }
 

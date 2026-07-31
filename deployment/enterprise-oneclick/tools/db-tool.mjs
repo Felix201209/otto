@@ -9,11 +9,28 @@ import {
   fsyncSync,
   lstatSync,
   openSync,
+  readFileSync,
 } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const MAX_DATABASE_BYTES = 20 * 1024 * 1024 * 1024;
-const EXPECTED_SCHEMA_VERSION = 11;
+
+function expectedSchemaVersion() {
+  const configured = Number(process.env.OTTO_EXPECTED_SCHEMA_VERSION);
+  if (Number.isInteger(configured) && configured >= 2) return configured;
+  try {
+    const manifestPath = fileURLToPath(
+      new URL('../release/manifest.json', import.meta.url),
+    );
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    const bundled = Number(manifest?.database?.schemaTo);
+    if (Number.isInteger(bundled) && bundled >= 2) return bundled;
+  } catch {
+    // Source-tree diagnostics can still inspect a database without a bundle.
+  }
+  return null;
+}
 
 function fail(message, code = 5) {
   process.stderr.write(`[Otto DB] ${message}\n`);
@@ -65,9 +82,10 @@ async function inspectDatabase(input) {
     if (!Number.isInteger(userVersion) || userVersion < 0) {
       fail(`user_version 非法：${userVersion}`);
     }
-    if (userVersion > EXPECTED_SCHEMA_VERSION) {
+    const supportedSchemaVersion = expectedSchemaVersion();
+    if (supportedSchemaVersion != null && userVersion > supportedSchemaVersion) {
       fail(
-        `数据库 schema ${userVersion} 高于部署包支持的 ${EXPECTED_SCHEMA_VERSION}，拒绝降级`,
+        `数据库 schema ${userVersion} 高于部署包支持的 ${supportedSchemaVersion}，拒绝降级`,
       );
     }
     const tables = db.prepare(`
@@ -111,7 +129,13 @@ async function backupDatabase(sourceInput, targetInput) {
   }
   const fd = openSync(target, 'r');
   try {
-    fsyncSync(fd);
+    try {
+      fsyncSync(fd);
+    } catch (error) {
+      if (process.platform !== 'win32' || error?.code !== 'EPERM') throw error;
+      // Node's SQLite backup has already closed the target; some Windows
+      // filesystems reject a second FlushFileBuffers call on a read handle.
+    }
   } finally {
     closeSync(fd);
   }

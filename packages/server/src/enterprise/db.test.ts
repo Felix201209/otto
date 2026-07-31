@@ -170,7 +170,7 @@ describe('旧账号会话迁移', () => {
     const db = await freshDb();
     expect(db.getDatabaseReadiness()).toEqual({
       ready: true,
-      schemaVersion: 13,
+      schemaVersion: 18,
     });
     const sessionColumns = db
       .getDB()
@@ -209,7 +209,7 @@ describe('数据库 readiness', () => {
     const db = await freshDb();
     expect(db.getDatabaseReadiness()).toEqual({
       ready: true,
-      schemaVersion: 13,
+      schemaVersion: 18,
     });
   });
 
@@ -251,7 +251,7 @@ describe('数据库 readiness', () => {
 
     vi.resetModules();
     const reopened: DbModule = await import('./db.js');
-    expect(reopened.getDatabaseReadiness()).toEqual({ ready: true, schemaVersion: 13 });
+    expect(reopened.getDatabaseReadiness()).toEqual({ ready: true, schemaVersion: 18 });
     const tableSql = (reopened.getDB().prepare(
       "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ticket_events'",
     ).get() as { sql: string }).sql;
@@ -309,7 +309,7 @@ describe('数据库 readiness', () => {
     try {
       expect(reopened.getDatabaseReadiness()).toEqual({
         ready: true,
-        schemaVersion: 13,
+        schemaVersion: 18,
       });
       const migrated = reopened.getTicketForAccount(
         legacyTicket.id,
@@ -386,7 +386,7 @@ describe('数据库 readiness', () => {
     try {
       expect(reopened.getDatabaseReadiness()).toEqual({
         ready: true,
-        schemaVersion: 13,
+        schemaVersion: 18,
       });
       const organizationColumns = reopened
         .getDB()
@@ -533,12 +533,12 @@ describe('数据库 readiness', () => {
     future.exec(`
       CREATE TABLE future_only (id TEXT PRIMARY KEY);
       INSERT INTO future_only (id) VALUES ('preserve-me');
-      PRAGMA user_version = 14;
+      PRAGMA user_version = 19;
     `);
     future.close();
 
     const db = await freshDb();
-    expect(() => db.getDB()).toThrow(/schema version 14.*current version 13/i);
+    expect(() => db.getDB()).toThrow(/schema version 19.*current version 18/i);
 
     const reopened = new Database(path.join(tmpDir, 'data.db'));
     try {
@@ -548,7 +548,7 @@ describe('数据库 readiness', () => {
             user_version: number;
           }
         ).user_version,
-      ).toBe(14);
+      ).toBe(19);
       expect(
         (reopened.prepare('SELECT id FROM future_only').get() as { id: string })
           .id,
@@ -1468,6 +1468,20 @@ describe('企业成员直聊', () => {
       }),
     ]);
     const attachmentId = message.attachments[0]!.id;
+    const stored = db.getDB().prepare(
+      `SELECT content, storage_backend, storage_key
+       FROM direct_message_attachments WHERE id = ?`,
+    ).get(attachmentId) as {
+      content: Uint8Array;
+      storage_backend: string;
+      storage_key: string;
+    };
+    expect(stored.storage_backend).toBe('encrypted-filesystem');
+    expect(Buffer.from(stored.content)).toHaveLength(0);
+    const encryptedFile = fs.readFileSync(
+      path.join(tmpDir, 'attachments', ...stored.storage_key.split('/')),
+    );
+    expect(encryptedFile.includes(file)).toBe(false);
     expect(db.getDirectMessageAttachment({
       organizationId: db.DEFAULT_ORGANIZATION_ID,
       accountId: bob.id,
@@ -2737,5 +2751,80 @@ describe('企业工作日志持久化边界', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('企业备份聚合', () => {
+  it('保留离职员工、限制任务历史并严格隔离企业数据', async () => {
+    const db = await freshDb();
+    const otherOrganization = db.createOrganization({
+      name: '备份隔离企业',
+      slug: 'backup-isolation',
+    });
+    db.createEmployee({ id: 'backup-former', name: '历史员工' });
+    db.createEmployee({
+      id: 'backup-other',
+      name: '其他企业员工',
+      organizationId: otherOrganization.id,
+    });
+    expect(db.offboardEmployee('backup-former')).toBe(true);
+
+    const database = db.getDB();
+    const insertTask = database.prepare(
+      `INSERT INTO task_logs
+           (organization_id, employee_id, task_type, created_at)
+         VALUES (?, ?, ?, ?)`,
+    );
+    database.exec('BEGIN IMMEDIATE');
+    try {
+      for (let index = 0; index < 1_001; index += 1) {
+        insertTask.run(
+          db.DEFAULT_ORGANIZATION_ID,
+          'backup-former',
+          `task-${index}`,
+          String(index).padStart(4, '0'),
+        );
+      }
+      insertTask.run(
+        otherOrganization.id,
+        'backup-other',
+        'other-tenant-task',
+        '9999',
+      );
+      database.exec('COMMIT');
+    } catch (error) {
+      database.exec('ROLLBACK');
+      throw error;
+    }
+
+    const snapshot = db.exportAll();
+    expect(Object.keys(snapshot)).toEqual([
+      'employees',
+      'taskLogs',
+      'knowledge',
+      'inviteCodes',
+      'auditLogs',
+      'accounts',
+      'accountTags',
+      'tickets',
+      'ticketDeliveries',
+    ]);
+    expect(snapshot.employees).toEqual([
+      expect.objectContaining({ id: 'backup-former', status: 'offboarded' }),
+    ]);
+    expect(snapshot.taskLogs).toHaveLength(1_000);
+    expect(snapshot.taskLogs[0]).toMatchObject({ task_type: 'task-1000' });
+    expect(snapshot.taskLogs.at(-1)).toMatchObject({ task_type: 'task-1' });
+    expect(snapshot.taskLogs).not.toContainEqual(
+      expect.objectContaining({ task_type: 'other-tenant-task' }),
+    );
+
+    const otherSnapshot = db.exportAll(otherOrganization.id);
+    expect(otherSnapshot.employees).toEqual([
+      expect.objectContaining({ id: 'backup-other' }),
+    ]);
+    expect(otherSnapshot.taskLogs).toEqual([
+      expect.objectContaining({ task_type: 'other-tenant-task' }),
+    ]);
   });
 });

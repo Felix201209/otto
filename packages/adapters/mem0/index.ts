@@ -26,7 +26,23 @@ import {
   type MemoryProvider,
   type MemoryScope,
 } from '../../core/src/memory/memoryProvider.js';
-import os from 'os';
+import os from 'node:os';
+
+interface Mem0Client {
+  add(messages: Array<{ role: string; content: string }>, options: Record<string, unknown>): Promise<unknown>;
+  delete(memoryId: string): Promise<unknown>;
+  getAll(options: Record<string, unknown>): Promise<unknown>;
+  search(query: string, options: Record<string, unknown>): Promise<unknown>;
+}
+
+interface Mem0Constructor {
+  new(options: Record<string, unknown>): Mem0Client;
+}
+
+interface Mem0Module {
+  default?: Mem0Constructor;
+  Mem0?: Mem0Constructor;
+}
 
 /** Mem0 记忆条目 */
 export interface Mem0Memory {
@@ -85,7 +101,7 @@ export interface Mem0Config {
 export class Mem0Adapter implements MemoryProvider {
   readonly name = 'mem0';
 
-  private mem0Client: any | null = null;
+  private mem0Client: Mem0Client | null = null;
   private fileFallback: FileMemoryProvider;
   private initialized = false;
   private initError: string | null = null;
@@ -111,7 +127,11 @@ export class Mem0Adapter implements MemoryProvider {
       if (!mem0Module) {
         throw new Error('mem0ai module not installed');
       }
-      const Mem0 = (mem0Module as any).default || (mem0Module as any).Mem0 || mem0Module;
+      const typedModule = mem0Module as unknown as Mem0Module;
+      const Mem0 = typedModule.default || typedModule.Mem0;
+      if (!Mem0) {
+        throw new Error('mem0ai module does not export a Mem0 constructor');
+      }
 
       const options: Record<string, unknown> = {};
 
@@ -164,7 +184,7 @@ export class Mem0Adapter implements MemoryProvider {
   /** 获取当前用户 ID（用于用户级隔离） */
   private getUserId(): string {
     // 优先用 config 中的用户标识，回退到 OS 用户名
-    const feishuUser = (this.config as any).getFeishuUser?.();
+    const feishuUser = (this.config as Config & { getFeishuUser?: () => string }).getFeishuUser?.();
     if (feishuUser) {
       return feishuUser;
     }
@@ -212,7 +232,7 @@ export class Mem0Adapter implements MemoryProvider {
       }
 
       // 格式化为 prompt 可用的文本
-      const memories = results.map((r: Mem0SearchResult) => {
+      const memories = (results as Mem0SearchResult[]).map((r) => {
         const tags = r.metadata?.tags
           ? ` [${Array.isArray(r.metadata.tags) ? r.metadata.tags.join(', ') : r.metadata.tags}]`
           : '';

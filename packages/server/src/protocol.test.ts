@@ -70,6 +70,42 @@ describe('validateClientPayload 形状校验（第二道闸）', () => {
     ).toBeNull();
   });
 
+  it('accepts bounded authorized enterprise context and rejects forged oversized payloads', () => {
+    expect(
+      validateClientPayload({
+        type: 'send_user_message',
+        payload: {
+          sessionId: 's1',
+          content: [{ type: 'text', value: 'hi' }],
+          source: 'local',
+          authorizedContext: '[企业知识#1] 已审核流程',
+        },
+      }),
+    ).toBeNull();
+    expect(
+      validateClientPayload({
+        type: 'send_user_message',
+        payload: {
+          sessionId: 's1',
+          content: [{ type: 'text', value: 'hi' }],
+          source: 'local',
+          authorizedContext: 'x'.repeat(12_001),
+        },
+      }),
+    ).toContain('authorizedContext');
+    expect(
+      validateClientPayload({
+        type: 'send_user_message',
+        payload: {
+          sessionId: 's1',
+          content: [{ type: 'text', value: 'hi' }],
+          source: 'local',
+          authorizedContext: { content: 'not a string' },
+        },
+      }),
+    ).toContain('authorizedContext');
+  });
+
   it('客户端不得伪造 feishu 来源（飞书消息只允许由服务端适配器注入）', () => {
     expect(
       validateClientPayload({
@@ -372,6 +408,9 @@ describe('validateClientPayload：斜杠命令帧（P3）', () => {
           apiUrl: 'https://ark.cn-beijing.volces.com/api/v3/responses',
           model: 'doubao-seed-2-0-lite-260215',
           apiKey: 'secret',
+          costPerRequestCny: 0.01,
+          monthlyRequestQuota: 1000,
+          monthlyBudgetCny: 50,
         },
       }),
     ).toBeNull();
@@ -387,6 +426,12 @@ describe('validateClientPayload：斜杠命令帧（P3）', () => {
         payload: { provider: 'volcengine', apiUrl: 'http://insecure.example.com' },
       }),
     ).toContain('HTTPS');
+    expect(
+      validateClientPayload({
+        type: 'save_search_config',
+        payload: { provider: 'bing', monthlyRequestQuota: -1 },
+      }),
+    ).toContain('monthlyRequestQuota');
   });
   });
 

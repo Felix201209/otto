@@ -10,6 +10,7 @@
  */
 
 import React from 'react';
+import type { DesktopRuntimeDiagnostic } from '../../../preload/index.js';
 import type { SessionSummary } from 'otto-server';
 import type { UseSettingsData } from '../../state/useSettingsData.js';
 import { IconCheck, IconClose } from '../icons.js';
@@ -21,6 +22,16 @@ export function DoctorPanel({ data }: { data: UseSettingsData }): React.JSX.Elem
   const { state, actions } = data;
   const [bundleState, setBundleState] = React.useState<'idle' | 'working' | 'done' | 'error'>('idle');
   const report = state.doctorReport;
+  const [runtime, setRuntime] = React.useState<DesktopRuntimeDiagnostic | null>(null);
+  React.useEffect(() => {
+    let cancelled = false;
+    void window.otto.runtimeDiagnostic().then((next) => {
+      if (!cancelled) setRuntime(next);
+    }).catch(() => {
+      if (!cancelled) setRuntime(null);
+    });
+    return () => { cancelled = true; };
+  }, []);
   // 缺失的排前面：体检的读者关心的是「缺什么」，就绪项只是背景。
   const checks = report
     ? [...report.checks].sort((a, b) => Number(a.present) - Number(b.present))
@@ -59,6 +70,20 @@ export function DoctorPanel({ data }: { data: UseSettingsData }): React.JSX.Elem
         </>
       }
     >
+      <Card>
+        <div className="otto-hub__item">
+          <span className="otto-hub__row-name">本地服务</span>
+          <span className="otto-hub__row-detail">{runtime?.server.message ?? '正在读取运行状态…'}</span>
+          <Badge tone={runtime?.server.status === 'unavailable' ? 'danger' : 'accent'}>
+            {runtime?.server.status === 'ready' ? `已就绪${runtime.server.ownership ? ` · ${runtime.server.ownership}` : ''}` : runtime?.server.status === 'unavailable' ? '不可用' : '启动中'}
+          </Badge>
+        </div>
+        <div className="otto-hub__item">
+          <span className="otto-hub__row-name">原生核心</span>
+          <span className="otto-hub__row-detail">{runtime?.nativeCore.message ?? '正在读取原生核心状态…'}</span>
+          <Badge>{runtime ? `${runtime.nativeCore.mode} · ${runtime.nativeCore.status}` : '未知'}</Badge>
+        </div>
+      </Card>
       {!report ? (
         <Empty>点击「开始体检」检查 pandoc / libreoffice / ffmpeg / playwright 等外部依赖。</Empty>
       ) : (
@@ -245,7 +270,7 @@ export function WorkflowsPanel({ data }: { data: UseSettingsData }): React.JSX.E
   return (
     <Panel
       title="Workflow"
-      desc="多智能体 workflow 的运行记录与各 agent 明细。"
+      desc="多专家 workflow 的运行记录与各 agent 明细。"
       actions={
         <button type="button" className="otto-hub__btn" onClick={actions.refreshWorkflows}>
           刷新

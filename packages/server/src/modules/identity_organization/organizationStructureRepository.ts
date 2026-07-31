@@ -137,6 +137,21 @@ function toOrganizationPositionView(
   };
 }
 
+export function getOrganizationPositionRoleMappingFromRepository(
+  database: Database,
+  organizationId: string,
+  positionId: string,
+): OrganizationPositionRoleMapping | null {
+  const row = database
+    .prepare(
+      `SELECT role_mapping FROM organization_positions
+       WHERE id = ? AND organization_id = ?`,
+    )
+    .get(positionId, organizationId) as
+    { role_mapping: OrganizationPositionRoleMapping } | undefined;
+  return row?.role_mapping ?? null;
+}
+
 function roleForMapping(mapping: OrganizationPositionRoleMapping): string {
   if (mapping === 'enterprise_admin') return '企业管理员';
   if (mapping === 'department_admin') return '部门管理员';

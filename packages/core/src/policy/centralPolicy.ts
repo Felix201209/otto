@@ -21,6 +21,7 @@ import { PolicyEngine, PolicyDecision } from './policy-engine.js';
 import { getAuditLogger, AuditLogger } from '../orchestration/auditLog.js';
 import { isHighRisk } from './highRiskTools.js';
 import {
+  FEATURE_FLAGS,
   FeatureFlagManager,
   type FeatureFlag,
 } from '../config/featureFlags.js';
@@ -70,7 +71,7 @@ export interface PolicyDecisionResult {
  * corresponding tool is denied at the policy gate regardless of approval
  * mode.
  */
-const TOOL_FEATURE_FLAG_MAP: Record<string, FeatureFlag> = {
+const TOOL_FEATURE_FLAG_MAP: Record<string, string> = {
   // 飞书自动回复
   'lark_cli': 'feishu_auto_reply',
   'feishu_project_collab': 'feishu_auto_reply',
@@ -78,6 +79,9 @@ const TOOL_FEATURE_FLAG_MAP: Record<string, FeatureFlag> = {
   // 桌面自动化 → park_service
   'desktop_automation': 'park_service',
   'web_automation': 'park_service',
+
+  'run_shell_command': 'shell_access',
+  'shell': 'shell_access',
 
 
   // 知识沉淀闭环
@@ -111,19 +115,20 @@ export class CentralPolicy {
   private readonly engine: PolicyEngine;
   private readonly config: Config;
   private readonly auditor: AuditLogger;
-  private readonly featureFlags: FeatureFlagManager;
+  private readonly featureFlags?: FeatureFlagManager;
 
   constructor(config: Config) {
     this.engine = new PolicyEngine();
     this.config = config;
     this.auditor = getAuditLogger();
-    this.featureFlags = new FeatureFlagManager(
-      config.getProjectSettingsManager(),
-    );
+    const settingsManager = config.getProjectSettingsManager?.();
+    if (settingsManager && typeof settingsManager.getSettings === 'function') {
+      this.featureFlags = new FeatureFlagManager(settingsManager);
+    }
   }
 
   /** 获取 FeatureFlagManager 供外部查询/变更。 */
-  getFeatureFlagManager(): FeatureFlagManager {
+  getFeatureFlagManager(): FeatureFlagManager | undefined {
     return this.featureFlags;
   }
 
@@ -219,13 +224,15 @@ export class CentralPolicy {
    * Fallback for legacy keys: read raw config, deny-by-default.
    */
   private isFeatureEnabled(flagKey: string): boolean {
-    // Typed flags first
-    if (flagKey in { park_service: 1, feishu_auto_reply: 1, enterprise_tree: 1, knowledge_loop: 1, memory_injection: 1, checkpoints: 1, audit_log: 1 }) {
+    if (flagKey in FEATURE_FLAGS && this.featureFlags) {
       return this.featureFlags.isEnabled(flagKey as FeatureFlag);
     }
-    // Legacy fallback
     try {
-      const settings = this.config.getProjectSettingsManager().getSettings();
+      const manager = this.config.getProjectSettingsManager?.() as unknown as {
+        getSettings?: () => { featureFlags?: Record<string, boolean> };
+        load?: () => { featureFlags?: Record<string, boolean> };
+      } | undefined;
+      const settings = manager?.getSettings?.() ?? manager?.load?.();
       if (!settings || !settings.featureFlags) return false;
       return settings.featureFlags[flagKey] === true;
     } catch {

@@ -27,6 +27,11 @@ import { Composer } from './Composer.js';
 import type { SlashCommand } from './SlashCommands.js';
 import { IconArrowDown, IconMoon, IconSun, OttoAvatar } from './icons.js';
 import { ParkServicesPlugin } from './ParkServicesPlugin.js';
+import { OttoPetStage } from './OttoPetStage.js';
+import {
+  PET_WIDGET_PREFERENCE_EVENT,
+  readPetWidgetEnabled,
+} from '../petWidgetPreference.js';
 
 /**
  * 顶栏黑/白底色一键切换（Jeremy）。点击在浅色/深色间切换（nativeTheme IPC，
@@ -81,8 +86,6 @@ interface ChatViewProps {
   currentModel: string | null;
   userInitial: string;
   busy: boolean;
-  /** 服务端权威身份；个人版不伪造部门，企业版显示真实角色。 */
-  identityLabel?: string;
   modelManagementLabel?: string;
   onSend: (
     text: string,
@@ -136,9 +139,7 @@ export function ChatView({
   messages,
   models,
   currentModel,
-  userInitial,
   busy,
-  identityLabel = '个人版 · Otto',
   modelManagementLabel = '模型与个人 API 设置',
   onSend,
   onCancel,
@@ -170,6 +171,7 @@ export function ChatView({
   const [hasUnread, setHasUnread] = useState(false);
   const [showJump, setShowJump] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const [petWidgetEnabled, setPetWidgetEnabled] = useState(readPetWidgetEnabled);
   // 空态示例胶囊注入 composer 的草稿（每次点击带新 token 触发再注入）。
   const [draft, setDraft] = useState<{ text: string; n: number }>({
     text: '',
@@ -222,6 +224,12 @@ export function ChatView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.sessionId]);
 
+  useEffect(() => {
+    const syncPreference = (): void => setPetWidgetEnabled(readPetWidgetEnabled());
+    window.addEventListener(PET_WIDGET_PREFERENCE_EVENT, syncPreference);
+    return () => window.removeEventListener(PET_WIDGET_PREFERENCE_EVENT, syncPreference);
+  }, []);
+
   const jumpToBottom = () => {
     const el = threadRef.current;
     if (!el) return;
@@ -265,27 +273,6 @@ export function ChatView({
           {session?.title ?? 'Otto'}
         </span>
 
-        {/* 服务端权威身份：个人版不伪造部门，企业版来自签名加入/管理者建档。 */}
-        <span
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px',
-            padding: '3px 10px',
-            fontSize: '11px',
-            fontWeight: 500,
-            color: 'var(--otto-text-secondary)',
-            background: 'var(--otto-surface)',
-            border: '1px solid var(--otto-border)',
-            borderRadius: 'var(--otto-radius-sm)',
-            whiteSpace: 'nowrap',
-            opacity: 0.8,
-          }}
-          title="当前产品身份"
-        >
-          {identityLabel}
-        </span>
-
         {session?.source === 'feishu' ? (
           <span className="otto-main__sync">飞书 · 实时同步</span>
         ) : null}
@@ -299,10 +286,7 @@ export function ChatView({
               title="导出会话为 Markdown"
               aria-label="导出会话为 Markdown"
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
-                <path d="M12 3v12m0 0-4-4m4 4 4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-              </svg>
+              Export
             </button>
           ) : null}
           <button
@@ -312,10 +296,7 @@ export function ChatView({
             title={modelManagementLabel}
             aria-label={modelManagementLabel}
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
-              <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" stroke="currentColor" strokeWidth="1.6" />
-              <path d="M19.4 13a7.6 7.6 0 0 0 .05-2l1.7-1.32-1.9-3.3-2.05.82a7.6 7.6 0 0 0-1.73-1l-.31-2.17H10.8l-.31 2.17a7.6 7.6 0 0 0-1.73 1l-2.05-.82-1.9 3.3L6.5 11a7.6 7.6 0 0 0 0 2l-1.7 1.32 1.9 3.3 2.06-.82c.53.4 1.11.74 1.73 1l.31 2.17h2.38l.31-2.17c.62-.26 1.2-.6 1.73-1l2.06.82 1.9-3.3L19.4 13Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-            </svg>
+            Settings
           </button>
           <button
             type="button"
@@ -324,16 +305,8 @@ export function ChatView({
             title="专家面板"
             aria-label="专家面板"
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
-              <rect x="3" y="3" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
-              <rect x="14" y="3" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
-              <rect x="3" y="14" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
-              <rect x="14" y="14" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
-            </svg>
+            Workspace
           </button>
-          <span className="otto-user-avatar" title="当前用户">
-            {userInitial}
-          </span>
         </div>
       </header>
 
@@ -372,6 +345,14 @@ export function ChatView({
 
       {/* 园区服务插件：常驻挂载（右侧面板「园区服务」入口经事件打开弹窗）。 */}
       <ParkServicesPlugin />
+
+      {petWidgetEnabled ? (
+        <OttoPetStage
+          variant="widget"
+          running={busy}
+          workLabel={busy ? '正在处理当前对话' : session ? '等待你的下一项工作' : '准备开始新的对话'}
+        />
+      ) : null}
 
       <Composer
         models={models}

@@ -176,7 +176,7 @@ No prerequisites -- uses built-in OS tools on both macOS and Windows.`;
     const info=await this.ps('Get-ComputerInfo|Select CsName,OsName,OsVersion,OsArchitecture,CsTotalPhysicalMemory|Format-List|Out-String');
     const gpu=await this.ps('Get-CimInstance Win32_VideoController|Select Name,DriverVersion|Format-List|Out-String');
     const up=await this.ps('(Get-Date)-(gcim Win32_OperatingSystem).LastBootUpTime');
-    return this.hf('System',info)+this.hf('GPU',gpu)+'Uptime: '+up;
+    return this.hf('System Info',info)+this.hf('GPU',gpu)+'Uptime: '+up;
   }
   private async winDiskHealth():Promise<string>{
     const smart=await this.ps('Get-PhysicalDisk|Select FriendlyName,MediaType,HealthStatus,OperationalStatus,Size|Format-Table -AutoSize|Out-String -Width 160');

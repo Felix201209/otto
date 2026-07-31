@@ -10,7 +10,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import type { WebSearchProvider } from 'otto-core';
+import type { SearchProviderRuntimeConfig, WebSearchProvider } from 'otto-core';
 import { loadUserSettingsSubset, patchUserSettings } from './userSettings.js';
 
 export const DEFAULT_VOLCENGINE_SEARCH_API_URL =
@@ -23,6 +23,10 @@ export interface SearchConfigView {
   apiUrl: string;
   model: string;
   hasApiKey: boolean;
+  costPerRequestCny?: number;
+  configuredProviders: WebSearchProvider[];
+  monthlyRequestQuota?: number;
+  monthlyBudgetCny?: number;
 }
 
 export interface SaveSearchConfigInput {
@@ -32,6 +36,9 @@ export interface SaveSearchConfigInput {
   /** 空字符串表示保留已有密钥。 */
   apiKey?: string;
   clearApiKey?: boolean;
+  costPerRequestCny?: number;
+  monthlyRequestQuota?: number;
+  monthlyBudgetCny?: number;
 }
 
 export interface SearchRuntimeConfig {
@@ -39,6 +46,9 @@ export interface SearchRuntimeConfig {
   apiUrl?: string;
   model?: string;
   apiKey?: string;
+  providerConfigs: Partial<
+    Record<WebSearchProvider, SearchProviderRuntimeConfig>
+  >;
 }
 
 function secretsDir(homeDir = os.homedir()): string {
@@ -78,18 +88,42 @@ export function loadSearchRuntimeConfig(
 ): SearchRuntimeConfig {
   const settings = loadUserSettingsSubset(homeDir);
   const provider = settings.searchProvider ?? 'bing';
+  const bochaApiKey =
+    readSecret('bocha', homeDir) ?? process.env.OTTO_BOCHA_API_KEY;
+  const volcengineApiKey =
+    readSecret('volcengine', homeDir) ?? process.env.ARK_API_KEY;
+  const volcengineApiUrl =
+    settings.searchApiUrl ?? DEFAULT_VOLCENGINE_SEARCH_API_URL;
+  const volcengineModel =
+    settings.searchModel ??
+    process.env.OTTO_SEARCH_MODEL ??
+    DEFAULT_VOLCENGINE_SEARCH_MODEL;
+  const providerConfigs: SearchRuntimeConfig['providerConfigs'] = {
+    bing: {
+      costPerRequestCny: settings.searchProviderCostsCny?.bing,
+    },
+    gemini: {
+      costPerRequestCny: settings.searchProviderCostsCny?.gemini,
+    },
+    bocha: {
+      apiKey: bochaApiKey,
+      costPerRequestCny: settings.searchProviderCostsCny?.bocha,
+    },
+    volcengine: {
+      apiKey: volcengineApiKey,
+      apiUrl: volcengineApiUrl,
+      model: volcengineModel,
+      costPerRequestCny: settings.searchProviderCostsCny?.volcengine,
+    },
+  };
   return {
     provider,
-    apiUrl: settings.searchApiUrl,
-    model: settings.searchModel,
+    apiUrl:
+      provider === 'volcengine' ? volcengineApiUrl : settings.searchApiUrl,
+    model: provider === 'volcengine' ? volcengineModel : settings.searchModel,
     apiKey:
-      readSecret(provider, homeDir) ??
-      settings.searchApiKey ??
-      (provider === 'volcengine'
-        ? process.env.ARK_API_KEY
-        : provider === 'bocha'
-          ? process.env.OTTO_BOCHA_API_KEY
-          : undefined),
+      providerConfigs[provider]?.apiKey ?? settings.searchApiKey ?? undefined,
+    providerConfigs,
   };
 }
 
@@ -99,11 +133,28 @@ export function loadSearchConfigView(homeDir = os.homedir()): SearchConfigView {
     provider: runtime.provider,
     apiUrl:
       runtime.apiUrl ??
-      (runtime.provider === 'volcengine' ? DEFAULT_VOLCENGINE_SEARCH_API_URL : ''),
+      (runtime.provider === 'volcengine'
+        ? DEFAULT_VOLCENGINE_SEARCH_API_URL
+        : ''),
     model:
       runtime.model ??
-      (runtime.provider === 'volcengine' ? DEFAULT_VOLCENGINE_SEARCH_MODEL : ''),
+      (runtime.provider === 'volcengine'
+        ? DEFAULT_VOLCENGINE_SEARCH_MODEL
+        : ''),
     hasApiKey: Boolean(runtime.apiKey),
+    costPerRequestCny:
+      runtime.providerConfigs[runtime.provider]?.costPerRequestCny,
+    configuredProviders: (
+      ['bing', 'bocha', 'volcengine', 'gemini'] as WebSearchProvider[]
+    ).filter(
+      (provider) =>
+        provider === 'bing' ||
+        provider === 'gemini' ||
+        Boolean(runtime.providerConfigs[provider]?.apiKey),
+    ),
+    monthlyRequestQuota:
+      loadUserSettingsSubset(homeDir).searchMonthlyRequestQuota,
+    monthlyBudgetCny: loadUserSettingsSubset(homeDir).searchMonthlyBudgetCny,
   };
 }
 
@@ -113,11 +164,36 @@ export function saveSearchConfig(
 ): SearchConfigView {
   const apiUrl = input.apiUrl?.trim() || undefined;
   const model = input.model?.trim() || undefined;
+  const current = loadUserSettingsSubset(homeDir);
+  const costs = { ...(current.searchProviderCostsCny ?? {}) };
+  if (
+    typeof input.costPerRequestCny === 'number' &&
+    Number.isFinite(input.costPerRequestCny) &&
+    input.costPerRequestCny >= 0
+  ) {
+    costs[input.provider] = input.costPerRequestCny;
+  }
   patchUserSettings(
     {
       searchProvider: input.provider,
-      searchApiUrl: apiUrl,
-      searchModel: model,
+      // 火山的接入点配置在切到其它 provider 后仍保留，供自动故障切换使用。
+      searchApiUrl:
+        input.provider === 'volcengine' ? apiUrl : current.searchApiUrl,
+      searchModel:
+        input.provider === 'volcengine' ? model : current.searchModel,
+      searchProviderCostsCny: costs,
+      searchMonthlyRequestQuota:
+        typeof input.monthlyRequestQuota === 'number' &&
+        Number.isFinite(input.monthlyRequestQuota) &&
+        input.monthlyRequestQuota >= 0
+          ? Math.floor(input.monthlyRequestQuota)
+          : current.searchMonthlyRequestQuota,
+      searchMonthlyBudgetCny:
+        typeof input.monthlyBudgetCny === 'number' &&
+        Number.isFinite(input.monthlyBudgetCny) &&
+        input.monthlyBudgetCny >= 0
+          ? input.monthlyBudgetCny
+          : current.searchMonthlyBudgetCny,
       // 旧版 CLI 曾允许明文落盘；一旦经新入口保存就完成迁移并删掉旧字段。
       searchApiKey: undefined,
     },

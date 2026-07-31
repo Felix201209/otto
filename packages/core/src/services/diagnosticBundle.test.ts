@@ -72,11 +72,16 @@ describe('diagnostic bundle', () => {
     const root = await mkdtemp(path.join(tmpdir(), 'otto-diagnostic-link-'));
     const home = path.join(root, 'home');
     const output = path.join(root, 'out');
-    const outside = path.join(root, 'outside.log');
+    const outside = path.join(root, 'outside');
     const { mkdir, writeFile, symlink } = await import('node:fs/promises');
     await mkdir(path.join(home, '.otto-user', 'logs'), { recursive: true });
-    await writeFile(outside, 'password=outside-secret');
-    await symlink(outside, path.join(home, '.otto-user', 'logs', 'linked.log'));
+    await mkdir(outside, { recursive: true });
+    await writeFile(path.join(outside, 'outside.log'), 'password=outside-secret');
+    await symlink(
+      outside,
+      path.join(home, '.otto-user', 'logs', 'linked'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
 
     const result = await createDiagnosticBundle({
       homeDir: home,
@@ -85,6 +90,6 @@ describe('diagnostic bundle', () => {
       doctorReport: EMPTY_DOCTOR_REPORT,
     });
     const zip = await JSZip.loadAsync(await readFile(result.path));
-    expect(zip.file('otto-user/logs/linked.log')).toBeNull();
+    expect(zip.file('otto-user/logs/linked/outside.log')).toBeNull();
   });
 });

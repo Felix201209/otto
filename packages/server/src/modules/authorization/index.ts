@@ -4,4 +4,5 @@
 
 export * from './enterpriseRoutePolicy.js';
 export * from './organizationFeatureAccess.js';
+export * from './authorizationComposition.js';
 export * from './toolConfirmationPolicy.js';

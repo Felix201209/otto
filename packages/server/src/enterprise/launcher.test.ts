@@ -13,6 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const temporaryDirectories: string[] = [];
+const EXPECTED_BUILD_COMMIT = '0123456789abcdef0123456789abcdef01234567';
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
@@ -65,6 +66,8 @@ Module._load = function (request, parent, isMain) {
           NODE_OPTIONS:
             `${process.env.NODE_OPTIONS || ''} --require ${preloadPath}`.trim(),
           OTTO_ENTERPRISE_HOST: '127.0.0.1',
+          OTTO_BUILD_COMMIT: EXPECTED_BUILD_COMMIT,
+          GITHUB_SHA: '',
           OTTO_LAUNCHER_TEST_OUTPUT: capturePath,
         },
       },
@@ -79,7 +82,7 @@ Module._load = function (request, parent, isMain) {
         host: '127.0.0.1',
         port: 8123,
         appVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/),
-        buildCommit: expect.stringMatching(/^[0-9a-f]{40}$/),
+        buildCommit: EXPECTED_BUILD_COMMIT,
       },
     });
     expect(result.stdout).toContain('http://127.0.0.1:8123');

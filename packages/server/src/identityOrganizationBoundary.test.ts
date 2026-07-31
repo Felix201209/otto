@@ -69,9 +69,15 @@ describe('identity_organization invitation kernel', () => {
     expect(identityOrganization.createOrganizationInviteFacade).toBeTypeOf(
       'function',
     );
+    expect(
+      identityOrganization.createEnterpriseInviteSchemaContributor,
+    ).toBeTypeOf('function');
     expect(identityOrganization.createDepartmentInviteFacade).toBeTypeOf(
       'function',
     );
+    expect(
+      identityOrganization.createOrganizationWorkforceComposition,
+    ).toBeTypeOf('function');
     expect(identityOrganization.issueOrganizationInvite).toBeTypeOf('function');
     expect(identityOrganization.inspectOrganizationInvite).toBeTypeOf(
       'function',
@@ -109,16 +115,38 @@ describe('identity_organization invitation kernel', () => {
     expect(
       identityOrganization.IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR,
     ).toMatchObject({ id: 'identity_organization_structure' });
+    expect(
+      identityOrganization.IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,
+    ).toMatchObject({ id: 'identity_organization_root' });
     expect(identityOrganization.backfillLegacyOrganizationStructure).toBeTypeOf(
       'function',
     );
+    expect(identityOrganization.migrateLegacyEnterpriseTenant).toBeTypeOf(
+      'function',
+    );
+    expect(identityOrganization.backfillEnterpriseAccountEmployees).toBeTypeOf(
+      'function',
+    );
+    expect(identityOrganization.normalizeAccountTags).toBeTypeOf('function');
+    expect(identityOrganization.listAccountTagsInRepository).toBeTypeOf(
+      'function',
+    );
+    expect(
+      identityOrganization.replaceMigratedAccountTagsInRepository,
+    ).toBeTypeOf('function');
     expect(identityOrganization.createAssignmentIdentityFacade).toBeTypeOf(
       'function',
     );
     expect(identityOrganization.createAccountDirectoryFacade).toBeTypeOf(
       'function',
     );
+    expect(identityOrganization.createAccountAccessComposition).toBeTypeOf(
+      'function',
+    );
     expect(identityOrganization.createAccountLifecycleFacade).toBeTypeOf(
+      'function',
+    );
+    expect(identityOrganization.createAccountMutationComposition).toBeTypeOf(
       'function',
     );
     expect(identityOrganization.createAccountRegistrationFacade).toBeTypeOf(
@@ -133,6 +161,9 @@ describe('identity_organization invitation kernel', () => {
     expect(identityOrganization.createOrganizationStructureFacade).toBeTypeOf(
       'function',
     );
+    expect(
+      identityOrganization.getOrganizationPositionRoleMappingFromRepository,
+    ).toBeTypeOf('function');
     expect(identityOrganization.createOrganizationFeatureFacade).toBeTypeOf(
       'function',
     );
@@ -143,6 +174,12 @@ describe('identity_organization invitation kernel', () => {
     expect(identityOrganization.identitySecretMatches).toBeTypeOf('function');
     expect(identityOrganization.assertAccountPassword).toBeTypeOf('function');
     expect(identityOrganization.createAuthSessionFacade).toBeTypeOf('function');
+    expect(identityOrganization.createAccountAuthSchemaContributor).toBeTypeOf(
+      'function',
+    );
+    expect(identityOrganization.migrateLegacyAuthSessions).toBeTypeOf(
+      'function',
+    );
     expect(identityOrganization.AUTH_SESSION_DEFAULT_TTL_MS).toBe(
       30 * 24 * 60 * 60 * 1000,
     );
@@ -218,12 +255,40 @@ describe('identity_organization invitation kernel', () => {
     expect(databaseFacade).not.toContain(
       'CREATE TABLE IF NOT EXISTS organization_positions',
     );
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS organizations',
+    );
+    expect(databaseFacade).not.toContain(
+      'INSERT OR IGNORE INTO organizations',
+    );
+    expect(databaseFacade).not.toContain('PRAGMA table_info(account_presence)');
+    expect(databaseFacade).toContain('migrateLegacyEnterpriseTenant(d, {');
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS organization_features',
+    );
+    expect(databaseFacade).not.toContain('idx_organizations_status');
+    expect(databaseFacade).not.toContain('idx_organizations_park');
+    expect(databaseFacade).not.toContain(
+      "ensureTextColumn('organizations', 'park_id')",
+    );
+    expect(databaseFacade).toMatch(
+      /IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,[\s\S]*?MODEL_GATEWAY_SCHEMA_CONTRIBUTOR/,
+    );
     expect(databaseFacade).not.toContain('idx_organization_departments_org');
     expect(databaseFacade).not.toContain('idx_organization_positions_org');
     expect(databaseFacade).toContain(
       'IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR',
     );
     expect(databaseFacade).toContain('backfillLegacyOrganizationStructure(d)');
+    expect(databaseFacade).toMatch(
+      /backfillEnterpriseAccountEmployees\(d\);[\s\S]*?backfillLegacyOrganizationStructure\(d\);/,
+    );
+    expect(databaseFacade).not.toContain(
+      'function backfillEnterpriseAccountEmployees',
+    );
+    expect(databaseFacade).not.toContain(
+      'SAVEPOINT backfill_enterprise_account_employees',
+    );
     expect(databaseFacade).not.toContain(
       'function backfillOrganizationStructure',
     );
@@ -241,7 +306,8 @@ describe('identity_organization invitation kernel', () => {
       path.join(enterpriseDir, 'db.ts'),
       'utf8',
     );
-    expect(databaseFacade).toContain('createDepartmentInviteFacade');
+    expect(databaseFacade).toContain('createOrganizationWorkforceComposition');
+    expect(databaseFacade).not.toContain('createDepartmentInviteFacade');
     expect(databaseFacade).not.toMatch(
       /export function (?:createInviteCode|validateInviteCode)\s*\(/,
     );
@@ -250,16 +316,104 @@ describe('identity_organization invitation kernel', () => {
     );
   });
 
+  it('keeps enterprise invite schema ownership in the identity module', () => {
+    const databaseFacade = fs.readFileSync(
+      path.join(enterpriseDir, 'db.ts'),
+      'utf8',
+    );
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS organization_invites',
+    );
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS invite_codes',
+    );
+    expect(databaseFacade).not.toContain('idx_organization_invites_active');
+    expect(databaseFacade).not.toContain(
+      "ensureTextColumn('organization_invites'",
+    );
+    expect(databaseFacade).not.toContain(
+      "ensureIntegerColumn('organization_invites'",
+    );
+    expect(databaseFacade).not.toMatch(/^\s*['"]invite_codes['"],\s*$/m);
+    expect(databaseFacade).toMatch(
+      /createAccountAuthSchemaContributor\(\{[\s\S]*?createEnterpriseInviteSchemaContributor\(\{[\s\S]*?createCreditsSchemaContributor\(\{/,
+    );
+  });
+
   it('keeps auth-session implementation behind the identity module facade', () => {
     const databaseFacade = fs.readFileSync(
       path.join(enterpriseDir, 'db.ts'),
       'utf8',
     );
-    expect(databaseFacade).toContain('createAuthSessionFacade');
+    expect(databaseFacade).toContain('createAccountAccessComposition');
+    expect(databaseFacade).not.toContain('createAuthSessionFacade');
     expect(databaseFacade).not.toMatch(
       /export function (?:createAuthSession|getAccountBySession|revokeAuthSession)/,
     );
     expect(databaseFacade).not.toContain('function tokenHash(');
+  });
+
+  it('keeps account and authentication schema ownership in the identity module', () => {
+    const databaseFacade = fs.readFileSync(
+      path.join(enterpriseDir, 'db.ts'),
+      'utf8',
+    );
+    const accountLifecycleRepository = fs.readFileSync(
+      path.join(moduleDir, 'accountLifecycleRepository.ts'),
+      'utf8',
+    );
+    for (const table of [
+      'accounts',
+      'account_tags',
+      'auth_sessions',
+      'sms_login_challenges',
+      'sms_registration_challenges',
+    ]) {
+      expect(databaseFacade).not.toContain(
+        `CREATE TABLE IF NOT EXISTS ${table}`,
+      );
+    }
+    for (const index of [
+      'idx_accounts_status',
+      'idx_account_tags_tag',
+      'idx_sessions_token',
+      'idx_sms_challenges_account_created',
+      'idx_sms_registration_phone_created',
+      'idx_accounts_phone_unique',
+      'idx_accounts_organization',
+      'idx_accounts_feishu_open_id',
+    ]) {
+      expect(databaseFacade).not.toContain(
+        `CREATE INDEX IF NOT EXISTS ${index}`,
+      );
+      expect(databaseFacade).not.toContain(
+        `CREATE UNIQUE INDEX IF NOT EXISTS ${index}`,
+      );
+    }
+    expect(databaseFacade).not.toContain('function migrateLegacyAuthSessions');
+    expect(databaseFacade).not.toContain(
+      "ensureTextColumn('sms_registration_challenges'",
+    );
+    expect(databaseFacade).not.toContain("ensureTextColumn('accounts'");
+    expect(databaseFacade).not.toContain('ALTER TABLE accounts');
+    expect(databaseFacade).not.toContain('SELECT tag FROM account_tags');
+    expect(databaseFacade).not.toContain('DELETE FROM account_tags');
+    expect(databaseFacade).not.toContain('INSERT INTO account_tags');
+    expect(databaseFacade).not.toContain(
+      'SELECT account_id, tag, created_at FROM account_tags',
+    );
+    expect(databaseFacade).toContain('listAccountTagsInRepository');
+    expect(databaseFacade).toContain(
+      'listOrganizationAccountTagsInRepository',
+    );
+    expect(accountLifecycleRepository).not.toContain('account_tags');
+    expect(databaseFacade).not.toMatch(/['"]auth_sessions['"],/);
+    expect(databaseFacade).toMatch(
+      /IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,[\s\S]*?createAccountAuthSchemaContributor\(\{[\s\S]*?createCreditsSchemaContributor\(\{/,
+    );
+    expect(databaseFacade).toContain(
+      'migrateLegacyAuthSessions(database, DEFAULT_ORGANIZATION_ID)',
+    );
   });
 
   it('keeps account directory reads behind the identity module facade', () => {
@@ -267,11 +421,42 @@ describe('identity_organization invitation kernel', () => {
       path.join(enterpriseDir, 'db.ts'),
       'utf8',
     );
-    expect(databaseFacade).toContain('createAccountDirectoryFacade');
+    expect(databaseFacade).toContain('createAccountAccessComposition');
+    expect(databaseFacade).not.toContain('createAccountDirectoryFacade');
     expect(databaseFacade).not.toMatch(
       /export function (?:getAccount|listAccounts|authenticateAccount|findAccountByPhone|findActiveAccountByPhone)/,
     );
     expect(databaseFacade).not.toContain('WHERE feishu_open_id = ? AND status');
+  });
+
+  it('composes account access internals behind one module factory', () => {
+    const databaseFacade = fs.readFileSync(
+      path.join(enterpriseDir, 'db.ts'),
+      'utf8',
+    );
+    expect(databaseFacade).toContain('createAccountAccessComposition');
+    for (const factory of [
+      'createAccountDirectoryFacade',
+      'createAuthSessionFacade',
+      'createSmsChallengeFacade',
+    ]) {
+      expect(databaseFacade).not.toContain(factory);
+    }
+  });
+
+  it('composes account mutation internals behind one module factory', () => {
+    const databaseFacade = fs.readFileSync(
+      path.join(enterpriseDir, 'db.ts'),
+      'utf8',
+    );
+    expect(databaseFacade).toContain('createAccountMutationComposition');
+    for (const factory of [
+      'createAccountLifecycleFacade',
+      'createOrganizationProvisioningFacade',
+      'createAccountRegistrationFacade',
+    ]) {
+      expect(databaseFacade).not.toContain(factory);
+    }
   });
 
   it('keeps account lifecycle writes behind the identity module facade', () => {
@@ -279,7 +464,8 @@ describe('identity_organization invitation kernel', () => {
       path.join(enterpriseDir, 'db.ts'),
       'utf8',
     );
-    expect(databaseFacade).toContain('createAccountLifecycleFacade');
+    expect(databaseFacade).toContain('createAccountMutationComposition');
+    expect(databaseFacade).not.toContain('createAccountLifecycleFacade');
     expect(databaseFacade).not.toMatch(
       /export function (?:createAccount|updateAccount|deleteAccount)/,
     );
@@ -290,7 +476,8 @@ describe('identity_organization invitation kernel', () => {
       path.join(enterpriseDir, 'db.ts'),
       'utf8',
     );
-    expect(databaseFacade).toContain('createAccountRegistrationFacade');
+    expect(databaseFacade).toContain('createAccountMutationComposition');
+    expect(databaseFacade).not.toContain('createAccountRegistrationFacade');
     expect(databaseFacade).not.toMatch(
       /export function (?:createSelfRegisteredAccount|createPersonalRegisteredAccount|joinOrganizationWithInvite)/,
     );
@@ -301,7 +488,10 @@ describe('identity_organization invitation kernel', () => {
       path.join(enterpriseDir, 'db.ts'),
       'utf8',
     );
-    expect(databaseFacade).toContain('createOrganizationProvisioningFacade');
+    expect(databaseFacade).toContain('createAccountMutationComposition');
+    expect(databaseFacade).not.toContain(
+      'createOrganizationProvisioningFacade',
+    );
     expect(databaseFacade).not.toMatch(
       /export function (?:createOrganization|provisionOrganization)\s*\(/,
     );
@@ -312,7 +502,8 @@ describe('identity_organization invitation kernel', () => {
       path.join(enterpriseDir, 'db.ts'),
       'utf8',
     );
-    expect(databaseFacade).toContain('createOrganizationDirectoryFacade');
+    expect(databaseFacade).toContain('createOrganizationWorkforceComposition');
+    expect(databaseFacade).not.toContain('createOrganizationDirectoryFacade');
     expect(databaseFacade).not.toMatch(
       /export function (?:getOrganization|listOrganizations|getEnterpriseOrganization|listEnterpriseOrganizations)\s*\(/,
     );
@@ -324,12 +515,16 @@ describe('identity_organization invitation kernel', () => {
       path.join(enterpriseDir, 'db.ts'),
       'utf8',
     );
-    expect(databaseFacade).toContain('createOrganizationStructureFacade');
+    expect(databaseFacade).toContain('createOrganizationWorkforceComposition');
+    expect(databaseFacade).not.toContain('createOrganizationStructureFacade');
     expect(databaseFacade).not.toMatch(
       /export function (?:listOrganizationStructure|createOrganizationDepartment|updateOrganizationDepartment|deleteOrganizationDepartment|createOrganizationPosition|updateOrganizationPosition|deleteOrganizationPosition)\s*\(/,
     );
     expect(databaseFacade).not.toContain(
       'function toOrganizationPositionView(',
+    );
+    expect(databaseFacade).not.toContain(
+      'SELECT role_mapping FROM organization_positions',
     );
   });
 
@@ -338,7 +533,8 @@ describe('identity_organization invitation kernel', () => {
       path.join(enterpriseDir, 'db.ts'),
       'utf8',
     );
-    expect(databaseFacade).toContain('createAssignmentIdentityFacade');
+    expect(databaseFacade).toContain('createOrganizationWorkforceComposition');
+    expect(databaseFacade).not.toContain('createAssignmentIdentityFacade');
     expect(databaseFacade).not.toMatch(
       /export function resolveAssignmentIdentity\s*\(/,
     );
@@ -348,13 +544,34 @@ describe('identity_organization invitation kernel', () => {
     expect(databaseFacade).not.toContain('该职位 ID 已绑定其他部门或职位名称');
   });
 
-  it('keeps feature persistence and license access behind module facades', () => {
+  it('composes organization workforce internals behind one module factory', () => {
     const databaseFacade = fs.readFileSync(
       path.join(enterpriseDir, 'db.ts'),
       'utf8',
     );
-    expect(databaseFacade).toContain('createOrganizationFeatureFacade');
-    expect(databaseFacade).toContain('createOrganizationFeatureAccessFacade');
+    expect(databaseFacade).toContain('createOrganizationWorkforceComposition');
+    for (const factory of [
+      'createOrganizationDirectoryFacade',
+      'createDepartmentInviteFacade',
+      'createOrganizationStructureFacade',
+      'createAssignmentIdentityFacade',
+      'createMemberDirectoryFacade',
+      'createOrganizationInviteFacade',
+    ]) {
+      expect(databaseFacade).not.toContain(factory);
+    }
+  });
+
+  it('keeps feature persistence and license access behind authorization composition', () => {
+    const databaseFacade = fs.readFileSync(
+      path.join(enterpriseDir, 'db.ts'),
+      'utf8',
+    );
+    expect(databaseFacade).toContain('createAuthorizationComposition');
+    expect(databaseFacade).not.toContain('createOrganizationFeatureFacade');
+    expect(databaseFacade).not.toContain(
+      'createOrganizationFeatureAccessFacade',
+    );
     expect(databaseFacade).not.toMatch(
       /export function (?:getOrganizationFeatures|updateOrganizationFeatures)\s*\(/,
     );
@@ -369,7 +586,8 @@ describe('identity_organization invitation kernel', () => {
       path.join(enterpriseDir, 'db.ts'),
       'utf8',
     );
-    expect(databaseFacade).toContain('createSmsChallengeFacade');
+    expect(databaseFacade).toContain('createAccountAccessComposition');
+    expect(databaseFacade).not.toContain('createSmsChallengeFacade');
     expect(databaseFacade).toContain('hashIdentitySecret');
     expect(databaseFacade).not.toMatch(
       /export function (?:createSmsLoginChallenge|discardSmsLoginChallenge|verifySmsLoginChallenge|createSmsRegistrationChallenge|discardSmsRegistrationChallenge|verifySmsRegistrationChallenge)\s*\(/,

@@ -8,10 +8,11 @@
  * - Agent Pool (memory-managed concurrent agent pool)
  */
 
-import { spawn, ChildProcess } from 'child_process';
-import { EventEmitter } from 'events';
-import * as path from 'path';
-import * as fs from 'fs';
+import { randomBytes } from 'node:crypto';
+import { spawn, ChildProcess } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import * as path from 'node:path';
+import * as fs from 'node:fs';
 
 // ============ Types ============
 
@@ -111,7 +112,7 @@ class NativeProcess extends EventEmitter {
       this.process = null;
       this.emit('exit', code);
       // Reject all pending requests
-      for (const [id, { reject }] of this.pending) {
+      for (const { reject } of this.pending.values()) {
         reject(new Error(`Process exited with code ${code}`));
       }
       this.pending.clear();
@@ -138,7 +139,7 @@ class NativeProcess extends EventEmitter {
               resolve(response.result);
             }
           }
-        } catch (e) {
+        } catch {
           // Ignore parse errors
         }
       }
@@ -233,10 +234,7 @@ export class EncryptionStore {
   }
 
   static generateKey(): string {
-    // This is a sync call, we need to spawn a process
-    // For now, use crypto module
-    const crypto = require('crypto');
-    return crypto.randomBytes(32).toString('hex');
+    return randomBytes(32).toString('hex');
   }
 
   async init(): Promise<void> {

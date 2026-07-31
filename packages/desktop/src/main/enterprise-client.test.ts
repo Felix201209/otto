@@ -59,6 +59,7 @@ const API_V2_HEALTH = {
     'park_service_push',
     'account_presence_v1',
     'modular_update_push_v1',
+    'signed_update_policy_v1',
   ],
 };
 
@@ -127,7 +128,7 @@ describe('EnterpriseClient', () => {
     expect(challenge.challengeId).toBe('sms_1');
     expect(challenge.organization).toEqual({ id: 'org_acme', name: '星河科技' });
     const loggedIn = await client.registerWithSms({
-      challengeId: 'sms_1', code: '042731', name: '员工一号', password: 'registered-password',
+      challengeId: 'sms_1', code: '042731', name: '员工一号', password: 'registered-password', legalConsent: true,
     });
     expect(loggedIn.account.id).toBe(ACCOUNT.id);
     expect(client.snapshot().token).toBe('sms-session');
@@ -140,7 +141,7 @@ describe('EnterpriseClient', () => {
       phone: '13800138000', inviteCode: 'Ab3D-k9Pq-Z7xY',
     });
     expect(JSON.parse((fetchMock.mock.calls[2]?.[1] as RequestInit).body as string)).toEqual({
-      challengeId: 'sms_1', code: '042731', name: '员工一号', password: 'registered-password',
+      challengeId: 'sms_1', code: '042731', name: '员工一号', password: 'registered-password', legalConsent: true,
     });
   });
 
@@ -243,6 +244,34 @@ describe('EnterpriseClient', () => {
       .toBe('https://enterprise.otto.test/enterprise/modules/updates/client');
     expect((fetchMock.mock.calls[2]?.[1] as RequestInit).headers)
       .toMatchObject({ authorization: 'Bearer session-token' });
+  });
+
+  it('uses the member session to resolve a distribution-bound update policy', async () => {
+    const result = {
+      status: 'not_configured' as const,
+      reason: 'online_license_required' as const,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT, token: 'session-token', expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, result));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
+
+    await expect(client.getDeploymentUpdatePolicy({
+      distributionId: 'otto-green',
+      currentVersion: '1.9.10',
+    })).resolves.toEqual(result);
+    expect(fetchMock.mock.calls[2]?.[0])
+      .toBe('https://enterprise.otto.test/enterprise/deployment/update-policy');
+    const request = fetchMock.mock.calls[2]?.[1] as RequestInit;
+    expect(request.headers).toMatchObject({ authorization: 'Bearer session-token' });
+    expect(JSON.parse(String(request.body))).toEqual({
+      distributionId: 'otto-green',
+      currentVersion: '1.9.10',
+    });
   });
 
   it('加入企业已提交但响应断线时，用原 Bearer 会话对账并提交企业身份', async () => {
@@ -490,18 +519,88 @@ describe('EnterpriseClient', () => {
       id: 'k1',
       organizationId: 'org_acme',
       sourceId: 'kb_123',
+      title: 'solution',
       department: '研发部',
       category: 'solution',
       content: '合同审查先核对违约条款。',
       contributor: '员工一号',
       confidence: 0.9,
+      sourceType: 'manual',
+      sourceLabel: null,
+      status: 'active',
+      version: 1,
+      reviewedBy: null,
+      reviewedAt: null,
       createdAt: '2026-07-20T04:00:00.000Z',
+      updatedAt: '2026-07-20T04:00:00.000Z',
     }]);
 
     expect(fetchMock.mock.calls[2]?.[0]).toBe('https://enterprise.otto.test/enterprise/knowledge?q=%E5%90%88%E5%90%8C&department=%E7%A0%94%E5%8F%91%E9%83%A8');
     const init = fetchMock.mock.calls[2]?.[1] as RequestInit;
     expect(init.method).toBe('GET');
     expect(init.headers).toMatchObject({ authorization: 'Bearer session-token' });
+  });
+
+  it('企业管理员可修订知识并读取版本历史', async () => {
+    const knowledgeRow = {
+      id: 12,
+      organization_id: 'org_acme',
+      source_id: 'manual-12',
+      title: '交付检查',
+      department: null,
+      category: '流程',
+      content: '检查备份、监控和回滚。',
+      contributor: '管理员',
+      confidence: 0.95,
+      source_type: 'manual',
+      status: 'active',
+      version: 3,
+      created_at: '2026-07-20T04:00:00.000Z',
+      updated_at: '2026-07-21T04:00:00.000Z',
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT, token: 'session-token', expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, { knowledge: knowledgeRow }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        revisions: [{
+          id: 31,
+          knowledge_id: 12,
+          version: 2,
+          title: '交付检查',
+          category: '流程',
+          content: '检查备份和监控。',
+          status: 'active',
+          changed_by: '管理员',
+          change_note: '补充监控',
+          created_at: '2026-07-20T05:00:00.000Z',
+        }],
+      }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
+
+    await expect(client.reviseKnowledge('12', {
+      title: '交付检查',
+      category: '流程',
+      content: '检查备份、监控和回滚。',
+      changeNote: '补充回滚',
+    })).resolves.toMatchObject({ id: '12', version: 3, content: knowledgeRow.content });
+    expect(fetchMock.mock.calls[2]?.[0])
+      .toBe('https://enterprise.otto.test/enterprise/knowledge/12');
+    expect(fetchMock.mock.calls[2]?.[1]).toMatchObject({ method: 'PATCH' });
+
+    await expect(client.listKnowledgeRevisions('12')).resolves.toEqual([
+      expect.objectContaining({
+        id: '31',
+        knowledgeId: '12',
+        version: 2,
+        changeNote: '补充监控',
+      }),
+    ]);
+    expect(fetchMock.mock.calls[3]?.[0])
+      .toBe('https://enterprise.otto.test/enterprise/knowledge/12/revisions');
   });
 
   it('登录成员通过 main 内的会话令牌读取完整组织架构', async () => {
@@ -871,6 +970,7 @@ describe('EnterpriseClient', () => {
       code: '042731',
       name: '员工一号',
       password: 'registered-password',
+      legalConsent: true,
     })).rejects.toThrow('企业服务器版本过旧或功能不完整，请联系管理员升级后重试');
 
     expect(fetchMock).toHaveBeenCalledOnce();
@@ -1185,6 +1285,7 @@ describe('EnterpriseClient', () => {
       code: '123456',
       name: '员工 A',
       password: 'password-a',
+      legalConsent: true,
     });
     await vi.waitFor(() => expect(fetchMock.mock.calls.some(
       ([url]) => String(url) === 'https://a.otto.test/enterprise/auth/register/sms/verify',
@@ -1258,5 +1359,64 @@ describe('EnterpriseClient', () => {
       serverUrl: 'https://enterprise.otto.test',
       token: null,
     }]);
+  });
+
+  it('通过受版本保护的企业 Skill 市场协议查询、投稿、安装、评分和读取榜单', async () => {
+    const marketHealth = {
+      ...API_V2_HEALTH,
+      capabilities: [...API_V2_HEALTH.capabilities, 'enterprise_skill_market_v1'],
+    };
+    const skill = {
+      id: 'skill-1', organizationId: 'org_acme', slug: 'monthly-report', name: '月报整理',
+      description: '整理月报', department: '财务部', visibility: 'department', status: 'active',
+      authorAccountId: 'author-1', authorName: '张悦', contentHash: 'hash', version: 1,
+      installCount: 1, usageCount: 2, successCount: 2, failureCount: 0,
+      rating: 5, ratingCount: 1, installedVersion: null,
+      reviewedBy: '管理员', reviewedAt: '2026-07-30', createdAt: '2026-07-30', updatedAt: '2026-07-30',
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, marketHealth))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT, token: 'session-token', expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, { skills: [skill] }))
+      .mockResolvedValueOnce(jsonResponse(201, { outcome: 'submitted', skill }))
+      .mockResolvedValueOnce(jsonResponse(200, { skill: { ...skill, content: '# 月报整理' } }))
+      .mockResolvedValueOnce(jsonResponse(200, { skill: { ...skill, rating: 4 } }))
+      .mockResolvedValueOnce(jsonResponse(200, { skill: { ...skill, usageCount: 3 } }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        skills: [{ ...skill, rank: 1, score: 90, successRate: 1 }], contributors: [], generatedAt: '2026-07-30',
+      }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
+
+    await expect(client.listEnterpriseSkills({ scope: 'department', query: '月报', sort: 'rating' }))
+      .resolves.toEqual([skill]);
+    await client.submitEnterpriseSkill({
+      name: '月报整理', description: '整理月报', content: '# 月报整理', visibility: 'department',
+    });
+    await client.installEnterpriseSkill('skill-1');
+    await client.rateEnterpriseSkill('skill-1', 4);
+    await client.recordEnterpriseSkillUsage('skill-1', true, 'a'.repeat(64));
+    await expect(client.getEnterpriseSkillLeaderboard()).resolves.toMatchObject({
+      skills: [expect.objectContaining({ id: 'skill-1', rank: 1 })],
+    });
+
+    expect(fetchMock.mock.calls.slice(2).map(([url]) => url)).toEqual([
+      'https://enterprise.otto.test/enterprise/skills?scope=department&q=%E6%9C%88%E6%8A%A5&sort=rating',
+      'https://enterprise.otto.test/enterprise/skills',
+      'https://enterprise.otto.test/enterprise/skills/skill-1/install',
+      'https://enterprise.otto.test/enterprise/skills/skill-1/rating',
+      'https://enterprise.otto.test/enterprise/skills/skill-1/usage',
+      'https://enterprise.otto.test/enterprise/skills/leaderboard',
+    ]);
+    expect(JSON.parse((fetchMock.mock.calls[3]?.[1] as RequestInit).body as string)).toMatchObject({
+      name: '月报整理', visibility: 'department',
+    });
+    expect(JSON.parse((fetchMock.mock.calls[5]?.[1] as RequestInit).body as string)).toEqual({ score: 4 });
+    expect(JSON.parse((fetchMock.mock.calls[6]?.[1] as RequestInit).body as string)).toEqual({
+      success: true,
+      eventId: 'a'.repeat(64),
+    });
   });
 });

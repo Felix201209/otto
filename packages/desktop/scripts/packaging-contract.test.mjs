@@ -112,6 +112,16 @@ describe('desktop packaging contract', () => {
     expect(packageJson.build.files).not.toContain('!**/node_modules/**/src/**');
   });
 
+  it('uses the current dependency collector and verifies the packaged Windows runtime', async () => {
+    const packageJson = JSON.parse(
+      await readFile(path.join(packageRoot, 'package.json'), 'utf8'),
+    );
+    expect(packageJson.build).not.toHaveProperty('includeSubNodeModules');
+    expect(packageJson.scripts['dist:win']).toContain(
+      'node scripts/verify-packaged-runtime.mjs release/win-unpacked/resources/app.asar --platform win32',
+    );
+  });
+
   it('keeps update manifest download URLs bound to the no-proxy update mirror', async () => {
     const script = await readFile(
       path.join(packageRoot, 'scripts', 'make-delivery-zip.mjs'),

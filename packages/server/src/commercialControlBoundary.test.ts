@@ -22,17 +22,29 @@ const commercialControlImport = '../modules/commercial_control/index.js';
 
 describe('commercial_control module boundary', () => {
   it('publishes deployment and module-update capabilities from one public entrypoint', () => {
+    expect(commercialControl.createCommercialControlComposition).toBeTypeOf(
+      'function',
+    );
     expect(commercialControl.getDeploymentId).toBeTypeOf('function');
+    expect(commercialControl.createDeploymentSettingsRepository).toBeTypeOf(
+      'function',
+    );
     expect(commercialControl.createAuditLogFacade).toBeTypeOf('function');
     expect(commercialControl.createAuditLogSchemaContributor).toBeTypeOf(
       'function',
     );
     expect(commercialControl.createCreditsFacade).toBeTypeOf('function');
+    expect(commercialControl.createCreditsSchemaContributor).toBeTypeOf(
+      'function',
+    );
     expect(commercialControl.getModuleUpdateManifestFromStore).toBeTypeOf(
       'function',
     );
     expect(commercialControl.handleDeploymentRoute).toBeTypeOf('function');
     expect(commercialControl.handleModuleUpdateRoute).toBeTypeOf('function');
+    expect(commercialControl.resolveDeploymentUpdatePolicy).toBeTypeOf(
+      'function',
+    );
     expect(commercialControl.PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR.id).toBe(
       'commercial_control_private_deployment',
     );
@@ -96,6 +108,20 @@ describe('commercial_control module boundary', () => {
       'CREATE TABLE IF NOT EXISTS deployment_settings',
     );
     expect(databaseFacade).not.toContain(
+      'SELECT value FROM deployment_settings WHERE key = ?',
+    );
+    expect(databaseFacade).not.toContain(
+      'INSERT INTO deployment_settings (key, value, updated_at)',
+    );
+    expect(databaseFacade).toContain('createCommercialControlComposition');
+    expect(databaseFacade).not.toContain(
+      'createDeploymentSettingsRepository',
+    );
+    expect(databaseFacade).not.toContain('createAuditLogFacade');
+    expect(databaseFacade).not.toContain('createCreditsFacade');
+    expect(databaseFacade).not.toContain('getModuleUpdateManifestFromStore');
+    expect(databaseFacade).not.toContain('getDeploymentIdFromRepository');
+    expect(databaseFacade).not.toContain(
       'CREATE TABLE IF NOT EXISTS deployment_license',
     );
     expect(databaseFacade).not.toContain(
@@ -104,6 +130,22 @@ describe('commercial_control module boundary', () => {
     expect(databaseFacade).not.toContain('idx_telemetry_events_status_created');
     expect(databaseFacade).toContain('PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR');
     expect(databaseFacade).toContain('createAuditLogSchemaContributor');
+    expect(databaseFacade).toContain('createCreditsSchemaContributor');
+    expect(databaseFacade).not.toContain('buildCreditsTablesSql');
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS credit_transactions',
+    );
+    expect(databaseFacade).not.toContain(
+      'CREATE TABLE IF NOT EXISTS redeem_codes',
+    );
+    expect(databaseFacade).not.toContain(
+      'ALTER TABLE organizations ADD COLUMN credit_balance',
+    );
+    expect(databaseFacade).not.toContain('idx_credit_trans_org');
+    expect(databaseFacade).not.toContain('idx_redeem_codes_code');
+    expect(databaseFacade).toMatch(
+      /IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,[\s\S]*?createCreditsSchemaContributor\(\{[\s\S]*?MODEL_GATEWAY_SCHEMA_CONTRIBUTOR/,
+    );
     expect(databaseFacade).not.toContain(
       'CREATE TABLE IF NOT EXISTS audit_logs',
     );

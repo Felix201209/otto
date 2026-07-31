@@ -153,6 +153,9 @@ describe('CoreToolScheduler', () => {
         getUsageStatisticsEnabled: () => true,
         getDebugMode: () => false,
         getApprovalMode: () => 'default',
+        getProjectSettingsManager: () => ({
+          getSettings: () => ({ featureFlags: { shell_access: true } }),
+        }),
       } as unknown as Config,
       toolRegistry: Promise.resolve(toolRegistry as any),
       onAllToolCallsComplete: vi.fn(),
@@ -189,8 +192,14 @@ describe('CoreToolScheduler', () => {
     const auditDir = path.join(auditRoot, 'audit');
     const [auditFile] = await fs.readdir(auditDir);
     const raw = await fs.readFile(path.join(auditDir, auditFile), 'utf8');
-    const entry = JSON.parse(raw.trim());
+    const entries = raw
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    const entry = entries.find((candidate) =>
+      String(candidate.action).includes('confirmation:cancel'));
 
+    expect(entry).toBeDefined();
     expect(entry.sessionId).toBe('audit-session');
     expect(entry.toolName).toBe('run_shell_command');
     expect(entry.action).toContain('confirmation:cancel');

@@ -7,7 +7,7 @@
  *   node dist/enterprise/bin.js --seed          # 先灌一批演示数据（看板立刻有东西看）
  *   OTTO_ENTERPRISE_HOST=0.0.0.0 \
  *   OTTO_ENTERPRISE_PUBLIC_URL=https://your-public-host \
- *   OTTO_APP_VERSION=1.9.2 \
+ *   OTTO_APP_VERSION=1.9.10 \
  *   OTTO_BUILD_COMMIT=<完整的40位Git-SHA> \
  *   OTTO_ENTERPRISE_ADMIN_TOKEN=xxx node dist/enterprise/bin.js   # 局域网 + 鉴权
  */

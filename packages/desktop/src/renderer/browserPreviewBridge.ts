@@ -164,11 +164,14 @@ if (!previewWindow.otto) {
     notificationShow: () => Promise.resolve(),
     notificationMarkRead: () => Promise.resolve(),
     notificationGetUnread: () => Promise.resolve([]),
-    appVersion: () => Promise.resolve('1.9.3-browser-preview'),
-    openExternal: () => Promise.resolve(), openPath: () => Promise.resolve(), saveTextFile: () => Promise.resolve(null),
+    appVersion: () => Promise.resolve('1.9.10-browser-preview'),
+    openExternal: () => Promise.resolve(), openPath: () => Promise.resolve(),
+    inspectLocalPath: () => Promise.resolve({ exists: false, kind: 'missing' as const, canOpen: false }),
+    activateLocalPath: () => Promise.resolve({ ok: false, error: '浏览器预览不支持打开本地文件' }),
+    saveTextFile: () => Promise.resolve(null),
     getPathForFile: (file: File) => (file as File & { path?: string }).path || file.name,
     readClipboardText: () => navigator.clipboard?.readText?.() ?? Promise.resolve(''),
-    updateCheck: () => Promise.resolve({ status: 'up-to-date', currentVersion: '1.9.3', latestVersion: null }),
+    updateCheck: () => Promise.resolve({ status: 'up-to-date', currentVersion: '1.9.10', latestVersion: null }),
     updateDownload: () => Promise.resolve({ ok: false, error: '浏览器预览不支持更新' }), updateCancel: () => Promise.resolve(), updateInstall: () => Promise.resolve({ ok: false, message: '浏览器预览不支持安装' }),
     themeGet: () => Promise.resolve('dark'), themeSet: () => Promise.resolve('dark'),
     enterpriseSession: () => Promise.resolve({
@@ -415,7 +418,7 @@ if (!previewWindow.otto) {
       const ticket = previewTickets.find((item) => item.id === ticketId) ?? null;
       return ticket ? Promise.resolve(ticket) : Promise.reject(new Error('申请单不存在'));
     },
-    enterpriseUsageRecord: () => Promise.resolve({ recorded: false }), enterpriseKnowledgeRecord: () => Promise.resolve({ added: false }), enterpriseKnowledgeList: () => Promise.resolve([]),
+    enterpriseUsageRecord: () => Promise.resolve({ recorded: false }), enterpriseKnowledgeRecord: () => Promise.resolve({ status: 'exists', added: false }), enterpriseKnowledgeList: () => Promise.resolve([]), enterpriseKnowledgeReview: () => Promise.reject(new Error('预览模式不支持知识审核')), enterpriseKnowledgeRevise: () => Promise.reject(new Error('预览模式不支持知识修订')), enterpriseKnowledgeRevisions: () => Promise.resolve([]),
   };
 
   previewWindow.otto = new Proxy(bridge, {

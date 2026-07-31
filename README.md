@@ -6,14 +6,14 @@ Otto 是一个正在走向成熟形态的 agent 产品：核心要轻、边界�
 
 ## 当前内核状态
 
-当前 `1.9.4` 是 LSTC（Long-term Stable Channel）目标版本，主入口仍然是 Node/TypeScript CLI bundle：
+当前 `1.9.10` 是 LSTC（Long-term Stable Channel）目标版本，正式产品入口是 Electron 桌面端与独立企业服务端：
 
-- npm bin: `bundle/otto.js`
-- 开发入口: `scripts/start.js`
+- 桌面端: `packages/desktop`
+- 企业服务端: `packages/server`
 - 核心 TypeScript 包: `packages/core`
 - Rust 原生核心目录: `otto-native`
 
-也就是说：Otto 现在不是完全 Rust-only。Rust 已经成为热路径接管方向，并且已经有 core bridge 和 runtime wrapper；但部分旧 TypeScript 调用点仍作为兼容 fallback 存在。
+旧 CLI/TUI 已退出桌面发布路径。Otto 仍不是完全 Rust-only：Rust 已经成为热路径接管方向，并且已有 core bridge 和 runtime wrapper；部分 TypeScript 调用点继续作为经过测试的兼容 fallback。
 
 当前 Rust 接管进度：
 

@@ -4,5 +4,12 @@
 
 export * from './sqliteCompat.js';
 export * from './fileEncryptionKeyProvider.js';
+export * from './encryptedFieldCipher.js';
+export * from './encryptedObjectStore.js';
+export * from './encryptedBackupArchive.js';
+export * from './dataProtectionService.js';
+export * from './dataProtectionRestore.js';
 export * from './enterpriseDatabaseLifecycle.js';
+export * from './enterpriseBackupFacade.js';
 export * from './databaseSchemaContributor.js';
+export * from './dataPlatformComposition.js';

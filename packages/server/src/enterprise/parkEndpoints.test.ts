@@ -25,6 +25,18 @@ const ENV_KEYS = [
 
 const ADMIN_TOKEN = 'park-admin-token-xyz789';
 
+interface ParkEndpointResponse {
+  park: { id: string; name: string; adminUserIds: string[] };
+  invite: { code: string; maxUses: number; active: boolean };
+  parkId: string;
+  enterpriseId: string;
+  error: string;
+  request: { status: string; assignedTo: string };
+  requests: Array<{ id: string }>;
+  specialists: Array<{ userId: string; serviceTypes: string[] }>;
+  specialist: { userId: string; serviceTypes: string[] };
+}
+
 async function startIsolated(adminToken?: string): Promise<{ base: string; server: Server }> {
   process.env.OTTO_ENTERPRISE_DIR = tmpDir;
   process.env.OTTO_ENTERPRISE_PUBLIC_URL = 'https://park.otto.example';
@@ -67,25 +79,28 @@ async function postJSON(
   path: string,
   body: Record<string, unknown>,
   headers?: Record<string, string>,
-): Promise<{ status: number; body: any }> {
+): Promise<{ status: number; body: ParkEndpointResponse }> {
   const res = await fetch(`${base}${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...headers },
     body: JSON.stringify(body),
   });
-  return { status: res.status, body: await res.json() };
+  return { status: res.status, body: await res.json() as ParkEndpointResponse };
 }
 
 async function getJSON(
   base: string,
   path: string,
   headers?: Record<string, string>,
-): Promise<{ status: number; body: any }> {
+): Promise<{ status: number; body: ParkEndpointResponse }> {
   const res = await fetch(`${base}${path}`, { headers });
-  return { status: res.status, body: await res.json() };
+  return { status: res.status, body: await res.json() as ParkEndpointResponse };
 }
 
-describe('Park endpoints', { timeout: 15_000 }, () => {
+// The first isolated import compiles the large enterprise graph under Vitest
+// coverage. Production uses prebuilt JavaScript, but CI needs a wider startup
+// budget on slower Windows runners.
+describe('Park endpoints', { timeout: 30_000 }, () => {
   it('POST /enterprise/park creates a park (admin only)', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
     const adminHeaders = { 'x-otto-admin-token': ADMIN_TOKEN };
@@ -103,7 +118,7 @@ describe('Park endpoints', { timeout: 15_000 }, () => {
 
   it('POST /enterprise/park rejects without admin token', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
-    const { status, body } = await postJSON(
+    const { status } = await postJSON(
       base, '/enterprise/park',
       { name: 'Unauthorized Park' },
     );

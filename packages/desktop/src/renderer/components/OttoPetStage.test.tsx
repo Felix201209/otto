@@ -3,7 +3,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import { OttoPetStage, PET_ANIMATIONS } from './OttoPetStage.js';
 
 vi.mock('../assets/otto-pet-atlas.png', () => ({ default: 'otto-pet-atlas.png' }));
@@ -31,16 +31,16 @@ afterEach(() => {
 });
 
 describe('OttoPetStage', () => {
-  it('右栏小宠物可以折叠和展开，登录页模式不显示折叠按钮', () => {
-    const { rerender } = render(<OttoPetStage running={false} />);
+  it('小宠物作为右下角挂件显示真实工作状态和红绿灯', () => {
+    const { rerender } = render(<OttoPetStage running={false} variant="widget" />);
 
-    fireEvent.click(screen.getByRole('button', { name: '折叠小宠物' }));
-    expect(screen.getByRole('region', { name: 'Otto 吉祥物活动区（已折叠）' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '展开小宠物' }));
-    expect(screen.getByRole('region', { name: 'Otto 吉祥物活动区' })).toBeTruthy();
+    expect(screen.getByRole('complementary', { name: 'Otto 小宠物工作状态' })).toBeTruthy();
+    expect(screen.getByText('等待下一项工作')).toBeTruthy();
+    expect(screen.getByLabelText('空闲待命')).toBeTruthy();
 
-    rerender(<OttoPetStage running={false} variant="login" />);
-    expect(screen.queryByRole('button', { name: '折叠小宠物' })).toBeNull();
+    rerender(<OttoPetStage running variant="widget" workLabel="正在运行工具" />);
+    expect(screen.getByText('正在运行工具')).toBeTruthy();
+    expect(screen.getByLabelText('工作中')).toBeTruthy();
   });
 
   it('声明完整 9 行动画协议，行号与 hatch-pet atlas 一一对应', () => {
@@ -50,7 +50,7 @@ describe('OttoPetStage', () => {
   });
 
   it('按 idle 行的逐帧时长推进 spritesheet 帧', () => {
-    const { container } = render(<OttoPetStage running={false} />);
+    const { container } = render(<OttoPetStage running={false} variant="widget" />);
     const motion = container.querySelector<HTMLElement>('[data-state="idle"]');
     expect(motion?.dataset.frame).toBe('0');
 
@@ -60,7 +60,7 @@ describe('OttoPetStage', () => {
 
   it('系统要求减少动效时固定在 idle 首帧', () => {
     window.matchMedia = matchMedia(true);
-    const { container } = render(<OttoPetStage running />);
+    const { container } = render(<OttoPetStage running variant="widget" />);
     const motion = container.querySelector<HTMLElement>('[data-state="idle"]');
     expect(motion?.dataset.reducedMotion).toBe('true');
 
@@ -69,7 +69,7 @@ describe('OttoPetStage', () => {
   });
 
   it('Otto 真正运行时切到右向跑步行', () => {
-    const { container } = render(<OttoPetStage running />);
+    const { container } = render(<OttoPetStage running variant="widget" />);
     expect(
       container.querySelector<HTMLElement>('[data-state="running-right"]'),
     ).toBeTruthy();

@@ -38,6 +38,7 @@ import { createCentralPolicy, CentralPolicy } from '../policy/centralPolicy.js';
 import { PolicyDecision } from '../policy/policy-engine.js';
 import { getSkillShareManager } from '../orchestration/skillShare.js';
 import { getKnowledgeCapturePipeline } from '../orchestration/knowledgeCapturePipeline.js';
+import { recordSkillUsage as recordAutoSkillUsage } from '../orchestration/autoSkillEnhance.js';
 
 // Re-export ToolExecutionContext for convenience
 export { ToolExecutionContext } from './toolSchedulerAdapter.js';
@@ -79,6 +80,14 @@ function summarizeToolPayload(value: unknown, maxLength = 600): string {
   } catch {
     return '[unserializable tool payload]';
   }
+}
+
+function activatedSkillName(reqInfo: ToolCallRequestInfo): string | null {
+  if (reqInfo.name !== 'use_skill' || !reqInfo.args || typeof reqInfo.args !== 'object') {
+    return null;
+  }
+  const value = (reqInfo.args as Record<string, unknown>)['skillName'];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
 /**
@@ -1261,6 +1270,21 @@ export class ToolExecutionEngine {
         });
       } catch { /* 知识沉淀失败不影响工具执行 */ }
 
+      // AutoSkill learning tracks actual skill activation, not unrelated tool calls.
+      try {
+        const skillName = activatedSkillName(reqInfo);
+        if (skillName) {
+          recordAutoSkillUsage({
+            skillName,
+            timestamp: new Date().toISOString(),
+            success: true,
+            durationMs: toolCall.startTime ? Date.now() - toolCall.startTime : 0,
+            toolCalls: 1,
+            projectDir: this.config?.getProjectRoot?.(),
+          });
+        }
+      } catch { /* Usage learning is best-effort and must not affect tool execution. */ }
+
       // 📊 记录 Skill 使用统计（用于排行榜使用率）
       try {
         const skillMgr = getSkillShareManager(this.config);
@@ -1342,6 +1366,21 @@ export class ToolExecutionEngine {
           durationMs: toolCall.startTime ? Date.now() - toolCall.startTime : undefined,
         });
       } catch { /* 知识沉淀失败不影响工具执行 */ }
+
+      try {
+        const skillName = activatedSkillName(reqInfo);
+        if (skillName) {
+          recordAutoSkillUsage({
+            skillName,
+            timestamp: new Date().toISOString(),
+            success: false,
+            durationMs: toolCall.startTime ? Date.now() - toolCall.startTime : 0,
+            toolCalls: 1,
+            errorMessage: response.error?.message,
+            projectDir: this.config?.getProjectRoot?.(),
+          });
+        }
+      } catch { /* Usage learning is best-effort and must not affect tool execution. */ }
 
       // 📊 记录 Skill 使用统计（失败也计）
       try {

@@ -46,12 +46,19 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DESKTOP_DIR = path.resolve(__dirname, '..');
 const ROOT_DIR = path.resolve(DESKTOP_DIR, '../..');
 const RELEASE_DIR = path.join(DESKTOP_DIR, 'release');
-const BUILD_PROVENANCE_PATH = path.join(RELEASE_DIR, '.otto-build-provenance.json');
+const BUILD_PROVENANCE_PATH = path.join(
+  RELEASE_DIR,
+  '.otto-build-provenance.json',
+);
 const WINDOWS_RIPGREP_DIR = path.join(DESKTOP_DIR, 'vendor', 'win', 'ripgrep');
 const WINDOWS_RIPGREP_PATH = path.join(WINDOWS_RIPGREP_DIR, 'rg.exe');
 const WINDOWS_RIPGREP_VERSION_PATH = path.join(WINDOWS_RIPGREP_DIR, '.version');
-const PKG = JSON.parse(readFileSync(path.join(DESKTOP_DIR, 'package.json'), 'utf-8'));
-const ROOT_PKG = JSON.parse(readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf-8'));
+const PKG = JSON.parse(
+  readFileSync(path.join(DESKTOP_DIR, 'package.json'), 'utf-8'),
+);
+const ROOT_PKG = JSON.parse(
+  readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf-8'),
+);
 const VERSION = PKG.version;
 const SOURCE_REPO = 'Felix201209/otto';
 const SOURCE_UPSTREAM = 'origin/internal';
@@ -102,7 +109,10 @@ function git(args) {
   }).trim();
 }
 
-function inspectSourceState({ requireClean = false, requirePushed = false } = {}) {
+function inspectSourceState({
+  requireClean = false,
+  requirePushed = false,
+} = {}) {
   if (ROOT_PKG.version !== VERSION) {
     throw new Error(
       `版本不一致：根 package.json=${ROOT_PKG.version}，desktop=${VERSION}`,
@@ -113,7 +123,11 @@ function inspectSourceState({ requireClean = false, requirePushed = false } = {}
     throw new Error('无法取得完整的源码 HEAD SHA');
   }
   if (requireClean) {
-    const trackedChanges = git(['status', '--porcelain', '--untracked-files=no']);
+    const trackedChanges = git([
+      'status',
+      '--porcelain',
+      '--untracked-files=no',
+    ]);
     if (trackedChanges) {
       throw new Error('发布构建要求已提交的干净工作树；仍有 tracked 修改');
     }
@@ -144,7 +158,12 @@ function inspectSourceState({ requireClean = false, requirePushed = false } = {}
         cwd: ROOT_DIR,
         stdio: 'pipe',
       });
-      upstream = git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']);
+      upstream = git([
+        'rev-parse',
+        '--abbrev-ref',
+        '--symbolic-full-name',
+        '@{upstream}',
+      ]);
       upstreamCommit = git(['rev-parse', '@{upstream}']);
     } catch {
       throw new Error('当前分支没有 upstream，必须先推送源码再发布');
@@ -191,7 +210,9 @@ function cleanupUnpackedOutput(name) {
   if (!existsSync(target)) return;
   const releaseMetadata = lstatSync(RELEASE_DIR);
   if (releaseMetadata.isSymbolicLink() || !releaseMetadata.isDirectory()) {
-    throw new Error(`release 必须是工作树内的真实目录，拒绝清理: ${RELEASE_DIR}`);
+    throw new Error(
+      `release 必须是工作树内的真实目录，拒绝清理: ${RELEASE_DIR}`,
+    );
   }
   const metadata = lstatSync(target);
   if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
@@ -206,9 +227,14 @@ function cleanupUnpackedOutput(name) {
   log('BUILD', `已清理可再生中间目录: ${name}`);
 }
 
-function runBuildStep(command, args, unpackedOutput) {
+function runBuildStep(command, args, unpackedOutput, env = process.env) {
   try {
-    execFileSync(command, args, { cwd: DESKTOP_DIR, stdio: 'inherit', ...EXEC_FILE_OPTIONS });
+    execFileSync(command, args, {
+      cwd: DESKTOP_DIR,
+      stdio: 'inherit',
+      env,
+      ...EXEC_FILE_OPTIONS,
+    });
   } finally {
     cleanupUnpackedOutput(unpackedOutput);
   }
@@ -238,20 +264,29 @@ async function writeBuildProvenance(sourceCommit) {
       ]),
     ),
   };
-  writeFileSync(BUILD_PROVENANCE_PATH, `${JSON.stringify(provenance, null, 2)}\n`, {
-    encoding: 'utf8',
-    mode: 0o600,
-  });
+  writeFileSync(
+    BUILD_PROVENANCE_PATH,
+    `${JSON.stringify(provenance, null, 2)}\n`,
+    {
+      encoding: 'utf8',
+      mode: 0o600,
+    },
+  );
   log('BUILD', `构建溯源已写入: ${BUILD_PROVENANCE_PATH}`);
 }
 
 async function inspectWindowsRipgrep() {
-  if (!existsSync(WINDOWS_RIPGREP_PATH) || !existsSync(WINDOWS_RIPGREP_VERSION_PATH)) {
+  if (
+    !existsSync(WINDOWS_RIPGREP_PATH) ||
+    !existsSync(WINDOWS_RIPGREP_VERSION_PATH)
+  ) {
     throw new Error('缺少已核验的 Windows rg.exe 或版本戳，禁止生成构建溯源');
   }
   const metadata = lstatSync(WINDOWS_RIPGREP_PATH);
   if (metadata.isSymbolicLink() || !metadata.isFile()) {
-    throw new Error('Windows rg.exe 必须是普通文件，拒绝符号链接或其他文件类型');
+    throw new Error(
+      'Windows rg.exe 必须是普通文件，拒绝符号链接或其他文件类型',
+    );
   }
   const version = readFileSync(WINDOWS_RIPGREP_VERSION_PATH, 'utf8').trim();
   const integrity = WINDOWS_RIPGREP_INTEGRITY[version];
@@ -261,8 +296,8 @@ async function inspectWindowsRipgrep() {
   const executableSha256 = await sha256(WINDOWS_RIPGREP_PATH);
   if (executableSha256 !== integrity.executableSha256) {
     throw new Error(
-      `Windows rg.exe SHA256 不匹配；期望 ${integrity.executableSha256}，`
-      + `实际 ${executableSha256}`,
+      `Windows rg.exe SHA256 不匹配；期望 ${integrity.executableSha256}，` +
+        `实际 ${executableSha256}`,
     );
   }
   return {
@@ -314,14 +349,15 @@ async function build(sourceCommit) {
   log('BUILD', 'Mac arm64 最终 DMG 的 preload、IPC 与 WS 动态验收通过');
 
   log('BUILD', '构建 Mac x64...');
-  runBuildStep(
-    NPX_BIN,
-    ['electron-builder', '--mac', 'dmg', '--x64'],
-    'mac',
-  );
+  runBuildStep(NPX_BIN, ['electron-builder', '--mac', 'dmg', '--x64'], 'mac');
 
   log('BUILD', '构建 Windows x64...');
-  runBuildStep(NPM_BIN, ['run', 'dist:win'], 'win-unpacked');
+  const windowsSigningEnv = {
+    ...process.env,
+    CSC_LINK: process.env.WIN_CSC_LINK,
+    CSC_KEY_PASSWORD: process.env.WIN_CSC_KEY_PASSWORD,
+  };
+  runBuildStep(NPM_BIN, ['run', 'dist:win'], 'win-unpacked', windowsSigningEnv);
 
   // 构建可能持续数十分钟；不能把期间被修改或切换过的工作树标成开工时的 SHA。
   assertSourceStateUnchanged(sourceCommit, { phase: '安装包构建' });
@@ -342,7 +378,9 @@ function checkArtifacts(expected = RELEASE_ASSET_NAMES) {
   }
   const releaseMetadata = lstatSync(RELEASE_DIR);
   if (releaseMetadata.isSymbolicLink() || !releaseMetadata.isDirectory()) {
-    throw new Error('release 必须是工作树内的真实目录，拒绝符号链接或其他文件类型');
+    throw new Error(
+      'release 必须是工作树内的真实目录，拒绝符号链接或其他文件类型',
+    );
   }
   const resolvedReleaseDir = realpathSync(RELEASE_DIR);
 
@@ -354,7 +392,9 @@ function checkArtifacts(expected = RELEASE_ASSET_NAMES) {
     }
     const metadata = lstatSync(p);
     if (metadata.isSymbolicLink() || !metadata.isFile()) {
-      throw new Error(`发布资产必须是普通文件，拒绝符号链接或其他文件类型: ${name}`);
+      throw new Error(
+        `发布资产必须是普通文件，拒绝符号链接或其他文件类型: ${name}`,
+      );
     }
     const resolvedPath = realpathSync(p);
     if (path.dirname(resolvedPath) !== resolvedReleaseDir) {
@@ -364,11 +404,12 @@ function checkArtifacts(expected = RELEASE_ASSET_NAMES) {
     if (size > 2 * 1024 * 1024 * 1024) {
       throw new Error(`${name} 体积超过 2 GiB 安全上限: ${size} bytes`);
     }
-    const minimumSize = name === 'latest.json'
-      ? 2
-      : name.endsWith('.blockmap')
-        ? 1024
-        : 1024 * 1024;
+    const minimumSize =
+      name === 'latest.json'
+        ? 2
+        : name.endsWith('.blockmap')
+          ? 1024
+          : 1024 * 1024;
     if (size < minimumSize) {
       throw new Error(`${name} 体积异常小: ${size} bytes`);
     }
@@ -385,7 +426,10 @@ function checkArtifacts(expected = RELEASE_ASSET_NAMES) {
 async function makeLatestJson(sourceCommit) {
   log('LATEST', '生成更新清单 latest.json...');
 
-  const notesFile = process.argv.find((a) => a.endsWith('.md') && a.includes('changelog') || a.includes('notes'));
+  const notesFile = process.argv.find(
+    (a) =>
+      (a.endsWith('.md') && a.includes('changelog')) || a.includes('notes'),
+  );
   let notes = '';
 
   if (notesFile && existsSync(notesFile)) {
@@ -437,7 +481,10 @@ async function makeLatestJson(sourceCommit) {
   writeFileSync(outPath, `${JSON.stringify(manifest, null, 2)}\n`);
   log('LATEST', `更新清单已生成: ${outPath}`);
   for (const [platform, asset] of Object.entries(manifest.assets)) {
-    log('LATEST', `  ${platform}: ${asset.sha256.substring(0, 16)}...  ${(asset.size / 1048576).toFixed(1)} MB`);
+    log(
+      'LATEST',
+      `  ${platform}: ${asset.sha256.substring(0, 16)}...  ${(asset.size / 1048576).toFixed(1)} MB`,
+    );
   }
 }
 
@@ -474,21 +521,22 @@ async function readAndVerifyBuildProvenance(localAssets, sourceCommit) {
     throw new Error(`构建溯源文件无法解析: ${error.message}`);
   }
   if (
-    provenance.schemaVersion !== 1
-    || provenance.version !== VERSION
-    || provenance.sourceCommit !== sourceCommit
+    provenance.schemaVersion !== 1 ||
+    provenance.version !== VERSION ||
+    provenance.sourceCommit !== sourceCommit
   ) {
     throw new Error(
       `构建溯源与发布候选不一致：期望 v${VERSION} @ ${sourceCommit}`,
     );
   }
-  const names = provenance.assets && typeof provenance.assets === 'object'
-    ? Object.keys(provenance.assets).sort()
-    : [];
+  const names =
+    provenance.assets && typeof provenance.assets === 'object'
+      ? Object.keys(provenance.assets).sort()
+      : [];
   const expectedNames = [...BUILD_ASSET_NAMES].sort();
   if (
-    names.length !== expectedNames.length
-    || names.some((name, index) => name !== expectedNames[index])
+    names.length !== expectedNames.length ||
+    names.some((name, index) => name !== expectedNames[index])
   ) {
     throw new Error('构建溯源中的资产集合不完整');
   }
@@ -496,17 +544,19 @@ async function readAndVerifyBuildProvenance(localAssets, sourceCommit) {
     const local = localAssetByName(localAssets, name);
     const recorded = provenance.assets[name];
     if (
-      !recorded
-      || recorded.size !== local.size
-      || recorded.sha256 !== local.sha256
+      !recorded ||
+      recorded.size !== local.size ||
+      recorded.sha256 !== local.sha256
     ) {
-      throw new Error(`构建产物 ${name} 与 HEAD=${sourceCommit} 的溯源记录不一致`);
+      throw new Error(
+        `构建产物 ${name} 与 HEAD=${sourceCommit} 的溯源记录不一致`,
+      );
     }
   }
   const currentRipgrep = await inspectWindowsRipgrep();
   if (
-    JSON.stringify(provenance.inputs?.windowsRipgrep)
-    !== JSON.stringify(currentRipgrep)
+    JSON.stringify(provenance.inputs?.windowsRipgrep) !==
+    JSON.stringify(currentRipgrep)
   ) {
     throw new Error('构建溯源中的 Windows rg.exe 与当前可信构建输入不一致');
   }
@@ -514,7 +564,11 @@ async function readAndVerifyBuildProvenance(localAssets, sourceCommit) {
 }
 
 function validateManifest(manifest, localAssets, source, sourceCommit) {
-  if (!manifest || typeof manifest !== 'object' || manifest.version !== VERSION) {
+  if (
+    !manifest ||
+    typeof manifest !== 'object' ||
+    manifest.version !== VERSION
+  ) {
     throw new Error(`${source} latest.json 版本不匹配，期望 ${VERSION}`);
   }
   if (manifest.sourceCommit !== sourceCommit) {
@@ -552,7 +606,9 @@ function validateManifest(manifest, localAssets, source, sourceCommit) {
       actual.size !== expected.size ||
       actual.sha256 !== expected.sha256
     ) {
-      throw new Error(`${source} latest.json 的 ${platform} 资产信息与本地构建不一致`);
+      throw new Error(
+        `${source} latest.json 的 ${platform} 资产信息与本地构建不一致`,
+      );
     }
   }
 }
@@ -607,7 +663,9 @@ async function findReleaseByTag() {
   const releases = await githubJson(
     `https://api.github.com/repos/${RELEASES_REPO}/releases?per_page=100`,
   );
-  const matches = releases.filter((release) => release.tag_name === RELEASE_TAG);
+  const matches = releases.filter(
+    (release) => release.tag_name === RELEASE_TAG,
+  );
   if (matches.length > 1) {
     throw new Error(`发现多个 ${RELEASE_TAG} Release，已停止`);
   }
@@ -665,8 +723,8 @@ async function assertReleaseTagSafe(releaseTargetCommit, phase) {
   const existingTagCommit = await resolveReleaseTagCommit();
   if (existingTagCommit && existingTagCommit !== releaseTargetCommit) {
     throw new Error(
-      `${phase}前发现 ${RELEASE_TAG} 已指向 ${existingTagCommit}，`
-      + `而发布目标是 ${releaseTargetCommit}；禁止让 GitHub 忽略 target_commitish`,
+      `${phase}前发现 ${RELEASE_TAG} 已指向 ${existingTagCommit}，` +
+        `而发布目标是 ${releaseTargetCommit}；禁止让 GitHub 忽略 target_commitish`,
     );
   }
   if (existingTagCommit) {
@@ -713,10 +771,10 @@ async function ensureDraftRelease(sourceCommit, releaseTargetCommit) {
     },
   );
   if (
-    !created.draft
-    || created.tag_name !== RELEASE_TAG
-    || created.target_commitish !== releaseTargetCommit
-    || !String(created.body || '').includes(sourceCommit)
+    !created.draft ||
+    created.tag_name !== RELEASE_TAG ||
+    created.target_commitish !== releaseTargetCommit ||
+    !String(created.body || '').includes(sourceCommit)
   ) {
     throw new Error('GitHub 未返回预期的草稿 Release');
   }
@@ -748,7 +806,9 @@ function assertRemoteAssetMatches(remote, local) {
 
 function rejectUnexpectedAssets(remoteAssets) {
   const expectedNames = new Set(RELEASE_ASSET_NAMES);
-  const unexpected = remoteAssets.filter((asset) => !expectedNames.has(asset.name));
+  const unexpected = remoteAssets.filter(
+    (asset) => !expectedNames.has(asset.name),
+  );
   if (unexpected.length > 0) {
     throw new Error(
       `草稿包含非预期资产，禁止继续: ${unexpected.map((asset) => asset.name).join(', ')}`,
@@ -805,7 +865,9 @@ async function downloadRemoteAsset(asset) {
   );
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(`下载远端 ${asset.name} 复验失败: ${response.status} ${detail}`);
+    throw new Error(
+      `下载远端 ${asset.name} 复验失败: ${response.status} ${detail}`,
+    );
   }
   return Buffer.from(await response.arrayBuffer());
 }
@@ -827,7 +889,9 @@ async function verifyRemoteDraft(release, localAssets, sourceCommit) {
     assertRemoteAssetMatches(remote, local);
   }
 
-  const remoteLatest = remoteAssets.find((asset) => asset.name === 'latest.json');
+  const remoteLatest = remoteAssets.find(
+    (asset) => asset.name === 'latest.json',
+  );
   const remoteLatestBytes = await downloadRemoteAsset(remoteLatest);
   let remoteManifest;
   try {
@@ -868,7 +932,9 @@ async function publishToGithub(localAssets, sourceCommit) {
   log('PUBLISH', '安全发布到 GitHub Releases...');
 
   if (!GITHUB_TOKEN) {
-    throw new Error('缺少 GitHub Token，请设置 GH_TOKEN 或 GITHUB_TOKEN 环境变量');
+    throw new Error(
+      '缺少 GitHub Token，请设置 GH_TOKEN 或 GITHUB_TOKEN 环境变量',
+    );
   }
 
   await verifySourceCommitPublished(sourceCommit);
@@ -890,8 +956,8 @@ async function publishToGithub(localAssets, sourceCommit) {
   await assertReleaseTagSafe(releaseTargetCommit, '正式公开 Release');
   const published = await publishDraft(release);
   if (
-    published.target_commitish !== releaseTargetCommit
-    || !String(published.body || '').includes(sourceCommit)
+    published.target_commitish !== releaseTargetCommit ||
+    !String(published.body || '').includes(sourceCommit)
   ) {
     throw new Error('正式 Release 的源码或目标提交绑定发生变化');
   }
@@ -932,7 +998,10 @@ async function main() {
       phase: '发布前核验',
     });
     await readAndVerifyBuildProvenance(localAssets, sourceState.sourceCommit);
-    log('CHECK', `6 个安装资产均来自已推送源码提交 ${sourceState.sourceCommit}`);
+    log(
+      'CHECK',
+      `6 个安装资产均来自已推送源码提交 ${sourceState.sourceCommit}`,
+    );
     await publishToGithub(localAssets, sourceState.sourceCommit);
   }
 

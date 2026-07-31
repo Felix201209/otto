@@ -16,6 +16,7 @@ import {
   type AuthRouteSmsSender,
 } from './authRoutes.js';
 import { handleCommunicationRoute } from './communicationRoutes.js';
+import { handleDataGovernanceRoute } from '../modules/data_governance/index.js';
 import { handleCreditsRoute } from './creditsRoutes.js';
 import {
   handleDeploymentRoute,
@@ -26,6 +27,7 @@ import { handleGeneralizedParkRoute } from './generalizedParkRoutes.js';
 import { handleHealthRoute } from './healthRoutes.js';
 import { handleLocalAgentRoute } from './localAgentRoutes.js';
 import { handleMemberWorkflowRoute } from './memberWorkflowRoutes.js';
+import { handleSkillMarketplaceRoute } from './skillMarketplaceRoutes.js';
 import { handleParkResourceRoute } from './parkResourceRoutes.js';
 import { handleParkServicePublicationRoute } from './parkServicePublicationRoutes.js';
 import { handleParkStatisticsRoute } from './parkStatisticsRoutes.js';
@@ -33,7 +35,7 @@ import { handlePlatformOrganizationRoute } from './platformOrganizationRoutes.js
 import { handleSimpleParkCompatibilityRoute } from './simpleParkCompatibilityRoutes.js';
 import { handleTicketRoute } from './ticketRoutes.js';
 import { handleWorkspaceRoute } from './workspaceRoutes.js';
-import type { RepairNotificationSender } from './repairNotifications.js';
+import type { RepairNotificationSender } from '../modules/integration_adapters/index.js';
 
 export type AdminPrincipal =
   | { kind: 'system'; organizationId: string }
@@ -134,6 +136,9 @@ export async function dispatchEnterpriseRoute({
       res,
       url,
       principal: adminPrincipal,
+      memberPrincipal: memberAccount
+        ? { organizationId: memberAccount.organizationId }
+        : null,
       services: db,
       readBody,
       sendJSON,
@@ -144,6 +149,21 @@ export async function dispatchEnterpriseRoute({
 
   if (
     await handleLocalAgentRoute({ path, method, req, res, readBody, sendJSON })
+  ) {
+    return true;
+  }
+
+  if (
+    await handleDataGovernanceRoute({
+      path,
+      method,
+      req,
+      res,
+      memberAccount,
+      services: db,
+      readBody,
+      sendJSON,
+    })
   ) {
     return true;
   }
@@ -329,6 +349,21 @@ export async function dispatchEnterpriseRoute({
       req,
       res,
       url,
+      memberAccount,
+      readBody,
+      sendJSON,
+    })
+  ) {
+    return true;
+  }
+
+  if (
+    await handleSkillMarketplaceRoute({
+      path,
+      method,
+      url,
+      req,
+      res,
       memberAccount,
       readBody,
       sendJSON,

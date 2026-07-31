@@ -40,6 +40,7 @@ interface TestWorkLogDay {
 function installBridge(
   recent: TestWorkLogDay[] | (() => Promise<TestWorkLogDay[]>) = [],
   knowledgeEnabled = false,
+  skillMarketEnabled = true,
 ) {
   const openPath = vi.fn(async () => undefined);
   const saveTextFile = vi.fn(async () => '/tmp/edited-worklog.md');
@@ -66,7 +67,16 @@ function installBridge(
     format: 'docx' as const,
     message: '已保存编辑稿：enterprise-summary.edited.docx',
   }));
-  const enterpriseKnowledgeList = vi.fn(async () => []);
+  const enterpriseKnowledgeList = vi.fn(async (): Promise<unknown[]> => []);
+  const enterpriseKnowledgeRecord = vi.fn(async () => ({
+    status: 'added' as const,
+    added: true,
+    reviewStatus: 'active' as const,
+    knowledgeId: 1,
+  }));
+  const enterpriseKnowledgeReview = vi.fn(async () => ({}));
+  const enterpriseKnowledgeRevise = vi.fn(async () => ({}));
+  const enterpriseKnowledgeRevisions = vi.fn(async (): Promise<unknown[]> => []);
   const enterpriseOrganizationFeaturesGet = vi.fn(async () => ({
     enterprise_tree: true,
     park_service: true,
@@ -74,6 +84,7 @@ function installBridge(
     direct_messages: true,
     atoa: true,
     knowledge: knowledgeEnabled,
+    skill_market: skillMarketEnabled,
   }));
   const workLogReport = vi.fn(async () => ({
     ok: true,
@@ -93,6 +104,10 @@ function installBridge(
       workResults: 0,
     }),
     enterpriseKnowledgeList,
+    enterpriseKnowledgeRecord,
+    enterpriseKnowledgeReview,
+    enterpriseKnowledgeRevise,
+    enterpriseKnowledgeRevisions,
     enterpriseOrganizationFeaturesGet,
     workLogReport,
     openPath,
@@ -111,6 +126,10 @@ function installBridge(
     exportEditedDocument,
     workLogReport,
     enterpriseKnowledgeList,
+    enterpriseKnowledgeRecord,
+    enterpriseKnowledgeReview,
+    enterpriseKnowledgeRevise,
+    enterpriseKnowledgeRevisions,
     enterpriseOrganizationFeaturesGet,
   };
 }
@@ -174,7 +193,7 @@ function enterpriseWorkspace(): ProductWorkspaceSnapshot {
 }
 
 describe('RightPanel fixed Agent catalog', () => {
-  it('在右边栏创建、保存并立即启动自定义智能体，不混入固定 9 Agent', async () => {
+  it('在右边栏创建、保存并立即启动自定义专家，不混入固定 9 Agent', async () => {
     installBridge();
     const create = vi.fn();
     const launch = vi.fn();
@@ -198,9 +217,9 @@ describe('RightPanel fixed Agent catalog', () => {
     );
 
     expect(container.querySelectorAll('.otto-profile-card')).toHaveLength(9);
-    fireEvent.click(screen.getByRole('button', { name: '创建智能体' }));
-    expect(screen.getByRole('dialog', { name: '创建智能体' })).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('智能体名称'), {
+    fireEvent.click(screen.getByRole('button', { name: '创建专家' }));
+    expect(screen.getByRole('dialog', { name: '创建专家' })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('专家名称'), {
       target: { value: '客户成功助手' },
     });
     fireEvent.change(screen.getByLabelText('职责说明'), {
@@ -212,7 +231,7 @@ describe('RightPanel fixed Agent catalog', () => {
       name: '客户成功助手',
       instructions: '跟进客户风险与续费待办。',
     }));
-    expect(screen.queryByRole('dialog', { name: '创建智能体' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: '创建专家' })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: '启动招投标助手' }));
     expect(launch).toHaveBeenCalledWith(saved);
@@ -230,7 +249,7 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(screen.queryByText('会议 Agent')).toBeNull();
     expect(screen.queryByText('品牌营销文案')).toBeNull();
     expect(screen.queryByText('企业AI自主开发')).toBeNull();
-    expect(screen.queryByText('开发 AI 智能体')).toBeNull();
+    expect(screen.queryByText('开发 AI 专家')).toBeNull();
     expect(screen.queryByText('自主开发')).toBeNull();
     expect(screen.queryByText('CEO Agent')).toBeNull();
     expect(screen.queryByText('战略与竞争 Agent')).toBeNull();
@@ -377,16 +396,14 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(screen.getByText('点击把命令填入输入框，回车执行')).toBeTruthy();
   });
 
-  it('keeps one mascot stage outside the tabs while switching panels', () => {
+  it('does not keep the legacy mascot stage in the right panel', () => {
     installBridge();
     render(<RightPanel busy={false} />);
-    expect(screen.getAllByRole('region', { name: 'Otto 吉祥物活动区' }))
-      .toHaveLength(1);
+    expect(screen.queryByTestId('otto-pet-stage')).toBeNull();
 
     fireEvent.click(screen.getByRole('tab', { name: '工作日志' }));
 
-    expect(screen.getAllByRole('region', { name: 'Otto 吉祥物活动区' }))
-      .toHaveLength(1);
+    expect(screen.queryByTestId('otto-pet-stage')).toBeNull();
   });
 
   it('keeps personal mode on its right-panel tabs without enterprise-only actions', () => {
@@ -556,7 +573,7 @@ describe('RightPanel fixed Agent catalog', () => {
 
     await waitFor(() => {
       expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-        '专家', '文档', '工作日志',
+        '专家', '文档', '企业记忆', '工作日志',
       ]);
     });
     fireEvent.click(screen.getByRole('button', { name: 'Skill 专区' }));
@@ -567,6 +584,20 @@ describe('RightPanel fixed Agent catalog', () => {
     fireEvent.click(toggle);
     expect(screen.getByText('宏创 AI')).toBeTruthy();
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('hides Skill Zone when the organization feature is disabled', async () => {
+    const bridge = installBridge([], false, false);
+    render(
+      <RightPanel
+        busy={false}
+        mode="enterprise"
+        workspace={enterpriseWorkspace()}
+      />,
+    );
+
+    await waitFor(() => expect(bridge.enterpriseOrganizationFeaturesGet).toHaveBeenCalledOnce());
+    expect(screen.queryByRole('button', { name: 'Skill 专区' })).toBeNull();
   });
 
   it('loads and displays real enterprise memory entries', async () => {
@@ -581,6 +612,11 @@ describe('RightPanel fixed Agent catalog', () => {
         content: '客户部署必须先完成企业邀请码校验。',
         contributor: 'Felix',
         confidence: 0.86,
+        sourceType: 'auto_capture',
+        evidenceCount: 4,
+        distinctSessionCount: 3,
+        distinctContributorCount: 2,
+        lastObservedAt: '2026-07-20T04:00:00.000Z',
         createdAt: '2026-07-20T04:00:00.000Z',
       },
     ]);
@@ -593,14 +629,151 @@ describe('RightPanel fixed Agent catalog', () => {
       />,
     );
 
-    // 企业记忆已合入文档 tab
-    fireEvent.click(await screen.findByRole('tab', { name: '文档' }));
+    // 企业记忆是独立 tab（含知识 / 沿革双视图）
+    fireEvent.click(await screen.findByRole('tab', { name: '企业记忆' }));
 
     expect(await screen.findByText('客户部署必须先完成企业邀请码校验。')).toBeTruthy();
     expect(screen.getByText('研发部')).toBeTruthy();
     expect(screen.getByText('solution')).toBeTruthy();
     expect(screen.getByText('86%')).toBeTruthy();
     expect(screen.getByText('Felix')).toBeTruthy();
+    expect(screen.getByText('4 条证据')).toBeTruthy();
+    expect(screen.getByText('3 个会话')).toBeTruthy();
+    expect(screen.getByText('2 名贡献者')).toBeTruthy();
+  });
+
+  it('separates approved enterprise knowledge from its revision timeline', async () => {
+    const bridge = installBridge([], true);
+    bridge.enterpriseKnowledgeList.mockResolvedValue([{
+      id: 'timeline-1',
+      organizationId: 'org-1',
+      sourceId: 'manual-timeline',
+      title: '客户交付规则',
+      department: null,
+      category: '制度',
+      content: '当前规则',
+      contributor: '管理员',
+      confidence: 0.95,
+      status: 'active',
+      version: 2,
+      createdAt: '2026-07-19T04:00:00.000Z',
+      updatedAt: '2026-07-20T04:00:00.000Z',
+    }]);
+    bridge.enterpriseKnowledgeRevisions.mockResolvedValue([{
+      id: 'timeline-revision-1',
+      knowledgeId: 'timeline-1',
+      version: 1,
+      title: '客户交付规则',
+      category: '制度',
+      content: '第一版规则',
+      status: 'active',
+      changedBy: '管理员',
+      changeNote: '首次形成',
+      createdAt: '2026-07-19T04:00:00.000Z',
+    }]);
+
+    render(
+      <RightPanel
+        busy={false}
+        mode="enterprise"
+        enterpriseRole="company_admin"
+        workspace={enterpriseWorkspace()}
+      />,
+    );
+    fireEvent.click(await screen.findByRole('tab', { name: '企业记忆' }));
+    fireEvent.click(await screen.findByRole('tab', { name: '记忆沿革' }));
+
+    expect(await screen.findByText('第一版规则')).toBeTruthy();
+    expect(screen.getByText(/管理员 · 首次形成/)).toBeTruthy();
+  });
+
+  it('lets enterprise admins publish a curated knowledge entry from the panel', async () => {
+    const bridge = installBridge([], true);
+    render(
+      <RightPanel
+        busy={false}
+        mode="enterprise"
+        enterpriseRole="company_admin"
+        workspace={enterpriseWorkspace()}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('tab', { name: '企业记忆' }));
+    fireEvent.click(await screen.findByRole('button', { name: '新增' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '知识标题' }), {
+      target: { value: '客户交付检查' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: '知识分类' }), {
+      target: { value: '交付流程' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: '知识内容' }), {
+      target: { value: '上线前检查备份、监控和回滚方案。' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发布知识' }));
+
+    await waitFor(() => expect(bridge.enterpriseKnowledgeRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: '客户交付检查',
+        category: '交付流程',
+        content: '上线前检查备份、监控和回滚方案。',
+        sourceType: 'manual',
+      }),
+    ));
+    expect(await screen.findByText('企业知识已发布。')).toBeTruthy();
+  });
+
+  it('lets enterprise admins revise knowledge and inspect its audit history', async () => {
+    const bridge = installBridge([], true);
+    bridge.enterpriseKnowledgeList.mockResolvedValue([{
+      id: '12',
+      organizationId: 'org-1',
+      sourceId: 'manual-12',
+      title: '旧流程',
+      department: null,
+      category: '制度',
+      content: '旧内容',
+      contributor: '管理员',
+      confidence: 0.9,
+      status: 'active',
+      version: 2,
+      createdAt: '2026-07-20T04:00:00.000Z',
+    }]);
+    bridge.enterpriseKnowledgeRevisions.mockResolvedValue([{
+      id: 'revision-1',
+      knowledgeId: '12',
+      version: 1,
+      title: '旧流程',
+      category: '制度',
+      content: '第一版内容',
+      status: 'active',
+      changedBy: '管理员',
+      changeNote: '首次发布',
+      createdAt: '2026-07-20T04:00:00.000Z',
+    }]);
+    render(
+      <RightPanel
+        busy={false}
+        mode="enterprise"
+        enterpriseRole="company_admin"
+        workspace={enterpriseWorkspace()}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('tab', { name: '企业记忆' }));
+    expect(await screen.findByText('旧内容')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '修订' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '知识内容' }), {
+      target: { value: '新内容' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存修订' }));
+    await waitFor(() => expect(bridge.enterpriseKnowledgeRevise).toHaveBeenCalledWith(
+      '12',
+      expect.objectContaining({ content: '新内容' }),
+    ));
+
+    fireEvent.click(await screen.findByRole('button', { name: '版本' }));
+    expect(await screen.findByText('首次发布')).toBeTruthy();
+    expect(bridge.enterpriseKnowledgeRevisions).toHaveBeenCalledWith('12');
   });
 
   it('组织未启用知识功能时隐藏企业记忆且不调用 list', async () => {
@@ -614,7 +787,7 @@ describe('RightPanel fixed Agent catalog', () => {
     );
 
     await waitFor(() => expect(bridge.enterpriseOrganizationFeaturesGet).toHaveBeenCalledOnce());
-    // 企业记忆合入文档 tab；未启用时文档 tab 内不显示企业记忆区域
+    // 未启用知识功能时不显示企业记忆 tab
     expect(screen.queryByRole('tab', { name: '企业记忆' })).toBeNull();
     expect(bridge.enterpriseKnowledgeList).not.toHaveBeenCalled();
   });
@@ -629,16 +802,16 @@ describe('RightPanel fixed Agent catalog', () => {
       />,
     );
 
-    // 企业记忆合入文档 tab，先切到文档触发加载
-    const docsTab = await screen.findByRole('tab', { name: '文档' });
+    // 先切到企业记忆 tab 触发功能快照刷新
+    const memoryTab = await screen.findByRole('tab', { name: '企业记忆' });
     bridge.enterpriseOrganizationFeaturesGet.mockRejectedValueOnce(
       new Error('组织功能快照暂时不可用'),
     );
-    fireEvent.click(docsTab);
+    fireEvent.click(memoryTab);
 
     await waitFor(() => {
       expect(bridge.enterpriseOrganizationFeaturesGet).toHaveBeenCalledTimes(2);
-      expect(screen.queryByText('企业记忆')).toBeNull();
+      expect(screen.queryByRole('tab', { name: '企业记忆' })).toBeNull();
     });
     expect(bridge.enterpriseKnowledgeList).not.toHaveBeenCalled();
   });
@@ -683,6 +856,10 @@ describe('RightPanel fixed Agent catalog', () => {
           detectedPattern: '整理数据 → 生成报告',
           occurrenceCount: 3,
           reason: '连续三天重复',
+          qualityScore: 86,
+          confidence: 0.82,
+          evidence: ['跨 3 天观察到 3 次同类流程'],
+          failureLessons: ['导出前先确认统计周期'],
         }]}
         onConfirmAutoSkill={confirm}
         onRejectAutoSkill={reject}
@@ -690,6 +867,10 @@ describe('RightPanel fixed Agent catalog', () => {
     );
 
     expect(screen.getByText('重复报告流程')).toBeTruthy();
+    expect(screen.getByText('质量 86/100')).toBeTruthy();
+    expect(screen.getByText(/可信度 82%/)).toBeTruthy();
+    expect(screen.getByText('跨 3 天观察到 3 次同类流程')).toBeTruthy();
+    expect(screen.getByText(/导出前先确认统计周期/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '确认生成' }));
     fireEvent.click(screen.getByRole('button', { name: '不再建议' }));
     expect(confirm).toHaveBeenCalledWith('candidate-1');

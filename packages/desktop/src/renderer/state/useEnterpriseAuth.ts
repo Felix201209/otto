@@ -49,7 +49,7 @@ export function useEnterpriseAuth(): {
       phone: string;
       inviteCode?: string;
     }): Promise<EnterpriseSmsChallenge>;
-    register(input: { challengeId: string; code: string; name: string; password: string }): Promise<void>;
+    register(input: { challengeId: string; code: string; name: string; password: string; legalConsent: true }): Promise<void>;
     joinEnterprise(input: { inviteCode: string }): Promise<void>;
     logout(): Promise<void>;
     clearError(): void;
@@ -166,6 +166,7 @@ export function useEnterpriseAuth(): {
     serverUrl: string;
     identifier: string;
     password: string;
+    legalConsent: true;
   }): Promise<void> => {
     const epoch = authEpochRef.current + 1;
     authEpochRef.current = epoch;
@@ -257,6 +258,7 @@ export function useEnterpriseAuth(): {
     code: string;
     name: string;
     password: string;
+    legalConsent: true;
   }): Promise<void> => {
     const epoch = authEpochRef.current + 1;
     authEpochRef.current = epoch;

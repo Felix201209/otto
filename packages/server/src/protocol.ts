@@ -295,6 +295,8 @@ export type SendUserMessageMsg = Envelope<
     source: MessageSource;
     /** 客户端临时 id，用于乐观渲染对账。 */
     clientMessageId?: string;
+    /** 经企业服务器按当前账号权限检索的只读知识上下文；不会写入聊天历史。 */
+    authorizedContext?: string;
     /**
      * 会话 busy 时消息的排队策略：
      * - 'merge'：注入到当前轮（安全边界如工具结果返回后合并）
@@ -440,6 +442,9 @@ export type SaveSearchConfigMsg = Envelope<
     model?: string;
     apiKey?: string;
     clearApiKey?: boolean;
+    costPerRequestCny?: number;
+    monthlyRequestQuota?: number;
+    monthlyBudgetCny?: number;
   }
 >;
 
@@ -613,6 +618,13 @@ export interface AutoSkillCandidateInfo {
   detectedPattern: string;
   occurrenceCount: number;
   reason: string;
+  qualityScore?: number;
+  confidence?: number;
+  evidence?: string[];
+  failureLessons?: string[];
+  knowledgeEvidenceCount?: number;
+  recommendation?: 'create' | 'enhance';
+  targetSkillName?: string;
 }
 export type GetPendingAutoSkillsMsg = Envelope<
   'get_pending_auto_skills',
@@ -744,6 +756,20 @@ export interface KnowledgeItem {
   confidence?: number;
 }
 
+/** 一次有效但尚未必晋级的知识观察，企业侧据此进行长期证据聚合。 */
+export interface KnowledgeObservationItem {
+  category: string;
+  content: string;
+  tags: string[];
+  sourceSessionId: string;
+  confidence: number;
+  fingerprint: string;
+  verified: boolean;
+  impactScore: number;
+  significanceSignals: string[];
+  observedAt: string;
+}
+
 /** 知识库列表 / 检索结果（S→C）。 */
 export type KnowledgeDataMsg = Envelope<
   'knowledge_data',
@@ -779,6 +805,8 @@ export type KnowledgeActivityMsg = Envelope<
     recent?: KnowledgeItem[];
     /** 本次真正新增的条目；组织知识库同步必须只消费它，避免重复上传 recent。 */
     captured?: KnowledgeItem[];
+    /** 本轮有效知识原子；即使个人库已去重，也要供企业侧累计长期证据。 */
+    observations?: KnowledgeObservationItem[];
   }
 >;
 
@@ -948,6 +976,20 @@ export type SessionStatusMsg = Envelope<
   { sessionId: string; status: SessionStatus }
 >;
 
+/** Versioned, renderer-safe lifecycle signal. Unlike tool cards this remains
+ * meaningful when a turn has no visible text yet or ends before a card exists. */
+export type RuntimeActivityMsg = Envelope<
+  'runtime_activity',
+  {
+    contractVersion: 1;
+    sessionId: string;
+    kind: 'agent' | 'tool' | 'turn';
+    state: 'started' | 'streaming' | 'awaiting_confirmation' | 'completed' | 'cancelled' | 'failed';
+    detail?: string;
+    timestamp: number;
+  }
+>;
+
 /** 错误帧。 */
 export type ErrorMsg = Envelope<
   'error',
@@ -1023,6 +1065,43 @@ export interface SearchConfigSnapshot {
   apiUrl: string;
   model: string;
   hasApiKey: boolean;
+  costPerRequestCny?: number;
+  configuredProviders: SearchProvider[];
+  monthlyRequestQuota?: number;
+  monthlyBudgetCny?: number;
+  diagnostics: {
+    tenantId: string;
+    cacheEntries: number;
+    cacheHits: number;
+    totalAttempts: number;
+    totalSuccesses: number;
+    estimatedCostCny: number;
+    updatedAt: number;
+    quota?: {
+      periodStart: number;
+      periodEnd: number;
+      requestLimit?: number;
+      requestsUsed: number;
+      budgetLimitCny?: number;
+      budgetUsedCny: number;
+      blocked: boolean;
+      blockedReason?: string;
+    };
+    providers: Array<{
+      provider: SearchProvider;
+      status: 'untested' | 'healthy' | 'degraded' | 'open';
+      attempts: number;
+      successes: number;
+      failures: number;
+      consecutiveFailures: number;
+      averageLatencyMs: number;
+      lastAttemptAt?: number;
+      lastSuccessAt?: number;
+      lastErrorCode?: string;
+      openUntil?: number;
+      estimatedCostCny: number;
+    }>;
+  };
 }
 
 export type SearchConfigMsg = Envelope<'search_config', SearchConfigSnapshot>;
@@ -1339,6 +1418,7 @@ export type ServerToClient =
   | ToolCallsUpdateMsg
   | ToolConfirmationRequestMsg
   | SessionStatusMsg
+  | RuntimeActivityMsg
   | ErrorMsg
   | IncrementalUpdateAvailableMsg
   | ModelsListMsg
@@ -1686,6 +1766,11 @@ export function validateClientPayload(msg: {
         typeof p['clientMessageId'] !== 'string'
       )
         return 'clientMessageId 必须是字符串';
+      if (
+        p['authorizedContext'] !== undefined
+        && (typeof p['authorizedContext'] !== 'string'
+          || p['authorizedContext'].length > 12_000)
+      ) return 'authorizedContext 必须是不超过 12000 字符的字符串';
       return null;
     }
     case 'tool_confirmation_response': {
@@ -1946,6 +2031,24 @@ export function validateClientPayload(msg: {
         typeof p['clearApiKey'] !== 'boolean'
       ) {
         return 'clearApiKey 必须是布尔';
+      }
+      for (const key of ['costPerRequestCny', 'monthlyBudgetCny'] as const) {
+        const value = p[key];
+        if (
+          value !== undefined &&
+          (typeof value !== 'number' || !Number.isFinite(value) || value < 0)
+        ) {
+          return `${key} 必须是非负数`;
+        }
+      }
+      const monthlyRequestQuota = p['monthlyRequestQuota'];
+      if (
+        monthlyRequestQuota !== undefined &&
+        (typeof monthlyRequestQuota !== 'number' ||
+          !Number.isSafeInteger(monthlyRequestQuota) ||
+          monthlyRequestQuota < 0)
+      ) {
+        return 'monthlyRequestQuota 必须是非负整数';
       }
       return null;
     }

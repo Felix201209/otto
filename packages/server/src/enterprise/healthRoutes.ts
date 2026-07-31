@@ -57,6 +57,8 @@ export function handleHealthRoute({
         sms: repairSmsConfigured,
         feishu: repairFeishuConfigured,
       },
+      dataProtection: db.getDataProtectionStatus(),
+      dataGovernance: db.getDataGovernanceProfile(null),
       deployment: {
         ...db.getPrivateDeploymentStatus(),
         moduleUpdates: db.getModuleUpdateManifest(),

@@ -611,7 +611,7 @@ describe('park ticket module', () => {
     })).toThrow('Notification recipient is not assigned');
   });
 
-  it('keeps pricing and ten-minute meeting rules in the form-rules layer', () => {
+  it('keeps pricing and 30-minute meeting rules in the form-rules layer', () => {
     const common = {
       company: 'Tenant A',
       roomNumber: '5-101',
@@ -642,6 +642,34 @@ describe('park ticket module', () => {
       unitPriceCny: '1.2',
       pricing: '1.2元/度',
       amountCny: '10',
+    });
+    const firstMeeting = normalizeParkServiceFormData('meeting-room', {
+      ...common,
+      attendees: '4',
+      roomId: 'room-a',
+      date: '2026-07-29',
+      meetingContent: '企业 A 会议',
+      startTime: '09:00',
+      endTime: '09:30',
+      priceHalfDay: '400',
+    });
+    const secondMeeting = normalizeParkServiceFormData('meeting-room', {
+      ...common,
+      attendees: '3',
+      roomId: 'room-a',
+      date: '2026-07-29',
+      meetingContent: '企业 B 会议',
+      startTime: '09:30',
+      endTime: '10:00',
+      priceHalfDay: '400',
+    });
+    expect(firstMeeting).toMatchObject({
+      amountCny: '400',
+      pricing: '400元/半天，不足半天按半天计',
+    });
+    expect(secondMeeting).toMatchObject({
+      amountCny: '400',
+      pricing: '400元/半天，不足半天按半天计',
     });
     expect(() => normalizeParkServiceFormData('vehicle-visit', {
       ...common,
@@ -676,7 +704,7 @@ describe('park ticket module', () => {
       startTime: '09:05',
       endTime: '10:00',
       priceHalfDay: '200',
-    })).toThrow('并按 10 分钟选择');
+    })).toThrow('并按 30 分钟选择');
   });
 
   it('round-trips a validated vehicle visit time through the ticket view', () => {

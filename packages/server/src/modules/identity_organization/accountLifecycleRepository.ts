@@ -3,6 +3,10 @@
  */
 
 import type { Database } from '../data_platform/index.js';
+import {
+  deleteAccountTagsInRepository,
+  replaceAccountTagsInRepository,
+} from './accountTagRepository.js';
 
 export type AccountLifecycleRoleMapping =
   'member' | 'department_admin' | 'enterprise_admin';
@@ -80,7 +84,6 @@ export interface AccountLifecycleRepositoryStore<
     value: string | null | undefined,
   ): string | null;
   normalizeOptionalAvatarUrl(value: string | null | undefined): string | null;
-  normalizeTags(tags: string[] | undefined): string[];
   assertPassword(password: string): void;
   hashPassword(password: string): string;
   createId(prefix: 'acc' | 'emp'): string;
@@ -121,28 +124,6 @@ function roleForMapping(
   if (roleMapping === 'department_admin') return '部门管理员';
   if (roleMapping === 'member') return '成员';
   return null;
-}
-
-export function replaceAccountTagsInRepository<
-  TAccountView extends AccountLifecycleView,
->(
-  store: AccountLifecycleRepositoryStore<TAccountView>,
-  accountId: string,
-  organizationId: string,
-  tags: string[],
-): void {
-  const database = store.db();
-  database
-    .prepare(
-      'DELETE FROM account_tags WHERE account_id = ? AND organization_id = ?',
-    )
-    .run(accountId, organizationId);
-  const insert = database.prepare(
-    'INSERT INTO account_tags (organization_id, account_id, tag) VALUES (?, ?, ?)',
-  );
-  for (const tag of store.normalizeTags(tags)) {
-    insert.run(organizationId, accountId, tag);
-  }
 }
 
 function throwStablePhoneConflict(error: unknown): never {
@@ -488,11 +469,7 @@ export function deleteAccountInRepository<
         id,
         organizationId,
       );
-    database
-      .prepare(
-        'DELETE FROM account_tags WHERE account_id = ? AND organization_id = ?',
-      )
-      .run(id, organizationId);
+    deleteAccountTagsInRepository(store, id, organizationId);
     database
       .prepare(
         `UPDATE auth_sessions SET revoked_at = datetime('now')
