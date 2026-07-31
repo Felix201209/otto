@@ -32,7 +32,7 @@ export interface InboxPageProps {
   onBack: () => void;
 }
 
-interface ConversationItem {
+export interface ConversationItem {
   peerAccountId: string;
   peerName: string;
   peerDepartment: string | null;
@@ -59,6 +59,8 @@ export function InboxPage({
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [replyInput, setReplyInput] = useState('');
   const [sending, setSending] = useState(false);
+  // 已读会话也要留在列表里：记录拉取过消息的 peer 及其最后一条消息
+  const [historyPeers, setHistoryPeers] = useState<Record<string, { lastMessage: string; lastMessageAt: string }>>({});
   const hasAuth = isAuthenticatedEnterpriseAccount(enterpriseAccount);
 
   // —— 加载未读通知 ——
@@ -131,11 +133,28 @@ export function InboxPage({
       });
     }
 
+    // 补充已读过消息的会话（未读为 0 也要留在列表，否则发完回复会话会消失）
+    for (const [peerId, history] of Object.entries(historyPeers)) {
+      if (convMap.has(peerId)) continue;
+      const member = memberMap.get(peerId);
+      if (!member) continue;
+      convMap.set(peerId, {
+        peerAccountId: peerId,
+        peerName: member.name,
+        peerDepartment: member.department,
+        peerPositionTitle: member.positionTitle ?? null,
+        lastMessage: history.lastMessage,
+        lastMessageAt: history.lastMessageAt,
+        unreadCount: 0,
+        online: member.ottoOnline ?? false,
+      });
+    }
+
     return [...convMap.values()].sort((a, b) => {
       if (a.unreadCount !== b.unreadCount) return b.unreadCount - a.unreadCount;
       return b.lastMessageAt.localeCompare(a.lastMessageAt);
     });
-  }, [notifications, orgMembers, enterpriseUnreadCounts]);
+  }, [notifications, orgMembers, enterpriseUnreadCounts, historyPeers]);
 
   // —— 过滤 ——
   const filtered = useMemo(() => {
@@ -155,7 +174,15 @@ export function InboxPage({
     let cancelled = false;
     setMessagesLoading(true);
     void window.otto.enterpriseMessagesList(selectedPeer).then((msgs) => {
-      if (!cancelled) setMessages(msgs);
+      if (cancelled) return;
+      setMessages(msgs);
+      const last = msgs[msgs.length - 1];
+      if (last) {
+        setHistoryPeers((cur) => ({
+          ...cur,
+          [selectedPeer]: { lastMessage: last.content, lastMessageAt: last.createdAt },
+        }));
+      }
     }).catch(() => { /* 忽略 */ }).finally(() => {
       if (!cancelled) setMessagesLoading(false);
     });
@@ -175,6 +202,10 @@ export function InboxPage({
     try {
       const msg = await window.otto.enterpriseMessageSend(selectedPeer, text);
       setMessages((cur) => [...cur, msg]);
+      setHistoryPeers((cur) => ({
+        ...cur,
+        [selectedPeer]: { lastMessage: msg.content, lastMessageAt: msg.createdAt },
+      }));
       setReplyInput('');
     } catch { /* 保留输入 */ } finally {
       setSending(false);

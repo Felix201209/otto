@@ -41,6 +41,8 @@ if (!previewWindow.otto) {
   };
   let previewTickets: Array<Record<string, unknown>> = [];
   const previewDirectMessages = new Map<string, Array<Record<string, unknown>>>();
+  // 演示未读：演示同事发来两条消息未读，打开会话后（listMessages）清除，模拟后端标已读
+  const previewUnread = new Map<string, Record<string, unknown>>();
   let previewApplicationSequence = 0;
   const previewMeetingSlots = makePreviewMeetingSlots();
 
@@ -93,6 +95,35 @@ if (!previewWindow.otto) {
   }
   function emitModels(): void { emit('models_list', { models, current: currentModel }); }
   function id(prefix: string): string { return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`; }
+
+  // —— 演示会话种子数据：让「我的消息」和导航未读角标在预览中有真实联动 ——
+  previewDirectMessages.set('preview-colleague', [
+    {
+      id: id('preview-message'),
+      senderAccountId: 'preview-colleague',
+      recipientAccountId: 'preview-account',
+      content: '下午三点的项目例会改到中型会议室了，记得提前五分钟到。',
+      createdAt: new Date(Date.now() - 40 * 60_000).toISOString(),
+      readAt: null,
+    },
+    {
+      id: id('preview-message'),
+      senderAccountId: 'preview-colleague',
+      recipientAccountId: 'preview-account',
+      content: '上次说的报修工单模板我放在共享文档里了，你看下格式对不对。',
+      createdAt: new Date(Date.now() - 12 * 60_000).toISOString(),
+      readAt: null,
+    },
+  ]);
+  previewUnread.set('preview-colleague', {
+    id: id('preview-notification'),
+    source: 'enterprise',
+    title: '演示同事',
+    senderAccountId: 'preview-colleague',
+    senderName: '演示同事',
+    preview: '上次说的报修工单模板我放在共享文档里了，你看下格式对不对。',
+    createdAt: new Date(Date.now() - 12 * 60_000).toISOString(),
+  });
 
   const bridge: Record<string, unknown> = {
     connect: () => {
@@ -180,14 +211,16 @@ if (!previewWindow.otto) {
     }),
     enterpriseLogout: () => Promise.resolve(),
     enterprisePresenceHeartbeat: () => Promise.resolve(),
-    enterpriseMessagesUnread: () => Promise.resolve([]),
+    enterpriseMessagesUnread: () => Promise.resolve([...previewUnread.values()]),
     enterpriseAtoaInbox: () => Promise.resolve([]),
     enterpriseOrganizationFeaturesGet: () => Promise.resolve({
-      direct_messaging: true,
-      knowledge_base: true,
+      enterprise_tree: true,
       park_service: true,
-      worklog: true,
-      usage_audit: true,
+      feishu_auto_reply: false,
+      direct_messages: true,
+      atoa: true,
+      knowledge: true,
+      skill_market: true,
     }),
     enterpriseOrganizationView: () => Promise.resolve({
       organization: {
@@ -242,16 +275,20 @@ if (!previewWindow.otto) {
       employeeCount: 3,
       structure: [],
       features: {
-        direct_messaging: true,
-        knowledge_base: true,
+        enterprise_tree: true,
         park_service: true,
-        worklog: true,
-        usage_audit: true,
+        feishu_auto_reply: false,
+        direct_messages: true,
+        atoa: true,
+        knowledge: true,
+        skill_market: true,
       },
     }),
-    enterpriseMessagesList: (peerAccountId: string) => Promise.resolve(
-      previewDirectMessages.get(peerAccountId) ?? [],
-    ),
+    enterpriseMessagesList: (peerAccountId: string) => {
+      // 与真实后端一致：拉取会话消息即标记该 peer 已读，下轮轮询未读清零
+      previewUnread.delete(peerAccountId);
+      return Promise.resolve(previewDirectMessages.get(peerAccountId) ?? []);
+    },
     enterpriseMessageSend: (
       peerAccountId: string,
       content: string,
@@ -277,6 +314,46 @@ if (!previewWindow.otto) {
       ]);
       return Promise.resolve(message);
     },
+    // 工作日志：预览演示数据（仅浏览器预览注入，Electron 下由 server 提供真实数据）
+    workLogToday: () => {
+      const today = new Date().toISOString().slice(0, 10);
+      return Promise.resolve({
+        date: today,
+        summary: '预览演示：今日完成 2 项成果，共 5 次操作。',
+        totalActions: 5,
+        workResults: 2,
+      });
+    },
+    workLogRecent: (days = 30) => {
+      const today = new Date();
+      const iso = (offset: number) => new Date(today.getTime() - offset * 86_400_000).toISOString().slice(0, 10);
+      void days;
+      return Promise.resolve([
+        {
+          date: iso(0),
+          entries: [
+            { time: '09:30', action: '整理园区报修工单并分派', taskTitle: '工单分派', entryType: 'work_result', success: true },
+            { time: '10:15', action: '与演示同事沟通会议室预订流程', entryType: 'note', success: true },
+            { time: '11:00', action: '输出企业部署交付清单初稿', taskTitle: '交付清单', entryType: 'work_result', success: true },
+            { time: '14:20', action: '查看企业知识库新增条目', entryType: 'note', success: true },
+            { time: '16:40', action: '预约明日 10:00 中型会议室', entryType: 'note', success: true },
+          ],
+        },
+        {
+          date: iso(1),
+          entries: [
+            { time: '10:00', action: '完成园区入驻企业回访', taskTitle: '企业回访', entryType: 'work_result', success: true },
+            { time: '15:30', action: '更新排班表', entryType: 'note', success: true },
+          ],
+        },
+        { date: iso(2), entries: [{ time: '09:10', action: '整理周报素材', entryType: 'note', success: true }] },
+      ]);
+    },
+    workLogReport: () => Promise.resolve({
+      ok: false,
+      path: '',
+      message: '浏览器预览不落地文件；正式版会生成 Markdown 总结并保存到本地。',
+    }),
     enterpriseParkView: () => Promise.resolve({
       id: 'preview-park',
       name: '北控宏创科技园',
