@@ -56,12 +56,12 @@ export function stripUIFields(content: Content): OriginalContent {
  * Helper function to strip UI fields from Content array
  * Also handles ContentListUnion type which could be string | Content[]
  */
-export function stripUIFieldsFromArray(contents: Content[] | any): OriginalContent[] {
+export function stripUIFieldsFromArray(contents: unknown): OriginalContent[] {
   if (Array.isArray(contents)) {
     return contents.map(stripUIFields);
   }
   // If it's not an array (e.g., string or other ContentListUnion type), return as-is
-  return contents;
+  return [];
 }
 
 /**

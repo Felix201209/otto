@@ -13,7 +13,7 @@ import { SubAgentDisplay } from './tools.js';
  */
 export interface ToolOutputMessage {
   type: 'text' | 'subagent_update' | 'structured_data';
-  data: any;
+  data: unknown;
   timestamp?: number;
 }
 
@@ -67,7 +67,7 @@ export function parseToolOutputMessage(output: string): ToolOutputMessage {
     if (parsed && typeof parsed === 'object' && parsed.type && parsed.data !== undefined) {
       return parsed as ToolOutputMessage;
     }
-  } catch (error) {
+  } catch (_error) {
     // JSON解析失败，认为是纯文本
   }
   

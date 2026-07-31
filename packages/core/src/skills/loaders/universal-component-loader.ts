@@ -7,7 +7,6 @@ import {
   UnifiedComponent,
   UnifiedPlugin,
   ComponentQuery,
-  ComponentType
 } from '../models/unified.js';
 import { IUnifiedLoaderService, IComponentLoader, IPluginLoader } from './types.js';
 
@@ -136,8 +135,8 @@ export class UniversalComponentLoader implements IUnifiedLoaderService {
   // Private Helpers
   // ==========================================================================
 
-  private isPlugin(item: any): item is UnifiedPlugin {
-    return 'components' in item && 'structure' in item;
+  private isPlugin(item: unknown): item is UnifiedPlugin {
+    return Boolean(item && typeof item === 'object' && 'components' in item && 'structure' in item);
   }
 
   private registerPlugin(plugin: UnifiedPlugin): void {

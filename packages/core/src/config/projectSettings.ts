@@ -107,7 +107,9 @@ export class ProjectSettingsManager {
         yolo: typeof parsed.yolo === 'boolean' ? parsed.yolo : undefined,
         autoTrimTrailingSpaces: typeof parsed.autoTrimTrailingSpaces === 'boolean' ? parsed.autoTrimTrailingSpaces : undefined,
         hooks: parsed.hooks ? JSON.parse(JSON.stringify(parsed.hooks)) : undefined,
-        agentStyle: validAgentStyles.includes(parsed.agentStyle as any) ? parsed.agentStyle : undefined,
+        agentStyle: typeof parsed.agentStyle === 'string' && validAgentStyles.includes(parsed.agentStyle as AgentStyle)
+          ? parsed.agentStyle as AgentStyle
+          : undefined,
         thinking: this.validateThinkingConfig(parsed.thinking),
         featureFlags,
         feishu: parsed.feishu ? {

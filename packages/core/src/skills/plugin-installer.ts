@@ -19,7 +19,6 @@ import {
   ValidationError,
   SkillType,
   PluginSource,
-  MarketplaceSource,
 } from './skill-types.js';
 import { SettingsManager, SkillsPaths } from './settings-manager.js';
 import { MarketplaceManager } from './marketplace-manager.js';
@@ -573,21 +572,12 @@ export class PluginInstaller {
    */
   private async copyPluginToPersonalDir(
     plugin: Plugin,
-    marketplaceId: string,
+    _marketplaceId: string,
   ): Promise<void> {
     try {
       // 个人 Skills 目录
       const personalSkillsDir = SkillsPaths.SKILLS_ROOT;
       await fs.ensureDir(personalSkillsDir);
-
-      // 源路径（Marketplace）
-      const marketplacePath = path.join(SkillsPaths.MARKETPLACE_ROOT, marketplaceId);
-
-      // 目标路径（个人目录）
-      const targetPluginDir = path.join(
-        personalSkillsDir,
-        `${marketplaceId}_${plugin.name}`,
-      );
 
       // 注意：由于 Skills 设计为统一在 Marketplace 管理，
       // 这里实际上不需要复制文件，仅记录引用即可
@@ -652,7 +642,7 @@ export class PluginInstaller {
       }
 
       // 提取 Git URL
-      const source = plugin.source as any;
+      const source = plugin.source as unknown as { source?: string; repo?: string; url?: string; ref?: string };
       let gitUrl: string | null = null;
       let ref: string | undefined = undefined;
 
@@ -660,10 +650,10 @@ export class PluginInstaller {
         gitUrl = `https://github.com/${source.repo}.git`;
         ref = source.ref;
       } else if (source.source === 'git') {
-        gitUrl = source.url;
+        gitUrl = source.url ?? null;
         ref = source.ref;
       } else if (source.source === 'url') {
-        gitUrl = source.url;
+        gitUrl = source.url ?? null;
       }
 
       if (!gitUrl) {

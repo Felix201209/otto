@@ -576,7 +576,7 @@ export class SkillsContextBuilder {
 
     try {
       const marketplaceJson = JSON.parse(fs.readFileSync(marketplaceJsonPath, 'utf-8')) as MarketplaceManifest;
-      const plugin = marketplaceJson.plugins?.find((p: any) => p.name === pluginName);
+      const plugin = marketplaceJson.plugins?.find((p) => p.name === pluginName);
 
       if (!plugin?.source) {
         return null;

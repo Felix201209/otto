@@ -8,6 +8,7 @@
 import { BaseTool, Icon, ToolResult } from '../tools.js';
 import { Config } from '../../config/config.js';
 import { LSPManager } from '../../lsp/index.js';
+import type { LspLocationLike } from './lsp-result-types.js';
 import { fileURLToPath } from 'node:url';
 import { Type } from '@google/genai';
 
@@ -70,7 +71,7 @@ export class LSPWorkspaceSymbolsTool extends BaseTool<LSPWorkspaceSymbolsParams,
       return kinds[kind] || `Unknown(${kind})`;
     };
 
-    const symbols: any[] = results.flat().filter(Boolean);
+    const symbols = results.flat().filter(Boolean) as unknown as LspLocationLike[];
 
     if (symbols.length === 0) {
       return {
@@ -80,10 +81,11 @@ export class LSPWorkspaceSymbolsTool extends BaseTool<LSPWorkspaceSymbolsParams,
     }
 
     const formatted = symbols.map(s => {
+      if (!s.location) return '';
       const filePath = fileURLToPath(s.location.uri);
       const line = s.location.range.start.line + 1;
-      const kindName = getSymbolKindName(s.kind);
-      return `- [${kindName}] ${s.name} in ${filePath}:${line}`;
+      const kindName = getSymbolKindName(s.kind ?? 0);
+      return `- [${kindName}] ${s.name ?? 'Unnamed'} in ${filePath}:${line}`;
     }).join('\n');
 
     return {

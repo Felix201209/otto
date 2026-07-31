@@ -350,7 +350,7 @@ export class MarketplaceLoader implements IPluginLoader {
         id: marketplaceId,
         name: marketplaceId
       },
-      rawConfig: pluginDef
+      rawConfig: pluginDef as unknown as Record<string, unknown>
     };
   }
 

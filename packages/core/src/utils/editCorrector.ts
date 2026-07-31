@@ -24,6 +24,13 @@ import {
 import { isCustomModel } from '../types/customModel.js';
 import { callCustomModel } from '../core/customModelAdapter.js';
 
+interface EditCorrectionResponse {
+  corrected_target_snippet?: string;
+  corrected_new_string?: string;
+  corrected_new_string_escaping?: string;
+  corrected_string_escaping?: string;
+}
+
 
 const CODE_CORRECTION_SYSTEM_PROMPT = `You are an expert code-editing assistant. Your task is to analyze a failed edit attempt and provide a corrected version of the text snippets.
 The correction should be as minimal as possible, staying very close to the original.
@@ -50,11 +57,11 @@ const fileContentCorrectionCache = new LruCache<string, string>(MAX_CACHE_SIZE);
  */
 async function callEditCorrectionAPI(
   contents: Content[],
-  schema: any,
+  schema: SchemaUnion,
   geminiClient: OttoClient,
   requestId: string,
   abortSignal?: AbortSignal,
-): Promise<any> {
+): Promise<EditCorrectionResponse> {
   // 获取用户当前使用的模型
   const currentModel = geminiClient.getCurrentModel();
 
@@ -84,22 +91,25 @@ async function callEditCorrectionAPI(
       if (responseText) {
         try {
           console.log(`[Edit Correction] ${requestId} completed successfully (custom model)`);
-          return JSON.parse(responseText);
+          const parsed: unknown = JSON.parse(responseText);
+          return parsed && typeof parsed === 'object' ? parsed as EditCorrectionResponse : {};
         } catch (e) {
           console.warn(`[Edit Correction] Failed to parse custom model response as JSON: ${e}`);
-          return responseText;
+          return {};
         }
       }
 
       console.log(`[Edit Correction] ${requestId} completed successfully (custom model)`);
-      return response;
+      return response as unknown as EditCorrectionResponse;
     } else {
       console.warn(`[Edit Correction] Custom model config not found for: ${currentModel}, falling back to default model`);
     }
   }
 
   // 默认使用 OttoServerAdapter（Flash 模型）
-  const ottoAdapter = geminiClient.getContentGenerator() as any;
+  const ottoAdapter = geminiClient.getContentGenerator() as unknown as {
+    generateContent: (request: unknown, requestId?: string) => Promise<unknown>;
+  };
   if (!ottoAdapter) {
     throw new Error('OttoServerAdapter not available');
   }
@@ -124,7 +134,7 @@ async function callEditCorrectionAPI(
   }, 'edit_correction');
 
   console.log(`[Edit Correction] ${requestId} completed successfully`);
-  return response;
+  return response as EditCorrectionResponse;
 }
 
 /**

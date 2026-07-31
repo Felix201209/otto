@@ -8,6 +8,16 @@ import path from 'path';
 import matter from 'gray-matter';
 import { UnifiedComponent, ComponentType, ComponentSource, ComponentLoadLevel } from '../models/unified.js';
 
+interface MarkdownFrontmatter {
+  name?: string;
+  description?: string;
+  version?: string;
+  author?: string;
+  category?: string;
+  tags?: string[];
+  [key: string]: unknown;
+}
+
 /**
  * Markdown 组件解析器
  * 负责解析 Claude Code 风格的 Markdown 组件定义 (Agents, Commands)
@@ -24,14 +34,14 @@ export class MarkdownParser {
   ): Promise<UnifiedComponent> {
     const content = await fs.readFile(filePath, 'utf-8');
 
-    let data: any = {};
+    let data: MarkdownFrontmatter = {};
     let body = content;
 
     try {
       const result = matter(content);
       data = result.data;
       body = result.content;
-    } catch (error) {
+    } catch (_error) {
       const fallback = this.parseFallback(content);
       data = fallback.data;
       body = fallback.content;
@@ -102,7 +112,7 @@ export class MarkdownParser {
    * 简单的 Frontmatter 解析回退方案
    * 用于处理格式不规范的 YAML (如 description 中包含未转义的冒号)
    */
-  private parseFallback(content: string): { data: any, content: string } {
+  private parseFallback(content: string): { data: MarkdownFrontmatter, content: string } {
     const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
 
     if (!match) {
@@ -111,7 +121,7 @@ export class MarkdownParser {
 
     const frontmatterRaw = match[1];
     const body = match[2];
-    const data: any = {};
+    const data: MarkdownFrontmatter = {};
 
     // 简单的行解析
     const lines = frontmatterRaw.split(/\r?\n/);
