@@ -1488,6 +1488,7 @@ function createWindow(): BrowserWindow {
     minWidth: 720,
     minHeight: 480,
     title: 'Otto',
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const } : {}),
     // 初始底色跟随系统深浅：暗色 #181818 / 浅色 #ffffff。硬编码任一固定色会在
     // 系统主题与之相反时于内容就绪前（及窗口边缘）闪出错误底色。themeSource 已
     // 在 whenReady 里设为 'system'，故 shouldUseDarkColors 反映的即 OS 当前主题。

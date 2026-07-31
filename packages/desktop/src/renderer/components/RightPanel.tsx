@@ -17,16 +17,10 @@ import type {
 import { SLASH_COMMANDS, insertComposerDraft } from './Composer.js';
 import { FilePreview, type FileEntry } from './FilePreview.js';
 import { GeneratedIcon } from './GeneratedIcon.js';
-import { OttoPetStage } from './OttoPetStage.js';
 import { openParkServices, useParkBrand } from './ParkServicesPlugin.js';
 import type { CentralEnterpriseRole } from '../state/centralEnterpriseIdentity.js';
 import { getEnterpriseOrganizationFeatures } from '../state/enterpriseOrganizationFeatures.js';
-import {
-  IconBuilding,
-  IconChevron,
-  IconChevronDown,
-  IconTerminal,
-} from './icons.js';
+import { IconChevron, IconChevronDown } from './icons.js';
 
 type TabType = 'agents' | 'tools' | 'documents' | 'memory' | 'worklog';
 type KnowledgeView = 'knowledge' | 'timeline';
@@ -82,6 +76,14 @@ const TAB_LABEL: Record<TabType, string> = {
   worklog: '工作日志',
 };
 
+const TAB_ARIA_LABEL: Record<TabType, string> = {
+  agents: '专家',
+  tools: '工具',
+  documents: '文档',
+  memory: '企业记忆',
+  worklog: '工作日志',
+};
+
 const TOOL_COMMAND_IDS = new Set([
   'new', 'model', 'clear', 'settings', 'doctor', 'feishu-status',
   'multi-channel', 'memory', 'skills',
@@ -99,6 +101,7 @@ const TOOL_COMMANDS = SLASH_COMMANDS.filter((command) => TOOL_COMMAND_IDS.has(co
 
 export interface RightPanelProps {
   busy: boolean;
+  presentation?: 'panel' | 'page';
   mode?: 'personal' | 'enterprise';
   /** 已由中心服务认证的角色；不能从本机 workspace.role 推导。 */
   enterpriseRole?: CentralEnterpriseRole;
@@ -137,6 +140,7 @@ function visibleProfiles(
 
 export function RightPanel({
   busy,
+  presentation = 'panel',
   mode = 'personal',
   enterpriseRole,
   enterpriseOrganizationId: authenticatedOrganizationId,
@@ -599,7 +603,7 @@ export function RightPanel({
     }
   };
 
-  if (collapsed) {
+  if (collapsed && presentation === 'panel') {
     return (
       <aside className="otto-right-panel otto-right-panel--collapsed" aria-label="右侧功能栏（已折叠）">
         <button type="button" className="otto-right-panel__edge" onClick={() => setCollapsed(false)} aria-label="展开右侧功能栏">
@@ -615,11 +619,13 @@ export function RightPanel({
   }
 
   return (
-    <aside className="otto-right-panel">
-      <button type="button" className="otto-right-panel__edge" onClick={() => setCollapsed(true)} aria-label="折叠右侧功能栏">›</button>
+    <aside className={`otto-right-panel otto-right-panel--${presentation}`}>
+      {presentation === 'panel' ? (
+        <button type="button" className="otto-right-panel__edge" onClick={() => setCollapsed(true)} aria-label="折叠右侧功能栏">›</button>
+      ) : null}
       <div className="otto-right-panel__tabs" role="tablist" aria-label="右侧面板">
         {tabs.map((tab) => (
-          <button key={tab} type="button" role="tab" aria-selected={activeTab === tab} className={`otto-right-panel__tab${activeTab === tab ? ' is-active' : ''}`} onClick={() => setActiveTab(tab)}>
+          <button key={tab} type="button" role="tab" aria-label={TAB_ARIA_LABEL[tab]} aria-selected={activeTab === tab} className={`otto-right-panel__tab${activeTab === tab ? ' is-active' : ''}`} onClick={() => setActiveTab(tab)}>
             {TAB_LABEL[tab]}
           </button>
         ))}
@@ -651,9 +657,6 @@ export function RightPanel({
                   onClick={openParkServices}
                   title="装修管理 · 满意度调查 · 园区公告 · 停车位办理 · 网络与电话 · 会议室预约 · 电卡充电 · 客户报修 · 来访车辆"
                 >
-                  <span className="otto-expert-card__icon otto-expert-card__icon--dev" aria-hidden>
-                    <IconBuilding size={17} />
-                  </span>
                   <span className="otto-expert-card__body">
                     <span className="otto-expert-card__name">{parkBrand}</span>
                     <span className="otto-expert-card__desc">装修 · 公告 · 停车 · 网络 · 会议 · 报修</span>
@@ -685,9 +688,6 @@ export function RightPanel({
                       onClick={() => onLaunchAgentProfile(SELF_DEVELOPMENT_PROFILE)}
                       title={SELF_DEVELOPMENT_PROFILE.tagline}
                     >
-                      <span className="otto-expert-card__icon otto-expert-card__icon--dev" aria-hidden>
-                        <IconTerminal size={17} />
-                      </span>
                       <span className="otto-expert-card__body">
                         <span className="otto-expert-card__name">{SELF_DEVELOPMENT_PROFILE.name}</span>
                         <span className="otto-expert-card__desc">{SELF_DEVELOPMENT_PROFILE.tagline}</span>
@@ -853,8 +853,8 @@ export function RightPanel({
           <div className="otto-documents-panel">
             <div className="otto-worklog-panel__head">
               <div>
-                <strong>右侧文档</strong>
-                <span>Markdown、TXT 和代码文件可直接编辑保存</span>
+                <strong>Documents</strong>
+                <span>Open, edit, and export local files</span>
               </div>
               <button type="button" disabled={documentsLoading} onClick={() => void selectDocumentFiles()}>
                 {documentsLoading ? '读取中' : '选择文件'}
@@ -1268,7 +1268,6 @@ export function RightPanel({
           ) : null}
         </div>
       ) : null}
-      <OttoPetStage running={busy} />
     </aside>
   );
 }

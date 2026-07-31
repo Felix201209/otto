@@ -106,7 +106,7 @@ const ENTERPRISE_UNREAD_POLL_INTERVAL_MS = 5_000;
 const ENTERPRISE_PRESENCE_HEARTBEAT_MS = 20_000;
 
 /** 主内容区当前视图：对话 / 智能体 / 设置 / 设置与诊断中心——均为整页，不再是弹窗浮层。 */
-type MainView = 'chat' | 'agents' | 'settings' | 'hub' | 'agenda' | 'skillzone' | 'accounts';
+type MainView = 'chat' | 'agents' | 'workspace' | 'settings' | 'hub' | 'agenda' | 'skillzone' | 'accounts';
 
 type PendingToolConsult = {
   member: EnterpriseOrganizationView['members'][number];
@@ -470,8 +470,6 @@ function OttoWorkspaceApp({
 
   // —— 主内容区视图：对话 / 智能体 / 设置，整页切换（右侧栏常驻）——
   const [mainView, setMainView] = useState<MainView>('chat');
-  // 右侧智能体面板切换（默认显示）。
-  const [showRightPanel, setShowRightPanel] = useState(true);
   // 右栏企业入口只负责展开左侧真实组织树，避免另开一张仅含身份的伪组织页。
   const [organizationOpenRequest, setOrganizationOpenRequest] = useState(0);
   const [organizationRefreshRevision, setOrganizationRefreshRevision] = useState(0);
@@ -906,69 +904,19 @@ function OttoWorkspaceApp({
           onLaunch={handleLaunchProfile}
           onBack={() => setMainView('chat')}
         />
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'row', flex: 1, minWidth: 0, height: '100%' }}>
-          {mainView === 'agenda' ? (
-            <DayAgenda
-              date={selectedDate}
-              schedules={selectedSchedules}
-              onCreate={product.actions.createSchedule}
-              onDelete={product.actions.deleteSchedule}
-              onBack={() => setMainView('chat')}
-            />
-          ) : mainView === 'skillzone' && edition === 'enterprise' ? (
-            <SkillZonePage
-              accountId={account.id}
-              isAdmin={account.isAdmin}
-              onBack={() => setMainView('chat')}
-            />
-          ) : (
-            <ChatView
-              session={activeSession}
-              messages={activeMessages}
-              models={state.models}
-              currentModel={state.currentModel}
-              userInitial={account.name.slice(0, 1).toUpperCase() || 'O'}
-              identityLabel={`${account.name} · ${centralIdentity.identityLabel}`}
-              modelManagementLabel="模型与个人 API 设置"
-              busy={busy}
-              onSend={handleSend}
-              onCancel={actions.cancel}
-              onSetModel={actions.setModel}
-              onRegenerate={handleRegenerate}
-              onRespondQuestion={handleToolConfirmation}
-              onOpenSetup={openModelSettings}
-              onToggleAgents={() => setShowRightPanel(v => !v)}
-              onNewChat={handleNewChat}
-              onClearContext={handleClearContext}
-              onExport={
-                activeSession
-                  ? () => settingsData.actions.exportConversation(activeSession.sessionId)
-                  : undefined
-              }
-              onOpenDoctor={() => openHub('doctor')}
-              onOpenFeishu={() => openHub('feishu')}
-              onOpenMemory={() => openHub('memory')}
-              onOpenSkills={() => openHub('skills')}
-              onOpenPrefs={() => openHub('prefs')}
-              onOpenSessions={() => setAllConvOpen(true)}
-              onShowHelp={handleShowHelp}
-              onLaunchAgentProfile={(profileId, title) => {
-                setMainView('chat');
-                actions.launchAgentProfile(title, profileId);
-              }}
-              commands={slashCommands}
-              onRunServerCommand={(name, args) => {
-                if (!activeSession) return;
-                transport.send({
-                  type: 'run_slash_command',
-                  payload: { sessionId: activeSession.sessionId, name, args },
-                });
-              }}
-            />
-          )}
-          {showRightPanel && (
+      ) : mainView === 'workspace' ? (
+        <section className="otto-workspace-page" aria-label="Workspace">
+          <header className="otto-workspace-page__head">
+            <div>
+              <div className="otto-workspace-page__title">Workspace</div>
+              <div className="otto-workspace-page__subtitle">Agents, tools, documents, memory and worklog</div>
+            </div>
+            <button type="button" className="otto-workspace-page__back" onClick={() => setMainView('chat')}>
+              Back to chat
+            </button>
+          </header>
           <RightPanel
+            presentation="page"
             busy={busy}
             mode={edition}
             enterpriseRole={centralIdentity.role}
@@ -997,6 +945,66 @@ function OttoWorkspaceApp({
             onConfirmAutoSkill={product.actions.confirmPendingAutoSkill}
             onRejectAutoSkill={product.actions.rejectPendingAutoSkill}
           />
+        </section>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'row', flex: 1, minWidth: 0, height: '100%' }}>
+          {mainView === 'agenda' ? (
+            <DayAgenda
+              date={selectedDate}
+              schedules={selectedSchedules}
+              onCreate={product.actions.createSchedule}
+              onDelete={product.actions.deleteSchedule}
+              onBack={() => setMainView('chat')}
+            />
+          ) : mainView === 'skillzone' && edition === 'enterprise' ? (
+            <SkillZonePage
+              accountId={account.id}
+              isAdmin={account.isAdmin}
+              onBack={() => setMainView('chat')}
+            />
+          ) : (
+            <ChatView
+              session={activeSession}
+              messages={activeMessages}
+              models={state.models}
+              currentModel={state.currentModel}
+              userInitial={account.name.slice(0, 1).toUpperCase() || 'O'}
+              modelManagementLabel="模型与个人 API 设置"
+              busy={busy}
+              onSend={handleSend}
+              onCancel={actions.cancel}
+              onSetModel={actions.setModel}
+              onRegenerate={handleRegenerate}
+              onRespondQuestion={handleToolConfirmation}
+              onOpenSetup={openModelSettings}
+              onToggleAgents={() => setMainView('workspace')}
+              onNewChat={handleNewChat}
+              onClearContext={handleClearContext}
+              onExport={
+                activeSession
+                  ? () => settingsData.actions.exportConversation(activeSession.sessionId)
+                  : undefined
+              }
+              onOpenDoctor={() => openHub('doctor')}
+              onOpenFeishu={() => openHub('feishu')}
+              onOpenMemory={() => openHub('memory')}
+              onOpenSkills={() => openHub('skills')}
+              onOpenPrefs={() => openHub('prefs')}
+              onOpenSessions={() => setAllConvOpen(true)}
+              onShowHelp={handleShowHelp}
+              onLaunchAgentProfile={(profileId, title) => {
+                setMainView('chat');
+                actions.launchAgentProfile(title, profileId);
+              }}
+              commands={slashCommands}
+              onRunServerCommand={(name, args) => {
+                if (!activeSession) return;
+                transport.send({
+                  type: 'run_slash_command',
+                  payload: { sessionId: activeSession.sessionId, name, args },
+                });
+              }}
+            />
           )}
         </div>
       )}

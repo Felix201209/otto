@@ -1076,6 +1076,8 @@ describe('ParkServicesPlugin', () => {
           brandName: '星火智慧园区服务',
           services: [{ name: '自定义服务A', desc: '描述A', prompt: '模板A' }],
         }),
+      enterpriseSession: () => Promise.resolve({ serverUrl: 'https://enterprise.test', account: null }),
+      enterpriseTicketList: () => Promise.resolve([]),
     };
     (window as unknown as { otto: typeof otto }).otto = otto;
     try {
@@ -1084,6 +1086,9 @@ describe('ParkServicesPlugin', () => {
       expect(await screen.findByText('星火智慧园区服务')).toBeTruthy();
       expect(screen.getByText('自定义服务A')).toBeTruthy();
       expect(screen.queryByText('装修管理')).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: /自定义服务A/ }));
+      expect(await screen.findByText('请先登录企业账号。')).toBeTruthy();
+      expect(screen.queryByText('模板A')).toBeNull();
     } finally {
       delete (window as unknown as { otto?: typeof otto }).otto;
     }

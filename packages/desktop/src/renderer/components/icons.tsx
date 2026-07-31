@@ -59,6 +59,29 @@ export function IconAgent({ size, className }: IconProps): React.JSX.Element {
   );
 }
 
+/** 默认账户头像：简洁的人形轮廓，避免用字母或高饱和色块占位。 */
+export function IconUserAvatar({ size = 28, className }: IconProps): React.JSX.Element {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 32 32"
+      fill="none"
+      className={className}
+      aria-hidden
+    >
+      <circle cx="16" cy="16" r="15" fill="currentColor" opacity=".14" />
+      <circle cx="16" cy="12" r="5" fill="currentColor" opacity=".82" />
+      <path
+        d="M7.5 26c1.4-4.2 4.3-6.3 8.5-6.3s7.1 2.1 8.5 6.3"
+        fill="currentColor"
+        opacity=".82"
+      />
+      <path d="M10 26.5h12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" opacity=".35" />
+    </svg>
+  );
+}
+
 export function IconList({ size, className }: IconProps): React.JSX.Element {
   return (
     <svg {...base(size)} className={className}>

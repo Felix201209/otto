@@ -12,7 +12,6 @@
  */
 
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { insertComposerDraft } from './Composer.js';
 import type {
   EnterpriseAccount,
   EnterpriseParkPublication,
@@ -437,7 +436,6 @@ function defaultServices(park: string, actors: ParkActorDirectory = {}): ParkSer
 }
 
 const PARK_OPEN_EVENT = 'otto:open-park-services';
-const SERVER_PUBLICATION_SERVICE_IDS = new Set(['announcement', 'satisfaction']);
 
 export function openParkServices(): void {
   window.dispatchEvent(new CustomEvent(PARK_OPEN_EVENT));
@@ -1846,13 +1844,6 @@ export function ParkServicesPlugin(): React.JSX.Element {
     event.currentTarget.releasePointerCapture?.(event.pointerId);
   };
   const pick = (service: ParkService): void => {
-    // 企业通过 park-services.json 配置的临时服务没有本地流程定义，保持原有
-    // “注入 Otto 输入框”的兼容行为。
-    if (!service.steps && !SERVER_PUBLICATION_SERVICE_IDS.has(service.id)) {
-      insertComposerDraft(service.prompt);
-      close();
-      return;
-    }
     openServiceWindow(service);
   };
 
