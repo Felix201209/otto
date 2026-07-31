@@ -1,7 +1,7 @@
 /**
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  *
- * 内置 skill 预置：把随包分发的 8 个办公 skill（skills-seed/）拷进用户级
+ * 内置 skill 预置：把随包分发的办公 skill（skills-seed/）拷进用户级
  * ~/.otto-user/skills/，让**任何安装（含打包的桌面 App）开箱即有 skill 可用**。
  *
  * 幂等 + 非破坏：新 skill 直接复制；旧版内置 skill 仅在内容仍等于 Otto 上次预置

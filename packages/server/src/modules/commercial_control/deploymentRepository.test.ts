@@ -9,7 +9,7 @@ import { createAuditLogSchemaContributor } from './auditLogSchema.js';
 import { createCommercialControlComposition } from './commercialControlComposition.js';
 import { signTelemetryRequest } from './deploymentRepository.js';
 import { PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR } from './privateDeploymentSchema.js';
-import { canonicalJson, signEd25519Envelope } from './signedEnvelope.js';
+import { canonicalJson, publicKeyId, signEd25519Envelope } from './signedEnvelope.js';
 
 function setup() {
   const pair = generateKeyPairSync('ed25519');
@@ -52,12 +52,110 @@ function setup() {
     }),
     databaseReadiness: () => ({ ready: true, schemaVersion: 1 }),
   });
-  return { database, control, privateKey };
+  return { database, control, privateKey, publicKey };
 }
 
 describe('private deployment license repository', () => {
-  it('requires an Ed25519 license bound to this deployment, organization, and machine', () => {
+  it('queues content-free module usage and retries it with License-bound billing credentials', async () => {
     const { database, control, privateKey } = setup();
+    try {
+      const now = Date.now();
+      const licensePayload = {
+        id: 'lic-billing',
+        deploymentId: control.getDeploymentId(),
+        organizationId: 'org-licensed',
+        machineFingerprint: control.getMachineFingerprint(),
+        customerName: 'Billing customer',
+        plan: 'enterprise',
+        expiresAtMs: now + 90 * 24 * 60 * 60 * 1000,
+        seatLimit: 20,
+        modules: ['enterprise_tree'],
+        offline: false,
+        leaseEndpoint: 'https://control.otto.example/v1/licenses/lic-billing/lease',
+        billingEndpoint: 'https://control.otto.example/v1/billing/usage/consume',
+        leaseToken: 'test-license-lease-token-at-least-32-characters',
+        telemetryAllowed: false,
+        issuedAtMs: now,
+      };
+      control.importDeploymentLicense({
+        license: licensePayload,
+        signature: signEd25519Envelope(licensePayload, privateKey),
+      });
+      const leasePayload = {
+        id: 'lease-billing',
+        licenseId: licensePayload.id,
+        deploymentId: licensePayload.deploymentId,
+        machineFingerprint: licensePayload.machineFingerprint,
+        issuedAtMs: now,
+        expiresAtMs: now + 10 * 60 * 1000,
+      };
+      control.importDeploymentLicenseLease({
+        lease: leasePayload,
+        signature: signEd25519Envelope(leasePayload, privateKey),
+      });
+
+      expect(control.queueBillingUsage({
+        organizationId: 'org-licensed',
+        module: 'model_gateway',
+        units: 1_250,
+        referenceId: 'usage_abcdef',
+        idempotencyKey: 'usage:abcdef',
+      })).toBe(true);
+      expect(control.queueBillingUsage({
+        organizationId: 'org-licensed',
+        module: 'model_gateway',
+        units: 1_250,
+        referenceId: 'usage_abcdef',
+        idempotencyKey: 'usage:abcdef',
+      })).toBe(false);
+
+      let uploaded: Record<string, unknown> = {};
+      let attempt = 0;
+      const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        expect(String(url)).toBe(licensePayload.billingEndpoint);
+        expect((init?.headers as Record<string, string>).authorization)
+          .toBe(`Bearer ${licensePayload.leaseToken}`);
+        uploaded = JSON.parse(String(init?.body));
+        attempt += 1;
+        if (attempt === 1) return new Response('{}', { status: 503 });
+        return Response.json({ replayed: false }, { status: 201 });
+      }) as unknown as typeof fetch;
+      await expect(control.flushBillingUsageQueue(fetchImpl)).resolves.toMatchObject({
+        attempted: 1,
+        sent: 0,
+        failed: 1,
+      });
+      expect(database.prepare(
+        'SELECT status, COUNT(*) AS count FROM billing_usage_outbox GROUP BY status',
+      ).all()).toEqual([{ status: 'failed', count: 1 }]);
+      database.prepare(
+        'UPDATE billing_usage_outbox SET next_attempt_at_ms = NULL WHERE idempotency_key = ?',
+      ).run('usage:abcdef');
+      await expect(control.flushBillingUsageQueue(fetchImpl)).resolves.toMatchObject({
+        attempted: 1,
+        sent: 1,
+        failed: 0,
+      });
+      expect(uploaded).toMatchObject({
+        licenseId: 'lic-billing',
+        deploymentId: licensePayload.deploymentId,
+        organizationId: 'org-licensed',
+        module: 'model_gateway',
+        units: 1_250,
+        referenceId: 'usage_abcdef',
+        idempotencyKey: 'usage:abcdef',
+      });
+      expect(JSON.stringify(uploaded)).not.toContain('prompt');
+      expect(database.prepare(
+        'SELECT status FROM billing_usage_outbox WHERE idempotency_key = ?',
+      ).get('usage:abcdef')).toEqual({ status: 'sent' });
+    } finally {
+      database.close();
+    }
+  });
+
+  it('requires an Ed25519 license bound to this deployment, organization, and machine', () => {
+    const { database, control, privateKey, publicKey } = setup();
     try {
       const now = Date.now();
       const payload = {
@@ -85,6 +183,15 @@ describe('private deployment license repository', () => {
         signatureAlgorithm: 'ed25519',
         status: 'active',
       });
+      expect(() => control.importDeploymentLicense({
+        license: { ...payload, id: 'lic-wrong-key-id' },
+        signingKeyId: '0000000000000000',
+        signature: signEd25519Envelope(
+          { ...payload, id: 'lic-wrong-key-id' },
+          privateKey,
+        ),
+      })).toThrow('signature invalid');
+      expect(publicKeyId(publicKey)).toBe(license.signingKeyId);
 
       const copied = { ...payload, id: 'lic-copied', machineFingerprint: 'other' };
       expect(() =>
@@ -169,6 +276,98 @@ describe('private deployment license repository', () => {
         status: 'active',
         lease: { required: true, status: 'active' },
       });
+    } finally {
+      database.close();
+    }
+  });
+
+  it('reports active seats and installs renewed License terms during lease refresh', async () => {
+    const { database, control, privateKey } = setup();
+    try {
+      database.exec(`
+        INSERT INTO accounts (id, organization_id) VALUES
+          ('account-1', 'org-licensed'),
+          ('account-2', 'org-licensed');
+      `);
+      const now = Date.now();
+      const licensePayload = {
+        id: 'lic-lifecycle',
+        revision: 1,
+        deploymentId: control.getDeploymentId(),
+        organizationId: 'org-licensed',
+        machineFingerprint: control.getMachineFingerprint(),
+        customerName: 'Lifecycle customer',
+        plan: 'enterprise',
+        expiresAtMs: now + 30 * 24 * 60 * 60 * 1000,
+        seatLimit: 20,
+        gracePeriodMs: 7 * 24 * 60 * 60 * 1000,
+        seatEnforcement: 'monitor',
+        modules: ['enterprise_tree'],
+        offline: false,
+        leaseEndpoint: 'https://license.otto.example/v1/licenses/lic-lifecycle/lease',
+        leaseToken: 'test-license-lease-token-at-least-32-characters',
+        telemetryAllowed: true,
+        telemetryToken: 'test-telemetry-token-at-least-32-characters',
+        issuedAtMs: now,
+      };
+      control.importDeploymentLicense({
+        license: licensePayload,
+        signature: signEd25519Envelope(licensePayload, privateKey),
+      });
+      const renewedPayload = {
+        ...licensePayload,
+        revision: 2,
+        expiresAtMs: now + 365 * 24 * 60 * 60 * 1000,
+        seatLimit: 1,
+        seatEnforcement: 'enforce',
+      };
+      const leasePayload = {
+        id: 'lease-lifecycle',
+        licenseId: licensePayload.id,
+        deploymentId: licensePayload.deploymentId,
+        machineFingerprint: licensePayload.machineFingerprint,
+        licenseRevision: 2,
+        issuedAtMs: now,
+        expiresAtMs: now + 10 * 60 * 1000,
+        seatLimit: 1,
+        activeSeatCount: 2,
+        seatStatus: 'overage_grace',
+        graceReasons: ['seat_overage'],
+        graceExpiresAtMs: now + 7 * 24 * 60 * 60 * 1000,
+      };
+      let requestBody: Record<string, unknown> = {};
+      const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        requestBody = JSON.parse(String(init?.body));
+        return Response.json({
+          lease: leasePayload,
+          signature: signEd25519Envelope(leasePayload, privateKey),
+          licenseEnvelope: {
+            license: renewedPayload,
+            signature: signEd25519Envelope(renewedPayload, privateKey),
+          },
+        });
+      }) as unknown as typeof fetch;
+
+      await expect(control.refreshDeploymentLicenseLease(fetchImpl)).resolves.toMatchObject({
+        refreshed: true,
+      });
+      expect(requestBody).toMatchObject({ activeSeatCount: 2 });
+      expect(control.getDeploymentLicense()).toMatchObject({
+        revision: 2,
+        seatLimit: 1,
+        gracePeriodMs: 7 * 24 * 60 * 60 * 1000,
+        seatEnforcement: 'enforce',
+        activeSeatCount: 2,
+        seatLimitExceeded: true,
+        status: 'active',
+        lease: {
+          status: 'active',
+          activeSeatCount: 2,
+          seatStatus: 'overage_grace',
+          graceReasons: ['seat_overage'],
+        },
+      });
+      expect(control.isLicenseUsableForOrganizationFeature('enterprise_tree')).toBe(true);
     } finally {
       database.close();
     }

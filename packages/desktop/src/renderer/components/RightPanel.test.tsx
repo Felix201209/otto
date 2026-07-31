@@ -397,16 +397,14 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(screen.getByText('点击把命令填入输入框，回车执行')).toBeTruthy();
   });
 
-  it('keeps one mascot stage outside the tabs while switching panels', () => {
+  it('does not keep the legacy mascot stage in the right panel', () => {
     installBridge();
     render(<RightPanel busy={false} />);
-    expect(screen.getAllByRole('region', { name: 'Otto 吉祥物活动区' }))
-      .toHaveLength(1);
+    expect(screen.queryByTestId('otto-pet-stage')).toBeNull();
 
     fireEvent.click(screen.getByRole('tab', { name: '工作日志' }));
 
-    expect(screen.getAllByRole('region', { name: 'Otto 吉祥物活动区' }))
-      .toHaveLength(1);
+    expect(screen.queryByTestId('otto-pet-stage')).toBeNull();
   });
 
   it('keeps personal mode on its right-panel tabs without enterprise-only actions', () => {

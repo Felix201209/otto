@@ -124,6 +124,46 @@ const verifyE2eeDevice = vi.fn(async () => ({
   deviceFingerprints: ['a'.repeat(64), 'c'.repeat(64)] as [string, string],
 }));
 const revokeE2eeDevice = vi.fn(async () => undefined);
+const getE2eeKeyTransparency = vi.fn(async () => ({
+  accountId: 'account-1',
+  headSequence: 3,
+  headHash: 'd'.repeat(64),
+  entries: [
+    {
+      sequence: 1,
+      accountId: 'account-1',
+      deviceId: 'device-current-12345678',
+      event: 'bootstrap_approved' as const,
+      keyFingerprint: 'a'.repeat(64),
+      actorDeviceId: null,
+      previousHash: '0'.repeat(64),
+      entryHash: 'b'.repeat(64),
+      createdAt: '2026-07-30T09:00:00.000Z',
+    },
+    {
+      sequence: 2,
+      accountId: 'account-1',
+      deviceId: 'device-pending-12345678',
+      event: 'registered_pending' as const,
+      keyFingerprint: 'c'.repeat(64),
+      actorDeviceId: null,
+      previousHash: 'b'.repeat(64),
+      entryHash: 'c'.repeat(64),
+      createdAt: '2026-07-31T08:00:00.000Z',
+    },
+    {
+      sequence: 3,
+      accountId: 'account-1',
+      deviceId: 'device-pending-12345678',
+      event: 'approved' as const,
+      keyFingerprint: 'c'.repeat(64),
+      actorDeviceId: 'device-current-12345678',
+      previousHash: 'c'.repeat(64),
+      entryHash: 'd'.repeat(64),
+      createdAt: '2026-07-31T09:00:00.000Z',
+    },
+  ],
+}));
 const exportE2eeRecovery = vi.fn(async () => '{"v":1,"ciphertext":"sealed"}');
 const importE2eeRecovery = vi.fn(async () => undefined);
 const saveTextFile = vi.fn(async () => 'D:\\Backups\\otto-e2ee-recovery.json');
@@ -140,6 +180,7 @@ beforeEach(() => {
       enterpriseE2eeDeviceApprove: approveE2eeDevice,
       enterpriseE2eeDeviceVerification: verifyE2eeDevice,
       enterpriseE2eeDeviceRevoke: revokeE2eeDevice,
+      enterpriseE2eeKeyTransparency: getE2eeKeyTransparency,
       enterpriseE2eeRecoveryExport: exportE2eeRecovery,
       enterpriseE2eeRecoveryImport: importE2eeRecovery,
       saveTextFile,
@@ -158,6 +199,7 @@ afterEach(() => {
   approveE2eeDevice.mockClear();
   verifyE2eeDevice.mockClear();
   revokeE2eeDevice.mockClear();
+  getE2eeKeyTransparency.mockClear();
   exportE2eeRecovery.mockClear();
   importE2eeRecovery.mockClear();
   saveTextFile.mockClear();
@@ -210,6 +252,17 @@ describe('PrivacyDataPanel', () => {
     await waitFor(() =>
       expect(approveE2eeDevice).toHaveBeenCalledWith('device-pending-12345678'),
     );
+  });
+
+  it('shows the auditable key-transparency history and current chain head', async () => {
+    render(<PrivacyDataPanel />);
+
+    expect(await screen.findByText('密钥透明日志')).toBeTruthy();
+    expect(screen.getByText('链头序号 3')).toBeTruthy();
+    expect(screen.getByText('首台设备建立')).toBeTruthy();
+    expect(screen.getByText('新设备待批准')).toBeTruthy();
+    expect(screen.getByText('设备已批准')).toBeTruthy();
+    expect(getE2eeKeyTransparency).toHaveBeenCalledTimes(1);
   });
 
   it('exports a passphrase-protected recovery bundle through the native save dialog', async () => {

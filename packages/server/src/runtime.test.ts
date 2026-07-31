@@ -493,6 +493,14 @@ describe('CoreSessionRuntime 流式落库与收口对账', () => {
     if (complete?.type === 'chat_complete') {
       expect(complete.payload.text).toBe('你好，世界');
     }
+    expect(frames).toContainEqual(expect.objectContaining({
+      type: 'runtime_activity',
+      payload: expect.objectContaining({ contractVersion: 1, kind: 'turn', state: 'started' }),
+    }));
+    expect(frames).toContainEqual(expect.objectContaining({
+      type: 'runtime_activity',
+      payload: expect.objectContaining({ contractVersion: 1, kind: 'turn', state: 'completed' }),
+    }));
 
     // ③ 定稿后 store 里正文完整、isStreaming=false。
     const finalAssistant = store

@@ -398,6 +398,25 @@ if (!previewWindow.otto) {
           revokedAt: null,
         },
       ]),
+    enterpriseE2eeKeyTransparency: () =>
+      Promise.resolve({
+        accountId: previewAccount.id,
+        headSequence: 1,
+        headHash: '0'.repeat(64),
+        entries: [
+          {
+            sequence: 1,
+            accountId: previewAccount.id,
+            deviceId: 'browser-preview-device',
+            event: 'bootstrap_approved',
+            keyFingerprint: '0'.repeat(64),
+            actorDeviceId: null,
+            previousHash: '0'.repeat(64),
+            entryHash: '0'.repeat(64),
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      }),
     enterpriseE2eeDeviceApprove: () =>
       Promise.resolve({
         accountId: previewAccount.id,

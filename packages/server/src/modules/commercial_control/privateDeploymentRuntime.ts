@@ -15,6 +15,13 @@ export interface PrivateDeploymentRuntimeServices {
     failed: number;
     skippedReason: string | null;
   }>;
+  flushBillingUsageQueue(): Promise<{
+    attempted: number;
+    sent: number;
+    discarded: number;
+    failed: number;
+    skippedReason: string | null;
+  }>;
   recordTelemetryEvent(input: {
     eventType: string;
     payload: Record<string, unknown>;
@@ -63,6 +70,7 @@ export function startPrivateDeploymentRuntime(
         nextHealthAt = Date.now() + healthIntervalMs;
       }
       await services.flushTelemetryQueue();
+      await services.flushBillingUsageQueue();
     } catch (error) {
       options.onError?.(error);
     } finally {

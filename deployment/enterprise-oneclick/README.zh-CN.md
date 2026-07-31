@@ -288,6 +288,15 @@ LUKS、云盘加密卷或等价保护后，才能把 `OTTO_STORAGE_VOLUME_ENCRYP
 恢复时间目标。磁盘可用空间低于 `OTTO_DISK_MIN_FREE_MB` 时 health 会告警，空间不足以
 容纳校验副本时新备份会拒绝执行，但现有业务数据不会被自动删除。
 
+License 验签支持多把 Ed25519 公钥并行。`OTTO_LICENSE_PUBLIC_KEYS` 可以填写 PEM 数组，
+也可以填写 Otto Control `GET /v1/signing-keyring` 返回的完整 JSON；客户端会接受
+`active`、`standby` 和 `retired` 公钥，因此密钥轮换后历史 License 仍可验证，并自动排除
+`revoked` 公钥。紧急处置还可通过 `OTTO_LICENSE_REVOKED_KEY_IDS` 填写 JSON 数组或
+逗号分隔的 16 位 key ID。更新这两个配置前必须先用已信任公钥验证控制面密钥环签名，
+不能把 HTTPS 下载结果直接当作新的信任根。在线 License 还会在下一次短租约刷新时由
+控制面检查签名密钥状态；离线 License 无法实时接收吊销，必须使用较短有效期并由交付
+流程同步吊销清单。
+
 ## 十、常见问题
 
 ### Caddy 证书申请失败

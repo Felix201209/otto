@@ -114,6 +114,10 @@ import { installAppMenu } from './menu.js';
 import { UpdateService } from './update-service.js';
 import { IncrementalUpdateService } from './incremental-update-service.js';
 import {
+  checkForUpdateUsingPolicy,
+  resolveDesktopDistribution,
+} from './update-policy-adapter.js';
+import {
   EnterpriseNotificationIdentityBoundary,
   NotificationService,
   type NotificationPayload,
@@ -421,6 +425,7 @@ let videoEditorWindow: BrowserWindow | undefined;
 // ── IPC channel 名（与 preload 对齐）──
 const IPC = {
   getEndpoint: 'otto:get-endpoint',
+  runtimeDiagnostic: 'otto:runtime-diagnostic',
   endpointChanged: 'otto:endpoint-changed',
   openExternal: 'otto:open-external',
   openPath: 'otto:open-path',
@@ -523,6 +528,7 @@ const IPC = {
   enterpriseMessageSend: 'otto:enterprise-message-send',
   enterpriseMessageAttachmentRead: 'otto:enterprise-message-attachment-read',
   enterpriseE2eeDevicesList: 'otto:enterprise-e2ee-devices-list',
+  enterpriseE2eeKeyTransparency: 'otto:enterprise-e2ee-key-transparency',
   enterpriseE2eeDeviceApprove: 'otto:enterprise-e2ee-device-approve',
   enterpriseE2eeDeviceVerification: 'otto:enterprise-e2ee-device-verification',
   enterpriseE2eeDeviceRevoke: 'otto:enterprise-e2ee-device-revoke',
@@ -898,6 +904,33 @@ const updateService = new UpdateService(
 const incrementalUpdateService = new IncrementalUpdateService(
   () => mainWindow?.webContents,
 );
+const desktopDistributionId = resolveDesktopDistribution(
+  process.env.OTTO_DISTRIBUTION_ID,
+  app.getName(),
+);
+
+async function checkDesktopUpdate() {
+  const session = enterpriseClient.snapshot();
+  return checkForUpdateUsingPolicy({
+    distributionId: desktopDistributionId,
+    currentVersion: app.getVersion(),
+    hasEnterpriseSession: Boolean(session.token),
+    resolvePolicy: () => enterpriseClient.getDeploymentUpdatePolicy({
+      distributionId: desktopDistributionId,
+      currentVersion: app.getVersion(),
+    }),
+    checkLegacy: () => updateService.checkForUpdate(),
+    checkManagedFull: (reference) => updateService.checkForUpdate({
+      manifestUrl: reference.url,
+      manifestSha256: reference.sha256,
+      releasePageUrl: reference.url,
+    }),
+    checkIncremental: (reference) => incrementalUpdateService.checkForUpdates(
+      reference.url,
+      reference.sha256,
+    ),
+  });
+}
 
 function moduleUpdateFingerprint(
   updates: EnterpriseModuleUpdateDescriptor[],
@@ -1679,6 +1712,7 @@ function createWindow(): BrowserWindow {
     minWidth: 720,
     minHeight: 480,
     title: 'Otto',
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const } : {}),
     // 初始底色跟随系统深浅：暗色 #181818 / 浅色 #ffffff。硬编码任一固定色会在
     // 系统主题与之相反时于内容就绪前（及窗口边缘）闪出错误底色。themeSource 已
     // 在 whenReady 里设为 'system'，故 shouldUseDarkColors 反映的即 OS 当前主题。
@@ -2680,6 +2714,10 @@ function registerIpc(): void {
     loadEnterpriseSession();
     return enterpriseClient.listOwnE2eeDevices(true);
   });
+  ipcMain.handle(IPC.enterpriseE2eeKeyTransparency, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.getOwnE2eeKeyTransparency();
+  });
   ipcMain.handle(
     IPC.enterpriseE2eeDeviceApprove,
     async (_event, deviceId: unknown) => {
@@ -3165,6 +3203,7 @@ function registerIpc(): void {
     if (!endpoint) void ensureEndpoint();
     return endpoint ?? null;
   });
+  ipcMain.handle(IPC.runtimeDiagnostic, () => serverManager.getDesktopRuntimeDiagnostic());
 
   // host-only 命令（替代 webview 的 vscode host 命令；交付文档 [WEBVIEW] §5）。
   ipcMain.handle(IPC.openExternal, (_e, url: unknown) => {
@@ -3771,7 +3810,7 @@ function registerIpc(): void {
   // 结果全部结构化透传，不在这里加工：「检查失败」与「已是最新」是 UpdateService
   // 返回的两种不同 status，任何一层都不许把失败粉饰成最新。
   ipcMain.handle(IPC.appVersion, () => app.getVersion());
-  ipcMain.handle(IPC.updateCheck, () => updateService.checkForUpdate());
+  ipcMain.handle(IPC.updateCheck, () => checkDesktopUpdate());
   ipcMain.handle(IPC.updateDownload, () => updateService.downloadUpdate());
   ipcMain.handle(IPC.updateCancel, () => {
     updateService.cancelDownload();

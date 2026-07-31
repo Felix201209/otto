@@ -7,6 +7,8 @@ import type {
   EnterpriseDataGovernanceProfile,
   EnterpriseE2eeDevice,
   EnterpriseE2eeDeviceVerification,
+  EnterpriseE2eeKeyTransparencyEvent,
+  EnterpriseE2eeKeyTransparencyView,
 } from '../../../preload/index.js';
 import { createQrMatrix } from '../../lib/qrMatrix.js';
 import { Badge, Card, Empty, Panel } from './HubUI.js';
@@ -54,10 +56,21 @@ function storageLabel(
   return '当前企业服务器';
 }
 
+function transparencyEventLabel(
+  event: EnterpriseE2eeKeyTransparencyEvent,
+): string {
+  if (event === 'bootstrap_approved') return '首台设备建立';
+  if (event === 'registered_pending') return '新设备待批准';
+  if (event === 'approved') return '设备已批准';
+  return '设备已撤销';
+}
+
 export function PrivacyDataPanel(): React.JSX.Element {
   const [profile, setProfile] =
     useState<EnterpriseDataGovernanceProfile | null>(null);
   const [devices, setDevices] = useState<EnterpriseE2eeDevice[] | null>(null);
+  const [transparency, setTransparency] =
+    useState<EnterpriseE2eeKeyTransparencyView | null>(null);
   const [busy, setBusy] = useState(false);
   const [e2eeBusy, setE2eeBusy] = useState(false);
   const [error, setError] = useState('');
@@ -90,6 +103,7 @@ export function PrivacyDataPanel(): React.JSX.Element {
     }
     try {
       setDevices(await window.otto.enterpriseE2eeDevicesList());
+      setTransparency(await window.otto.enterpriseE2eeKeyTransparency());
     } catch (cause) {
       setE2eeError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -157,6 +171,7 @@ export function PrivacyDataPanel(): React.JSX.Element {
     try {
       await window.otto.enterpriseE2eeDeviceRevoke(device.deviceId);
       setDevices(await window.otto.enterpriseE2eeDevicesList());
+      setTransparency(await window.otto.enterpriseE2eeKeyTransparency());
       setPendingDeviceRevocation(null);
       setNotice(`已撤销设备“${device.deviceName}”；它不能再接收新消息密钥。`);
     } catch (cause) {
@@ -187,6 +202,7 @@ export function PrivacyDataPanel(): React.JSX.Element {
     try {
       await window.otto.enterpriseE2eeDeviceApprove(device.deviceId);
       setDevices(await window.otto.enterpriseE2eeDevicesList());
+      setTransparency(await window.otto.enterpriseE2eeKeyTransparency());
       setDeviceVerification(null);
       setNotice(
         `已批准设备“${device.deviceName}”；后续消息会包含该设备的密钥信封。`,
@@ -285,7 +301,7 @@ export function PrivacyDataPanel(): React.JSX.Element {
         <>
           <Card className="otto-hub__privacy-summary">
             <div>
-              <span>License</span>
+              <span>许可证</span>
               <strong>{license?.text}</strong>
               <Badge tone={license?.danger ? 'danger' : 'accent'}>
                 {profile.authorization.license.plan}
@@ -501,6 +517,48 @@ export function PrivacyDataPanel(): React.JSX.Element {
                   导入恢复包
                 </button>
               </div>
+            </div>
+            <div className="otto-hub__e2ee-transparency">
+              <div className="otto-hub__setting-text">
+                <strong>密钥透明日志</strong>
+                <span className="otto-hub__field-hint">
+                  追加式记录设备登记、批准与撤销。在不同已核验设备间对比链头，可辅助发现目录回滚。
+                </span>
+              </div>
+              {transparency ? (
+                <>
+                  <div className="otto-hub__e2ee-chain-head">
+                    <Badge tone="accent">链头序号 {transparency.headSequence}</Badge>
+                    <code title={transparency.headHash}>
+                      {transparency.headHash.slice(0, 24)}
+                    </code>
+                  </div>
+                  <div className="otto-hub__e2ee-log" role="list">
+                    {transparency.entries.map((entry) => (
+                      <div
+                        className="otto-hub__e2ee-log-entry"
+                        key={`${entry.sequence}:${entry.entryHash}`}
+                        role="listitem"
+                      >
+                        <div>
+                          <strong>{transparencyEventLabel(entry.event)}</strong>
+                          <span>
+                            序号 {entry.sequence} · 设备{' '}
+                            {entry.deviceId.slice(0, 12)} · 指纹{' '}
+                            {entry.keyFingerprint.slice(0, 16)} · 日志哈希{' '}
+                            {entry.entryHash.slice(0, 16)}
+                          </span>
+                        </div>
+                        <time dateTime={entry.createdAt}>
+                          {new Date(entry.createdAt).toLocaleString()}
+                        </time>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <Empty>{busy ? '正在读取透明日志…' : '暂时无法读取透明日志'}</Empty>
+              )}
             </div>
           </Card>
 

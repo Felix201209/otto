@@ -112,6 +112,8 @@ export interface TurnCheckpoint {
 
 export class TurnCheckpointManager {
   private readonly checkpointsDir: string;
+  /** Preserve write order when several tool completions land in one clock tick. */
+  private lastSavedAtMs = 0;
 
   constructor(baseDir?: string) {
     const dir = baseDir || process.env.OTTO_USER_DIR || path.join(homedir(), '.otto-user');
@@ -129,7 +131,9 @@ export class TurnCheckpointManager {
    */
   async save(checkpoint: TurnCheckpoint): Promise<void> {
     await fs.mkdir(this.checkpointsDir, { recursive: true });
-    checkpoint.timestamp = new Date().toISOString();
+    const timestampMs = Math.max(Date.now(), this.lastSavedAtMs + 1);
+    this.lastSavedAtMs = timestampMs;
+    checkpoint.timestamp = new Date(timestampMs).toISOString();
     const file = this.filePath(checkpoint.turnId);
     await fs.writeFile(file, JSON.stringify(checkpoint, null, 2), 'utf-8');
   }

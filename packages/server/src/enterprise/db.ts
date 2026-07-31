@@ -65,7 +65,7 @@ import {
 } from '../modules/park_services/index.js';
 import path from 'path';
 import os from 'os';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
   createAuditLogSchemaContributor,
   createCommercialControlComposition,
@@ -388,6 +388,50 @@ export function getEnterpriseServiceTopology() {
   return describeEnterpriseServiceTopology(ENTERPRISE_SERVICE_TOPOLOGY);
 }
 
+/**
+ * Credential-free operations posture for the enterprise admin page. Planning
+ * targets are reported as not connected until a real runtime adapter exists.
+ */
+export function getOperationsSecurityStatus() {
+  let sqlCipher:
+    | {
+        state: 'active';
+        keyVersion: number;
+        migratedFromPlaintext: boolean;
+      }
+    | { state: 'disabled' | 'error' };
+  if (!SQLCIPHER_RUNTIME) {
+    sqlCipher = { state: 'disabled' };
+  } else {
+    try {
+      const status = dataPlatform.getDatabaseEncryptionStatus();
+      sqlCipher = {
+        state: 'active',
+        keyVersion: status.keyVersion,
+        migratedFromPlaintext: status.migratedFromPlaintext,
+      };
+    } catch {
+      sqlCipher = { state: 'error' };
+    }
+  }
+  return {
+    topology: getEnterpriseServiceTopology(),
+    sqlCipher,
+    keyManagement: {
+      databaseKeyProvider: SQLCIPHER_RUNTIME
+        ? ('offline-file' as const)
+        : ('not-configured' as const),
+      remoteProvider: 'not-connected' as const,
+      automaticRotation: 'not-configured' as const,
+      sseKms:
+        ENTERPRISE_SERVICE_TOPOLOGY.attachments.backend === 's3' &&
+        Boolean(ENTERPRISE_SERVICE_TOPOLOGY.attachments.kmsKeyId)
+          ? ('configured' as const)
+          : ('not-configured' as const),
+    },
+  };
+}
+
 /** 执行真实读查询，供 HTTP readiness 判断数据库与 schema 是否可用。 */
 export const getDatabaseReadiness = dataPlatform.getReadiness;
 export const getDatabaseEncryptionStatus =
@@ -423,11 +467,14 @@ export const {
   importDeploymentLicense,
   importDeploymentLicenseLease,
   refreshDeploymentLicenseLease,
+  resolveDeploymentUpdatePolicy,
   getTelemetrySettings,
   updateTelemetrySettings,
   recordTelemetryEvent,
   getTelemetryQueueSummary,
   flushTelemetryQueue,
+  queueBillingUsage,
+  flushBillingUsageQueue,
   ingestTelemetryBatch,
   ensureDeploymentLicenseSecretsEncrypted,
   getPrivateDeploymentStatus,
@@ -446,6 +493,7 @@ export const {
     parsePublicKeyList(
       process.env.OTTO_LICENSE_PUBLIC_KEYS ||
         process.env.OTTO_LICENSE_PUBLIC_KEY,
+      process.env.OTTO_LICENSE_REVOKED_KEY_IDS,
     ),
   telemetryEndpoint: () => process.env.OTTO_TELEMETRY_ENDPOINT || null,
   telemetryIngestSecret: () => process.env.OTTO_TELEMETRY_INGEST_SECRET || '',
@@ -980,6 +1028,22 @@ const modelGateway = createModelGatewayComposition({
   getOrganization,
   listOrganizationAccounts: listAccounts,
   createId: randomUUID,
+  onRecordedUsage(input) {
+    if (input.totalTokens < 1) return;
+    const digest = createHash('sha256')
+      .update(
+        [getDeploymentId(), input.organizationId, input.messageId].join('\0'),
+        'utf8',
+      )
+      .digest('hex');
+    queueBillingUsage({
+      organizationId: input.organizationId,
+      module: 'model_gateway',
+      units: input.totalTokens,
+      referenceId: `usage_${digest.slice(0, 32)}`,
+      idempotencyKey: `usage:${digest}`,
+    });
+  },
 });
 
 export const { getOrganizationUsageSummary, recordTokenUsage } = modelGateway;

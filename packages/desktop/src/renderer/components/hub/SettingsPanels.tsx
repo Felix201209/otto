@@ -14,6 +14,7 @@ import type { UseSettingsData } from '../../state/useSettingsData.js';
 import { GeneratedIcon, type GeneratedIconName } from '../GeneratedIcon.js';
 import { IconClose } from '../icons.js';
 import { Panel, Card, Dot, Badge, Empty, type DotTone } from './HubUI.js';
+import { readPetWidgetEnabled, writePetWidgetEnabled } from '../../petWidgetPreference.js';
 
 // ── 偏好设置 ──────────────────────────────────────────────────────────────
 
@@ -46,6 +47,7 @@ export function PrefsPanel({ data }: { data: UseSettingsData }): React.JSX.Eleme
   const [langDraft, setLangDraft] = useState('');
   // 外观主题：独立于 server settings（走 main 的 nativeTheme IPC，本机持久化）。
   const [theme, setTheme] = useState<'system' | 'light' | 'dark'>('system');
+  const [petWidgetEnabled, setPetWidgetEnabled] = useState(readPetWidgetEnabled);
 
   useEffect(() => {
     setLangDraft(s?.preferredLanguage ?? '');
@@ -144,6 +146,26 @@ export function PrefsPanel({ data }: { data: UseSettingsData }): React.JSX.Eleme
                 </button>
               ))}
             </div>
+          </div>
+
+          <div className="otto-hub__setting">
+            <div className="otto-hub__setting-text">
+              <div className="otto-hub__field-label">小宠物挂件</div>
+              <div className="otto-hub__field-hint">在右下角显示 Otto 的实时工作状态。</div>
+            </div>
+            <button
+              type="button"
+              className={'otto-hub__toggle' + (petWidgetEnabled ? ' is-on' : '')}
+              onClick={() => {
+                const next = !petWidgetEnabled;
+                setPetWidgetEnabled(next);
+                writePetWidgetEnabled(next);
+              }}
+              aria-pressed={petWidgetEnabled}
+            >
+              <span className="otto-hub__toggle-knob" />
+              {petWidgetEnabled ? '已开启' : '已关闭'}
+            </button>
           </div>
 
           <div className="otto-hub__setting">

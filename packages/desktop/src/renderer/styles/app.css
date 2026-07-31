@@ -395,22 +395,6 @@
   font-size: 11px;
   color: var(--otto-text-tertiary);
 }
-.otto-user-avatar {
-  margin-left: auto;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: var(--otto-accent-gradient);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  -webkit-app-region: no-drag;
-  user-select: none;
-}
-
 .otto-thread {
   flex: 1 1 auto;
   overflow-y: auto;
@@ -2065,6 +2049,260 @@ h6.otto-prose__h {
     transform: translateY(4px) scale(0.98);
   }
 }
+
+/* Account identity stays in the sidebar: soft blue, no green status-card treatment. */
+.otto-sidebar-account {
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  gap: 9px;
+  margin-top: 10px;
+  padding: 13px 4px 2px;
+  border-top: 1px solid var(--otto-border);
+}
+
+.otto-sidebar-account__avatar {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  color: #4b9eea;
+  background: #e2f2ff;
+}
+
+.otto-sidebar-account__copy {
+  gap: 3px;
+}
+
+.otto-sidebar-account__copy strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.otto-sidebar-account__copy small {
+  color: #78a8cf;
+  font-size: 10px;
+}
+
+.otto-sidebar-account__logout {
+  min-width: 26px;
+  padding: 0 4px;
+  color: var(--otto-text-tertiary);
+  font-size: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .otto-sidebar-account__avatar {
+    color: #8bc7ff;
+    background: rgba(82, 164, 235, 0.18);
+  }
+
+  .otto-sidebar-account__copy small {
+    color: #8bb9dc;
+  }
+}
+
+/* Enterprise tree: replace the developer-style connector tree with a quiet sidebar list. */
+.otto-orgtree {
+  margin: 0 10px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.otto-orgtree__toggle {
+  min-height: 32px;
+  padding: 0 8px;
+  border-radius: 8px;
+  color: var(--otto-text-secondary);
+}
+
+.otto-orgtree__toggle:hover {
+  background: var(--otto-accent-soft);
+  color: var(--otto-text);
+}
+
+.otto-orgtree__company {
+  color: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.otto-orgtree__body {
+  padding: 4px 2px 0;
+  border-top: 0;
+}
+
+.otto-orgtree__company-branch + .otto-orgtree__company-branch {
+  margin-top: 8px;
+}
+
+.otto-orgtree__company-node {
+  margin: 3px 6px 7px;
+  padding: 0;
+  border-left: 0;
+  color: var(--otto-text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.otto-orgtree__company-content {
+  margin: 0;
+  padding: 0;
+  border-left: 0;
+}
+
+.otto-orgtree__presence-summary {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  margin: 4px 4px 8px;
+  padding: 0 2px 7px;
+  border: 0;
+  border-bottom: 1px solid var(--otto-border);
+  border-radius: 0;
+  background: transparent;
+  font-size: 10px;
+}
+
+.otto-orgtree__presence-summary > span {
+  font-size: 10px;
+}
+
+.otto-orgtree__presence-summary small {
+  font-size: 9px;
+}
+
+.otto-orgtree__presence-summary button {
+  min-height: 22px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--otto-text-tertiary);
+}
+
+.otto-orgtree__department {
+  margin: 2px 0;
+  padding: 0;
+  border-left: 0;
+}
+
+.otto-orgtree__department::before {
+  display: none;
+}
+
+.otto-orgtree__department-toggle {
+  min-height: 30px;
+  padding: 0 7px;
+  border-radius: 7px;
+  gap: 6px;
+}
+
+.otto-orgtree__department-toggle:hover {
+  background: color-mix(in srgb, var(--otto-accent) 7%, transparent);
+  color: var(--otto-text);
+}
+
+.otto-orgtree__department-name {
+  color: var(--otto-text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.otto-orgtree__department-toggle > small {
+  min-width: 18px;
+  line-height: 18px;
+  background: transparent;
+  color: var(--otto-text-tertiary);
+  font-size: 9px;
+}
+
+.otto-orgtree__position-group {
+  margin: 2px 0 5px 13px;
+  padding: 0;
+}
+
+.otto-orgtree__position-group::before {
+  display: none;
+}
+
+.otto-orgtree__position-head {
+  min-height: 22px;
+  padding: 0 7px;
+  color: var(--otto-text-tertiary);
+}
+
+.otto-orgtree__position-head > span {
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+}
+
+.otto-orgtree__position-head > small {
+  font-size: 8px;
+}
+
+.otto-orgtree__position-members {
+  gap: 1px;
+}
+
+.otto-orgtree__member {
+  min-height: 32px;
+  margin-top: 1px;
+  padding: 4px 7px;
+  border-radius: 8px;
+  font-size: 10px;
+}
+
+.otto-orgtree__member-button:hover {
+  border-radius: 8px;
+  background: var(--otto-accent-soft);
+  color: var(--otto-text);
+}
+
+.otto-orgtree__member-identity {
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 7px;
+}
+
+.otto-orgtree__member-avatar {
+  width: 22px;
+  height: 22px;
+  color: #4b9eea;
+  background: #e2f2ff;
+  font-size: 8px !important;
+}
+
+.otto-orgtree__member-copy strong {
+  font-size: 10px;
+}
+
+.otto-orgtree__member-copy small {
+  font-size: 8px;
+}
+
+.otto-orgtree__presence.is-online,
+.otto-orgtree__presence.is-recent {
+  color: #4b9eea !important;
+}
+
+.otto-orgtree__presence.is-online::before,
+.otto-orgtree__presence.is-recent::before {
+  background: #71b8f2;
+  box-shadow: 0 0 0 3px rgba(113, 184, 242, 0.16);
+}
+
+.otto-orgtree__self-badge {
+  background: var(--otto-accent-soft);
+  color: var(--otto-accent) !important;
+}
+
+.otto-orgtree__vacant {
+  padding: 6px 7px;
+  font-size: 9px;
+}
 .otto-modelmenu__item {
   display: flex;
   align-items: center;
@@ -2715,7 +2953,7 @@ h6.otto-prose__h {
  * ════════════════════════════════════════════════════════════════════════ */
 
 /* 模态遮罩 + 卡片 */
-/* —— 「查看全部对话」检索面板 —— */
+/* —— 统一消息中心 —— */
 .otto-allconv-overlay {
   position: absolute;
   inset: 0;
@@ -2781,6 +3019,29 @@ h6.otto-prose__h {
 .otto-allconv__close:hover {
   background: rgba(0, 0, 0, 0.05);
   color: var(--otto-text);
+}
+.otto-allconv__filters {
+  display: flex;
+  gap: 6px;
+  padding: 9px 14px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--otto-border);
+}
+.otto-allconv__filter {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-pill);
+  background: transparent;
+  color: var(--otto-text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.otto-allconv__filter:hover,
+.otto-allconv__filter.is-active {
+  border-color: color-mix(in srgb, var(--otto-accent) 45%, var(--otto-border));
+  background: var(--otto-accent-soft);
+  color: var(--otto-accent-hover);
 }
 .otto-allconv__list {
   flex: 1;
@@ -4049,121 +4310,83 @@ h6.otto-prose__h {
   flex-direction: column;
 }
 
-/* —— 右下吉祥物舞台：位置独立；busy 时切跑步，空闲时按自己的节奏活动。 —— */
-.otto-pet-stage {
-  flex: 0 0 182px;
-  min-height: 182px;
-  padding: 10px 14px 8px;
-  background: var(--otto-surface);
-  border-top: 1px solid var(--otto-border);
-  overflow: hidden;
+/* 小宠物默认不占布局；开启后才以右下角状态挂件出现。 */
+.otto-pet-widget {
+  position: fixed;
+  right: 22px;
+  bottom: 20px;
+  z-index: 35;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(260px, calc(100vw - 40px));
+  min-height: 70px;
+  padding: 8px 11px 8px 7px;
+  border: 1px solid color-mix(in srgb, var(--otto-border-strong) 68%, transparent);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--otto-surface-raised) 88%, transparent);
+  box-shadow: 0 14px 36px rgba(30, 53, 76, 0.14);
+  backdrop-filter: blur(18px) saturate(1.12);
   user-select: none;
 }
-.otto-pet-stage__head {
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  color: var(--otto-text-secondary);
-  font-size: 11px;
-  font-weight: 650;
-  letter-spacing: 0.01em;
-}
-.otto-pet-stage__state {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--otto-text-tertiary);
-  font-weight: 500;
-}
-.otto-pet-stage__toggle {
-  flex: 0 0 auto;
-  border: 1px solid var(--otto-border);
-  border-radius: var(--otto-radius-sm);
-  background: var(--otto-surface-raised);
-  color: var(--otto-text-secondary);
-  font-size: 10.5px;
-  font-weight: 650;
-  padding: 3px 7px;
-  cursor: pointer;
-}
-.otto-pet-stage__toggle:hover {
-  color: var(--otto-accent);
-  border-color: var(--otto-accent);
-  background: var(--otto-accent-soft);
-}
-.otto-pet-stage__toggle:focus-visible {
-  outline: none;
-  box-shadow: var(--otto-shadow-focus);
-}
-.otto-pet-stage--collapsed {
-  flex-basis: 42px;
-  min-height: 42px;
-  padding: 6px 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.otto-pet-stage--collapsed .otto-pet-stage__toggle {
-  width: 100%;
-  height: 28px;
-}
-.otto-pet-stage__scene {
+.otto-pet-widget__sprite {
   position: relative;
-  height: 140px;
+  flex: 0 0 71px;
+  width: 71px;
+  height: 60px;
   overflow: hidden;
 }
-.otto-pet-stage__floor {
-  position: absolute;
-  left: 18px;
-  right: 18px;
-  bottom: 9px;
-  height: 1px;
-  background: var(--otto-border-strong);
-  opacity: 0.72;
-}
-.otto-pet-stage__floor::before,
-.otto-pet-stage__floor::after {
-  content: '';
-  position: absolute;
-  bottom: -2px;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #e69a22;
-}
-.otto-pet-stage__floor::before { left: -1px; }
-.otto-pet-stage__floor::after { right: -1px; }
 .otto-pet-stage__motion {
   position: absolute;
   left: 50%;
-  bottom: 10px;
-  width: 119.04px;
-  height: 128.96px;
+  bottom: -6px;
   transform: translateX(-50%);
-  will-change: left;
 }
-.otto-pet-stage__motion.is-running-right {
-  animation: otto-pet-travel-right var(--otto-pet-state-duration) linear both;
-}
-.otto-pet-stage__motion.is-running-left {
-  animation: otto-pet-travel-left var(--otto-pet-state-duration) linear both;
+.otto-pet-stage__scene {
+  position: relative;
 }
 .otto-pet-stage__sprite {
   image-rendering: pixelated;
   image-rendering: crisp-edges;
 }
-@keyframes otto-pet-travel-right {
-  from { left: 24%; }
-  to { left: 76%; }
+.otto-pet-widget__copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
 }
-@keyframes otto-pet-travel-left {
-  from { left: 76%; }
-  to { left: 24%; }
+.otto-pet-widget__name {
+  color: var(--otto-text-tertiary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
 }
+.otto-pet-widget__copy strong {
+  overflow: hidden;
+  color: var(--otto-text-primary);
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.otto-pet-widget__lights {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 4px;
+}
+.otto-pet-widget__light {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--otto-border-strong);
+  opacity: 0.5;
+}
+.otto-pet-widget__light.is-active {
+  opacity: 1;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent);
+}
+.otto-pet-widget__light.is-red { color: #dc5c61; background: #dc5c61; }
+.otto-pet-widget__light.is-yellow { color: #d89d2b; background: #d89d2b; }
+.otto-pet-widget__light.is-green { color: #4fa877; background: #4fa877; }
 
 /* 登录页复用同一套 hatch-pet 图集：只放大 sprite，不带右栏标题、地面和位移动画。 */
 .otto-pet-stage.otto-pet-stage--login {
@@ -5562,6 +5785,9 @@ h6.otto-prose__h {
 .otto-hub__e2ee-recovery-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:8px;align-items:start}
 .otto-hub__e2ee-recovery-grid--import{grid-template-columns:minmax(0,2fr) minmax(0,1fr) auto;padding-top:12px;border-top:1px solid var(--otto-border)}
 .otto-hub__e2ee-recovery-grid textarea.otto-hub__input{min-height:68px;padding-top:10px;resize:vertical}
+.otto-hub__e2ee-transparency{display:grid;gap:12px;padding:15px;border-top:1px solid var(--otto-border)}
+.otto-hub__e2ee-chain-head{display:flex;align-items:center;gap:10px;min-width:0}.otto-hub__e2ee-chain-head code{min-width:0;overflow:hidden;color:var(--otto-text-tertiary);font:10px/1.4 var(--otto-font-mono);text-overflow:ellipsis;white-space:nowrap}
+.otto-hub__e2ee-log{display:grid;border:1px solid var(--otto-border);border-radius:var(--otto-radius-sm);overflow:hidden}.otto-hub__e2ee-log-entry{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid var(--otto-border)}.otto-hub__e2ee-log-entry:last-child{border-bottom:0}.otto-hub__e2ee-log-entry>div{display:grid;gap:3px;min-width:0}.otto-hub__e2ee-log-entry strong{font-size:11.5px}.otto-hub__e2ee-log-entry span,.otto-hub__e2ee-log-entry time{color:var(--otto-text-tertiary);font:10px/1.4 var(--otto-font-mono)}.otto-hub__e2ee-log-entry span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.otto-hub__e2ee-log-entry time{flex-shrink:0}
 @media(max-width:720px){.otto-hub__privacy-summary{grid-template-columns:1fr}.otto-hub__privacy-summary>div{border-right:0;border-bottom:1px solid var(--otto-border)!important}.otto-hub__privacy-summary>div:last-child{border-bottom:0!important}.otto-hub__privacy-delete,.otto-hub__e2ee-recovery-grid,.otto-hub__e2ee-verification{grid-template-columns:1fr}.otto-hub__e2ee-device{grid-template-columns:minmax(0,1fr) auto}.otto-hub__e2ee-device>.otto-hub__btn,.otto-hub__e2ee-confirm{grid-column:1/-1;justify-self:start}.otto-hub__privacy-activities summary{align-items:flex-start;flex-direction:column}.otto-hub__privacy-activities dl>div{grid-template-columns:1fr;gap:2px}}
 
 /* ── 园区服务插件（右下角悬浮小钮 + 居中对话框）─────────────────── */
@@ -7256,6 +7482,7 @@ h6.otto-prose__h {
   display: flex;
   justify-content: flex-end;
 }
+.otto-first-run{z-index:91}.otto-first-run__body{display:grid;gap:18px;padding:4px 0}.otto-first-run__body p{margin:0;color:var(--otto-text-secondary);font-size:13px;line-height:1.7}.otto-first-run__progress{display:flex;gap:7px}.otto-first-run__progress span{width:28px;height:4px;border-radius:var(--otto-radius-pill);background:var(--otto-border)}.otto-first-run__progress span.is-active{background:var(--otto-accent)}.otto-first-run__actions{display:flex;justify-content:space-between;gap:10px;margin-top:18px}
 
 /* ══════════════ v1.7 个人/企业双模式工作区 ══════════════ */
 .otto-orgtree {
@@ -8407,6 +8634,349 @@ h6.otto-prose__h {
   .otto-enterprise-config__position { grid-template-columns: 24px minmax(0, 1fr) minmax(120px, .65fr); }
   .otto-enterprise-config__position-actions { grid-column: 2 / -1; justify-content: flex-start; }
 }
+
+/* Apple/Codex refinement: hierarchy comes from space, not stacked boxes. */
+.otto-sidebar {
+  width: 248px;
+  min-width: 248px;
+  border-right: 0;
+}
+
+.otto-sidebar__brandrow {
+  padding: 2px 18px 18px;
+}
+
+.otto-brand {
+  background: none;
+  -webkit-text-fill-color: currentColor;
+  color: var(--otto-text);
+  font-size: 20px;
+  letter-spacing: -0.035em;
+}
+
+.otto-newchat {
+  justify-content: flex-start;
+  margin: 0 16px 16px;
+  height: 34px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--otto-accent);
+  box-shadow: none;
+}
+.otto-newchat:hover {
+  border-color: transparent;
+  background: var(--otto-accent-soft);
+  color: var(--otto-accent-hover);
+  box-shadow: none;
+}
+
+.otto-conversations {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.otto-conversations__toggle {
+  padding: 8px 18px 7px;
+  color: var(--otto-text-tertiary);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+.otto-conversations__toggle:hover {
+  background: transparent;
+  color: var(--otto-text-secondary);
+}
+.otto-conversations .otto-sessions {
+  border-top: 0;
+}
+.otto-sessions {
+  padding: 2px 10px 8px;
+}
+.otto-group__label {
+  padding: 12px 8px 5px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.otto-session {
+  padding: 8px 10px 9px;
+  border-radius: 8px;
+}
+.otto-session--active,
+.otto-session--active:hover {
+  background: var(--otto-accent-soft);
+  box-shadow: none;
+}
+.otto-session--active::before {
+  display: none;
+}
+
+.otto-sidebar__footer {
+  border-top: 0;
+  padding: 10px 14px 14px;
+}
+.otto-viewall {
+  padding: 7px 4px;
+  border-radius: 7px;
+}
+.otto-viewall:hover,
+.otto-viewall--hub.is-active {
+  background: transparent;
+  color: var(--otto-text);
+}
+.otto-viewall--hub.is-active {
+  color: var(--otto-accent);
+}
+.otto-viewall__chev {
+  display: none;
+}
+.otto-sidebar-account {
+  margin-top: 8px;
+  padding: 12px 4px 0;
+  border-top: 1px solid var(--otto-border);
+}
+
+.otto-main__topbar {
+  height: 54px;
+  padding: 0 26px;
+  border-bottom: 0;
+  background: color-mix(in srgb, var(--otto-bg) 82%, transparent);
+  backdrop-filter: blur(18px) saturate(140%);
+}
+.otto-main__title {
+  font-size: 14px;
+  letter-spacing: -0.01em;
+}
+.otto-main__identity {
+  margin-left: 10px;
+  color: var(--otto-text-tertiary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.otto-main__sync {
+  color: var(--otto-accent);
+}
+
+.otto-thread {
+  padding-top: 24px;
+}
+.otto-thread__inner,
+.otto-composer__inner,
+.otto-composer__hint {
+  max-width: 820px;
+}
+.otto-msg-bot {
+  gap: 0;
+}
+.otto-response-mark {
+  display: none;
+}
+.otto-msg-user__bubble {
+  border: 0;
+  border-radius: 18px 18px 5px 18px;
+  box-shadow: none;
+}
+.otto-msg-system__card {
+  min-width: 0;
+  border: 0;
+  border-left: 2px solid var(--otto-border-strong);
+  border-radius: 0;
+  background: transparent;
+  padding: 4px 12px;
+}
+.otto-empty {
+  gap: 8px;
+}
+.otto-empty__title {
+  font-size: 17px;
+  letter-spacing: -0.02em;
+}
+
+.otto-composer {
+  padding: 12px 26px 20px;
+}
+.otto-composer__inner {
+  border-color: var(--otto-border-strong);
+  border-radius: 18px;
+  box-shadow: none;
+  background: color-mix(in srgb, var(--otto-surface) 86%, transparent);
+  backdrop-filter: blur(16px) saturate(130%);
+}
+.otto-composer__inner:focus-within {
+  border-color: var(--otto-accent);
+  box-shadow: 0 0 0 3px var(--otto-accent-soft);
+}
+
+.otto-right-panel {
+  width: 280px;
+  min-width: 280px;
+  border-left: 0;
+  background: var(--otto-sidebar-bg);
+}
+.otto-right-panel__tabs {
+  gap: 0;
+  padding: 10px 12px 8px;
+  border-bottom: 0;
+  background: transparent;
+}
+.otto-right-panel__tab {
+  border-radius: 7px;
+  padding: 7px 2px;
+}
+.otto-right-panel__tab.is-active {
+  background: var(--otto-surface);
+  color: var(--otto-text);
+}
+.otto-right-panel__body {
+  padding: 10px 16px 18px;
+}
+.otto-expert-card,
+.otto-profile-card,
+.otto-custom-agent-card,
+.otto-tool-item {
+  border-color: transparent;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+}
+.otto-expert-card:hover,
+.otto-profile-card:hover,
+.otto-custom-agent-card:hover,
+.otto-tool-item:hover {
+  border-color: transparent;
+  background: var(--otto-surface);
+  box-shadow: none;
+  transform: none;
+}
+.otto-expert-card__icon,
+.otto-profile-card__mark,
+.otto-custom-agent-card__mark {
+  display: none;
+}
+.otto-expert-card {
+  padding: 9px 8px;
+}
+.otto-profile-card {
+  padding: 9px 8px;
+}
+.otto-right-panel__waist {
+  margin: 16px 0;
+  background: var(--otto-border);
+}
+.otto-right-panel__moreagents {
+  height: 32px;
+  border: 0;
+  background: transparent;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .otto-main__topbar,
+  .otto-composer__inner {
+    background: var(--otto-bg);
+    backdrop-filter: none;
+  }
+}
+
+/* Main path stays quiet; dense capabilities live on the dedicated Workspace page. */
+.otto-topbar-export,
+.otto-topbar-setup {
+  width: auto;
+  min-width: 0;
+  height: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.otto-topbar-export:hover,
+.otto-topbar-setup:hover {
+  border-color: transparent;
+  background: var(--otto-accent-soft);
+  color: var(--otto-accent);
+}
+.otto-topbar-theme {
+  border: 0;
+  background: transparent;
+}
+
+.otto-workspace-page {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--otto-bg);
+}
+.otto-workspace-page__head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 30px 38px 18px;
+}
+.otto-workspace-page__title {
+  color: var(--otto-text);
+  font-size: 25px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+}
+.otto-workspace-page__subtitle {
+  margin-top: 5px;
+  color: var(--otto-text-tertiary);
+  font-size: 12px;
+}
+.otto-workspace-page__back {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--otto-text-secondary);
+  cursor: pointer;
+  font: 600 12px var(--otto-font);
+  padding: 8px 10px;
+}
+.otto-workspace-page__back:hover {
+  background: var(--otto-accent-soft);
+  color: var(--otto-accent);
+}
+.otto-right-panel--page {
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 0;
+  background: transparent;
+}
+.otto-right-panel--page .otto-right-panel__tabs {
+  flex: 0 0 auto;
+  max-width: 1040px;
+  width: calc(100% - 76px);
+  margin: 0 auto;
+  padding: 0 0 10px;
+}
+.otto-right-panel--page .otto-right-panel__body {
+  width: min(1040px, calc(100% - 76px));
+  margin: 0 auto;
+  padding: 12px 0 34px;
+}
+@media (max-width: 760px) {
+  .otto-workspace-page__head {
+    padding: 22px 20px 14px;
+  }
+  .otto-right-panel--page .otto-right-panel__tabs,
+  .otto-right-panel--page .otto-right-panel__body {
+    width: calc(100% - 40px);
+  }
+  .otto-pet-widget {
+    right: 12px;
+    bottom: 12px;
+  }
+}
 @media (max-width: 760px) {
   .otto-enterprise-config__hero { flex-direction: column; }
   .otto-enterprise-config__switches,
@@ -8420,4 +8990,856 @@ h6.otto-prose__h {
   .otto-enterprise-config__position-actions { grid-column: 2; }
   .otto-enterprise-config__positions-head { align-items: flex-start; flex-direction: column; gap: 3px; }
   .otto-enterprise-config__specialist-picker { grid-template-columns: 1fr; }
+}
+
+/* Codex-inspired final pass: quieter chrome, stronger focus, fewer visible boxes. */
+.otto-app {
+  background: var(--otto-sidebar-bg);
+}
+
+.otto-sidebar {
+  width: 240px;
+  min-width: 240px;
+  background: color-mix(in srgb, var(--otto-sidebar-bg) 92%, var(--otto-bg));
+}
+
+.otto-main {
+  margin: 8px 8px 8px 0;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--otto-border) 70%, transparent);
+}
+
+.otto-main__topbar {
+  height: 50px;
+  padding: 0 22px;
+  background: color-mix(in srgb, var(--otto-bg) 90%, transparent);
+}
+
+.otto-main__title {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.otto-main__identity {
+  margin-left: 8px;
+  padding-left: 8px;
+  border-left: 1px solid var(--otto-border);
+  max-width: min(42vw, 440px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.otto-topbar__actions {
+  gap: 4px;
+}
+
+.otto-topbar-export,
+.otto-topbar-setup {
+  height: 28px;
+  padding: 0 8px;
+  color: var(--otto-text-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.otto-topbar-theme {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--otto-text-secondary);
+}
+
+.otto-thread {
+  padding-top: 30px;
+}
+
+.otto-thread__inner,
+.otto-composer__inner,
+.otto-composer__hint {
+  max-width: 880px;
+}
+
+.otto-empty {
+  gap: 8px;
+  padding-bottom: 96px;
+}
+
+.otto-empty__title {
+  margin-top: 4px;
+  color: var(--otto-text);
+  font-size: 18px;
+  font-weight: 650;
+}
+
+.otto-empty > div:not(.otto-empty__title):not(.otto-empty__prompts) {
+  color: var(--otto-text-tertiary);
+  font-size: 12px;
+}
+
+.otto-empty__prompts {
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.otto-prompt-chip {
+  padding: 7px 11px;
+  border-color: var(--otto-border);
+  box-shadow: none;
+  background: var(--otto-sidebar-bg);
+  font-size: 12px;
+}
+
+.otto-composer {
+  padding: 12px 26px 18px;
+}
+
+.otto-composer__inner {
+  border-color: var(--otto-border);
+  border-radius: 16px;
+  background: var(--otto-surface);
+  box-shadow: 0 5px 18px rgba(28, 25, 23, 0.06);
+}
+
+.otto-composer__inner:focus-within {
+  border-color: color-mix(in srgb, var(--otto-accent) 58%, var(--otto-border));
+  box-shadow: 0 0 0 3px var(--otto-accent-soft), 0 5px 18px rgba(28, 25, 23, 0.06);
+}
+
+.otto-msg-user__bubble {
+  max-width: min(78%, 620px);
+}
+
+.otto-right-panel--page .otto-right-panel__tabs {
+  border-bottom: 1px solid var(--otto-border);
+}
+
+@media (max-width: 760px) {
+  .otto-main {
+    margin: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .otto-sidebar {
+    width: 220px;
+    min-width: 220px;
+  }
+
+  .otto-main__topbar {
+    padding: 0 16px;
+  }
+
+  .otto-main__identity,
+  .otto-topbar-export {
+    display: none;
+  }
+}
+
+/* Workspace pages get an editorial reading width instead of inheriting the old narrow rail density. */
+.otto-right-panel--page .otto-right-panel__body {
+  overflow-y: auto;
+}
+
+.otto-right-panel--page .otto-documents-panel {
+  gap: 18px;
+}
+
+.otto-right-panel--page .otto-worklog-panel__head {
+  min-height: 48px;
+  padding-bottom: 4px;
+}
+
+.otto-right-panel--page .otto-worklog-panel__head strong {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.otto-right-panel--page .otto-worklog-panel__head span {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.otto-right-panel--page .otto-worklog-panel__head button,
+.otto-right-panel--page .otto-documents-panel button {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--otto-border);
+  border-radius: 9px;
+  background: var(--otto-surface);
+  color: var(--otto-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.otto-right-panel--page .otto-worklog-panel__head button:hover,
+.otto-right-panel--page .otto-documents-panel button:hover {
+  border-color: var(--otto-accent);
+  color: var(--otto-accent);
+  background: var(--otto-accent-soft);
+}
+
+.otto-right-panel--page .otto-documents-panel .otto-file-preview {
+  min-height: 560px;
+  border: 1px solid var(--otto-border);
+  border-radius: 14px;
+  box-shadow: var(--otto-shadow-xs);
+}
+
+.otto-right-panel--page .otto-file-preview__layout {
+  grid-template-columns: 220px minmax(0, 1fr);
+  min-height: 560px;
+}
+
+.otto-right-panel--page .otto-file-preview__list {
+  padding: 8px;
+  background: color-mix(in srgb, var(--otto-sidebar-bg) 70%, var(--otto-surface));
+}
+
+.otto-right-panel--page .otto-file-preview__list-head {
+  padding: 10px 10px 12px;
+  font-size: 12px;
+}
+
+.otto-right-panel--page .otto-file-preview__list-head span,
+.otto-right-panel--page .otto-file-preview__source,
+.otto-right-panel--page .otto-file-preview__list-item-size {
+  font-size: 11px;
+}
+
+.otto-right-panel--page .otto-file-preview__list-items {
+  gap: 3px;
+  padding: 0;
+}
+
+.otto-right-panel--page .otto-file-preview__list-item {
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 8px;
+  padding: 10px 9px;
+  border-radius: 9px;
+}
+
+.otto-right-panel--page .otto-file-preview__list-item-name {
+  font-size: 12px;
+}
+
+.otto-right-panel--page .otto-file-preview__toolbar {
+  min-height: 46px;
+  padding: 8px 14px;
+}
+
+.otto-right-panel--page .otto-file-preview__filename {
+  font-size: 13px;
+}
+
+.otto-right-panel--page .otto-file-preview__body {
+  padding: 18px 22px;
+}
+
+.otto-right-panel--page .otto-file-preview__code,
+.otto-right-panel--page .otto-file-preview__markdown {
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+@media (max-width: 760px) {
+  .otto-right-panel--page .otto-file-preview__layout {
+    grid-template-columns: 150px minmax(0, 1fr);
+  }
+
+  .otto-right-panel--page .otto-file-preview__body {
+    padding: 14px;
+  }
+}
+
+/* CEO management: bring the admin surface back into the same calm blue-gray system. */
+.otto-account-page {
+  --identity-night: var(--otto-text);
+  --identity-lime: #a8d7ff;
+  padding: 34px clamp(24px, 4vw, 58px) 56px;
+  background: color-mix(in srgb, var(--otto-sidebar-bg) 44%, var(--otto-bg));
+}
+
+.otto-account-page__content {
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.otto-account-hero {
+  margin-bottom: 28px;
+  padding: 0 2px;
+  align-items: flex-start;
+}
+
+.otto-account-page__back {
+  margin-bottom: 22px;
+  color: var(--otto-text-tertiary);
+}
+
+.otto-account-page__eyebrow,
+.otto-account-invite > header > div > span,
+.otto-enterprise-config__hero > div > span {
+  color: var(--otto-accent);
+  font-family: var(--otto-font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .12em;
+}
+
+.otto-account-hero h1 {
+  margin: 9px 0 8px;
+  color: var(--otto-text);
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -.045em;
+}
+
+.otto-account-hero p {
+  max-width: 650px;
+  color: var(--otto-text-secondary);
+  font-size: 13px;
+}
+
+.otto-account-page__create {
+  min-height: 38px;
+  height: 38px;
+  border-radius: 10px;
+  color: #fff;
+  background: var(--otto-accent);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--otto-accent) 22%, transparent);
+}
+
+.otto-account-page__create:hover {
+  background: var(--otto-accent-hover);
+}
+
+.otto-account-invite {
+  margin-bottom: 18px;
+  border: 1px solid color-mix(in srgb, var(--otto-accent) 25%, var(--otto-border));
+  border-radius: 16px;
+  color: var(--otto-text);
+  background: color-mix(in srgb, var(--otto-accent-soft) 56%, var(--otto-surface));
+  box-shadow: var(--otto-shadow-xs);
+}
+
+.otto-account-invite > header {
+  padding: 20px 22px 17px;
+  border-bottom: 1px solid color-mix(in srgb, var(--otto-accent) 16%, var(--otto-border));
+}
+
+.otto-account-invite > header h2 {
+  margin: 8px 0 5px;
+  color: var(--otto-text);
+  font-size: 18px;
+  letter-spacing: -.025em;
+}
+
+.otto-account-invite > header p {
+  color: var(--otto-text-secondary);
+}
+
+.otto-account-invite > header button {
+  min-height: 36px;
+  border: 0;
+  border-radius: 9px;
+  color: #fff;
+  background: var(--otto-accent);
+}
+
+.otto-account-invite__department,
+.otto-account-invite__position-grid {
+  padding-left: 22px;
+  padding-right: 22px;
+}
+
+.otto-account-invite__department {
+  color: var(--otto-text-secondary);
+}
+
+.otto-account-invite__department input,
+.otto-account-invite__position-grid input,
+.otto-account-invite__position-grid select {
+  border-color: var(--otto-border);
+  color: var(--otto-text);
+  background: var(--otto-surface);
+}
+
+.otto-account-invite__body {
+  padding: 18px 22px 22px;
+}
+
+.otto-account-invite__code strong {
+  color: var(--otto-accent-hover);
+}
+
+.otto-account-invite__code small.is-active {
+  color: var(--otto-accent);
+}
+
+.otto-account-invite__link code {
+  border-color: var(--otto-border);
+  color: var(--otto-text-secondary);
+  background: var(--otto-surface);
+}
+
+.otto-account-invite__actions button {
+  border-color: var(--otto-border);
+  color: var(--otto-text-secondary);
+  background: var(--otto-surface);
+}
+
+.otto-account-invite__actions button:hover {
+  border-color: var(--otto-accent);
+  color: var(--otto-accent);
+}
+
+.otto-enterprise-config {
+  gap: 16px;
+  margin: 22px 0;
+}
+
+.otto-enterprise-config__hero,
+.otto-enterprise-config__card {
+  border-color: var(--otto-border);
+  border-radius: 14px;
+  background: var(--otto-surface);
+  box-shadow: var(--otto-shadow-xs);
+}
+
+.otto-enterprise-config__hero {
+  padding: 19px 21px;
+}
+
+.otto-enterprise-config__hero h2 {
+  font-size: 18px;
+  letter-spacing: -.025em;
+}
+
+.otto-enterprise-config__hero p,
+.otto-enterprise-config__card > p {
+  color: var(--otto-text-secondary);
+}
+
+.otto-enterprise-config__card {
+  gap: 14px;
+  padding: 18px;
+}
+
+.otto-enterprise-config__card h3 {
+  font-size: 15px;
+  letter-spacing: -.015em;
+}
+
+.otto-enterprise-config__switch {
+  border-color: var(--otto-border);
+  border-radius: 10px;
+  background: var(--otto-bg);
+}
+
+.otto-enterprise-config__department {
+  border-color: var(--otto-border);
+  border-radius: 12px;
+}
+
+.otto-enterprise-config__department-head {
+  padding: 14px 16px;
+  background: var(--otto-bg);
+}
+
+.otto-enterprise-config__positions {
+  padding: 14px 16px 16px 60px;
+}
+
+.otto-account-metrics {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin: 22px auto;
+}
+
+.otto-account-metrics article {
+  min-height: 104px;
+  padding: 16px;
+  border: 1px solid var(--otto-border);
+  border-radius: 13px;
+  background: var(--otto-surface);
+  box-shadow: var(--otto-shadow-xs);
+}
+
+.otto-account-metrics article strong {
+  color: var(--otto-text);
+  font-size: 25px;
+}
+
+.otto-account-metrics article small {
+  color: var(--otto-text-tertiary);
+}
+
+.otto-account-directory {
+  border-color: var(--otto-border);
+  border-radius: 16px;
+  background: var(--otto-surface);
+  box-shadow: var(--otto-shadow-xs);
+}
+
+.otto-account-directory > header {
+  padding: 20px 22px 16px;
+}
+
+.otto-account-directory > header h2 {
+  font-size: 18px;
+  letter-spacing: -.025em;
+}
+
+.otto-account-search {
+  border-color: var(--otto-border);
+  border-radius: 9px;
+  background: var(--otto-bg);
+}
+
+.otto-account-table {
+  border-top-color: var(--otto-border);
+}
+
+.otto-account-table__row {
+  border-bottom-color: var(--otto-border);
+}
+
+.otto-account-table__row:hover {
+  background: color-mix(in srgb, var(--otto-accent-soft) 32%, transparent);
+}
+
+@media (max-width: 820px) {
+  .otto-account-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .otto-account-hero {
+    flex-direction: column;
+  }
+}
+
+/* Auth pages: one coherent light-blue identity instead of a dark terminal card. */
+.otto-auth-shell {
+  --auth-ink: #172033;
+  --auth-muted: #72809a;
+  --auth-line: #dbe5f1;
+  --auth-night: #eef6ff;
+  --auth-blue: #317fd4;
+  --auth-blue-bright: #76b7f1;
+  --auth-electric: #6eaff0;
+  grid-template-columns: minmax(440px, 1fr) minmax(460px, .9fr);
+  background: #f7faff;
+}
+
+.otto-auth-visual {
+  padding: 34px clamp(34px, 5vw, 78px) 30px;
+  color: var(--auth-ink);
+  background:
+    radial-gradient(circle at 72% 29%, rgba(137, 196, 247, .44), transparent 28%),
+    linear-gradient(145deg, #f1f8ff 0%, #e5f1ff 55%, #d9ebff 100%);
+}
+
+.otto-auth-visual::before {
+  opacity: .42;
+  background-image:
+    linear-gradient(rgba(49, 127, 212, .09) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(49, 127, 212, .09) 1px, transparent 1px);
+}
+
+.otto-auth-visual::after {
+  border-color: rgba(49, 127, 212, .16);
+  box-shadow: inset 0 0 120px rgba(49, 127, 212, .08), 0 0 160px rgba(49, 127, 212, .08);
+}
+
+.otto-auth-visual__aurora {
+  background: radial-gradient(ellipse, rgba(93, 166, 232, .34), rgba(255, 255, 255, .34) 46%, transparent 72%);
+}
+
+.otto-auth-brand {
+  color: #1d4f86;
+}
+
+.otto-auth-brand small {
+  color: #7594b7;
+}
+
+.otto-auth-brand__mark {
+  border-color: rgba(49, 127, 212, .28);
+  background: rgba(255, 255, 255, .58);
+  box-shadow: 0 7px 20px rgba(49, 127, 212, .12);
+}
+
+.otto-auth-brand__mark path {
+  fill: #4e9bdf;
+}
+
+.otto-auth-brand__mark circle {
+  fill: #fff;
+}
+
+.otto-auth-mascot-stage::before {
+  border-color: rgba(49, 127, 212, .15);
+  box-shadow: 0 0 0 36px rgba(49, 127, 212, .035), 0 0 0 74px rgba(49, 127, 212, .025);
+}
+
+.otto-auth-mascot-stage__label {
+  border-color: rgba(49, 127, 212, .18);
+  color: #3d7fb9;
+  background: rgba(255, 255, 255, .64);
+}
+
+.otto-auth-mascot-stage__label::before {
+  background: #6eaff0;
+  box-shadow: 0 0 10px rgba(110, 175, 240, .65);
+}
+
+.otto-auth-kicker {
+  color: #4b8dca;
+}
+
+.otto-auth-visual__copy h1 > span:first-child {
+  color: #183354;
+}
+
+.otto-auth-visual__copy h1 .otto-auth-typewriter {
+  color: #317fd4;
+}
+
+.otto-auth-visual__copy h1 .otto-auth-typewriter__cursor {
+  background: #317fd4;
+  box-shadow: 0 0 14px rgba(49, 127, 212, .28);
+}
+
+.otto-auth-visual__copy p {
+  color: #5f7897;
+}
+
+.otto-auth-trust {
+  color: #6683a3;
+}
+
+.otto-auth-trust svg {
+  stroke: #4f99db;
+}
+
+.otto-auth-panel {
+  padding: 34px clamp(26px, 5vw, 74px);
+  background: #f7faff;
+  background-image: none;
+}
+
+.otto-auth-panel::before {
+  display: none;
+}
+
+.otto-auth-card,
+.otto-auth-card--register {
+  --auth-line: #d8e3ef;
+  width: min(100%, 480px);
+  gap: 14px;
+  padding: 30px 31px 26px;
+  border: 1px solid #dbe5f1;
+  border-radius: 18px;
+  color: var(--auth-ink);
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 18px 50px rgba(58, 104, 154, .13), 0 2px 7px rgba(58, 104, 154, .06);
+}
+
+.otto-auth-card__pixel-corner,
+.otto-auth-card__pixel-mark {
+  display: none;
+}
+
+.otto-auth-card__masthead {
+  min-height: 38px;
+  padding-bottom: 15px;
+  border-bottom-color: #e6edf5;
+}
+
+.otto-auth-card__masthead strong {
+  color: #244c78;
+}
+
+.otto-auth-card__masthead small {
+  color: #8195ad;
+}
+
+.otto-auth-card__masthead b {
+  color: #4c91ce;
+}
+
+.otto-auth-server {
+  padding: 9px 11px;
+  border-color: #d8e7f5;
+  border-radius: 9px;
+  background: #f3f8fd;
+}
+
+.otto-auth-server span {
+  color: #7892ae;
+}
+
+.otto-auth-server strong {
+  color: #416b96;
+}
+
+.otto-auth-card__topline {
+  border: 0;
+  border-radius: 999px;
+  color: #5684ae;
+  background: #edf6ff;
+}
+
+.otto-auth-status-dot {
+  background: #6eaff0;
+  box-shadow: 0 0 0 4px rgba(110, 175, 240, .16);
+}
+
+.otto-auth-card h2 {
+  color: #172033;
+}
+
+.otto-auth-card__intro {
+  color: #718096;
+}
+
+.otto-auth-field {
+  color: #51647c;
+}
+
+.otto-auth-field > input,
+.otto-auth-phone,
+.otto-auth-code {
+  min-height: 48px;
+  border-color: #d8e3ef;
+  border-radius: 10px;
+  background: #fbfdff;
+}
+
+.otto-auth-field > input {
+  color: #172033;
+}
+
+.otto-auth-field > input::placeholder,
+.otto-auth-phone input::placeholder,
+.otto-auth-code input::placeholder {
+  color: #9aabbd;
+}
+
+.otto-auth-phone b {
+  border-right-color: #d8e3ef;
+  color: #5d7691;
+  background: #f1f6fb;
+}
+
+.otto-auth-phone input,
+.otto-auth-code input {
+  color: #172033;
+}
+
+.otto-auth-phone:focus-within,
+.otto-auth-code:focus-within,
+.otto-auth-field > input:focus {
+  border-color: #6eaff0;
+  box-shadow: 0 0 0 3px rgba(110, 175, 240, .16);
+  background: #fff;
+}
+
+.otto-auth-code button {
+  min-height: 38px;
+  border-radius: 8px;
+  color: #22609a;
+  background: #e7f3ff;
+}
+
+.otto-auth-code button:hover:not(:disabled) {
+  color: #185486;
+  background: #d8ecff;
+}
+
+.otto-auth-login-methods {
+  padding: 3px;
+  border-color: #d8e3ef;
+  border-radius: 10px;
+  background: #f3f7fb;
+}
+
+.otto-auth-login-methods button {
+  color: #718096;
+  border-radius: 8px;
+}
+
+.otto-auth-login-methods button[aria-pressed="true"] {
+  color: #225b92;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(58, 104, 154, .12);
+}
+
+.otto-auth-organization {
+  border-color: #cfe5f8;
+  border-radius: 9px;
+  color: #3c78aa;
+  background: #eff8ff;
+}
+
+.otto-auth-submit {
+  min-height: 48px;
+  border-radius: 10px;
+  color: #fff;
+  background: #4f9bdf;
+  box-shadow: 0 5px 12px rgba(79, 155, 223, .22);
+}
+
+.otto-auth-submit:hover:not(:disabled) {
+  box-shadow: 0 7px 16px rgba(79, 155, 223, .28);
+}
+
+.otto-auth-submit svg {
+  stroke: #fff;
+}
+
+.otto-auth-mode-switch {
+  color: #8291a4;
+}
+
+.otto-auth-mode-switch button,
+.otto-auth-consent button {
+  color: #3f86c6;
+  border-bottom-color: rgba(63, 134, 198, .35);
+}
+
+.otto-auth-legal {
+  color: #9aa8b8;
+}
+
+.otto-auth-legal span {
+  color: #6eaff0;
+}
+
+.otto-auth-consent {
+  color: #718096;
+}
+
+.otto-auth-consent input {
+  accent-color: #4f9bdf;
+}
+
+@media (max-width: 900px) {
+  .otto-auth-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .otto-auth-visual {
+    min-height: 390px;
+  }
+
+  .otto-auth-mascot-stage {
+    min-height: 190px;
+  }
+
+  .otto-auth-panel {
+    min-height: 600px;
+    order: 0;
+  }
 }

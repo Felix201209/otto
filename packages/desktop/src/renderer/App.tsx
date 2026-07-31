@@ -49,6 +49,7 @@ import { useSettingsData } from './state/useSettingsData.js';
 import { useSoftwareUpdate } from './state/useSoftwareUpdate.js';
 import { SettingsHubPage, type TabId as HubTabId } from './components/SettingsHubPage.js';
 import { WhatsNewDialog } from './components/WhatsNewDialog.js';
+import { FirstRunGuide } from './components/FirstRunGuide.js';
 import { ProactiveToast } from './components/ProactiveToast.js';
 import { useProductWorkspace } from './state/useProductWorkspace.js';
 import { DayAgenda } from './components/DayAgenda.js';
@@ -106,7 +107,7 @@ const ENTERPRISE_UNREAD_POLL_INTERVAL_MS = 5_000;
 const ENTERPRISE_PRESENCE_HEARTBEAT_MS = 20_000;
 
 /** 主内容区当前视图：对话 / 智能体 / 设置 / 设置与诊断中心——均为整页，不再是弹窗浮层。 */
-type MainView = 'chat' | 'agents' | 'settings' | 'hub' | 'agenda' | 'skillzone' | 'accounts';
+type MainView = 'chat' | 'agents' | 'workspace' | 'settings' | 'hub' | 'agenda' | 'skillzone' | 'accounts';
 
 type PendingToolConsult = {
   member: EnterpriseOrganizationView['members'][number];
@@ -470,13 +471,11 @@ function OttoWorkspaceApp({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // —— 「查看全部对话」检索面板（仍是浮层） ——
+  // —— 统一消息中心：会话历史、未读状态与企业通知 ——
   const [allConvOpen, setAllConvOpen] = useState(false);
 
   // —— 主内容区视图：对话 / 智能体 / 设置，整页切换（右侧栏常驻）——
   const [mainView, setMainView] = useState<MainView>('chat');
-  // 右侧智能体面板切换（默认显示）。
-  const [showRightPanel, setShowRightPanel] = useState(true);
   // 右栏企业入口只负责展开左侧真实组织树，避免另开一张仅含身份的伪组织页。
   const [organizationOpenRequest, setOrganizationOpenRequest] = useState(0);
   const [organizationRefreshRevision, setOrganizationRefreshRevision] = useState(0);
@@ -484,7 +483,7 @@ function OttoWorkspaceApp({
     peerAccountId: string;
     requestId: number;
   }>();
-  useEffect(() => window.otto.onNotificationSessionOpen((sessionId) => {
+  const openNotificationSession = useCallback((sessionId: string): void => {
     const prefix = 'enterprise:message:';
     if (!sessionId.startsWith(prefix)) return;
     const peerAccountId = sessionId.slice(prefix.length);
@@ -495,7 +494,11 @@ function OttoWorkspaceApp({
       peerAccountId,
       requestId: (current?.requestId ?? 0) + 1,
     }));
-  }), []);
+  }, []);
+  useEffect(
+    () => window.otto.onNotificationSessionOpen(openNotificationSession),
+    [openNotificationSession],
+  );
   // 打开「设置与诊断中心」时默认停在哪个 tab（斜杠命令 /doctor /memory /skills 直达用）。
   const [hubInitialTab, setHubInitialTab] = useState<HubTabId>('prefs');
   const openHub = (tab: HubTabId = 'prefs'): void => {
@@ -700,7 +703,10 @@ function OttoWorkspaceApp({
           ]);
           authorizedContext = buildEnterpriseKnowledgePromptContext(knowledge);
         } catch {
-          // Knowledge retrieval must improve the answer without blocking the conversation.
+          // Retrieval is optional, but the degraded path must be visible: otherwise
+          // users cannot tell whether a reply omitted enterprise knowledge because
+          // none matched or because the lookup failed.
+          actions.postSystemNote('企业知识检索暂不可用；本轮将继续回答，但未附加企业知识上下文。');
         }
       }
       actions.sendMessage(text, source, attachments, undefined, authorizedContext);
@@ -910,69 +916,19 @@ function OttoWorkspaceApp({
           onLaunch={handleLaunchProfile}
           onBack={() => setMainView('chat')}
         />
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'row', flex: 1, minWidth: 0, height: '100%' }}>
-          {mainView === 'agenda' ? (
-            <DayAgenda
-              date={selectedDate}
-              schedules={selectedSchedules}
-              onCreate={product.actions.createSchedule}
-              onDelete={product.actions.deleteSchedule}
-              onBack={() => setMainView('chat')}
-            />
-          ) : mainView === 'skillzone' && edition === 'enterprise' ? (
-            <SkillZonePage
-              accountId={account.id}
-              isAdmin={account.isAdmin}
-              onBack={() => setMainView('chat')}
-            />
-          ) : (
-            <ChatView
-              session={activeSession}
-              messages={activeMessages}
-              models={state.models}
-              currentModel={state.currentModel}
-              userInitial={account.name.slice(0, 1).toUpperCase() || 'O'}
-              identityLabel={`${account.name} · ${centralIdentity.identityLabel}`}
-              modelManagementLabel="模型与个人 API 设置"
-              busy={busy}
-              onSend={handleSend}
-              onCancel={actions.cancel}
-              onSetModel={actions.setModel}
-              onRegenerate={handleRegenerate}
-              onRespondQuestion={handleToolConfirmation}
-              onOpenSetup={openModelSettings}
-              onToggleAgents={() => setShowRightPanel(v => !v)}
-              onNewChat={handleNewChat}
-              onClearContext={handleClearContext}
-              onExport={
-                activeSession
-                  ? () => settingsData.actions.exportConversation(activeSession.sessionId)
-                  : undefined
-              }
-              onOpenDoctor={() => openHub('doctor')}
-              onOpenFeishu={() => openHub('feishu')}
-              onOpenMemory={() => openHub('memory')}
-              onOpenSkills={() => openHub('skills')}
-              onOpenPrefs={() => openHub('prefs')}
-              onOpenSessions={() => setAllConvOpen(true)}
-              onShowHelp={handleShowHelp}
-              onLaunchAgentProfile={(profileId, title) => {
-                setMainView('chat');
-                actions.launchAgentProfile(title, profileId);
-              }}
-              commands={slashCommands}
-              onRunServerCommand={(name, args) => {
-                if (!activeSession) return;
-                transport.send({
-                  type: 'run_slash_command',
-                  payload: { sessionId: activeSession.sessionId, name, args },
-                });
-              }}
-            />
-          )}
-          {showRightPanel && (
+      ) : mainView === 'workspace' ? (
+        <section className="otto-workspace-page" aria-label="工作台">
+          <header className="otto-workspace-page__head">
+            <div>
+              <div className="otto-workspace-page__title">工作台</div>
+              <div className="otto-workspace-page__subtitle">智能体、工具、文档、记忆与工作日志</div>
+            </div>
+            <button type="button" className="otto-workspace-page__back" onClick={() => setMainView('chat')}>
+              返回对话
+            </button>
+          </header>
           <RightPanel
+            presentation="page"
             busy={busy}
             mode={edition}
             enterpriseRole={centralIdentity.role}
@@ -1001,6 +957,67 @@ function OttoWorkspaceApp({
             onConfirmAutoSkill={product.actions.confirmPendingAutoSkill}
             onRejectAutoSkill={product.actions.rejectPendingAutoSkill}
           />
+        </section>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'row', flex: 1, minWidth: 0, height: '100%' }}>
+          {mainView === 'agenda' ? (
+            <DayAgenda
+              date={selectedDate}
+              schedules={selectedSchedules}
+              onCreate={product.actions.createSchedule}
+              onDelete={product.actions.deleteSchedule}
+              onBack={() => setMainView('chat')}
+            />
+          ) : mainView === 'skillzone' && edition === 'enterprise' ? (
+            <SkillZonePage
+              accountId={account.id}
+              isAdmin={account.isAdmin}
+              onBack={() => setMainView('chat')}
+            />
+          ) : (
+            <ChatView
+              session={activeSession}
+              messages={activeMessages}
+              models={state.models}
+              currentModel={state.currentModel}
+              userInitial={account.name.slice(0, 1).toUpperCase() || 'O'}
+              identityLabel={centralIdentity.identityLabel}
+              modelManagementLabel="模型与个人 API 设置"
+              busy={busy}
+              onSend={handleSend}
+              onCancel={actions.cancel}
+              onSetModel={actions.setModel}
+              onRegenerate={handleRegenerate}
+              onRespondQuestion={handleToolConfirmation}
+              onOpenSetup={openModelSettings}
+              onToggleAgents={() => setMainView('workspace')}
+              onNewChat={handleNewChat}
+              onClearContext={handleClearContext}
+              onExport={
+                activeSession
+                  ? () => settingsData.actions.exportConversation(activeSession.sessionId)
+                  : undefined
+              }
+              onOpenDoctor={() => openHub('doctor')}
+              onOpenFeishu={() => openHub('feishu')}
+              onOpenMemory={() => openHub('memory')}
+              onOpenSkills={() => openHub('skills')}
+              onOpenPrefs={() => openHub('prefs')}
+              onOpenSessions={() => setAllConvOpen(true)}
+              onShowHelp={handleShowHelp}
+              onLaunchAgentProfile={(profileId, title) => {
+                setMainView('chat');
+                actions.launchAgentProfile(title, profileId);
+              }}
+              commands={slashCommands}
+              onRunServerCommand={(name, args) => {
+                if (!activeSession) return;
+                transport.send({
+                  type: 'run_slash_command',
+                  payload: { sessionId: activeSession.sessionId, name, args },
+                });
+              }}
+            />
           )}
         </div>
       )}
@@ -1020,10 +1037,12 @@ function OttoWorkspaceApp({
           sessions={selectSortedSessions(state)}
           activeSessionId={state.activeSessionId}
           unreadSessions={state.unreadSessions}
+          enterpriseUnreadCounts={enterpriseUnreadCounts}
           onSelect={(id) => {
             setMainView('chat');
             actions.selectSession(id);
           }}
+          onOpenNotification={openNotificationSession}
           onClose={() => setAllConvOpen(false)}
           onDelete={actions.deleteSession}
         />
@@ -1095,6 +1114,7 @@ function OttoWorkspaceApp({
 
       {/* 升级后首次启动：弹出本版更新说明（自包含，读版本比对已读记录）。 */}
       <WhatsNewDialog />
+      <FirstRunGuide />
       {/* 主动服务提醒：右下角 toast（日程/洞察/日报等） */}
       <ProactiveToast />
     </div>

@@ -213,6 +213,7 @@ const EXPERT_EMBEDDED: Readonly<Record<string, string[]>> = {
   doc: ['doc-writer'],
   sheet: ['spreadsheet-pro'],
   pdf: ['pdf-toolkit'],
+  dataviz: ['data-viz-pro'],
   research: ['market-research'],
   copy: ['copywriting'],
 };

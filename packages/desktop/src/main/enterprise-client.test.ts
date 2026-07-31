@@ -115,6 +115,7 @@ const API_V2_HEALTH = {
     'park_service_push',
     'account_presence_v1',
     'modular_update_push_v1',
+    'signed_update_policy_v1',
   ],
 };
 
@@ -299,6 +300,34 @@ describe('EnterpriseClient', () => {
       .toBe('https://enterprise.otto.test/enterprise/modules/updates/client');
     expect((fetchMock.mock.calls[2]?.[1] as RequestInit).headers)
       .toMatchObject({ authorization: 'Bearer session-token' });
+  });
+
+  it('uses the member session to resolve a distribution-bound update policy', async () => {
+    const result = {
+      status: 'not_configured' as const,
+      reason: 'online_license_required' as const,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT, token: 'session-token', expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, result));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
+
+    await expect(client.getDeploymentUpdatePolicy({
+      distributionId: 'otto-green',
+      currentVersion: '1.9.10',
+    })).resolves.toEqual(result);
+    expect(fetchMock.mock.calls[2]?.[0])
+      .toBe('https://enterprise.otto.test/enterprise/deployment/update-policy');
+    const request = fetchMock.mock.calls[2]?.[1] as RequestInit;
+    expect(request.headers).toMatchObject({ authorization: 'Bearer session-token' });
+    expect(JSON.parse(String(request.body))).toEqual({
+      distributionId: 'otto-green',
+      currentVersion: '1.9.10',
+    });
   });
 
   it('加入企业已提交但响应断线时，用原 Bearer 会话对账并提交企业身份', async () => {

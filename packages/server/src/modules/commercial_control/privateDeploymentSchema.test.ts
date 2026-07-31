@@ -132,10 +132,11 @@ describe('private deployment schema contributor', () => {
             `SELECT COUNT(*) AS count FROM sqlite_master
              WHERE type = 'table'
                AND name IN ('deployment_settings', 'deployment_license',
-                            'deployment_license_leases', 'telemetry_events')`,
+                            'deployment_license_leases', 'telemetry_events',
+                            'billing_usage_outbox')`,
           )
           .get(),
-      ).toEqual({ count: 4 });
+      ).toEqual({ count: 5 });
     } finally {
       database.close();
     }
