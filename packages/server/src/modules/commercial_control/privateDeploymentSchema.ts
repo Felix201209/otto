@@ -17,6 +17,7 @@ export const PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor =
 
       CREATE TABLE IF NOT EXISTS deployment_license (
         id TEXT PRIMARY KEY,
+        revision INTEGER NOT NULL DEFAULT 1,
         deployment_id TEXT NOT NULL,
         organization_id TEXT,
         machine_fingerprint TEXT,
@@ -24,6 +25,9 @@ export const PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor =
         plan TEXT NOT NULL,
         expires_at_ms INTEGER NOT NULL,
         seat_limit INTEGER NOT NULL,
+        grace_period_ms INTEGER NOT NULL DEFAULT 0,
+        seat_enforcement TEXT NOT NULL DEFAULT 'monitor'
+          CHECK(seat_enforcement IN ('monitor', 'enforce')),
         modules_json TEXT NOT NULL,
         offline INTEGER NOT NULL DEFAULT 0 CHECK(offline IN (0, 1)),
         telemetry_allowed INTEGER NOT NULL DEFAULT 1 CHECK(telemetry_allowed IN (0, 1)),
@@ -114,6 +118,12 @@ export const PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor =
         }
       };
       addLicenseColumn('machine_fingerprint', 'TEXT');
+      addLicenseColumn('revision', 'INTEGER NOT NULL DEFAULT 1');
+      addLicenseColumn('grace_period_ms', 'INTEGER NOT NULL DEFAULT 0');
+      addLicenseColumn(
+        'seat_enforcement',
+        "TEXT NOT NULL DEFAULT 'monitor'",
+      );
       addLicenseColumn(
         'signature_algorithm',
         "TEXT NOT NULL DEFAULT 'ed25519'",

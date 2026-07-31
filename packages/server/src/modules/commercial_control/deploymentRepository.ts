@@ -212,6 +212,7 @@ function activeSeatCount(
 
 interface DeploymentLicenseRow {
   id: string;
+  revision: number;
   deployment_id: string;
   organization_id: string | null;
   machine_fingerprint: string | null;
@@ -219,6 +220,8 @@ interface DeploymentLicenseRow {
   plan: string;
   expires_at_ms: number;
   seat_limit: number;
+  grace_period_ms: number;
+  seat_enforcement: 'monitor' | 'enforce';
   modules_json: string;
   offline: number;
   telemetry_allowed: number;
@@ -270,6 +273,7 @@ function toDeploymentLicenseView(
     const activeSeats = activeSeatCount(store, null);
     return {
       id: 'unlicensed',
+      revision: 0,
       deploymentId: getDeploymentId(store),
       organizationId: null,
       machineFingerprint: null,
@@ -277,6 +281,8 @@ function toDeploymentLicenseView(
       plan: enforce ? 'locked' : 'development-open',
       expiresAt: dateFromMs(now + 365 * 24 * 60 * 60 * 1000),
       seatLimit: enforce ? 0 : Number.MAX_SAFE_INTEGER,
+      gracePeriodMs: 0,
+      seatEnforcement: 'monitor',
       activeSeatCount: activeSeats,
       seatLimitExceeded: false,
       modules,
@@ -291,6 +297,10 @@ function toDeploymentLicenseView(
         expiresAt: null,
         lastRefreshAt: null,
         lastError: null,
+        activeSeatCount: null,
+        seatStatus: null,
+        graceReasons: [],
+        graceExpiresAt: null,
       },
       status: enforce ? 'missing' : 'active',
       enforce,
@@ -301,7 +311,8 @@ function toDeploymentLicenseView(
   let status: DeploymentLicenseStatus = 'active';
   let signingKeyId = row.signing_key_id;
   if (row.revoked_at_ms != null) status = 'revoked';
-  else if (now >= row.expires_at_ms) status = 'expired';
+  else if (now >= row.expires_at_ms + row.grace_period_ms) status = 'expired';
+  else if (now >= row.expires_at_ms) status = 'grace';
   else if (row.expires_at_ms - now <= 14 * 24 * 60 * 60 * 1000)
     status = 'expiring';
   try {
@@ -333,10 +344,14 @@ function toDeploymentLicenseView(
   const leaseRow = row.offline === 1 ? null : getLicenseLeaseRow(store, row.id);
   let leaseStatus: DeploymentLicenseView['lease']['status'] =
     row.offline === 1 ? 'not_required' : 'missing';
+  let leaseActiveSeatCount: number | null = null;
+  let leaseSeatStatus: DeploymentLicenseView['lease']['seatStatus'] = null;
+  let leaseGraceReasons: DeploymentLicenseView['lease']['graceReasons'] = [];
+  let leaseGraceExpiresAt: string | null = null;
   if (leaseRow) {
     let leaseValid = false;
     try {
-      const leasePayload = JSON.parse(leaseRow.raw_json);
+      const leasePayload = safeJsonObject(JSON.parse(leaseRow.raw_json));
       leaseValid =
         verifyDeploymentLicensePayload(
           store,
@@ -348,6 +363,32 @@ function toDeploymentLicenseView(
         leaseRow.license_id === row.id &&
         leaseRow.deployment_id === row.deployment_id &&
         leaseRow.machine_fingerprint === row.machine_fingerprint;
+      if (leaseValid) {
+        const reportedSeats = Number(leasePayload.activeSeatCount);
+        leaseActiveSeatCount = Number.isInteger(reportedSeats) && reportedSeats >= 0
+          ? reportedSeats
+          : null;
+        const reportedStatus = String(leasePayload.seatStatus || '');
+        leaseSeatStatus = [
+          'unreported',
+          'within_limit',
+          'over_limit_monitor',
+          'overage_grace',
+          'blocked',
+        ].includes(reportedStatus)
+          ? reportedStatus as NonNullable<DeploymentLicenseView['lease']['seatStatus']>
+          : null;
+        leaseGraceReasons = Array.isArray(leasePayload.graceReasons)
+          ? leasePayload.graceReasons.filter(
+              (reason): reason is 'expiration' | 'seat_overage' =>
+                reason === 'expiration' || reason === 'seat_overage',
+            )
+          : [];
+        const graceExpiresAtMs = Number(leasePayload.graceExpiresAtMs);
+        leaseGraceExpiresAt = Number.isFinite(graceExpiresAtMs) && graceExpiresAtMs > 0
+          ? dateFromMs(graceExpiresAtMs)
+          : null;
+      }
     } catch {
       leaseValid = false;
     }
@@ -356,7 +397,7 @@ function toDeploymentLicenseView(
     else if (now >= leaseRow.expires_at_ms) leaseStatus = 'expired';
     else leaseStatus = 'active';
   }
-  if (status === 'active' || status === 'expiring') {
+  if (status === 'active' || status === 'expiring' || status === 'grace') {
     if (leaseStatus === 'missing') status = 'lease_missing';
     if (leaseStatus === 'expired') status = 'lease_expired';
     if (leaseStatus === 'revoked') status = 'revoked';
@@ -364,6 +405,7 @@ function toDeploymentLicenseView(
   const seats = activeSeatCount(store, row.organization_id);
   return {
     id: row.id,
+    revision: row.revision,
     deploymentId: row.deployment_id,
     organizationId: row.organization_id,
     machineFingerprint: row.machine_fingerprint,
@@ -371,6 +413,8 @@ function toDeploymentLicenseView(
     plan: row.plan,
     expiresAt: dateFromMs(row.expires_at_ms),
     seatLimit: row.seat_limit,
+    gracePeriodMs: row.grace_period_ms,
+    seatEnforcement: row.seat_enforcement,
     activeSeatCount: seats,
     seatLimitExceeded: row.seat_limit > 0 && seats > row.seat_limit,
     modules,
@@ -390,6 +434,10 @@ function toDeploymentLicenseView(
         leaseRow?.last_error ||
         store.readSetting('license_lease_last_error') ||
         null,
+      activeSeatCount: leaseActiveSeatCount,
+      seatStatus: leaseSeatStatus,
+      graceReasons: leaseGraceReasons,
+      graceExpiresAt: leaseGraceExpiresAt,
     },
     status,
     enforce,
@@ -461,6 +509,10 @@ export function importDeploymentLicense(
       (Number.isFinite(parsedIssuedAtMs) ? parsedIssuedAtMs : Date.now()),
   );
   const seatLimit = Math.max(0, Math.floor(Number(payload.seatLimit ?? 0)));
+  const revision = Math.max(1, Math.floor(Number(payload.revision ?? 1)));
+  const gracePeriodMs = Math.max(0, Math.floor(Number(payload.gracePeriodMs ?? 0)));
+  const seatEnforcement = payload.seatEnforcement === 'enforce' ? 'enforce' : 'monitor';
+  const offline = payload.offline !== false;
   if (!Number.isFinite(expiresAtMs) || expiresAtMs <= 0)
     throw new Error('license expiresAt invalid');
   if (!Number.isFinite(issuedAtMs) || issuedAtMs <= 0)
@@ -470,9 +522,13 @@ export function importDeploymentLicense(
   if (expiresAtMs <= issuedAtMs)
     throw new Error('license expiresAt must be after issuedAt');
   if (seatLimit <= 0) throw new Error('license seatLimit must be positive');
+  if (!Number.isFinite(revision)) throw new Error('license revision invalid');
+  if (!Number.isFinite(gracePeriodMs) || gracePeriodMs > 30 * 24 * 60 * 60 * 1000)
+    throw new Error('license gracePeriodMs invalid');
+  if (offline && seatEnforcement === 'enforce')
+    throw new Error('offline license cannot enforce real-time seat usage');
   if (modules.length === 0) throw new Error('license modules required');
   const id = String(payload.id || `lic_${randomUUID().replace(/-/g, '')}`);
-  const offline = payload.offline !== false;
   const telemetryAllowed = payload.telemetryAllowed !== false;
   if (
     telemetryAllowed &&
@@ -504,12 +560,14 @@ export function importDeploymentLicense(
   store.db()
     .prepare(
       `INSERT INTO deployment_license
-       (id, deployment_id, organization_id, machine_fingerprint, customer_name, plan,
-        expires_at_ms, seat_limit, modules_json, offline, telemetry_allowed, issued_at_ms,
+       (id, revision, deployment_id, organization_id, machine_fingerprint, customer_name, plan,
+        expires_at_ms, seat_limit, grace_period_ms, seat_enforcement, modules_json,
+        offline, telemetry_allowed, issued_at_ms,
         revoked_at_ms, signature, signature_algorithm, signing_key_id, lease_endpoint,
         raw_json, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ed25519', ?, ?, ?, datetime('now'))
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ed25519', ?, ?, ?, datetime('now'))
      ON CONFLICT(id) DO UPDATE SET
+       revision = excluded.revision,
        deployment_id = excluded.deployment_id,
        organization_id = excluded.organization_id,
        machine_fingerprint = excluded.machine_fingerprint,
@@ -517,6 +575,8 @@ export function importDeploymentLicense(
        plan = excluded.plan,
        expires_at_ms = excluded.expires_at_ms,
        seat_limit = excluded.seat_limit,
+       grace_period_ms = excluded.grace_period_ms,
+       seat_enforcement = excluded.seat_enforcement,
        modules_json = excluded.modules_json,
        offline = excluded.offline,
        telemetry_allowed = excluded.telemetry_allowed,
@@ -531,6 +591,7 @@ export function importDeploymentLicense(
     )
     .run(
       id,
+      revision,
       deploymentId,
       organizationId,
       machineFingerprint,
@@ -538,6 +599,8 @@ export function importDeploymentLicense(
       String(payload.plan || 'enterprise'),
       expiresAtMs,
       seatLimit,
+      gracePeriodMs,
+      seatEnforcement,
       JSON.stringify(modules),
       offline ? 1 : 0,
       telemetryAllowed ? 1 : 0,
@@ -673,11 +736,15 @@ export async function refreshDeploymentLicenseLease(
         organizationId: license.organizationId,
         machineFingerprint: getMachineFingerprint(),
         nonce: randomUUID(),
+        activeSeatCount: activeSeatCount(store, license.organizationId),
       }),
       signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok) throw new Error(`license endpoint returned ${response.status}`);
-    const envelope = await response.json();
+    const envelope = safeJsonObject(await response.json());
+    if (envelope.licenseEnvelope) {
+      importDeploymentLicense(store, envelope.licenseEnvelope);
+    }
     importDeploymentLicenseLease(store, envelope);
     store.writeSetting('license_lease_last_error', '');
     return { refreshed: true, skippedReason: null, error: null };
@@ -1322,12 +1389,8 @@ export function isLicenseUsableForOrganizationFeature(
   feature: OrganizationFeatureKey,
 ): boolean {
   const license = getDeploymentLicense(store);
-  if (!license.enforce && license.status === 'active') return true;
-  if (
-    !['active', 'expiring'].includes(license.status) ||
-    license.seatLimitExceeded
-  )
-    return false;
+  if (!license.enforce && ['active', 'expiring', 'grace'].includes(license.status)) return true;
+  if (!['active', 'expiring', 'grace'].includes(license.status)) return false;
   for (const moduleName of license.modules) {
     if (LICENSE_MODULE_FEATURES[moduleName]?.includes(feature)) return true;
   }
@@ -1338,7 +1401,6 @@ export function isLicenseRestricted(store: DeploymentRepositoryStore): boolean {
   const license = getDeploymentLicense(store);
   return (
     license.enforce &&
-    (!['active', 'expiring'].includes(license.status) ||
-      license.seatLimitExceeded)
+    !['active', 'expiring', 'grace'].includes(license.status)
   );
 }

@@ -183,6 +183,98 @@ describe('private deployment license repository', () => {
     }
   });
 
+  it('reports active seats and installs renewed License terms during lease refresh', async () => {
+    const { database, control, privateKey } = setup();
+    try {
+      database.exec(`
+        INSERT INTO accounts (id, organization_id) VALUES
+          ('account-1', 'org-licensed'),
+          ('account-2', 'org-licensed');
+      `);
+      const now = Date.now();
+      const licensePayload = {
+        id: 'lic-lifecycle',
+        revision: 1,
+        deploymentId: control.getDeploymentId(),
+        organizationId: 'org-licensed',
+        machineFingerprint: control.getMachineFingerprint(),
+        customerName: 'Lifecycle customer',
+        plan: 'enterprise',
+        expiresAtMs: now + 30 * 24 * 60 * 60 * 1000,
+        seatLimit: 20,
+        gracePeriodMs: 7 * 24 * 60 * 60 * 1000,
+        seatEnforcement: 'monitor',
+        modules: ['enterprise_tree'],
+        offline: false,
+        leaseEndpoint: 'https://license.otto.example/v1/licenses/lic-lifecycle/lease',
+        leaseToken: 'test-license-lease-token-at-least-32-characters',
+        telemetryAllowed: true,
+        telemetryToken: 'test-telemetry-token-at-least-32-characters',
+        issuedAtMs: now,
+      };
+      control.importDeploymentLicense({
+        license: licensePayload,
+        signature: signEd25519Envelope(licensePayload, privateKey),
+      });
+      const renewedPayload = {
+        ...licensePayload,
+        revision: 2,
+        expiresAtMs: now + 365 * 24 * 60 * 60 * 1000,
+        seatLimit: 1,
+        seatEnforcement: 'enforce',
+      };
+      const leasePayload = {
+        id: 'lease-lifecycle',
+        licenseId: licensePayload.id,
+        deploymentId: licensePayload.deploymentId,
+        machineFingerprint: licensePayload.machineFingerprint,
+        licenseRevision: 2,
+        issuedAtMs: now,
+        expiresAtMs: now + 10 * 60 * 1000,
+        seatLimit: 1,
+        activeSeatCount: 2,
+        seatStatus: 'overage_grace',
+        graceReasons: ['seat_overage'],
+        graceExpiresAtMs: now + 7 * 24 * 60 * 60 * 1000,
+      };
+      let requestBody: Record<string, unknown> = {};
+      const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        requestBody = JSON.parse(String(init?.body));
+        return Response.json({
+          lease: leasePayload,
+          signature: signEd25519Envelope(leasePayload, privateKey),
+          licenseEnvelope: {
+            license: renewedPayload,
+            signature: signEd25519Envelope(renewedPayload, privateKey),
+          },
+        });
+      }) as unknown as typeof fetch;
+
+      await expect(control.refreshDeploymentLicenseLease(fetchImpl)).resolves.toMatchObject({
+        refreshed: true,
+      });
+      expect(requestBody).toMatchObject({ activeSeatCount: 2 });
+      expect(control.getDeploymentLicense()).toMatchObject({
+        revision: 2,
+        seatLimit: 1,
+        gracePeriodMs: 7 * 24 * 60 * 60 * 1000,
+        seatEnforcement: 'enforce',
+        activeSeatCount: 2,
+        seatLimitExceeded: true,
+        status: 'active',
+        lease: {
+          status: 'active',
+          activeSeatCount: 2,
+          seatStatus: 'overage_grace',
+          graceReasons: ['seat_overage'],
+        },
+      });
+      expect(control.isLicenseUsableForOrganizationFeature('enterprise_tree')).toBe(true);
+    } finally {
+      database.close();
+    }
+  });
+
   it('uploads queued operational telemetry and the collector rejects content fields', async () => {
     const { database, control, privateKey } = setup();
     try {
