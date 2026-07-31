@@ -616,6 +616,11 @@ describe('RightPanel fixed Agent catalog', () => {
         content: '客户部署必须先完成企业邀请码校验。',
         contributor: 'Felix',
         confidence: 0.86,
+        sourceType: 'auto_capture',
+        evidenceCount: 4,
+        distinctSessionCount: 3,
+        distinctContributorCount: 2,
+        lastObservedAt: '2026-07-20T04:00:00.000Z',
         createdAt: '2026-07-20T04:00:00.000Z',
       },
     ]);
@@ -635,6 +640,54 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(screen.getByText('solution')).toBeTruthy();
     expect(screen.getByText('86%')).toBeTruthy();
     expect(screen.getByText('Felix')).toBeTruthy();
+    expect(screen.getByText('4 条证据')).toBeTruthy();
+    expect(screen.getByText('3 个会话')).toBeTruthy();
+    expect(screen.getByText('2 名贡献者')).toBeTruthy();
+  });
+
+  it('separates approved enterprise knowledge from its revision timeline', async () => {
+    const bridge = installBridge([], true);
+    bridge.enterpriseKnowledgeList.mockResolvedValue([{
+      id: 'timeline-1',
+      organizationId: 'org-1',
+      sourceId: 'manual-timeline',
+      title: '客户交付规则',
+      department: null,
+      category: '制度',
+      content: '当前规则',
+      contributor: '管理员',
+      confidence: 0.95,
+      status: 'active',
+      version: 2,
+      createdAt: '2026-07-19T04:00:00.000Z',
+      updatedAt: '2026-07-20T04:00:00.000Z',
+    }]);
+    bridge.enterpriseKnowledgeRevisions.mockResolvedValue([{
+      id: 'timeline-revision-1',
+      knowledgeId: 'timeline-1',
+      version: 1,
+      title: '客户交付规则',
+      category: '制度',
+      content: '第一版规则',
+      status: 'active',
+      changedBy: '管理员',
+      changeNote: '首次形成',
+      createdAt: '2026-07-19T04:00:00.000Z',
+    }]);
+
+    render(
+      <RightPanel
+        busy={false}
+        mode="enterprise"
+        enterpriseRole="company_admin"
+        workspace={enterpriseWorkspace()}
+      />,
+    );
+    fireEvent.click(await screen.findByRole('tab', { name: '企业记忆' }));
+    fireEvent.click(await screen.findByRole('tab', { name: '记忆沿革' }));
+
+    expect(await screen.findByText('第一版规则')).toBeTruthy();
+    expect(screen.getByText(/管理员 · 首次形成/)).toBeTruthy();
   });
 
   it('lets enterprise admins publish a curated knowledge entry from the panel', async () => {

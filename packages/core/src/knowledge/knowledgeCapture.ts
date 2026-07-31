@@ -90,14 +90,14 @@ const SECRET_PATTERNS: RegExp[] = [
   // OpenAI / 类 OpenAI API key
   /sk-[a-zA-Z0-9]{20,}/gi,
   // Bearer token
-  /Bearer\s+[a-zA-Z0-9\-_\.]{20,}/gi,
+  /Bearer\s+[a-zA-Z0-9_.-]{20,}/gi,
   // api_key / apikey / api-key = ...
   /api[_-]?key\s*[:=]\s*\S+/gi,
   // access_token / secret_key / password = ...
   /(?:access|secret|refresh)_?(?:token|key)\s*[:=]\s*\S+/gi,
   /password\s*[:=]\s*\S+/gi,
   // 通用 token= 模式
-  /token\s*[:=]\s*[a-zA-Z0-9\-_\.]{16,}/gi,
+  /token\s*[:=]\s*[a-zA-Z0-9_.-]{16,}/gi,
   // Authorization: Bearer ...
   /Authorization\s*[:=]\s*Bearer\s+\S+/gi,
   // Cookie 大段（>60 字符的 key=value; 模式）
@@ -260,7 +260,7 @@ export class KnowledgeCapture {
     );
 
     // 收集所有 assistant 回复（整段）
-    const assistantBlocks: { text: string; index: number }[] = [];
+    const assistantBlocks: Array<{ text: string; index: number }> = [];
     for (let i = 0; i < messages.length; i++) {
       const m = messages[i];
       if (m.role === 'assistant' && m.text.trim().length > 20) {
@@ -469,7 +469,7 @@ export class KnowledgeCapture {
     const lower = text.toLowerCase();
 
     // 技术栈标签
-    const techPatterns: [RegExp, string][] = [
+    const techPatterns: Array<[RegExp, string]> = [
       [/react/i, 'react'],
       [/vue/i, 'vue'],
       [/angular/i, 'angular'],
@@ -505,7 +505,7 @@ export class KnowledgeCapture {
     }
 
     // 通用概念标签
-    const conceptPatterns: [RegExp, string][] = [
+    const conceptPatterns: Array<[RegExp, string]> = [
       [/auth|登录|鉴权|权限/i, 'auth'],
       [/deploy|部署|上线/i, 'deploy'],
       [/debug|调试|排查|报错|错误/i, 'debug'],
@@ -575,6 +575,13 @@ export class KnowledgeCapture {
       try {
         const existing = await this.store.findByFingerprint(fp);
         if (existing) {
+          await this.store.reinforceByFingerprint(fp, {
+            sourceSessionId: candidate.sourceSessionId,
+            confidence: candidate.confidence,
+            tags: candidate.tags,
+            content: sanitizedContent,
+            category: candidate.category,
+          });
           result.skippedDuplicate++;
           continue;
         }
@@ -585,6 +592,7 @@ export class KnowledgeCapture {
           candidate.tags,
           fp,
           candidate.confidence,
+          candidate.sourceSessionId,
         );
         result.written++;
         result.entries.push(entry);

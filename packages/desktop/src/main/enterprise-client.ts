@@ -153,6 +153,11 @@ export interface EnterpriseKnowledgeItem {
   reviewedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  evidenceCount?: number;
+  distinctSessionCount?: number;
+  distinctContributorCount?: number;
+  firstObservedAt?: string | null;
+  lastObservedAt?: string | null;
 }
 
 export interface EnterpriseKnowledgeRevision {
@@ -243,6 +248,16 @@ interface EnterpriseKnowledgeRow {
   createdAt?: string;
   updated_at?: string;
   updatedAt?: string;
+  evidence_count?: number;
+  evidenceCount?: number;
+  distinct_session_count?: number;
+  distinctSessionCount?: number;
+  distinct_contributor_count?: number;
+  distinctContributorCount?: number;
+  first_observed_at?: string | null;
+  firstObservedAt?: string | null;
+  last_observed_at?: string | null;
+  lastObservedAt?: string | null;
 }
 
 interface EnterpriseKnowledgeRevisionRow {
@@ -281,6 +296,24 @@ function mapEnterpriseKnowledgeItem(item: EnterpriseKnowledgeRow): EnterpriseKno
     reviewedAt: item.reviewedAt ?? item.reviewed_at ?? null,
     createdAt: item.createdAt || item.created_at || '',
     updatedAt: item.updatedAt || item.updated_at || item.createdAt || item.created_at || '',
+    ...((item.evidenceCount ?? item.evidence_count) !== undefined
+      ? { evidenceCount: item.evidenceCount ?? item.evidence_count }
+      : {}),
+    ...((item.distinctSessionCount ?? item.distinct_session_count) !== undefined
+      ? { distinctSessionCount: item.distinctSessionCount ?? item.distinct_session_count }
+      : {}),
+    ...((item.distinctContributorCount ?? item.distinct_contributor_count) !== undefined
+      ? {
+        distinctContributorCount:
+          item.distinctContributorCount ?? item.distinct_contributor_count,
+      }
+      : {}),
+    ...((item.firstObservedAt ?? item.first_observed_at) !== undefined
+      ? { firstObservedAt: item.firstObservedAt ?? item.first_observed_at }
+      : {}),
+    ...((item.lastObservedAt ?? item.last_observed_at) !== undefined
+      ? { lastObservedAt: item.lastObservedAt ?? item.last_observed_at }
+      : {}),
   };
 }
 

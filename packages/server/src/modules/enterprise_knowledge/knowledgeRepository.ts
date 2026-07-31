@@ -45,6 +45,11 @@ export interface EnterpriseKnowledgeEntryView {
   archived_at: string | null;
   created_at: string;
   updated_at: string;
+  evidence_count?: number;
+  distinct_session_count?: number;
+  distinct_contributor_count?: number;
+  first_observed_at?: string | null;
+  last_observed_at?: string | null;
 }
 
 export interface EnterpriseKnowledgeRevisionView {
@@ -396,6 +401,26 @@ function escapeLikeLiteral(value: string): string {
   return value.replace(/[\\%_]/g, '\\$&');
 }
 
+const KNOWLEDGE_WITH_EVIDENCE_SELECT = `SELECT k.*,
+  COALESCE((SELECT COUNT(*) FROM knowledge_retention_evidence e
+    WHERE e.organization_id = k.organization_id AND e.promoted_knowledge_id = k.id), 0)
+    AS evidence_count,
+  COALESCE((SELECT COUNT(DISTINCT e.source_session_id)
+    FROM knowledge_retention_evidence e
+    WHERE e.organization_id = k.organization_id AND e.promoted_knowledge_id = k.id), 0)
+    AS distinct_session_count,
+  COALESCE((SELECT COUNT(DISTINCT e.contributor_account_id)
+    FROM knowledge_retention_evidence e
+    WHERE e.organization_id = k.organization_id AND e.promoted_knowledge_id = k.id), 0)
+    AS distinct_contributor_count,
+  (SELECT MIN(e.observed_at) FROM knowledge_retention_evidence e
+    WHERE e.organization_id = k.organization_id AND e.promoted_knowledge_id = k.id)
+    AS first_observed_at,
+  (SELECT MAX(e.observed_at) FROM knowledge_retention_evidence e
+    WHERE e.organization_id = k.organization_id AND e.promoted_knowledge_id = k.id)
+    AS last_observed_at
+  FROM knowledge k`;
+
 function queryTerms(query: string): string[] {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return [];
@@ -417,6 +442,17 @@ function knowledgeRelevance(entry: EnterpriseKnowledgeEntryView, terms: string[]
   const content = entry.content.toLowerCase();
   const metadata = `${entry.category} ${entry.source_label ?? ''}`.toLowerCase();
   let score = entry.confidence;
+  score += Math.min(2.5, Math.log2(1 + (entry.evidence_count ?? 0)));
+  score += Math.min(1.5, (entry.distinct_contributor_count ?? 0) * 0.5);
+  score += Math.min(1, (entry.distinct_session_count ?? 0) * 0.2);
+  if (entry.source_type === 'auto_capture') {
+    const lastObserved = Date.parse(entry.last_observed_at || entry.updated_at);
+    if (Number.isFinite(lastObserved)) {
+      const ageDays = Math.max(0, (Date.now() - lastObserved) / 86_400_000);
+      if (ageDays > 180) score -= 2;
+      else if (ageDays > 90) score -= 0.5;
+    }
+  }
   for (const term of terms) {
     if (title.includes(term)) score += 8;
     if (metadata.includes(term)) score += 4;
@@ -433,7 +469,9 @@ function searchRows(
 ): EnterpriseKnowledgeEntryView[] {
   const terms = queryTerms(query);
   if (terms.length === 0) {
-    return database.prepare(`${baseSql} ORDER BY datetime(updated_at) DESC, id DESC LIMIT 100`)
+    return database.prepare(
+      `${baseSql} ORDER BY evidence_count DESC, datetime(updated_at) DESC, id DESC LIMIT 100`,
+    )
       .all(...baseParams) as EnterpriseKnowledgeEntryView[];
   }
   const matches = terms.map(() =>
@@ -472,17 +510,17 @@ export function listEnterpriseKnowledgeFromRepository(
     ENTERPRISE_KNOWLEDGE_MAX_CATEGORY_LENGTH,
     'knowledge category',
   );
-  let sql = "SELECT * FROM knowledge WHERE organization_id = ? AND status = 'active'";
+  let sql = `${KNOWLEDGE_WITH_EVIDENCE_SELECT} WHERE k.organization_id = ? AND k.status = 'active'`;
   const params: string[] = [normalizedOrganizationId];
   if (normalizedDepartment) {
-    sql += ' AND department = ?';
+    sql += ' AND k.department = ?';
     params.push(normalizedDepartment);
   }
   if (normalizedCategory) {
-    sql += ' AND category = ?';
+    sql += ' AND k.category = ?';
     params.push(normalizedCategory);
   }
-  sql += ' ORDER BY datetime(updated_at) DESC, id DESC';
+  sql += ' ORDER BY evidence_count DESC, datetime(k.updated_at) DESC, k.id DESC';
   return store.db().prepare(sql).all(...params) as EnterpriseKnowledgeEntryView[];
 }
 
@@ -503,10 +541,10 @@ export function searchEnterpriseKnowledgeInRepository(
     ENTERPRISE_KNOWLEDGE_MAX_QUERY_LENGTH,
     'knowledge query',
   ) ?? '';
-  let sql = "SELECT * FROM knowledge WHERE organization_id = ? AND status = 'active'";
+  let sql = `${KNOWLEDGE_WITH_EVIDENCE_SELECT} WHERE k.organization_id = ? AND k.status = 'active'`;
   const params: Array<string | number> = [normalizedOrganizationId];
   if (normalizedDepartment) {
-    sql += ' AND department = ?';
+    sql += ' AND k.department = ?';
     params.push(normalizedDepartment);
   }
   return searchRows(store.db(), sql, params, normalizedQuery);
@@ -535,19 +573,19 @@ export function listMemberEnterpriseKnowledgeFromRepository(
     200,
     'knowledge contributor account id',
   );
-  let sql = 'SELECT * FROM knowledge WHERE organization_id = ?';
+  let sql = `${KNOWLEDGE_WITH_EVIDENCE_SELECT} WHERE k.organization_id = ?`;
   const params: Array<string | number> = [normalizedOrganizationId];
   if (options.includeOwnPending && contributorAccountId) {
-    sql += " AND (status = 'active' OR (status = 'pending_review' AND contributor_account_id = ?))";
+    sql += " AND (k.status = 'active' OR (k.status = 'pending_review' AND k.contributor_account_id = ?))";
     params.push(contributorAccountId);
   } else {
-    sql += " AND status = 'active'";
+    sql += " AND k.status = 'active'";
   }
   if (department) {
-    sql += ' AND (department IS NULL OR department = ?)';
+    sql += ' AND (k.department IS NULL OR k.department = ?)';
     params.push(department);
   } else {
-    sql += ' AND department IS NULL';
+    sql += ' AND k.department IS NULL';
   }
   return searchRows(store.db(), sql, params, normalizedQuery);
 }
@@ -570,14 +608,14 @@ export function listEnterpriseKnowledgeForAdministrationFromRepository(
     ENTERPRISE_KNOWLEDGE_MAX_QUERY_LENGTH,
     'knowledge query',
   ) ?? '';
-  let sql = 'SELECT * FROM knowledge WHERE organization_id = ?';
+  let sql = `${KNOWLEDGE_WITH_EVIDENCE_SELECT} WHERE k.organization_id = ?`;
   const params: Array<string | number> = [normalizedOrganizationId];
   if (status) {
-    sql += ' AND status = ?';
+    sql += ' AND k.status = ?';
     params.push(normalizeStatus(status));
   }
   if (normalizedDepartment) {
-    sql += ' AND department = ?';
+    sql += ' AND k.department = ?';
     params.push(normalizedDepartment);
   }
   return searchRows(store.db(), sql, params, normalizedQuery);
@@ -589,9 +627,9 @@ export function listEnterpriseKnowledgeForBackupFromRepository(
 ): EnterpriseKnowledgeEntryView[] {
   const normalizedOrganizationId = requireOrganization(store, organizationId);
   return store.db().prepare(
-    `SELECT * FROM knowledge
-     WHERE organization_id = ?
-     ORDER BY datetime(updated_at) DESC, id DESC`,
+    `${KNOWLEDGE_WITH_EVIDENCE_SELECT}
+     WHERE k.organization_id = ?
+     ORDER BY datetime(k.updated_at) DESC, k.id DESC`,
   ).all(normalizedOrganizationId) as EnterpriseKnowledgeEntryView[];
 }
 

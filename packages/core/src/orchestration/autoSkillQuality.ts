@@ -13,11 +13,23 @@ export interface AutoSkillQualityInput {
   occurrenceCount: number;
   sampleEntries: WorkLogEntry[];
   skillContent: string;
+  knowledgeEvidence?: AutoSkillKnowledgeEvidence[];
+  evidenceSignature?: string;
+}
+
+export interface AutoSkillKnowledgeEvidence {
+  id: string;
+  category: string;
+  content: string;
+  reinforcementCount: number;
+  sourceSessionCount: number;
+  confidence: number;
 }
 
 export interface ExistingSkillSummary {
   name: string;
   summary: string;
+  evidenceSignature?: string;
 }
 
 export interface AutoSkillQualityMetadata {
@@ -26,6 +38,9 @@ export interface AutoSkillQualityMetadata {
   evidence: string[];
   failureLessons: string[];
   rejectionReasons: string[];
+  recommendation: 'create' | 'enhance';
+  targetSkillName?: string;
+  evidenceSignature: string;
 }
 
 function uniqueNonEmpty(values: Array<string | null | undefined>): string[] {
@@ -73,6 +88,30 @@ function rounded(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
+function candidateEvidenceSignature(candidate: AutoSkillQualityInput): string {
+  const raw = [
+    candidate.detectedPattern,
+    ...candidate.sampleEntries.map((entry) => [
+      entry.timestamp,
+      entry.action,
+      entry.details ?? '',
+      entry.success ? '1' : '0',
+    ].join('|')),
+    ...(candidate.knowledgeEvidence ?? []).map((entry) => [
+      entry.id,
+      entry.reinforcementCount,
+      entry.sourceSessionCount,
+      entry.confidence,
+    ].join('|')),
+  ].join('\n');
+  let hash = 2166136261;
+  for (let index = 0; index < raw.length; index++) {
+    hash ^= raw.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `ev_${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
 /** 可解释的确定性质量门禁。LLM 可以提炼语义，但不能绕过证据要求。 */
 export function assessAutoSkillCandidate(
   candidate: AutoSkillQualityInput,
@@ -86,6 +125,9 @@ export function assessAutoSkillCandidate(
   const failureLessons = uniqueNonEmpty(
     failures.map((entry) => entry.details || entry.action),
   ).slice(0, 3);
+  const knowledgeEvidence = (candidate.knowledgeEvidence ?? [])
+    .filter((entry) => entry.reinforcementCount >= 2 || entry.sourceSessionCount >= 2)
+    .slice(0, 4);
   const representativeNeeds = uniqueNonEmpty(
     candidate.sampleEntries.map(
       (entry) => entry.userInput || entry.taskTitle || entry.action,
@@ -112,6 +154,7 @@ export function assessAutoSkillCandidate(
   qualityScore += hasBoundarySection ? 6 : 0;
   qualityScore += hasInputRequirements ? 6 : 0;
   qualityScore += representativeNeeds.length >= 2 ? 6 : representativeNeeds.length * 2;
+  qualityScore += Math.min(8, knowledgeEvidence.length * 2);
   qualityScore = Math.min(100, qualityScore);
 
   const confidence = rounded(Math.min(
@@ -120,11 +163,15 @@ export function assessAutoSkillCandidate(
       + Math.min(0.24, dates.length * 0.08)
       + Math.min(0.24, candidate.occurrenceCount * 0.04)
       + Math.min(0.15, candidate.sampleEntries.length * 0.025)
+      + Math.min(0.05, knowledgeEvidence.length * 0.015)
       + (hasTriggerSection && steps >= 2 ? 0.1 : 0),
   ));
   const evidence = [
     `跨 ${dates.length} 天观察到 ${candidate.occurrenceCount} 次同类流程`,
     `相关样本 ${candidate.sampleEntries.length} 条，成功率 ${Math.round(successRate * 100)}%`,
+    ...knowledgeEvidence.map((entry) =>
+      `个人知识证据：${entry.content.slice(0, 90)}（验证 ${entry.reinforcementCount} 次）`,
+    ),
     ...representativeNeeds.map((need) => `典型需求：${need.slice(0, 100)}`),
   ].slice(0, 5);
   const rejectionReasons: string[] = [];
@@ -143,6 +190,8 @@ export function assessAutoSkillCandidate(
     evidence,
     failureLessons,
     rejectionReasons,
+    recommendation: 'create',
+    evidenceSignature: candidate.evidenceSignature || candidateEvidenceSignature(candidate),
   };
 }
 
@@ -187,16 +236,34 @@ export function rankAutoSkillCandidates<T extends AutoSkillQualityInput>(
   const selected: Array<T & AutoSkillQualityMetadata> = [];
 
   for (const candidate of assessed) {
-    const duplicatesExisting = existingSkills.some((existing) =>
-      existing.name.toLowerCase() === candidate.name.toLowerCase()
-      || autoSkillCandidateSimilarity(candidate, existing) >= 0.62,
+    const matchingExisting = existingSkills
+      .map((existing) => ({
+        existing,
+        score: existing.name.toLowerCase() === candidate.name.toLowerCase()
+          ? 1
+          : autoSkillCandidateSimilarity(candidate, existing),
+      }))
+      .filter((match) => match.score >= 0.62)
+      .sort((left, right) => right.score - left.score)[0];
+    if (matchingExisting?.existing.evidenceSignature === candidate.evidenceSignature) continue;
+    const hasNewEvidence = Boolean(
+      candidate.evidenceSignature
+      && (matchingExisting?.existing.evidenceSignature
+        || candidate.failureLessons.length > 0
+        || (candidate.knowledgeEvidence?.length ?? 0) > 0),
     );
-    if (duplicatesExisting) continue;
+    if (matchingExisting && !hasNewEvidence) continue;
+    const recommendation: 'create' | 'enhance' = matchingExisting ? 'enhance' : 'create';
+    const rankedCandidate = {
+      ...candidate,
+      recommendation,
+      ...(matchingExisting ? { targetSkillName: matchingExisting.existing.name } : {}),
+    };
     const duplicatesCandidate = selected.some(
-      (accepted) => autoSkillCandidateSimilarity(candidate, accepted) >= 0.62,
+      (accepted) => autoSkillCandidateSimilarity(rankedCandidate, accepted) >= 0.62,
     );
     if (duplicatesCandidate) continue;
-    selected.push(candidate);
+    selected.push(rankedCandidate);
     if (selected.length >= limit) break;
   }
   return selected;

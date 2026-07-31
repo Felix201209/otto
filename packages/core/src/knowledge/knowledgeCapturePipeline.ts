@@ -181,13 +181,23 @@ export class KnowledgeCapturePipeline {
 
       const fp = this.capture.fingerprint(sanitized);
       const existing = await this.store.findByFingerprint(fp);
-      if (existing) return { written: false };
+      if (existing) {
+        await this.store.reinforceByFingerprint(fp, {
+          sourceSessionId: sessionId,
+          confidence: 1,
+          content: sanitized,
+          category: 'preference',
+        });
+        return { written: false };
+      }
 
       const entry = await this.store.add(
         'preference',
         sanitized,
         [],
         fp,
+        1,
+        sessionId,
       );
 
       this.stats.capturedThisSession++;

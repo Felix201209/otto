@@ -400,6 +400,11 @@ export interface EnterpriseKnowledgeItem {
   reviewedAt?: string | null;
   createdAt: string;
   updatedAt?: string;
+  evidenceCount?: number;
+  distinctSessionCount?: number;
+  distinctContributorCount?: number;
+  firstObservedAt?: string | null;
+  lastObservedAt?: string | null;
 }
 
 export interface EnterpriseKnowledgeRevision {

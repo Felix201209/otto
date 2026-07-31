@@ -192,6 +192,9 @@ function publicAutoSkillCandidate(
     confidence: candidate.confidence,
     evidence: candidate.evidence,
     failureLessons: candidate.failureLessons,
+    knowledgeEvidenceCount: candidate.knowledgeEvidence?.length,
+    recommendation: candidate.recommendation,
+    targetSkillName: candidate.targetSkillName,
   };
 }
 

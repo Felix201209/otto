@@ -79,7 +79,7 @@ describe('autoSkillQuality', () => {
     expect(result.rejectionReasons).toContain('缺少明确触发意图');
   });
 
-  it('按质量排序并过滤与现有 Skill 或候选高度重复的建议', () => {
+  it('按质量排序，把带新失败证据的重复能力改成增强建议', () => {
     const duplicate = candidate({
       name: 'auto-marketing-plan',
       description: '复用品牌营销方案的结构、校验与交付流程',
@@ -100,6 +100,13 @@ describe('autoSkillQuality', () => {
       [{ name: 'existing-brand-workflow', summary: '品牌营销方案结构校验交付流程' }],
     );
 
-    expect(result.map((item) => item.name)).toEqual(['auto-meeting-minutes']);
+    expect(result.map((item) => item.name)).toEqual([
+      'auto-meeting-minutes',
+      'auto-brand-campaign',
+    ]);
+    expect(result[1]).toMatchObject({
+      recommendation: 'enhance',
+      targetSkillName: 'existing-brand-workflow',
+    });
   });
 });

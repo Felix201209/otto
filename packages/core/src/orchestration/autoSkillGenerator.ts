@@ -23,9 +23,16 @@ import { getResponseText } from '../utils/partUtils.js';
 import type { AutoSkillRealtimeWatcher as AutoSkillRealtimeWatcherType } from './autoSkillEnhance.js';
 import {
   rankAutoSkillCandidates,
+  type AutoSkillKnowledgeEvidence,
   type ExistingSkillSummary,
 } from './autoSkillQuality.js';
 import { textSimilarity } from '../utils/topicSimilarity.js';
+import {
+  LocalKnowledgeStore,
+  personalKnowledgeFreshness,
+  personalKnowledgeStrength,
+  type KnowledgeEntry,
+} from '../knowledge/localKnowledgeStore.js';
 
 /** 飞书通知接口（用于检测到候选时推送给用户） */
 export interface AutoSkillFeishuNotifier {
@@ -59,6 +66,12 @@ export interface SkillCandidate {
   evidence?: string[];
   /** 从相关失败日志提炼的修正线索。 */
   failureLessons?: string[];
+  /** 参与候选生成的个人知识证据，只包含本账号本地条目。 */
+  knowledgeEvidence?: AutoSkillKnowledgeEvidence[];
+  /** create 新建；enhance 表示用户确认后更新已有 Skill。 */
+  recommendation?: 'create' | 'enhance';
+  targetSkillName?: string;
+  evidenceSignature?: string;
 }
 
 /** 模式检测参数 */
@@ -99,14 +112,30 @@ function isPortableAutoSkillName(value: string): boolean {
   return /^auto-[^/\\]{1,160}$/u.test(value);
 }
 
-function resolvePendingCandidateFilePath(skillName: string): string {
+function isSafeSkillDirectoryName(value: string): boolean {
+  return /^(?!\.{1,2}$)[^/\\]{1,160}$/u.test(value);
+}
+
+function resolvePendingCandidateFilePath(candidate: SkillCandidate): string {
+  const skillName = candidate.recommendation === 'enhance'
+    && candidate.targetSkillName
+    && isSafeSkillDirectoryName(candidate.targetSkillName)
+    ? candidate.targetSkillName
+    : candidate.name;
   return path.join(resolveAutoSkillSkillsDir(), skillName, 'SKILL.md');
 }
 
 function portablePendingCandidate(candidate: SkillCandidate): SkillCandidate {
   return {
     ...candidate,
-    filePath: path.posix.join(candidate.name, 'SKILL.md'),
+    filePath: path.posix.join(
+      candidate.recommendation === 'enhance'
+        && candidate.targetSkillName
+        && isSafeSkillDirectoryName(candidate.targetSkillName)
+        ? candidate.targetSkillName
+        : candidate.name,
+      'SKILL.md',
+    ),
   };
 }
 
@@ -321,10 +350,12 @@ export async function generateSkillCandidates(
   const rejected = await getRejectedSkills();
   const skillsDir = getSkillsDir(config);
   const existingSkills = listExistingSkillSummaries(skillsDir);
+  const personalKnowledge = await loadStablePersonalKnowledge();
   const workResultCandidates = await generateWorkResultSkillCandidates(
     allEntries,
     rejected,
     skillsDir,
+    personalKnowledge,
   );
 
   // N-gram 预筛：至少检出基础模式才继续（纯随机操作不调 LLM）
@@ -344,6 +375,7 @@ export async function generateSkillCandidates(
       rejected,
       skillsDir,
       existingSkills,
+      personalKnowledge,
     );
     if (llmCandidates.length > 0) {
       return rankAutoSkillCandidates(
@@ -364,7 +396,11 @@ export async function generateSkillCandidates(
     const steps = pattern.split(' → ');
     const skillName = generateSkillName(steps);
     const filePath = path.join(skillsDir, skillName, 'SKILL.md');
-    if (rejected.has(skillName) || await fileExists(filePath)) continue;
+    if (rejected.has(skillName)) continue;
+    const knowledgeEvidence = selectRelevantKnowledgeEvidence(
+      [pattern, ...steps].join(' '),
+      personalKnowledge,
+    );
     candidates.push({
       id: `auto_skill_${createHash('sha256').update(pattern).digest('hex').slice(0, 16)}`,
       name: skillName,
@@ -376,6 +412,7 @@ export async function generateSkillCandidates(
       skillContent,
       reason: `检测到你在过去 ${count} 天中重复执行"${pattern}"，出现 ${count} 次。生成此 Skill 后，Otto 会在你说"${steps[0]}"时自动按此流程执行。`,
       filePath,
+      knowledgeEvidence,
     });
   }
   return rankAutoSkillCandidates(
@@ -399,10 +436,64 @@ function mergeSkillCandidates(
   return merged.slice(0, 5);
 }
 
+function toSkillKnowledgeEvidence(entry: KnowledgeEntry): AutoSkillKnowledgeEvidence {
+  return {
+    id: entry.id,
+    category: entry.category,
+    content: entry.content,
+    reinforcementCount: entry.reinforcementCount ?? 1,
+    sourceSessionCount: entry.sourceSessionIds?.length ?? 0,
+    confidence: entry.confidence ?? 0.75,
+  };
+}
+
+async function loadStablePersonalKnowledge(): Promise<AutoSkillKnowledgeEvidence[]> {
+  try {
+    const entries = await new LocalKnowledgeStore().loadAll();
+    return entries
+      .filter((entry) =>
+        entry.category !== 'preference'
+        && personalKnowledgeFreshness(entry) !== 'needs_review'
+        && ((entry.reinforcementCount ?? 1) >= 2
+          || (entry.sourceSessionIds?.length ?? 0) >= 2
+          || (entry.useCount ?? 0) >= 2
+          || (entry.confidence ?? 0) >= 0.92),
+      )
+      .sort((left, right) =>
+        personalKnowledgeStrength(right) - personalKnowledgeStrength(left)
+        || (right.updatedAt || right.createdAt).localeCompare(left.updatedAt || left.createdAt),
+      )
+      .slice(0, 40)
+      .map(toSkillKnowledgeEvidence);
+  } catch {
+    return [];
+  }
+}
+
+function selectRelevantKnowledgeEvidence(
+  descriptor: string,
+  evidence: AutoSkillKnowledgeEvidence[],
+): AutoSkillKnowledgeEvidence[] {
+  return evidence
+    .map((entry) => ({
+      entry,
+      score: textSimilarity(
+        descriptor,
+        `${entry.category} ${entry.content}`,
+      ),
+    }))
+    .filter(({ score }) => score >= 0.08)
+    .sort((left, right) => right.score - left.score
+      || right.entry.reinforcementCount - left.entry.reinforcementCount)
+    .slice(0, 4)
+    .map(({ entry }) => entry);
+}
+
 async function generateWorkResultSkillCandidates(
   entries: Array<{ date: string; entry: WorkLogEntry }>,
   rejected: Set<string>,
   skillsDir: string,
+  personalKnowledge: AutoSkillKnowledgeEvidence[],
 ): Promise<SkillCandidate[]> {
   const workResults = entries.filter(({ entry }) =>
     entry.entryType === 'work_result'
@@ -424,7 +515,7 @@ async function generateWorkResultSkillCandidates(
     if (samples.length < 3 || dates.size < 2) continue;
     const name = `auto-${signature}`;
     const filePath = path.join(skillsDir, name, 'SKILL.md');
-    if (rejected.has(name) || await fileExists(filePath)) continue;
+    if (rejected.has(name)) continue;
     const sortedSamples = samples.sort((a, b) => a.date.localeCompare(b.date));
     const relatedSamples = entries
       .filter(({ entry }) =>
@@ -452,6 +543,10 @@ async function generateWorkResultSkillCandidates(
       skillContent,
       reason: `检测到你最近多次让 Otto 完成「${title}」类成果，跨 ${dates.size} 天出现 ${samples.length} 次。生成 Skill 后，Otto 会复用你的常见输入、交付格式和验收步骤。`,
       filePath,
+      knowledgeEvidence: selectRelevantKnowledgeEvidence(
+        `${title} ${sortedSamples.map((sample) => sample.entry.userInput || '').join(' ')}`,
+        personalKnowledge,
+      ),
     });
   }
 
@@ -668,9 +763,13 @@ function listExistingSkillSummaries(skillsDir?: string): ExistingSkillSummary[] 
         const headings = [...content.matchAll(/^#{1,3}\s+(.+)$/gmu)]
           .map((match) => match[1].trim())
           .slice(0, 6);
+        const evidenceSignature = content.match(
+          /<!--\s*otto-auto-skill-evidence:([a-z0-9_-]+)\s*-->/iu,
+        )?.[1];
         summaries.push({
           name,
           summary: [description, ...headings].filter(Boolean).join(' '),
+          ...(evidenceSignature ? { evidenceSignature } : {}),
         });
       } catch {
         // 单个损坏 Skill 不应阻断其他候选分析。
@@ -738,6 +837,7 @@ async function callLLMForSkillCandidates(
   rejected: Set<string>,
   skillsDir: string,
   existingSkills: ExistingSkillSummary[],
+  personalKnowledge: AutoSkillKnowledgeEvidence[],
 ): Promise<SkillCandidate[]> {
   const client = config.getOttoClient();
   if (!client) throw new Error('LLM client unavailable');
@@ -793,6 +893,15 @@ async function callLLMForSkillCandidates(
     ).join('\n')}\n> 已有能力能够覆盖时不要创建同义 Skill。`
     : '';
 
+  const personalKnowledgeSection = personalKnowledge.length > 0
+    ? `\n\n# 已稳定的个人知识（只用于增强步骤、边界和验收）\n${personalKnowledge
+      .slice(0, 20)
+      .map((entry) =>
+        `- [${entry.id}] ${entry.category}：${entry.content.slice(0, 180)}（重复验证 ${entry.reinforcementCount} 次，跨 ${entry.sourceSessionCount} 个会话）`,
+      )
+      .join('\n')}\n> 不要把个人知识原文发布到企业；这里只用于生成本人的 Skill。`
+    : '';
+
   const prompt = [
     '你是 Otto 的工作习惯分析师。以下是用户的深度分析报告，请做语义建模：',
     '',
@@ -809,6 +918,7 @@ async function callLLMForSkillCandidates(
     '',
     analyticsSection,
     existingSection,
+    personalKnowledgeSection,
     '',
     '# 输出格式（严格 JSON，不要任何解释）',
     '```json',
@@ -887,7 +997,7 @@ async function callLLMForSkillCandidates(
     const skillName = cleanName.startsWith('auto-') ? cleanName : `auto-${cleanName}`;
     const filePath = path.join(skillsDir, skillName, 'SKILL.md');
 
-    if (rejected.has(skillName) || await fileExists(filePath)) continue;
+    if (rejected.has(skillName)) continue;
 
     const mdContent = s.skillMarkdown?.trim() || s.description || s.title;
     const fullSkillContent = mdContent.startsWith('---')
@@ -908,6 +1018,10 @@ async function callLLMForSkillCandidates(
       allEntries,
       ngramPatterns,
     );
+    const knowledgeEvidence = selectRelevantKnowledgeEvidence(
+      descriptor,
+      personalKnowledge,
+    );
 
     candidates.push({
       id: `auto_skill_${createHash('sha256').update(s.name + s.title).digest('hex').slice(0, 16)}`,
@@ -920,6 +1034,7 @@ async function callLLMForSkillCandidates(
       skillContent: fullSkillContent,
       reason: s.occurrenceNote || `Otto 从你的工作习惯中发现了模式"${s.title || skillName}"`,
       filePath,
+      knowledgeEvidence,
     });
   }
 
@@ -933,7 +1048,14 @@ async function callLLMForSkillCandidates(
  */
 export async function confirmAndSaveSkill(candidate: SkillCandidate): Promise<string> {
   const skillsRoot = path.resolve(resolveAutoSkillSkillsDir());
-  const safePath = path.resolve(candidate.filePath);
+  const installedName = candidate.recommendation === 'enhance'
+    && candidate.targetSkillName
+    && isSafeSkillDirectoryName(candidate.targetSkillName)
+    ? candidate.targetSkillName
+    : candidate.name;
+  const safePath = candidate.recommendation === 'enhance'
+    ? path.resolve(skillsRoot, installedName, 'SKILL.md')
+    : path.resolve(candidate.filePath);
   const relative = path.relative(skillsRoot, safePath);
   if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
     throw new Error('自动 Skill 只能写入用户级 skills 目录');
@@ -941,9 +1063,24 @@ export async function confirmAndSaveSkill(candidate: SkillCandidate): Promise<st
 
   const skillDir = path.dirname(safePath);
   await fs.mkdir(skillDir, { recursive: true, mode: 0o700 });
+  if (candidate.recommendation === 'enhance' && await fileExists(safePath)) {
+    const historyDir = path.join(skillDir, 'history');
+    await fs.mkdir(historyDir, { recursive: true, mode: 0o700 });
+    await fs.copyFile(
+      safePath,
+      path.join(historyDir, `SKILL.${Date.now()}.md`),
+    );
+  }
+  const normalizedContent = candidate.skillContent.replace(
+    /^(name:\s*).+$/mu,
+    `$1${installedName}`,
+  );
+  const contentWithEvidence = candidate.evidenceSignature
+    ? `${normalizedContent.trimEnd()}\n\n<!-- otto-auto-skill-evidence:${candidate.evidenceSignature} -->\n`
+    : `${normalizedContent.trimEnd()}\n`;
   const tempPath = `${safePath}.${process.pid}.${Date.now()}.tmp`;
   try {
-    await fs.writeFile(tempPath, candidate.skillContent, {
+    await fs.writeFile(tempPath, contentWithEvidence, {
       encoding: 'utf8',
       mode: 0o600,
     });
@@ -959,7 +1096,9 @@ export async function confirmAndSaveSkill(candidate: SkillCandidate): Promise<st
     const logger = getWorkLogger();
     await logger.log({
       toolName: 'auto_skill_confirm',
-      action: `[自动Skill] 用户确认生成 Skill "${candidate.name}"（检测到 ${candidate.occurrenceCount} 次重复模式）`,
+      action: candidate.recommendation === 'enhance'
+        ? `[自动Skill] 用户确认增强 Skill "${installedName}"（检测到新证据）`
+        : `[自动Skill] 用户确认生成 Skill "${installedName}"（检测到 ${candidate.occurrenceCount} 次重复模式）`,
       category: 'other',
       success: true,
       details: `模式：${candidate.detectedPattern} | 路径：${safePath}`,
@@ -970,7 +1109,7 @@ export async function confirmAndSaveSkill(candidate: SkillCandidate): Promise<st
   try {
     const { generateProfilePipeline } = await import("./autoSkillProfile.js");
     await generateProfilePipeline([
-      { skillName: candidate.name, skillDir, skillContent: candidate.skillContent },
+      { skillName: installedName, skillDir, skillContent: contentWithEvidence },
     ]);
   } catch {
     // 专家孵化可选，Skill已就绪即可
@@ -988,7 +1127,7 @@ export async function listPendingSkillCandidates(): Promise<SkillCandidate[]> {
     if (!Array.isArray(parsed)) return [];
     return parsed.filter(isSkillCandidate).map((candidate) => ({
       ...candidate,
-      filePath: resolvePendingCandidateFilePath(candidate.name),
+      filePath: resolvePendingCandidateFilePath(candidate),
     }));
   } catch {
     return [];
@@ -1120,7 +1259,21 @@ function isSkillCandidate(value: unknown): value is SkillCandidate {
     && (item.evidence === undefined
       || (Array.isArray(item.evidence) && item.evidence.every((entry) => typeof entry === 'string')))
     && (item.failureLessons === undefined
-      || (Array.isArray(item.failureLessons) && item.failureLessons.every((entry) => typeof entry === 'string')));
+      || (Array.isArray(item.failureLessons) && item.failureLessons.every((entry) => typeof entry === 'string')))
+    && (item.knowledgeEvidence === undefined
+      || (Array.isArray(item.knowledgeEvidence) && item.knowledgeEvidence.every((entry) =>
+        entry && typeof entry === 'object'
+        && typeof entry.id === 'string'
+        && typeof entry.category === 'string'
+        && typeof entry.content === 'string'
+        && typeof entry.reinforcementCount === 'number'
+        && typeof entry.sourceSessionCount === 'number'
+        && typeof entry.confidence === 'number')))
+    && (item.recommendation === undefined
+      || item.recommendation === 'create'
+      || item.recommendation === 'enhance')
+    && (item.targetSkillName === undefined || isSafeSkillDirectoryName(item.targetSkillName))
+    && (item.evidenceSignature === undefined || typeof item.evidenceSignature === 'string');
 }
 
 function generateSkillName(steps: string[]): string {

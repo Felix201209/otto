@@ -622,6 +622,9 @@ export interface AutoSkillCandidateInfo {
   confidence?: number;
   evidence?: string[];
   failureLessons?: string[];
+  knowledgeEvidenceCount?: number;
+  recommendation?: 'create' | 'enhance';
+  targetSkillName?: string;
 }
 export type GetPendingAutoSkillsMsg = Envelope<
   'get_pending_auto_skills',

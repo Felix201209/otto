@@ -264,7 +264,7 @@ export function createMemorySubsystem(
               sourceEvent: entry.id,
               timestamp: entry.createdAt ?? '',
               content: entry.content,
-              tags: tags,
+              tags,
               confidence: conf,
             },
             score,
@@ -282,7 +282,13 @@ export function createMemorySubsystem(
           b.entry.timestamp.localeCompare(a.entry.timestamp),
       );
 
-      return results.slice(0, Math.max(1, limit));
+      const selected = results.slice(0, Math.max(1, limit));
+      await knowledgeStore.markUsed(
+        selected
+          .filter((result) => result.provenance === 'knowledgeStore')
+          .map((result) => result.entry.sourceEvent),
+      ).catch(() => undefined);
+      return selected;
     },
 
     async getStats(): Promise<MemoryStats> {

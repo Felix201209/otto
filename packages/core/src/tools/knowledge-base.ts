@@ -45,7 +45,10 @@ function formatEntry(entry: KnowledgeEntry, index: number): string {
       : entry.content;
   const tags = entry.tags.length > 0 ? ` tags: ${entry.tags.join(', ')}` : '';
   const date = entry.createdAt ? entry.createdAt.slice(0, 10) : 'unknown';
-  return `${index + 1}. [${entry.category}] ${content}\n   (id: ${entry.id}, ${date}${tags})`;
+  const lifecycle = 'strength' in entry && 'freshness' in entry
+    ? `, strength: ${Math.round(Number(entry.strength) * 100)}%, freshness: ${String(entry.freshness)}`
+    : '';
+  return `${index + 1}. [${entry.category}] ${content}\n   (id: ${entry.id}, ${date}${tags}${lifecycle})`;
 }
 
 export class KnowledgeBaseTool extends BaseTool<
@@ -182,6 +185,7 @@ Use this to persist reusable knowledge across sessions: project conventions, tro
           const body = results
             .map((entry, index) => formatEntry(entry, index))
             .join('\n');
+          await store.markUsed(results.map((entry) => entry.id));
           const message = `Found ${results.length} knowledge entr${results.length === 1 ? 'y' : 'ies'} for "${params.query}":\n${body}`;
           return {
             llmContent: message,

@@ -29,6 +29,7 @@ import {
 } from './icons.js';
 
 type TabType = 'agents' | 'tools' | 'documents' | 'memory' | 'worklog';
+type KnowledgeView = 'knowledge' | 'timeline';
 
 // server 构建产物更新前也保持 renderer 可独立 typecheck；字段由当前协议快照提供。
 type AuthenticatedWorkspaceSnapshot = ProductWorkspaceSnapshot & {
@@ -53,6 +54,11 @@ interface EnterpriseKnowledgeItem {
   reviewedAt?: string | null;
   createdAt: string;
   updatedAt?: string;
+  evidenceCount?: number;
+  distinctSessionCount?: number;
+  distinctContributorCount?: number;
+  firstObservedAt?: string | null;
+  lastObservedAt?: string | null;
 }
 
 interface EnterpriseKnowledgeRevision {
@@ -197,6 +203,7 @@ export function RightPanel({
   const [workReportMessage, setWorkReportMessage] = useState('');
   const [workReportPath, setWorkReportPath] = useState('');
   const [knowledgeItems, setKnowledgeItems] = useState<EnterpriseKnowledgeItem[]>([]);
+  const [knowledgeView, setKnowledgeView] = useState<KnowledgeView>('knowledge');
   const [knowledgeLoading, setKnowledgeLoading] = useState(false);
   const [knowledgeError, setKnowledgeError] = useState('');
   const [knowledgeQuery, setKnowledgeQuery] = useState('');
@@ -230,6 +237,7 @@ export function RightPanel({
     setKnowledgeItems([]);
     setKnowledgeError('');
     setKnowledgeEditor(null);
+    setKnowledgeView('knowledge');
     setKnowledgeRevisions({});
     if (!enterpriseOrganizationId) return () => { cancelled = true; };
     void getEnterpriseOrganizationFeatures(enterpriseOrganizationId, { force: true })
@@ -500,6 +508,61 @@ export function RightPanel({
     if (activeTab === 'memory' && enterpriseKnowledgeEnabled) void refreshEnterpriseKnowledge();
   }, [activeTab, enterpriseKnowledgeEnabled, refreshEnterpriseKnowledge]);
 
+  useEffect(() => {
+    if (knowledgeView !== 'timeline' || enterpriseRole !== 'company_admin') return;
+    const missing = knowledgeItems
+      .filter((item) => item.status !== 'archived' && knowledgeRevisions[item.id] === undefined)
+      .slice(0, 30);
+    if (missing.length === 0) return;
+    void Promise.all(missing.map(async (item) => ({
+      id: item.id,
+      revisions: await window.otto.enterpriseKnowledgeRevisions(item.id),
+    }))).then((loaded) => {
+      setKnowledgeRevisions((current) => ({
+        ...current,
+        ...Object.fromEntries(loaded.map((item) => [item.id, item.revisions])),
+      }));
+    }).catch((error) => {
+      setKnowledgeError(error instanceof Error ? error.message : String(error));
+    });
+  }, [enterpriseRole, knowledgeItems, knowledgeRevisions, knowledgeView]);
+
+  const knowledgeTimeline = useMemo(() => knowledgeItems
+    .filter((item) => !item.status || item.status === 'active')
+    .flatMap((item) => {
+      const revisions = knowledgeRevisions[item.id];
+      if (revisions?.length) {
+        return revisions.map((revision) => ({
+          id: revision.id,
+          knowledgeId: item.id,
+          title: revision.title,
+          category: revision.category,
+          content: revision.content,
+          version: revision.version,
+          changedBy: revision.changedBy || item.contributor || '系统沉淀',
+          changeNote: revision.changeNote || revision.status,
+          createdAt: revision.createdAt,
+          department: item.department,
+        }));
+      }
+      return [{
+        id: `current-${item.id}`,
+        knowledgeId: item.id,
+        title: item.title || item.category,
+        category: item.category,
+        content: item.content,
+        version: item.version || 1,
+        changedBy: item.contributor || '系统沉淀',
+        changeNote: item.version && item.version > 1 ? '当前版本' : '形成知识',
+        createdAt: item.updatedAt || item.createdAt,
+        department: item.department,
+      }];
+    })
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt)), [
+      knowledgeItems,
+      knowledgeRevisions,
+    ]);
+
   const worklogByDate = useMemo(
     () => Object.fromEntries(worklogDays.map((day) => [day.date, day.entries])),
     [worklogDays],
@@ -734,6 +797,11 @@ export function RightPanel({
                       <em>质量 {candidate.qualityScore}/100</em>
                     ) : null}
                   </header>
+                  {candidate.recommendation === 'enhance' && candidate.targetSkillName ? (
+                    <b className="otto-auto-skill__mode">
+                      增强已有 Skill：{candidate.targetSkillName}
+                    </b>
+                  ) : null}
                   <span>{candidate.description}</span>
                   <small>
                     {candidate.detectedPattern} · {candidate.occurrenceCount} 次重复
@@ -751,8 +819,13 @@ export function RightPanel({
                   {candidate.failureLessons?.length ? (
                     <p>已吸收修正：{candidate.failureLessons.slice(0, 2).join('；')}</p>
                   ) : null}
+                  {candidate.knowledgeEvidenceCount ? (
+                    <p>已引用 {candidate.knowledgeEvidenceCount} 条稳定个人知识作为步骤或边界依据</p>
+                  ) : null}
                   <div>
-                    <button type="button" onClick={() => onConfirmAutoSkill(candidate.id)}>确认生成</button>
+                    <button type="button" onClick={() => onConfirmAutoSkill(candidate.id)}>
+                      {candidate.recommendation === 'enhance' ? '确认增强' : '确认生成'}
+                    </button>
                     <button type="button" onClick={() => onRejectAutoSkill(candidate.id)}>不再建议</button>
                   </div>
                 </article>
@@ -809,8 +882,10 @@ export function RightPanel({
           <div>
             <div className="otto-worklog-panel__head">
               <div>
-                <strong>企业知识</strong>
-                <span>长期复现或高影响结论，经审核后保留</span>
+                <strong>{knowledgeView === 'knowledge' ? '企业知识' : '企业记忆沿革'}</strong>
+                <span>{knowledgeView === 'knowledge'
+                  ? '长期复现或高影响结论，经审核后保留'
+                  : '按时间查看组织结论如何形成、修订与生效'}</span>
               </div>
               <div className="otto-enterprise-memory-head-actions">
                 {enterpriseRole === 'company_admin' ? (
@@ -823,6 +898,20 @@ export function RightPanel({
                   {knowledgeLoading ? '加载中' : '刷新'}
                 </button>
               </div>
+            </div>
+            <div className="otto-enterprise-memory-switch" role="tablist" aria-label="企业知识与记忆">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={knowledgeView === 'knowledge'}
+                onClick={() => setKnowledgeView('knowledge')}
+              >企业知识</button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={knowledgeView === 'timeline'}
+                onClick={() => setKnowledgeView('timeline')}
+              >记忆沿革</button>
             </div>
             <form
               className="otto-enterprise-memory-search"
@@ -844,7 +933,7 @@ export function RightPanel({
               />
               <button type="submit" disabled={knowledgeLoading}>搜索</button>
             </form>
-            {knowledgeEditor ? (
+            {knowledgeView === 'knowledge' && knowledgeEditor ? (
               <form
                 className="otto-enterprise-memory-editor"
                 onSubmit={(event) => {
@@ -888,7 +977,7 @@ export function RightPanel({
             {knowledgeNotice ? (
               <div className="otto-enterprise-memory-notice" role="status">{knowledgeNotice}</div>
             ) : null}
-            {knowledgeCandidates.length > 0 ? (
+            {knowledgeView === 'knowledge' && knowledgeCandidates.length > 0 ? (
               <section className="otto-enterprise-memory-candidates" aria-label="可沉淀的工作成果">
                 <div>
                   <strong>最近成果候选</strong>
@@ -925,6 +1014,20 @@ export function RightPanel({
               <div className="otto-right-panel__empty">
                 暂无达到保留标准的企业知识。普通对话不会直接进入企业知识库。
               </div>
+            ) : knowledgeView === 'timeline' ? (
+              <div className="otto-enterprise-memory-timeline" aria-label="企业记忆沿革">
+                {knowledgeTimeline.map((event) => (
+                  <article key={`${event.knowledgeId}-${event.id}`}>
+                    <time>{formatEnterpriseMemoryDate(event.createdAt)}</time>
+                    <div>
+                      <span>{event.department || '全组织'} · {event.category} · v{event.version}</span>
+                      <strong>{event.title}</strong>
+                      <p>{event.content}</p>
+                      <small>{event.changedBy} · {event.changeNote}</small>
+                    </div>
+                  </article>
+                ))}
+              </div>
             ) : (
               <div className="otto-enterprise-memory-list">
                 {knowledgeItems.filter((item) => item.status !== 'archived').map((item) => (
@@ -936,6 +1039,20 @@ export function RightPanel({
                       <span>v{item.version || 1}</span>
                       <span>{Math.round(item.confidence * 100)}%</span>
                     </div>
+                    {(item.evidenceCount ?? 0) > 0 ? (
+                      <div className="otto-enterprise-memory-card__evidence">
+                        <strong>{item.evidenceCount} 条证据</strong>
+                        <span>{item.distinctSessionCount || 0} 个会话</span>
+                        <span>{item.distinctContributorCount || 0} 名贡献者</span>
+                        {item.lastObservedAt ? (
+                          <span>最近验证 {formatEnterpriseMemoryDate(item.lastObservedAt)}</span>
+                        ) : null}
+                      </div>
+                    ) : item.sourceType === 'manual' ? (
+                      <div className="otto-enterprise-memory-card__evidence">
+                        <strong>管理员确认发布</strong>
+                      </div>
+                    ) : null}
                     {item.title && item.title !== item.category ? (
                       <strong className="otto-enterprise-memory-card__title">
                         {item.title}

@@ -97,4 +97,38 @@ describe('enterprise knowledge composition', () => {
       database.close();
     }
   });
+
+  it('returns evidence strength with promoted enterprise knowledge', () => {
+    const database = createDatabase();
+    const knowledge = createComposition(database);
+
+    try {
+      const observed = knowledge.observeKnowledge({
+        organizationId: 'org-a',
+        category: 'solution',
+        content: '重大生产事故的根因是租户缓存未隔离，加入企业编号后验证通过。',
+        contributor: '研发成员',
+        contributorAccountId: 'account-a',
+        sourceId: 'session-a:solution',
+        sourceSessionId: 'session-a',
+        confidence: 0.95,
+        verified: true,
+      });
+      expect(observed.promoted).toBe(true);
+      knowledge.reviewKnowledge({
+        id: observed.knowledge!.id,
+        organizationId: 'org-a',
+        action: 'approve',
+        reviewer: '企业管理员',
+      });
+
+      expect(knowledge.getKnowledge()[0]).toMatchObject({
+        evidence_count: 1,
+        distinct_session_count: 1,
+        distinct_contributor_count: 1,
+      });
+    } finally {
+      database.close();
+    }
+  });
 });

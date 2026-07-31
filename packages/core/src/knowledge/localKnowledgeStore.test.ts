@@ -12,6 +12,7 @@ import * as path from 'path';
 import {
   LocalKnowledgeStore,
   getKnowledgeDir,
+  personalKnowledgeFreshness,
 } from './localKnowledgeStore.js';
 
 describe('LocalKnowledgeStore', () => {
@@ -109,6 +110,74 @@ describe('LocalKnowledgeStore', () => {
       expect(await store.search('   ')).toEqual([]);
       const results = await store.search('common keyword');
       expect(results).toHaveLength(20);
+    });
+
+    it('同等关键词相关度下优先返回被重复验证和实际使用的知识', async () => {
+      const store = new LocalKnowledgeStore();
+      const weak = await store.add('dev', '部署检查需要验证数据库', ['部署'], 'weak');
+      const strong = await store.add(
+        'dev',
+        '部署检查需要验证缓存',
+        ['部署'],
+        'strong',
+        0.9,
+        'session-a',
+      );
+      await store.reinforceByFingerprint('strong', { sourceSessionId: 'session-b' });
+      await store.markUsed([strong.id, strong.id]);
+
+      const results = await store.search('部署检查');
+      expect(results[0].id).toBe(strong.id);
+      expect(results.find((entry) => entry.id === weak.id)).toBeDefined();
+    });
+  });
+
+  describe('reinforcement lifecycle', () => {
+    it('重复知识保留首次创建时间并累积跨会话证据', async () => {
+      const store = new LocalKnowledgeStore();
+      const first = await store.add(
+        'process',
+        '发布前必须执行数据库回滚演练',
+        ['release'],
+        'release-check',
+        0.82,
+        'session-a',
+      );
+
+      const reinforced = await store.reinforceByFingerprint('release-check', {
+        sourceSessionId: 'session-b',
+        confidence: 0.95,
+        tags: ['database'],
+      });
+
+      expect(reinforced).toMatchObject({
+        id: first.id,
+        createdAt: first.createdAt,
+        reinforcementCount: 2,
+        confidence: 0.95,
+      });
+      expect(reinforced?.sourceSessionIds).toEqual(['session-a', 'session-b']);
+      expect(reinforced?.tags).toEqual(['release', 'database']);
+    });
+
+    it('时效性知识过期后进入待复核状态', () => {
+      expect(personalKnowledgeFreshness({
+        id: 'kb-old-price',
+        category: 'price',
+        content: '会议室费用为每天 400 元',
+        tags: ['费用'],
+        createdAt: '2025-01-01T00:00:00.000Z',
+        updatedAt: '2025-01-01T00:00:00.000Z',
+      })).toBe('needs_review');
+    });
+
+    it('不会把文本相似但结论相反的知识误合并', async () => {
+      const store = new LocalKnowledgeStore();
+      await store.add('release', '生产发布前必须执行完整数据库备份');
+      await store.add('release', '生产发布前不必执行完整数据库备份');
+
+      expect(await store.mergeSimilar(0.55)).toBe(0);
+      expect(await store.loadAll()).toHaveLength(2);
     });
   });
 
