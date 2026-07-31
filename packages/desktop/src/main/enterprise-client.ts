@@ -5,6 +5,12 @@
  * 企业服务器，也永远拿不到会话令牌。
  */
 
+import type {
+  EnterpriseE2eeCrypto,
+  EnterpriseE2eeDeviceBundle,
+  EnterpriseE2eeWireMessage,
+} from './enterprise-e2ee.js';
+
 export interface EnterpriseAccount {
   id: string;
   organizationId: string;
@@ -556,6 +562,9 @@ export interface EnterpriseDirectMessage {
   createdAt: string;
   readAt: string | null;
   attachments?: EnterpriseDirectMessageAttachment[];
+  e2ee?: true;
+  contentType?: 'message' | 'atoa_request' | 'atoa_response';
+  inReplyToMessageId?: string | null;
 }
 
 export interface EnterpriseUnreadMessageNotification {
@@ -858,6 +867,34 @@ function normalizeServerUrl(input: string): string {
   return `${url.origin}${pathPrefix}`;
 }
 
+function e2eeProtocolMetadata(content: string): {
+  contentType: 'message' | 'atoa_request' | 'atoa_response';
+  inReplyToMessageId: string | null;
+} {
+  if (content.startsWith('OTTO_ATOA_REQUEST ')) {
+    return { contentType: 'atoa_request', inReplyToMessageId: null };
+  }
+  if (content.startsWith('OTTO_ATOA_RESPONSE ')) {
+    try {
+      const parsed = JSON.parse(content.slice('OTTO_ATOA_RESPONSE '.length)) as unknown;
+      if (
+        parsed &&
+        typeof parsed === 'object' &&
+        !Array.isArray(parsed) &&
+        typeof (parsed as Record<string, unknown>).requestId === 'string'
+      ) {
+        return {
+          contentType: 'atoa_response',
+          inReplyToMessageId: (parsed as Record<string, string>).requestId,
+        };
+      }
+    } catch {
+      // Invalid A2A content remains an ordinary private message.
+    }
+  }
+  return { contentType: 'message', inReplyToMessageId: null };
+}
+
 export class EnterpriseClient {
   private serverUrl = '';
   private token: string | null = null;
@@ -870,6 +907,7 @@ export class EnterpriseClient {
   constructor(
     private readonly fetchImpl: typeof fetch = fetch,
     private readonly onSessionInvalidated: () => void = () => undefined,
+    private readonly e2ee?: EnterpriseE2eeCrypto,
   ) {}
 
   restore(session: StoredSession): void {
@@ -1690,16 +1728,128 @@ export class EnterpriseClient {
     )).service;
   }
 
+  private requireE2eeContext(): {
+    crypto: EnterpriseE2eeCrypto;
+    account: EnterpriseAccount;
+    serverScope: string;
+  } {
+    if (!this.e2ee) {
+      throw new Error('private-chat E2EE is unavailable on this device');
+    }
+    if (!this.currentAccount || !this.serverUrl) {
+      throw new Error('enterprise session has expired; please sign in again');
+    }
+    return {
+      crypto: this.e2ee,
+      account: this.currentAccount,
+      serverScope: this.serverUrl,
+    };
+  }
+
+  private async registerLocalE2eeDevice(): Promise<EnterpriseE2eeDeviceBundle> {
+    const { crypto, account, serverScope } = this.requireE2eeContext();
+    const local = crypto.localDevice(serverScope, account.id);
+    const response = await this.request<{ device: EnterpriseE2eeDeviceBundle }>(
+      '/enterprise/e2ee/devices',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          deviceId: local.deviceId,
+          deviceName: local.deviceName,
+          identitySigningPublicKey: local.identitySigningPublicKey,
+          deviceExchangePublicKey: local.deviceExchangePublicKey,
+        }),
+      },
+    );
+    if (response.device.revokedAt) {
+      throw new Error('this E2EE device was revoked; recover or create a new trusted device');
+    }
+    return response.device;
+  }
+
+  async ensureE2eeDeviceReady(): Promise<EnterpriseE2eeDeviceBundle> {
+    if (!this.token) throw new Error('enterprise session has expired; please sign in again');
+    await this.assertCompatibleServer(this.serverUrl, ['e2ee_private_messages_v1']);
+    return this.registerLocalE2eeDevice();
+  }
+
+  private async e2eeDevicesForConversation(
+    peerAccountId: string,
+  ): Promise<EnterpriseE2eeDeviceBundle[]> {
+    const { account } = this.requireE2eeContext();
+    await this.registerLocalE2eeDevice();
+    const query = new URLSearchParams();
+    query.append('accountId', account.id);
+    query.append('accountId', peerAccountId);
+    return (await this.request<{ devices: EnterpriseE2eeDeviceBundle[] }>(
+      `/enterprise/e2ee/devices?${query.toString()}`,
+    )).devices;
+  }
+
+  private decryptE2eeMessage(message: EnterpriseE2eeWireMessage): EnterpriseDirectMessage {
+    const { crypto, account, serverScope } = this.requireE2eeContext();
+    const decrypted = crypto.decryptMessage({
+      serverScope,
+      organizationId: account.organizationId,
+      accountId: account.id,
+      message,
+    });
+    return {
+      id: decrypted.id,
+      senderAccountId: decrypted.senderAccountId,
+      recipientAccountId: decrypted.recipientAccountId,
+      content: decrypted.content,
+      createdAt: decrypted.createdAt,
+      readAt: decrypted.readAt,
+      attachments: decrypted.attachments,
+      e2ee: true,
+      contentType: decrypted.contentType,
+      inReplyToMessageId: decrypted.inReplyToMessageId,
+    };
+  }
+
+  async listOwnE2eeDevices(
+    includeRevoked = true,
+  ): Promise<EnterpriseE2eeDeviceBundle[]> {
+    if (!this.token) throw new Error('enterprise session has expired; please sign in again');
+    await this.assertCompatibleServer(this.serverUrl, ['e2ee_private_messages_v1']);
+    const { account } = this.requireE2eeContext();
+    await this.registerLocalE2eeDevice();
+    const query = new URLSearchParams({
+      accountId: account.id,
+      includeRevoked: String(includeRevoked),
+    });
+    return (await this.request<{ devices: EnterpriseE2eeDeviceBundle[] }>(
+      `/enterprise/e2ee/devices?${query.toString()}`,
+    )).devices;
+  }
+
+  async revokeOwnE2eeDevice(deviceId: string): Promise<void> {
+    if (!this.token) throw new Error('enterprise session has expired; please sign in again');
+    await this.assertCompatibleServer(this.serverUrl, ['e2ee_private_messages_v1']);
+    const { crypto, account, serverScope } = this.requireE2eeContext();
+    const local = crypto.localDevice(serverScope, account.id);
+    await this.request(
+      `/enterprise/e2ee/devices/${encodeURIComponent(deviceId)}`,
+      { method: 'DELETE' },
+    );
+    if (deviceId === local.deviceId) {
+      crypto.rotateLocalDevice(serverScope, account.id);
+      await this.registerLocalE2eeDevice();
+    }
+  }
+
   async listDirectMessages(peerAccountId: string): Promise<EnterpriseDirectMessage[]> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(this.serverUrl, ['direct_messages']);
-    const messages = (await this.request<{ messages: EnterpriseDirectMessage[] }>(
+    await this.assertCompatibleServer(this.serverUrl, [
+      'direct_messages',
+      'e2ee_private_messages_v1',
+    ]);
+    await this.registerLocalE2eeDevice();
+    const messages = (await this.request<{ messages: EnterpriseE2eeWireMessage[] }>(
       '/enterprise/messages/' + encodeURIComponent(peerAccountId),
     )).messages;
-    return messages.map((message) => ({
-      ...message,
-      attachments: Array.isArray(message.attachments) ? message.attachments : [],
-    }));
+    return messages.map((message) => this.decryptE2eeMessage(message));
   }
   async listUnreadDirectMessageNotifications(): Promise<EnterpriseUnreadMessageNotification[]> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
@@ -1721,46 +1871,83 @@ export class EnterpriseClient {
     attachments: EnterpriseDirectMessageAttachmentUpload[] = [],
   ): Promise<EnterpriseDirectMessage> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(
-      this.serverUrl,
-      attachments.length > 0
-        ? ['direct_messages', 'direct_message_attachments_v1']
-        : ['direct_messages'],
-    );
-    const message = (await this.request<{ message: EnterpriseDirectMessage }>(
+    await this.assertCompatibleServer(this.serverUrl, [
+      'direct_messages',
+      'e2ee_private_messages_v1',
+      ...(attachments.length > 0 ? ['direct_message_attachments_v1'] : []),
+    ]);
+    const { crypto, account, serverScope } = this.requireE2eeContext();
+    const devices = await this.e2eeDevicesForConversation(peerAccountId);
+    const protocol = e2eeProtocolMetadata(content);
+    const encrypted = crypto.encryptMessage({
+      serverScope,
+      organizationId: account.organizationId,
+      senderAccountId: account.id,
+      recipientAccountId: peerAccountId,
+      content,
+      contentType: protocol.contentType,
+      inReplyToMessageId: protocol.inReplyToMessageId,
+      devices,
+      attachments,
+    });
+    const message = (await this.request<{ message: EnterpriseE2eeWireMessage }>(
       '/enterprise/messages/' + encodeURIComponent(peerAccountId),
       {
         method: 'POST',
-        body: JSON.stringify({
-          content,
-          ...(attachments.length > 0 ? { attachments } : {}),
-        }),
+        body: JSON.stringify(encrypted),
       },
       { timeoutMs: attachments.length > 0 ? 60_000 : 10_000 },
     )).message;
-    return {
-      ...message,
-      attachments: Array.isArray(message.attachments) ? message.attachments : [],
-    };
+    return this.decryptE2eeMessage(message);
   }
 
   async getDirectMessageAttachment(
     attachmentId: string,
   ): Promise<EnterpriseDirectMessageAttachmentDownload> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(this.serverUrl, ['direct_message_attachments_v1']);
-    return (await this.request<{ attachment: EnterpriseDirectMessageAttachmentDownload }>(
+    await this.assertCompatibleServer(this.serverUrl, [
+      'direct_message_attachments_v1',
+      'e2ee_private_messages_v1',
+    ]);
+    const download = await this.request<{
+      attachment: {
+        message: EnterpriseE2eeWireMessage;
+        attachment: { id: string; ciphertext: string; nonce: string };
+      };
+    }>(
       '/enterprise/message-attachments/' + encodeURIComponent(attachmentId),
       {},
       { timeoutMs: 60_000 },
-    )).attachment;
+    );
+    const { crypto, account, serverScope } = this.requireE2eeContext();
+    return crypto.decryptAttachment({
+      serverScope,
+      organizationId: account.organizationId,
+      accountId: account.id,
+      message: download.attachment.message,
+      attachment: download.attachment.attachment,
+    });
   }
   async listAtoaInbox(): Promise<EnterpriseAtoaInboxMessage[]> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(this.serverUrl, ['atoa']);
-    return (await this.request<{ requests: EnterpriseAtoaInboxMessage[] }>(
+    await this.assertCompatibleServer(this.serverUrl, [
+      'atoa',
+      'e2ee_private_messages_v1',
+    ]);
+    await this.registerLocalE2eeDevice();
+    const requests = (await this.request<{
+      requests: Array<EnterpriseE2eeWireMessage & {
+        peerAccountId: string;
+        peer: EnterpriseAtoaInboxMessage['peer'];
+      }>;
+    }>(
       '/enterprise/atoa/inbox',
     )).requests;
+    return requests.map((request) => ({
+      ...this.decryptE2eeMessage(request),
+      peerAccountId: request.peerAccountId,
+      peer: request.peer,
+    }));
   }
 
   async pushParkService(input: {

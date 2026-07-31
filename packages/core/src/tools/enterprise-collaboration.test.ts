@@ -40,7 +40,6 @@ describe('EnterpriseCollaborationTool', () => {
     expect(tool.allowSubAgentUse).toBe(false);
     expect(actionSchema?.enum).toEqual([
       'list_members',
-      'list_messages',
       'send_message',
       'ask_peer_otto',
       'consult_peer_otto',
@@ -50,11 +49,12 @@ describe('EnterpriseCollaborationTool', () => {
     expect(tool.description).toContain('enterprise tree');
     expect(tool.description).toContain('permission');
     expect(tool.description).toContain('Never invent');
-    expect(tool.description).toContain('current direct chat');
+    expect(tool.description).toContain('selected current-chat segments');
+    expect(tool.description).toContain('not readable by this tool');
     expect(tool.description).toContain('enterprise knowledge');
     expect(tool.description).toContain('work logs');
     expect(tool.description).toContain('schedules');
-    expect(tool.description).toContain('does not include files, API keys, or other chats');
+    expect(tool.description).toContain('does not include files, API keys, other chats');
     expect(tool.description).toContain('enterprise administrator');
     expect(tool.description).toContain('assign_member_position');
     expect(tool.description).not.toContain('allow full access');
@@ -62,7 +62,6 @@ describe('EnterpriseCollaborationTool', () => {
 
   it.each([
     { action: 'list_members' },
-    { action: 'list_messages', recipientAccountId: 'acc_peer-1' },
     {
       action: 'send_message',
       recipientAccountId: 'acc_peer-1',
@@ -178,7 +177,7 @@ describe('EnterpriseCollaborationTool', () => {
 
   it.each([
     [{ action: 'unknown' }, 'action'],
-    [{ action: 'list_messages' }, 'recipientAccountId'],
+    [{ action: 'list_messages', recipientAccountId: 'acc_peer-1' }, 'action'],
     [
       { action: 'send_message', recipientAccountId: 'bad id', content: 'hi' },
       'recipientAccountId',

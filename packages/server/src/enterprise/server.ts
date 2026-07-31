@@ -125,6 +125,7 @@ const ENTERPRISE_CAPABILITIES = [
   'privacy_self_service',
   'multi_organization',
   'direct_messages',
+  'e2ee_private_messages_v1',
   'direct_message_attachments_v1',
   'encrypted_attachment_storage_v1',
   'encrypted_message_storage_v1',

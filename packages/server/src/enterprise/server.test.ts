@@ -9,15 +9,114 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import { request as httpRequest, type Server } from 'node:http';
-import { createHash, generateKeyPairSync, sign } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { canonicalJson } from '../modules/commercial_control/signedEnvelope.js';
 import {
-  buildAtoaRequest,
-  buildAtoaResponse,
-} from '../../../core/src/a2a/atoaProtocol.js';
+  e2eeMessageSignaturePayload,
+  type E2eeAttachmentCiphertextInput,
+  type E2eeContentType,
+  type E2eeMessageEnvelope,
+  type SendE2eeDirectMessageInput,
+} from '../modules/collaboration/e2eeRepository.js';
+
+interface RouteE2eeDevice {
+  accountId: string;
+  deviceId: string;
+  signingPrivateKey: ReturnType<typeof generateKeyPairSync>['privateKey'];
+  signingPublicKey: string;
+  exchangePublicKey: string;
+}
+
+function routePublicKey(
+  key: ReturnType<typeof generateKeyPairSync>['publicKey'],
+): string {
+  return key.export({ type: 'spki', format: 'pem' }).toString();
+}
+
+async function registerRouteE2eeDevice(input: {
+  base: string;
+  token: string;
+  accountId: string;
+  deviceId?: string;
+}): Promise<RouteE2eeDevice> {
+  const signing = generateKeyPairSync('ed25519');
+  const exchange = generateKeyPairSync('x25519');
+  const device: RouteE2eeDevice = {
+    accountId: input.accountId,
+    deviceId: input.deviceId ?? `device-${randomUUID()}`,
+    signingPrivateKey: signing.privateKey,
+    signingPublicKey: routePublicKey(signing.publicKey),
+    exchangePublicKey: routePublicKey(exchange.publicKey),
+  };
+  const response = await fetch(`${input.base}/enterprise/e2ee/devices`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${input.token}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      deviceId: device.deviceId,
+      deviceName: 'route test device',
+      identitySigningPublicKey: device.signingPublicKey,
+      deviceExchangePublicKey: device.exchangePublicKey,
+    }),
+  });
+  expect(response.status).toBe(200);
+  return device;
+}
+
+function routeE2eePayload(input: {
+  organizationId: string;
+  senderAccountId: string;
+  recipientAccountId: string;
+  senderDevice: RouteE2eeDevice;
+  devices: RouteE2eeDevice[];
+  messageId?: string;
+  contentType?: E2eeContentType;
+  inReplyToMessageId?: string | null;
+  attachments?: E2eeAttachmentCiphertextInput[];
+}): Omit<SendE2eeDirectMessageInput, 'organizationId' | 'senderAccountId' | 'recipientAccountId'> {
+  const ephemeral = routePublicKey(generateKeyPairSync('x25519').publicKey);
+  const envelopes: E2eeMessageEnvelope[] = input.devices.map((device, index) => ({
+    accountId: device.accountId,
+    deviceId: device.deviceId,
+    ephemeralPublicKey: ephemeral,
+    wrappedKey: Buffer.alloc(48, index + 1).toString('base64'),
+    nonce: Buffer.alloc(12, index + 1).toString('base64'),
+  }));
+  const unsigned: Omit<SendE2eeDirectMessageInput, 'signature'> = {
+    organizationId: input.organizationId,
+    senderAccountId: input.senderAccountId,
+    recipientAccountId: input.recipientAccountId,
+    messageId: input.messageId ?? randomUUID(),
+    senderDeviceId: input.senderDevice.deviceId,
+    protocolVersion: 1,
+    contentType: input.contentType ?? 'message',
+    inReplyToMessageId: input.inReplyToMessageId ?? null,
+    ciphertext: Buffer.from('opaque route ciphertext plus authentication tag').toString('base64'),
+    nonce: Buffer.alloc(12, 7).toString('base64'),
+    envelopes,
+    attachments: input.attachments ?? [],
+  };
+  const complete: SendE2eeDirectMessageInput = {
+    ...unsigned,
+    signature: sign(
+      null,
+      e2eeMessageSignaturePayload(unsigned),
+      input.senderDevice.signingPrivateKey,
+    ).toString('base64'),
+  };
+  const {
+    organizationId: _organizationId,
+    senderAccountId: _senderAccountId,
+    recipientAccountId: _recipientAccountId,
+    ...payload
+  } = complete;
+  return payload;
+}
 
 type ServerModule = typeof import('./server.js');
 type DatabaseModule = typeof import('./db.js');
@@ -1731,16 +1830,42 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       headers: { authorization: `Bearer ${memberSession.token}` },
     });
     expect(conversation.status).toBe(200);
-    await expect(conversation.json()).resolves.toMatchObject({
-      messages: [
-        expect.objectContaining({
-          senderAccountId: admin.id,
-          recipientAccountId: member.id,
-          content: expect.stringContaining('请今天下班前补充现场照片'),
-        }),
-      ],
-    });
+    // 园区系统通知不是成员私聊，不能伪装成客户端 E2EE 消息进入私聊历史。
+    await expect(conversation.json()).resolves.toEqual({ messages: [] });
   }, 20_000);
+
+  it('E2EE 设备登记与撤销只作用于当前账号，并写入安全审计', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const db = await import('./db.js');
+    const alice = db.createAccount({
+      username: 'e2ee-device-alice',
+      password: 'alice-password',
+      name: 'Alice',
+    });
+    const login = await fetch(`${base}/enterprise/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ identifier: 'e2ee-device-alice', password: 'alice-password' }),
+    });
+    expect(login.status).toBe(200);
+    const token = ((await login.json()) as { token: string }).token;
+    const device = await registerRouteE2eeDevice({
+      base,
+      token,
+      accountId: alice.id,
+    });
+
+    const revoked = await fetch(
+      `${base}/enterprise/e2ee/devices/${encodeURIComponent(device.deviceId)}`,
+      { method: 'DELETE', headers: { authorization: `Bearer ${token}` } },
+    );
+    expect(revoked.status).toBe(200);
+    await expect(revoked.json()).resolves.toEqual({ revoked: true });
+    expect(db.getAuditLogs(20, alice.organizationId)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: 'e2ee_device_registered' }),
+      expect.objectContaining({ event: 'e2ee_device_revoked' }),
+    ]));
+  });
 
   it('企业私聊可发送并鉴权下载 Word、PDF 或图片附件', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
@@ -1773,6 +1898,21 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     const bobToken = await login('file-route-bob', 'bob-password');
     const charlieToken = await login('file-route-charlie', 'charlie-password');
     const file = Buffer.from('%PDF-1.7\nAttachment route test');
+    const aliceDevice = await registerRouteE2eeDevice({
+      base,
+      token: aliceToken,
+      accountId: alice.id,
+    });
+    const bobDevice = await registerRouteE2eeDevice({
+      base,
+      token: bobToken,
+      accountId: bob.id,
+    });
+    const attachmentId = `attachment-${randomUUID()}`;
+    const encryptedAttachment = Buffer.concat([
+      file,
+      Buffer.alloc(16, 9),
+    ]).toString('base64');
 
     const sent = await fetch(base + '/enterprise/messages/' + bob.id, {
       method: 'POST',
@@ -1780,25 +1920,27 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         authorization: 'Bearer ' + aliceToken,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({
-        content: '',
+      body: JSON.stringify(routeE2eePayload({
+        organizationId: alice.organizationId,
+        senderAccountId: alice.id,
+        recipientAccountId: bob.id,
+        senderDevice: aliceDevice,
+        devices: [aliceDevice, bobDevice],
         attachments: [{
-          fileName: '项目方案.pdf',
-          mimeType: 'application/pdf',
-          size: file.length,
-          data: file.toString('base64'),
+          id: attachmentId,
+          ciphertext: encryptedAttachment,
+          nonce: Buffer.alloc(12, 8).toString('base64'),
         }],
-      }),
+      })),
     });
     expect(sent.status).toBe(201);
     const sentBody = await sent.json() as {
-      message: { content: string; attachments: Array<{ id: string; fileName: string; size: number }> };
+      message: { ciphertext: string; attachments: Array<{ id: string; ciphertextSize: number }> };
     };
-    expect(sentBody.message.content).toContain('项目方案.pdf');
+    expect(JSON.stringify(sentBody)).not.toContain('项目方案.pdf');
     expect(sentBody.message.attachments).toEqual([
-      expect.objectContaining({ fileName: '项目方案.pdf', size: file.length }),
+      expect.objectContaining({ id: attachmentId }),
     ]);
-    const attachmentId = sentBody.message.attachments[0]!.id;
 
     const conversation = await fetch(base + '/enterprise/messages/' + alice.id, {
       headers: { authorization: 'Bearer ' + bobToken },
@@ -1820,9 +1962,11 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     expect(downloaded.status).toBe(200);
     await expect(downloaded.json()).resolves.toMatchObject({
       attachment: {
-        id: attachmentId,
-        fileName: '项目方案.pdf',
-        data: file.toString('base64'),
+        message: { id: expect.any(String) },
+        attachment: {
+          id: attachmentId,
+          ciphertext: encryptedAttachment,
+        },
       },
     });
 
@@ -1856,6 +2000,24 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     };
     const aliceToken = await login('atoa-route-alice', 'alice-password');
     const bobToken = await login('atoa-route-bob', 'bob-password');
+    const aliceDevice = await registerRouteE2eeDevice({
+      base,
+      token: aliceToken,
+      accountId: alice.id,
+    });
+    const bobDevice = await registerRouteE2eeDevice({
+      base,
+      token: bobToken,
+      accountId: bob.id,
+    });
+    const requestPayload = routeE2eePayload({
+      organizationId: alice.organizationId,
+      senderAccountId: alice.id,
+      recipientAccountId: bob.id,
+      senderDevice: aliceDevice,
+      devices: [aliceDevice, bobDevice],
+      contentType: 'atoa_request',
+    });
 
     const sent = await fetch(`${base}/enterprise/messages/${bob.id}`, {
       method: 'POST',
@@ -1863,9 +2025,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         authorization: `Bearer ${aliceToken}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({
-        content: buildAtoaRequest('今天方便评审吗？', { id: 'route-1' }),
-      }),
+      body: JSON.stringify(requestPayload),
     });
     expect(sent.status).toBe(201);
     const requestMessage = (await sent.json()) as { message: { id: string } };
@@ -1906,13 +2066,15 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         authorization: `Bearer ${bobToken}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({
-        content: buildAtoaResponse({
-          requestId: requestMessage.message.id,
-          question: '今天方便评审吗？',
-          answer: '可以，15:00 开始。',
-        }),
-      }),
+      body: JSON.stringify(routeE2eePayload({
+        organizationId: bob.organizationId,
+        senderAccountId: bob.id,
+        recipientAccountId: alice.id,
+        senderDevice: bobDevice,
+        devices: [aliceDevice, bobDevice],
+        contentType: 'atoa_response',
+        inReplyToMessageId: requestMessage.message.id,
+      })),
     });
     expect(replied.status).toBe(201);
     expect(db.getDB().prepare(
@@ -4394,6 +4556,16 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     });
     const salesToken = await login(base, sales.username, 'atoa-sales-password');
     const legalToken = await login(base, legal.username, 'atoa-legal-password');
+    const salesDevice = await registerRouteE2eeDevice({
+      base,
+      token: salesToken,
+      accountId: sales.id,
+    });
+    const legalDevice = await registerRouteE2eeDevice({
+      base,
+      token: legalToken,
+      accountId: legal.id,
+    });
 
     const sent = await fetch(`${base}/enterprise/messages/${legal.id}`, {
       method: 'POST',
@@ -4401,16 +4573,23 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
         authorization: `Bearer ${salesToken}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({
-        content: 'OTTO_ATOA_REQUEST {"v":1,"id":"knowledge-scope","question":"审查方案","requestedSources":["enterprise_knowledge"]}',
-      }),
+      body: JSON.stringify(routeE2eePayload({
+        organizationId: organization.id,
+        senderAccountId: sales.id,
+        recipientAccountId: legal.id,
+        senderDevice: salesDevice,
+        devices: [salesDevice, legalDevice],
+        contentType: 'atoa_request',
+      })),
     });
     expect(sent.status).toBe(201);
     const inbox = await fetch(`${base}/enterprise/atoa/inbox`, {
       headers: { authorization: `Bearer ${legalToken}` },
     });
     expect(inbox.status).toBe(200);
-    expect(JSON.stringify(await inbox.json())).toContain('enterprise_knowledge');
+    const inboxPayload = JSON.stringify(await inbox.json());
+    expect(inboxPayload).not.toContain('审查方案');
+    expect(inboxPayload).not.toContain('enterprise_knowledge');
 
     // A2A context collector 使用的就是当前账号会话下的 knowledge GET。
     const contextKnowledge = await fetch(`${base}/enterprise/knowledge`, {

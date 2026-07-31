@@ -3,8 +3,10 @@
  */
 
 import React, { useState } from 'react';
+import type { EnterpriseDirectMessage } from '../../preload/index.js';
 import {
   ATOA_CONTEXT_SOURCES,
+  displayDirectMessageContent,
   type AtoaContextSource,
   type AtoaRequestPayload,
 } from '../atoaProtocol.js';
@@ -16,6 +18,8 @@ import type {
 export interface AtoaPermissionRequest {
   peer: AtoaPeerIdentity;
   payload: AtoaRequestPayload;
+  /** Already decrypted locally; never loaded by Otto unless selected below. */
+  messages: EnterpriseDirectMessage[];
 }
 const SOURCE_DETAILS: Record<
   AtoaContextSource,
@@ -23,7 +27,7 @@ const SOURCE_DETAILS: Record<
 > = {
   current_chat: {
     label: '当前聊天',
-    detail: '仅这位同事与你最近的私聊内容',
+    detail: '必须继续勾选具体消息；不会授权整段会话',
   },
   enterprise_knowledge: {
     label: '企业知识',
@@ -47,6 +51,7 @@ export function AtoaPermissionDialog({
   onDecision(decision: AtoaPermissionDecision): void;
 }): React.JSX.Element {
   const [selected, setSelected] = useState<AtoaContextSource[]>([]);
+  const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
   const peerMeta = [request.peer.department, request.peer.positionTitle]
     .filter(Boolean)
     .join(' · ');
@@ -60,6 +65,15 @@ export function AtoaPermissionDialog({
           ),
     );
   };
+  const toggleMessage = (messageId: string): void => {
+    setSelectedMessageIds((current) =>
+      current.includes(messageId)
+        ? current.filter((id) => id !== messageId)
+        : [...current, messageId].slice(-40),
+    );
+  };
+  const selectedChatWithoutMessages =
+    selected.includes('current_chat') && selectedMessageIds.length === 0;
 
   return (
     <div className="otto-a2a-permission-backdrop">
@@ -113,6 +127,34 @@ export function AtoaPermissionDialog({
           ))}
         </div>
 
+        {selected.includes('current_chat') ? (
+          <fieldset aria-label="选择私聊片段">
+            <legend>仅授权下面明确勾选的消息</legend>
+            {request.messages.slice(-20).map((message) => (
+              <label key={message.id}>
+                <input
+                  type="checkbox"
+                  checked={selectedMessageIds.includes(message.id)}
+                  onChange={() => toggleMessage(message.id)}
+                />
+                <span>
+                  <strong>
+                    {message.senderAccountId === request.peer.id
+                      ? request.peer.name
+                      : '我'}
+                  </strong>
+                  <small>
+                    {displayDirectMessageContent(message.content).slice(0, 180)}
+                  </small>
+                </span>
+              </label>
+            ))}
+            {request.messages.length === 0 ? (
+              <small>当前没有可授权的私聊消息。</small>
+            ) : null}
+          </fieldset>
+        ) : null}
+
         <footer>
           <button
             type="button"
@@ -123,9 +165,15 @@ export function AtoaPermissionDialog({
           </button>
           <button
             type="button"
-            disabled={selected.length === 0}
+            disabled={selected.length === 0 || selectedChatWithoutMessages}
             onClick={() =>
-              onDecision({ kind: 'allow', sources: [...selected] })
+              onDecision({
+                kind: 'allow',
+                sources: [...selected],
+                ...(selected.includes('current_chat')
+                  ? { messageIds: [...selectedMessageIds] }
+                  : {}),
+              })
             }
           >
             允许所选范围
@@ -136,11 +184,13 @@ export function AtoaPermissionDialog({
             onClick={() =>
               onDecision({
                 kind: 'allow',
-                sources: [...ATOA_CONTEXT_SOURCES],
+                sources: ATOA_CONTEXT_SOURCES.filter(
+                  (source) => source !== 'current_chat',
+                ),
               })
             }
           >
-            允许全部可授权资料
+            允许全部非私聊资料
           </button>
         </footer>
       </section>

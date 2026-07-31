@@ -8,6 +8,7 @@ import type {
   EncryptedObjectStore,
 } from '../data_platform/index.js';
 import { createDirectMessageFacade } from './directMessageFacade.js';
+import { createE2eeFacade } from './e2eeRepository.js';
 import { createAccountPresenceFacade } from './presenceFacade.js';
 
 export interface CollaborationCompositionAccount {
@@ -49,6 +50,7 @@ export function createCollaborationComposition<
     },
   };
   const directMessages = createDirectMessageFacade(directMessageStore);
+  const e2ee = createE2eeFacade(directMessageStore);
   const presence = createAccountPresenceFacade({
     db: options.db,
     now: options.now,
@@ -58,6 +60,7 @@ export function createCollaborationComposition<
 
   return {
     ...directMessages,
+    ...e2ee,
     ...presence,
   };
 }

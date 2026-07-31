@@ -36,6 +36,8 @@ export interface CollectAuthorizedAtoaContextInput {
   currentAccountId: string;
   currentAccountName: string;
   peerName: string;
+  /** Message IDs explicitly selected in the current one-time permission UI. */
+  authorizedMessageIds?: readonly string[];
   listMessages(peerAccountId: string): Promise<EnterpriseDirectMessage[]>;
   listKnowledge(): Promise<EnterpriseKnowledgeItem[]>;
   workLogRecent(days?: number): Promise<WorkLogDay[]>;
@@ -146,7 +148,21 @@ export async function collectAuthorizedAtoaContext(
     try {
       let body: string;
       if (source === 'current_chat') {
-        body = formatMessages(await input.listMessages(input.peerAccountId), input);
+        const authorized = new Set(
+          (input.authorizedMessageIds ?? []).filter(
+            (id) => typeof id === 'string' && id.length > 0 && id.length <= 200,
+          ).slice(0, 40),
+        );
+        if (authorized.size === 0) {
+          throw new Error('未明确选择任何私聊消息片段');
+        }
+        const selectedMessages = (
+          await input.listMessages(input.peerAccountId)
+        ).filter((message) => authorized.has(message.id));
+        if (selectedMessages.length === 0) {
+          throw new Error('所选私聊消息已不存在或不属于当前会话');
+        }
+        body = formatMessages(selectedMessages, input);
       } else if (source === 'enterprise_knowledge') {
         body = formatKnowledge(await input.listKnowledge());
       } else if (source === 'work_logs') {

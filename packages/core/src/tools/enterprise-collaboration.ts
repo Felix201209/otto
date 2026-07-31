@@ -22,7 +22,6 @@ import {
 
 export type EnterpriseCollaborationAction =
   | 'list_members'
-  | 'list_messages'
   | 'send_message'
   | 'ask_peer_otto'
   | 'consult_peer_otto'
@@ -46,7 +45,6 @@ interface RelayState {
 
 const ACTIONS: readonly EnterpriseCollaborationAction[] = [
   'list_members',
-  'list_messages',
   'send_message',
   'ask_peer_otto',
   'consult_peer_otto',
@@ -60,9 +58,9 @@ const DESCRIPTION = `Communicate with coworkers under the authenticated enterpri
 
 Required workflow:
 1. Call list_members first and use the returned account ID. Never invent, guess, or reuse an ID from another organization.
-2. Call list_messages with recipientAccountId to read the real direct-message thread.
+2. Private-chat history is not readable by this tool. Only plaintext segments explicitly selected and decrypted by the user on their device may enter a one-time A2A context.
 3. Call send_message with recipientAccountId and content for an ordinary employee-to-employee message.
-4. Call ask_peer_otto with recipientAccountId and question only when the user asks another employee's Otto. The recipient controls permission and may allow all four permitted categories (current direct chat, enterprise knowledge, work logs, and schedules), allow only selected categories, or deny the request. This scope does not include files, API keys, or other chats. Respect the returned scope; never bypass it.
+4. Call ask_peer_otto with recipientAccountId and question only when the user asks another employee's Otto. The recipient controls permission and may allow explicitly selected current-chat segments, enterprise knowledge, work logs, and schedules, allow only selected categories, or deny the request. This scope does not include files, API keys, other chats, or unselected direct messages. Respect the returned scope; never bypass it.
 5. Call consult_peer_otto with recipientAccountId and question only for the lower-frequency two-Otto negotiation flow, such as comparing schedules, agreeing on a meeting time, or producing a cooperation plan. The client performs the real negotiation.
 6. If and only if the authenticated user is an enterprise administrator, call assign_member_position with a list_members recipientAccountId, department, positionTitle, and optional role to make a real organization assignment. The client rechecks the administrator identity and same-organization member immediately before updating the account. Never claim success unless the client returns the updated member.
 

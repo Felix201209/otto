@@ -688,6 +688,20 @@ export interface EnterpriseDirectMessage {
   createdAt: string;
   readAt: string | null;
   attachments?: EnterpriseDirectMessageAttachment[];
+  e2ee?: true;
+  contentType?: 'message' | 'atoa_request' | 'atoa_response';
+  inReplyToMessageId?: string | null;
+}
+
+export interface EnterpriseE2eeDevice {
+  accountId: string;
+  deviceId: string;
+  deviceName: string;
+  identitySigningPublicKey: string;
+  deviceExchangePublicKey: string;
+  createdAt: string;
+  lastSeenAt: string;
+  revokedAt: string | null;
 }
 
 export interface EnterpriseUnreadMessageNotification {
@@ -919,6 +933,10 @@ const IPC = {
   enterpriseMessagesUnread: 'otto:enterprise-messages-unread',
   enterpriseMessageSend: 'otto:enterprise-message-send',
   enterpriseMessageAttachmentRead: 'otto:enterprise-message-attachment-read',
+  enterpriseE2eeDevicesList: 'otto:enterprise-e2ee-devices-list',
+  enterpriseE2eeDeviceRevoke: 'otto:enterprise-e2ee-device-revoke',
+  enterpriseE2eeRecoveryExport: 'otto:enterprise-e2ee-recovery-export',
+  enterpriseE2eeRecoveryImport: 'otto:enterprise-e2ee-recovery-import',
   enterpriseAtoaInbox: 'otto:enterprise-atoa-inbox',
   enterpriseParkServicePush: 'otto:enterprise-park-service-push',
   enterpriseParkView: 'otto:enterprise-park-view',
@@ -1320,6 +1338,10 @@ export interface OttoBridge {
   enterpriseMessageAttachmentRead(
     attachmentId: string,
   ): Promise<EnterpriseDirectMessageAttachmentDownload>;
+  enterpriseE2eeDevicesList(): Promise<EnterpriseE2eeDevice[]>;
+  enterpriseE2eeDeviceRevoke(deviceId: string): Promise<void>;
+  enterpriseE2eeRecoveryExport(passphrase: string): Promise<string>;
+  enterpriseE2eeRecoveryImport(bundle: string, passphrase: string): Promise<void>;
   enterpriseAtoaInbox(): Promise<EnterpriseAtoaInboxMessage[]>;
   enterpriseParkServicePush(input: {
     recipientAccountId: string;
@@ -2221,6 +2243,22 @@ const bridge: OttoBridge = {
       IPC.enterpriseMessageAttachmentRead,
       attachmentId,
     ) as Promise<EnterpriseDirectMessageAttachmentDownload>;
+  },
+  enterpriseE2eeDevicesList(): Promise<EnterpriseE2eeDevice[]> {
+    return ipcRenderer.invoke(IPC.enterpriseE2eeDevicesList) as Promise<EnterpriseE2eeDevice[]>;
+  },
+  enterpriseE2eeDeviceRevoke(deviceId: string): Promise<void> {
+    return ipcRenderer.invoke(IPC.enterpriseE2eeDeviceRevoke, deviceId) as Promise<void>;
+  },
+  enterpriseE2eeRecoveryExport(passphrase: string): Promise<string> {
+    return ipcRenderer.invoke(IPC.enterpriseE2eeRecoveryExport, passphrase) as Promise<string>;
+  },
+  enterpriseE2eeRecoveryImport(bundle: string, passphrase: string): Promise<void> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseE2eeRecoveryImport,
+      bundle,
+      passphrase,
+    ) as Promise<void>;
   },
   enterpriseAtoaInbox(): Promise<EnterpriseAtoaInboxMessage[]> {
     return ipcRenderer.invoke(IPC.enterpriseAtoaInbox) as Promise<EnterpriseAtoaInboxMessage[]>;

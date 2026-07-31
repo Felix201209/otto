@@ -139,6 +139,104 @@ export async function handleCommunicationRoute({
     return true;
   }
 
+  if (path === '/enterprise/e2ee/devices' && method === 'POST') {
+    const body = await readBody(req, 16 * 1024);
+    try {
+      const requestedDeviceId = typeof body.deviceId === 'string' ? body.deviceId : '';
+      const alreadyRegistered = db.listE2eeDevices({
+        organizationId: memberAccount.organizationId,
+        requesterAccountId: memberAccount.id,
+        accountIds: [memberAccount.id],
+        includeRevoked: true,
+      }).some((candidate) => candidate.deviceId === requestedDeviceId);
+      const device = db.registerE2eeDevice({
+        organizationId: memberAccount.organizationId,
+        accountId: memberAccount.id,
+        deviceId: requestedDeviceId,
+        deviceName: typeof body.deviceName === 'string' ? body.deviceName : '',
+        identitySigningPublicKey:
+          typeof body.identitySigningPublicKey === 'string'
+            ? body.identitySigningPublicKey
+            : '',
+        deviceExchangePublicKey:
+          typeof body.deviceExchangePublicKey === 'string'
+            ? body.deviceExchangePublicKey
+            : '',
+      });
+      if (!alreadyRegistered) {
+        db.logAudit(
+          'e2ee_device_registered',
+          memberAccount.employeeId,
+          JSON.stringify({
+            accountId: memberAccount.id,
+            deviceId: device.deviceId,
+            deviceName: device.deviceName,
+          }),
+          memberAccount.organizationId,
+        );
+      }
+      sendJSON(res, 200, { device });
+    } catch (error) {
+      sendJSON(res, 400, {
+        error: error instanceof Error ? error.message : 'E2EE device registration failed',
+      });
+    }
+    return true;
+  }
+
+  if (path === '/enterprise/e2ee/devices' && method === 'GET') {
+    try {
+      const accountIds = url.searchParams.getAll('accountId');
+      const devices = db.listE2eeDevices({
+        organizationId: memberAccount.organizationId,
+        requesterAccountId: memberAccount.id,
+        accountIds: accountIds.length > 0 ? accountIds : [memberAccount.id],
+        includeRevoked: url.searchParams.get('includeRevoked') === 'true',
+      });
+      res.setHeader('Cache-Control', 'no-store');
+      sendJSON(res, 200, { devices });
+    } catch (error) {
+      sendJSON(res, 400, {
+        error: error instanceof Error ? error.message : 'E2EE device lookup failed',
+      });
+    }
+    return true;
+  }
+
+  if (path.startsWith('/enterprise/e2ee/devices/') && method === 'DELETE') {
+    let deviceId = '';
+    try {
+      deviceId = decodeURIComponent(path.slice('/enterprise/e2ee/devices/'.length));
+    } catch {
+      // Invalid identifiers are rejected by the repository.
+    }
+    try {
+      const revoked = db.revokeE2eeDevice({
+        organizationId: memberAccount.organizationId,
+        accountId: memberAccount.id,
+        deviceId,
+      });
+      if (revoked) {
+        db.logAudit(
+          'e2ee_device_revoked',
+          memberAccount.employeeId,
+          JSON.stringify({ accountId: memberAccount.id, deviceId }),
+          memberAccount.organizationId,
+        );
+      }
+      sendJSON(
+        res,
+        revoked ? 200 : 404,
+        revoked ? { revoked: true } : { error: 'E2EE device not found' },
+      );
+    } catch (error) {
+      sendJSON(res, 400, {
+        error: error instanceof Error ? error.message : 'E2EE device revocation failed',
+      });
+    }
+    return true;
+  }
+
   if (path === '/enterprise/atoa/inbox' && method === 'GET') {
     if (!db.getOrganizationFeatures(memberAccount.organizationId).atoa) {
       sendJSON(res, 403, { error: '企业协作功能已由管理员关闭' });
@@ -148,11 +246,9 @@ export async function handleCommunicationRoute({
     for (const [key, expiresAt] of atoaClaims) {
       if (expiresAt <= now) atoaClaims.delete(key);
     }
-    const pending = db.listPendingAtoaRequests({
+    const pending = db.listPendingE2eeAtoaRequests({
       organizationId: memberAccount.organizationId,
       accountId: memberAccount.id,
-      requestPrefix: 'OTTO_ATOA_REQUEST ',
-      responsePrefix: 'OTTO_ATOA_RESPONSE ',
       limit: Number(url.searchParams.get('limit') || 50),
     });
     const claimed = pending.find((request) => {
@@ -200,7 +296,7 @@ export async function handleCommunicationRoute({
     }
     const requestedLimit = Number(url.searchParams.get('limit') || 50);
     sendJSON(res, 200, {
-      notifications: db.listUnreadDirectMessageNotifications({
+      notifications: db.listUnreadE2eeNotifications({
         organizationId: memberAccount.organizationId,
         accountId: memberAccount.id,
         limit: Number.isFinite(requestedLimit) ? requestedLimit : 50,
@@ -222,7 +318,7 @@ export async function handleCommunicationRoute({
     }
     try {
       sendJSON(res, 200, {
-        attachment: db.getDirectMessageAttachment({
+        attachment: db.getE2eeAttachment({
           organizationId: memberAccount.organizationId,
           accountId: memberAccount.id,
           attachmentId,
@@ -250,7 +346,7 @@ export async function handleCommunicationRoute({
       return true;
     }
     if (method === 'GET') {
-      sendJSON(res, 200, { messages: db.listDirectMessages({
+      sendJSON(res, 200, { messages: db.listE2eeDirectMessages({
         organizationId: memberAccount.organizationId,
         accountId: memberAccount.id,
         peerAccountId,
@@ -259,32 +355,46 @@ export async function handleCommunicationRoute({
       return true;
     }
     const body = await readBody(req, 30 * 1024 * 1024);
-    if (typeof body.content !== 'string' || (body.attachments != null && !Array.isArray(body.attachments))) {
+    if (
+      typeof body.messageId !== 'string' ||
+      typeof body.senderDeviceId !== 'string' ||
+      body.protocolVersion !== 1 ||
+      typeof body.ciphertext !== 'string' ||
+      typeof body.nonce !== 'string' ||
+      typeof body.signature !== 'string' ||
+      !Array.isArray(body.envelopes) ||
+      (body.attachments != null && !Array.isArray(body.attachments))
+    ) {
       sendJSON(res, 400, { error: '消息内容不能为空' });
       return true;
     }
     try {
-      const message = db.sendDirectMessage({
+      const message = db.sendE2eeDirectMessage({
         organizationId: memberAccount.organizationId,
         senderAccountId: memberAccount.id,
         recipientAccountId: peerAccountId,
-        content: body.content,
-        attachments: body.attachments as db.DirectMessageAttachmentInput[] | undefined,
+        messageId: body.messageId as string,
+        senderDeviceId: body.senderDeviceId as string,
+        protocolVersion: 1,
+        contentType:
+          body.contentType === 'atoa_request' || body.contentType === 'atoa_response'
+            ? body.contentType
+            : 'message',
+        inReplyToMessageId:
+          typeof body.inReplyToMessageId === 'string'
+            ? body.inReplyToMessageId
+            : null,
+        ciphertext: body.ciphertext as string,
+        nonce: body.nonce as string,
+        signature: body.signature as string,
+        envelopes: body.envelopes as db.E2eeMessageEnvelope[],
+        attachments:
+          body.attachments as db.E2eeAttachmentCiphertextInput[] | undefined,
       });
-      if (body.content.startsWith('OTTO_ATOA_RESPONSE ')) {
-        const requestId = db.markAtoaRequestReadFromResponse({
-          organizationId: memberAccount.organizationId,
-          responderAccountId: memberAccount.id,
-          peerAccountId,
-          responseContent: body.content,
-          requestPrefix: 'OTTO_ATOA_REQUEST ',
-          responsePrefix: 'OTTO_ATOA_RESPONSE ',
-        });
-        if (requestId) {
-          atoaClaims.delete(
-            `${memberAccount.organizationId}:${memberAccount.id}:${requestId}`,
-          );
-        }
+      if (message.inReplyToMessageId) {
+        atoaClaims.delete(
+          `${memberAccount.organizationId}:${memberAccount.id}:${message.inReplyToMessageId}`,
+        );
       }
       sendJSON(res, 201, { message });
     } catch (error) {

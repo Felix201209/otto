@@ -3,7 +3,10 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import type { EnterpriseDataGovernanceProfile } from '../../../preload/index.js';
+import type {
+  EnterpriseDataGovernanceProfile,
+  EnterpriseE2eeDevice,
+} from '../../../preload/index.js';
 import { Badge, Card, Empty, Panel } from './HubUI.js';
 
 function licenseLabel(status: string): { text: string; danger: boolean } {
@@ -21,9 +24,17 @@ function storageLabel(storage: EnterpriseDataGovernanceProfile['processingActivi
 
 export function PrivacyDataPanel(): React.JSX.Element {
   const [profile, setProfile] = useState<EnterpriseDataGovernanceProfile | null>(null);
+  const [devices, setDevices] = useState<EnterpriseE2eeDevice[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [e2eeBusy, setE2eeBusy] = useState(false);
   const [error, setError] = useState('');
+  const [e2eeError, setE2eeError] = useState('');
   const [notice, setNotice] = useState('');
+  const [pendingDeviceRevocation, setPendingDeviceRevocation] = useState<string | null>(null);
+  const [recoveryPassphrase, setRecoveryPassphrase] = useState('');
+  const [recoveryPassphraseConfirmation, setRecoveryPassphraseConfirmation] = useState('');
+  const [recoveryBundle, setRecoveryBundle] = useState('');
+  const [recoveryImportPassphrase, setRecoveryImportPassphrase] = useState('');
   const [showDelete, setShowDelete] = useState(false);
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
@@ -31,13 +42,18 @@ export function PrivacyDataPanel(): React.JSX.Element {
   const load = async (): Promise<void> => {
     setBusy(true);
     setError('');
+    setE2eeError('');
     try {
       setProfile(await window.otto.enterpriseDataGovernanceGet());
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
     }
+    try {
+      setDevices(await window.otto.enterpriseE2eeDevicesList());
+    } catch (cause) {
+      setE2eeError(cause instanceof Error ? cause.message : String(cause));
+    }
+    setBusy(false);
   };
 
   useEffect(() => { void load(); }, []);
@@ -88,6 +104,73 @@ export function PrivacyDataPanel(): React.JSX.Element {
     });
   };
 
+  const revokeDevice = async (device: EnterpriseE2eeDevice): Promise<void> => {
+    setE2eeBusy(true);
+    setE2eeError('');
+    try {
+      await window.otto.enterpriseE2eeDeviceRevoke(device.deviceId);
+      setDevices(await window.otto.enterpriseE2eeDevicesList());
+      setPendingDeviceRevocation(null);
+      setNotice(`已撤销设备“${device.deviceName}”；它不能再接收新消息密钥。`);
+    } catch (cause) {
+      setE2eeError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setE2eeBusy(false);
+    }
+  };
+
+  const exportRecoveryBundle = async (): Promise<void> => {
+    if (recoveryPassphrase.length < 12) {
+      setE2eeError('恢复包口令至少需要 12 个字符。');
+      return;
+    }
+    if (recoveryPassphrase !== recoveryPassphraseConfirmation) {
+      setE2eeError('两次输入的恢复包口令不一致。');
+      return;
+    }
+    setE2eeBusy(true);
+    setE2eeError('');
+    try {
+      const bundle = await window.otto.enterpriseE2eeRecoveryExport(recoveryPassphrase);
+      const date = new Date().toISOString().slice(0, 10);
+      const savedPath = await window.otto.saveTextFile(
+        `otto-e2ee-recovery-${date}.json`,
+        bundle,
+      );
+      if (savedPath) {
+        setNotice(`恢复包已保存到 ${savedPath}`);
+        setRecoveryPassphrase('');
+        setRecoveryPassphraseConfirmation('');
+      }
+    } catch (cause) {
+      setE2eeError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setE2eeBusy(false);
+    }
+  };
+
+  const importRecoveryBundle = async (): Promise<void> => {
+    if (!recoveryBundle.trim() || recoveryImportPassphrase.length < 12) {
+      setE2eeError('请粘贴恢复包，并输入至少 12 个字符的恢复口令。');
+      return;
+    }
+    setE2eeBusy(true);
+    setE2eeError('');
+    try {
+      await window.otto.enterpriseE2eeRecoveryImport(
+        recoveryBundle.trim(),
+        recoveryImportPassphrase,
+      );
+      setRecoveryBundle('');
+      setRecoveryImportPassphrase('');
+      setNotice('历史设备密钥已安全导入；当前设备密钥保持不变。');
+    } catch (cause) {
+      setE2eeError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setE2eeBusy(false);
+    }
+  };
+
   const license = profile ? licenseLabel(profile.authorization.license.status) : null;
   return (
     <Panel
@@ -104,6 +187,112 @@ export function PrivacyDataPanel(): React.JSX.Element {
             <div><span>数据位置</span><strong>{profile.residency.localizationReady ? '中国境内 / 当前企业服务器' : profile.residency.region}</strong><small>{profile.residency.crossBorderEnabled ? '已开启跨境处理' : '默认不跨境'}</small></div>
             <div><span>健康遥测</span><strong>{profile.authorization.telemetry.enabled ? '已开启' : '已关闭'}</strong><small>不上传聊天、文件、会议或个人记忆原文</small></div>
             <div><span>传输</span><strong>公网 HTTPS / TLS</strong><small>会话令牌不进入 URL</small></div>
+          </Card>
+
+          <div className="otto-hub__privacy-section-head">
+            <div>
+              <strong>端到端加密私聊</strong>
+              <span>消息与附件只在已登记设备上解密；服务器只保存密文。</span>
+            </div>
+          </div>
+          {e2eeError ? <div className="otto-hub__privacy-error" role="alert">{e2eeError}</div> : null}
+          <Card className="otto-hub__e2ee-card">
+            <div className="otto-hub__e2ee-device-list">
+              {!devices ? <Empty>{busy ? '正在读取加密设备…' : '暂时无法读取加密设备'}</Empty> : null}
+              {devices?.length === 0 ? <Empty>还没有登记的加密设备</Empty> : null}
+              {devices?.map((device) => (
+                <div className="otto-hub__e2ee-device" key={device.deviceId}>
+                  <div>
+                    <strong>{device.deviceName}</strong>
+                    <span>设备 {device.deviceId.slice(0, 12)} · 最后在线 {new Date(device.lastSeenAt).toLocaleString()}</span>
+                  </div>
+                  <Badge tone={device.revokedAt ? 'danger' : 'accent'}>
+                    {device.revokedAt ? '已撤销' : '可接收新消息'}
+                  </Badge>
+                  {!device.revokedAt ? pendingDeviceRevocation === device.deviceId ? (
+                    <div className="otto-hub__e2ee-confirm">
+                      <button
+                        type="button"
+                        className="otto-hub__btn otto-hub__btn--danger"
+                        aria-label={`确认撤销 ${device.deviceName}`}
+                        disabled={e2eeBusy}
+                        onClick={() => void revokeDevice(device)}
+                      >确认撤销</button>
+                      <button
+                        type="button"
+                        className="otto-hub__btn"
+                        disabled={e2eeBusy}
+                        onClick={() => setPendingDeviceRevocation(null)}
+                      >取消</button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="otto-hub__btn"
+                      aria-label={`撤销设备 ${device.deviceName}`}
+                      disabled={e2eeBusy}
+                      onClick={() => setPendingDeviceRevocation(device.deviceId)}
+                    >撤销设备</button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+            <div className="otto-hub__e2ee-recovery">
+              <div className="otto-hub__setting-text">
+                <strong>加密密钥恢复包</strong>
+                <span className="otto-hub__field-hint">恢复包由口令加密，但仍应保存在离线或受保护的位置。导入只补回历史解密密钥，不替换当前设备身份。</span>
+              </div>
+              <div className="otto-hub__e2ee-recovery-grid">
+                <input
+                  className="otto-hub__input"
+                  type="password"
+                  autoComplete="new-password"
+                  aria-label="恢复包口令"
+                  value={recoveryPassphrase}
+                  onChange={(event) => setRecoveryPassphrase(event.target.value)}
+                  placeholder="设置至少 12 个字符的口令"
+                />
+                <input
+                  className="otto-hub__input"
+                  type="password"
+                  autoComplete="new-password"
+                  aria-label="确认恢复包口令"
+                  value={recoveryPassphraseConfirmation}
+                  onChange={(event) => setRecoveryPassphraseConfirmation(event.target.value)}
+                  placeholder="再次输入口令"
+                />
+                <button
+                  type="button"
+                  className="otto-hub__btn otto-hub__btn--primary"
+                  disabled={e2eeBusy}
+                  onClick={() => void exportRecoveryBundle()}
+                >导出恢复包</button>
+              </div>
+              <div className="otto-hub__e2ee-recovery-grid otto-hub__e2ee-recovery-grid--import">
+                <textarea
+                  className="otto-hub__input"
+                  aria-label="恢复包内容"
+                  value={recoveryBundle}
+                  onChange={(event) => setRecoveryBundle(event.target.value)}
+                  placeholder="粘贴恢复包 JSON"
+                />
+                <input
+                  className="otto-hub__input"
+                  type="password"
+                  autoComplete="current-password"
+                  aria-label="导入恢复包口令"
+                  value={recoveryImportPassphrase}
+                  onChange={(event) => setRecoveryImportPassphrase(event.target.value)}
+                  placeholder="输入恢复包口令"
+                />
+                <button
+                  type="button"
+                  className="otto-hub__btn"
+                  disabled={e2eeBusy}
+                  onClick={() => void importRecoveryBundle()}
+                >导入恢复包</button>
+              </div>
+            </div>
           </Card>
 
           {!profile.readiness.configured ? (

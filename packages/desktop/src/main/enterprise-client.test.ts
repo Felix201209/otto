@@ -8,6 +8,60 @@ import {
   EnterpriseJoinStateUncertainError,
   logoutAndPersistEnterpriseSession,
 } from './enterprise-client.js';
+import type {
+  EnterpriseE2eeCrypto,
+  EnterpriseE2eeWireMessage,
+} from './enterprise-e2ee.js';
+
+const E2EE_DEVICE = {
+  accountId: 'acc_1',
+  deviceId: 'device-1',
+  deviceName: 'test device',
+  identitySigningPublicKey: 'test signing key',
+  deviceExchangePublicKey: 'test exchange key',
+  createdAt: '2026-07-31T00:00:00.000Z',
+  lastSeenAt: '2026-07-31T00:00:00.000Z',
+  revokedAt: null,
+};
+
+function mockE2eeCrypto(input: {
+  decryptContent?: string;
+  decryptedAttachments?: Array<{ id: string; fileName: string; mimeType: string; size: number }>;
+} = {}): EnterpriseE2eeCrypto {
+  return {
+    localDevice: vi.fn(() => E2EE_DEVICE),
+    encryptMessage: vi.fn(() => ({
+      messageId: 'message-1',
+      senderDeviceId: 'device-1',
+      protocolVersion: 1,
+      contentType: 'message',
+      inReplyToMessageId: null,
+      ciphertext: 'Y2lwaGVydGV4dCBwbHVzIGF1dGggdGFn',
+      nonce: 'AAAAAAAAAAAAAAAA',
+      signature: 'c2lnbmF0dXJl',
+      envelopes: [],
+      attachments: [],
+    })),
+    decryptMessage: vi.fn(({ message }: { message: EnterpriseE2eeWireMessage }) => ({
+      id: message.id,
+      senderAccountId: message.senderAccountId,
+      recipientAccountId: message.recipientAccountId,
+      content: input.decryptContent ?? 'decrypted message',
+      contentType: message.contentType,
+      inReplyToMessageId: message.inReplyToMessageId,
+      createdAt: message.createdAt,
+      readAt: message.readAt,
+      attachments: input.decryptedAttachments ?? [],
+    })),
+    decryptAttachment: vi.fn(() => ({
+      id: 'attachment-1',
+      fileName: '方案.pdf',
+      mimeType: 'application/pdf',
+      size: 4,
+      data: 'JVBERg==',
+    })),
+  } as unknown as EnterpriseE2eeCrypto;
+}
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -52,6 +106,7 @@ const API_V2_HEALTH = {
     'account_deletion',
     'multi_organization',
     'direct_messages',
+    'e2ee_private_messages_v1',
     'direct_message_attachments_v1',
     'atoa',
     'position_invites',
@@ -646,6 +701,17 @@ describe('EnterpriseClient', () => {
   it('登录成员使用会话令牌读取 A2A 待处理请求', async () => {
     const requests = [{
       id: 'msg_atoa_1',
+      senderAccountId: 'acc_2',
+      recipientAccountId: 'acc_1',
+      senderDeviceId: 'peer-device',
+      senderIdentitySigningPublicKey: 'peer signing key',
+      protocolVersion: 1 as const,
+      contentType: 'atoa_request' as const,
+      inReplyToMessageId: null,
+      ciphertext: 'ciphertext',
+      nonce: 'nonce',
+      signature: 'signature',
+      envelopes: [],
       peerAccountId: 'acc_2',
       peer: {
         id: 'acc_2',
@@ -657,20 +723,32 @@ describe('EnterpriseClient', () => {
       },
       content: 'OTTO_ATOA_REQUEST {"v":1,"id":"request-1","question":"现在方便吗？"}',
       createdAt: '2026-07-19T12:00:00.000Z',
+      readAt: null,
+      attachments: [],
     }];
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
       .mockResolvedValueOnce(jsonResponse(200, {
         account: ACCOUNT, token: 'session-token', expiresAt: '2099-01-01',
       }))
+      .mockResolvedValueOnce(jsonResponse(200, { device: E2EE_DEVICE }))
       .mockResolvedValueOnce(jsonResponse(200, { requests }));
-    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    const client = new EnterpriseClient(
+      fetchMock as typeof fetch,
+      () => undefined,
+      mockE2eeCrypto({ decryptContent: requests[0]!.content }),
+    );
     await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
 
-    await expect(client.listAtoaInbox()).resolves.toEqual(requests);
-    expect(fetchMock.mock.calls[2]?.[0])
+    await expect(client.listAtoaInbox()).resolves.toMatchObject([{
+      id: 'msg_atoa_1',
+      content: requests[0]!.content,
+      peerAccountId: 'acc_2',
+      e2ee: true,
+    }]);
+    expect(fetchMock.mock.calls[3]?.[0])
       .toBe('https://enterprise.otto.test/enterprise/atoa/inbox');
-    expect((fetchMock.mock.calls[2]?.[1] as RequestInit).headers).toMatchObject({
+    expect((fetchMock.mock.calls[3]?.[1] as RequestInit).headers).toMatchObject({
       authorization: 'Bearer session-token',
     });
   });
@@ -1010,14 +1088,21 @@ describe('EnterpriseClient', () => {
       id: 'message-1',
       senderAccountId: 'acc_1',
       recipientAccountId: 'acc_peer',
-      content: '请查收',
+      senderDeviceId: 'device-1',
+      senderIdentitySigningPublicKey: 'test signing key',
+      protocolVersion: 1 as const,
+      contentType: 'message' as const,
+      inReplyToMessageId: null,
+      ciphertext: 'ciphertext',
+      nonce: 'nonce',
+      signature: 'signature',
+      envelopes: [],
       createdAt: '2026-07-26T08:00:00.000Z',
       readAt: null,
       attachments: [{
         id: 'attachment-1',
-        fileName: attachment.fileName,
-        mimeType: attachment.mimeType,
-        size: attachment.size,
+        ciphertextSize: 20,
+        nonce: 'attachment nonce',
       }],
     };
     const fetchMock = vi.fn()
@@ -1027,24 +1112,51 @@ describe('EnterpriseClient', () => {
         token: 'session-token',
         expiresAt: '2099-01-01',
       }))
+      .mockResolvedValueOnce(jsonResponse(200, { device: E2EE_DEVICE }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        devices: [E2EE_DEVICE, { ...E2EE_DEVICE, accountId: 'acc_peer', deviceId: 'peer-device' }],
+      }))
       .mockResolvedValueOnce(jsonResponse(201, { message: responseMessage }))
       .mockResolvedValueOnce(jsonResponse(200, {
-        attachment: { ...responseMessage.attachments[0], data: attachment.data },
+        attachment: {
+          message: responseMessage,
+          attachment: {
+            id: 'attachment-1',
+            ciphertext: 'encrypted attachment',
+            nonce: 'attachment nonce',
+          },
+        },
       }));
-    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    const e2ee = mockE2eeCrypto({
+      decryptContent: '请查收',
+      decryptedAttachments: [{
+        id: 'attachment-1',
+        fileName: attachment.fileName,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+      }],
+    });
+    const client = new EnterpriseClient(
+      fetchMock as typeof fetch,
+      () => undefined,
+      e2ee,
+    );
     await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
 
     await expect(client.sendDirectMessage('acc_peer', '请查收', [attachment]))
-      .resolves.toEqual(responseMessage);
+      .resolves.toMatchObject({
+        id: 'message-1',
+        content: '请查收',
+        e2ee: true,
+        attachments: [{ id: 'attachment-1', fileName: attachment.fileName }],
+      });
     await expect(client.getDirectMessageAttachment('attachment-1'))
       .resolves.toMatchObject({ id: 'attachment-1', data: attachment.data });
 
-    const sendInit = fetchMock.mock.calls[2]?.[1] as RequestInit;
-    expect(JSON.parse(String(sendInit.body))).toEqual({
-      content: '请查收',
-      attachments: [attachment],
-    });
-    expect(fetchMock.mock.calls[3]?.[0]).toBe(
+    const sendInit = fetchMock.mock.calls[4]?.[1] as RequestInit;
+    expect(String(sendInit.body)).not.toContain('请查收');
+    expect(String(sendInit.body)).not.toContain('方案.pdf');
+    expect(fetchMock.mock.calls[5]?.[0]).toBe(
       'https://enterprise.otto.test/enterprise/message-attachments/attachment-1',
     );
   });

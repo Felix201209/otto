@@ -252,6 +252,19 @@ if (!previewWindow.otto) {
     enterpriseMessagesList: (peerAccountId: string) => Promise.resolve(
       previewDirectMessages.get(peerAccountId) ?? [],
     ),
+    enterpriseE2eeDevicesList: () => Promise.resolve([{
+      accountId: previewAccount.id,
+      deviceId: 'browser-preview-device',
+      deviceName: '浏览器预览设备',
+      identitySigningPublicKey: 'preview-signing-key',
+      deviceExchangePublicKey: 'preview-exchange-key',
+      createdAt: new Date().toISOString(),
+      lastSeenAt: new Date().toISOString(),
+      revokedAt: null,
+    }]),
+    enterpriseE2eeDeviceRevoke: () => Promise.resolve(),
+    enterpriseE2eeRecoveryExport: () => Promise.resolve('{"v":1,"preview":true}'),
+    enterpriseE2eeRecoveryImport: () => Promise.resolve(),
     enterpriseMessageSend: (
       peerAccountId: string,
       content: string,

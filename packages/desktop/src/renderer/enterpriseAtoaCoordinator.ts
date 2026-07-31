@@ -21,7 +21,12 @@ export interface AtoaPeerIdentity {
 }
 export type AtoaPermissionDecision =
   | { kind: 'deny' }
-  | { kind: 'allow'; sources: AtoaContextSource[] };
+  | {
+      kind: 'allow';
+      sources: AtoaContextSource[];
+      /** Exact locally decrypted private-chat messages authorized once. */
+      messageIds?: string[];
+    };
 
 export type EnterpriseAtoaProcessingStatus =
   | 'ignored'
@@ -36,7 +41,10 @@ export interface ProcessEnterpriseAtoaRequestInput {
     peer: AtoaPeerIdentity;
     payload: AtoaRequestPayload;
   }): Promise<AtoaPermissionDecision>;
-  collectContext(sources: AtoaContextSource[]): Promise<AuthorizedAtoaContext>;
+  collectContext(
+    sources: AtoaContextSource[],
+    authorizedMessageIds: string[],
+  ): Promise<AuthorizedAtoaContext>;
   askOtto(input: {
     question: string;
     workContext: string;
@@ -79,7 +87,10 @@ export async function processEnterpriseAtoaRequest(
     return 'denied';
   }
 
-  const context = await input.collectContext(decision.sources);
+  const context = await input.collectContext(
+    decision.sources,
+    decision.messageIds ?? [],
+  );
   if (input.signal?.aborted) return 'aborted';
 
   let answer: string;

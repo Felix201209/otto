@@ -15,7 +15,6 @@ import { buildAtoaRequest } from './atoaProtocol.js';
 
 export type EnterpriseCollaborationRelayParams =
   | { action: 'list_members' }
-  | { action: 'list_messages'; recipientAccountId: string }
   | {
       action: 'send_message';
       recipientAccountId: string;
@@ -43,7 +42,6 @@ type Member = EnterpriseOrganizationView['members'][number];
 
 export interface EnterpriseCollaborationRelayDependencies {
   getOrganizationView(): Promise<EnterpriseOrganizationView>;
-  listMessages(peerAccountId: string): Promise<EnterpriseDirectMessage[]>;
   sendMessage(
     peerAccountId: string,
     content: string,
@@ -60,7 +58,6 @@ export interface EnterpriseCollaborationRelayDependencies {
 const RECIPIENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const ACTIONS = new Set([
   'list_members',
-  'list_messages',
   'send_message',
   'ask_peer_otto',
   'consult_peer_otto',
@@ -69,7 +66,6 @@ const ACTIONS = new Set([
 
 const ACTION_FIELDS: Record<EnterpriseCollaborationRelayParams['action'], ReadonlySet<string>> = {
   list_members: new Set(['action']),
-  list_messages: new Set(['action', 'recipientAccountId']),
   send_message: new Set(['action', 'recipientAccountId', 'content']),
   ask_peer_otto: new Set(['action', 'recipientAccountId', 'question']),
   consult_peer_otto: new Set(['action', 'recipientAccountId', 'question']),
@@ -114,9 +110,6 @@ function parseParams(value: unknown): EnterpriseCollaborationRelayParams {
     !RECIPIENT_ID.test(raw.recipientAccountId)
   ) {
     throw new Error('recipientAccountId 无效，必须使用企业树返回的账号 ID');
-  }
-  if (action === 'list_messages') {
-    return { action, recipientAccountId: raw.recipientAccountId };
   }
   if (action === 'send_message') {
     if (
@@ -254,14 +247,6 @@ export async function executeEnterpriseCollaborationRelay(
       ok: true,
       action: params.action,
       member: publicMember(updated),
-    };
-  }
-  if (params.action === 'list_messages') {
-    return {
-      ok: true,
-      action: params.action,
-      peer: publicMember(member),
-      messages: await deps.listMessages(member.id),
     };
   }
   if (params.action === 'send_message') {

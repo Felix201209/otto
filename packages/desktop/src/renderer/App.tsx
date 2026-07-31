@@ -213,13 +213,17 @@ function OttoWorkspaceApp({
   const [pendingAtoaPermission, setPendingAtoaPermission] =
     useState<AtoaPermissionRequest | null>(null);
   const requestAtoaPermission = useCallback(
-    (request: AtoaPermissionRequest): Promise<AtoaPermissionDecision> =>
-      new Promise((resolve) => {
+    async (
+      request: Omit<AtoaPermissionRequest, 'messages'>,
+    ): Promise<AtoaPermissionDecision> => {
+      const messages = await window.otto.enterpriseMessagesList(request.peer.id);
+      return new Promise((resolve) => {
         // 服务器一次只 claim 一条；若界面状态异常叠加，旧请求按拒绝收口。
         permissionResolver.current?.({ kind: 'deny' });
         permissionResolver.current = resolve;
-        setPendingAtoaPermission(request);
-      }),
+        setPendingAtoaPermission({ ...request, messages });
+      });
+    },
     [],
   );
   const completeAtoaPermission = useCallback(
@@ -370,9 +374,10 @@ function OttoWorkspaceApp({
         await processEnterpriseAtoaRequest({
           request,
           requestPermission: requestAtoaPermission,
-          collectContext: (sources) =>
+          collectContext: (sources, authorizedMessageIds) =>
             collectAuthorizedAtoaContext({
               sources,
+              authorizedMessageIds,
               peerAccountId: request.peerAccountId,
               currentAccountId: account.id,
               currentAccountName: account.name,
@@ -801,7 +806,6 @@ function OttoWorkspaceApp({
 
       void executeEnterpriseCollaborationRelay(tool.parameters, account, {
         getOrganizationView: window.otto.enterpriseOrganizationView,
-        listMessages: window.otto.enterpriseMessagesList,
         sendMessage: window.otto.enterpriseMessageSend,
         requestConsult: requestToolConsult,
         updateAccount: window.otto.enterpriseAccountUpdate,

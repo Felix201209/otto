@@ -139,6 +139,8 @@ export type {
   DirectMessageAttachmentInput,
   DirectMessageAttachmentView,
   DirectMessageView,
+  E2eeAttachmentCiphertextInput,
+  E2eeMessageEnvelope,
   UnreadDirectMessageNotification,
 } from '../modules/collaboration/index.js';
 export type {
@@ -220,7 +222,7 @@ const PRIVACY_DELETION_LEDGER_KEY_PATH = path.join(
 );
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
-export const ENTERPRISE_SCHEMA_VERSION = 18;
+export const ENTERPRISE_SCHEMA_VERSION = 19;
 export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
@@ -432,8 +434,7 @@ export const {
         process.env.OTTO_LICENSE_PUBLIC_KEY,
     ),
   telemetryEndpoint: () => process.env.OTTO_TELEMETRY_ENDPOINT || null,
-  telemetryIngestSecret: () =>
-    process.env.OTTO_TELEMETRY_INGEST_SECRET || '',
+  telemetryIngestSecret: () => process.env.OTTO_TELEMETRY_INGEST_SECRET || '',
   telemetryRetentionDays: () =>
     Number(process.env.OTTO_TELEMETRY_RETENTION_DAYS || 90),
   fieldCipher,
@@ -508,7 +509,8 @@ export const {
   db: getDB,
   fieldCipher,
   createId: randomUUID,
-  organizationExists: (organizationId) => Boolean(getOrganization(organizationId)),
+  organizationExists: (organizationId) =>
+    Boolean(getOrganization(organizationId)),
 });
 
 function normalizeOptionalText(
@@ -640,8 +642,7 @@ export const normalizeTags = normalizeAccountTags;
 const passwordHash = hashIdentitySecret;
 const passwordMatches = identitySecretMatches;
 const assertAccountPassword = assertIdentityAccountPassword;
-export const isAcceptableAccountPassword =
-  isAcceptableIdentityAccountPassword;
+export const isAcceptableAccountPassword = isAcceptableIdentityAccountPassword;
 
 const accountTagStore = { db: getDB };
 
@@ -761,8 +762,7 @@ export const {
   normalizeOptionalAvatarUrl,
   assertPassword: assertAccountPassword,
   hashPassword: passwordHash,
-  createAccountEntityId: (prefix: 'acc' | 'emp') =>
-    `${prefix}_${randomUUID()}`,
+  createAccountEntityId: (prefix: 'acc' | 'emp') => `${prefix}_${randomUUID()}`,
   createDeletionPasswordHash: () =>
     passwordHash(randomBytes(32).toString('base64url')),
   createOrganizationId: () => `org_${randomUUID()}`,
@@ -800,10 +800,18 @@ export const {
   ensureDirectMessageContentEncrypted,
   getDirectMessageAttachment,
   listDirectMessages,
+  getE2eeAttachment,
+  listE2eeDevices,
+  listE2eeDirectMessages,
+  listPendingE2eeAtoaRequests,
+  listUnreadE2eeNotifications,
   listPendingAtoaRequests,
   listUnreadDirectMessageNotifications,
   markAtoaRequestReadFromResponse,
   sendDirectMessage,
+  registerE2eeDevice,
+  revokeE2eeDevice,
+  sendE2eeDirectMessage,
   touchAccountPresence,
   listAccountPresence,
 } = createCollaborationComposition<AccountView>({
@@ -1004,10 +1012,8 @@ const enterpriseBackup = dataPlatform.createBackup({
   defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
   listEmployees: (organizationId) =>
     listEmployeesForBackup(backupDatabaseStore, organizationId),
-  listTaskLogs: (organizationId) =>
-    listWorklogsForBackup(organizationId),
-  listKnowledge: (organizationId) =>
-    getKnowledgeForBackup(organizationId),
+  listTaskLogs: (organizationId) => listWorklogsForBackup(organizationId),
+  listKnowledge: (organizationId) => getKnowledgeForBackup(organizationId),
   listInviteCodes: (organizationId) =>
     listDepartmentInvitesForBackup(backupDatabaseStore, organizationId),
   listAuditLogs: (organizationId) => getAuditLogs(200, organizationId),

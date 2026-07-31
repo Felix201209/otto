@@ -82,9 +82,9 @@ export function dataProcessingInventory(): DataProcessingActivity[] {
     },
     {
       id: 'collaboration', category: '私聊与附件', purpose: '企业协作与 A2A',
-      sensitivity: 'sensitive', storage: 'enterprise_server', atRest: '消息正文和附件对象均使用 AES-256-GCM 加密；检索元数据存于企业数据库',
-      transport: 'HTTPS/TLS；服务端鉴权，不是端到端加密', retention: '账号存续期间或企业配置期限',
-      deletion: '注销时删除本人参与的私聊及附件对象', recipients: ['聊天双方', '企业服务器管理员'], crossBorder: false,
+      sensitivity: 'sensitive', storage: 'enterprise_server', atRest: '客户端对消息正文、附件内容和附件元数据执行端到端 AES-256-GCM 加密；服务器只保存密文、设备信封与路由元数据',
+      transport: 'HTTPS/TLS 叠加设备级端到端加密与 Ed25519 签名', retention: '账号存续期间或企业配置期限',
+      deletion: '注销时删除本人参与的私聊密文、附件密文和设备目录', recipients: ['聊天双方的已授权设备'], crossBorder: false,
     },
     {
       id: 'personal_intelligence', category: '个人记忆、工作日志与自动 Skill', purpose: '跨设备恢复与个性化协助',

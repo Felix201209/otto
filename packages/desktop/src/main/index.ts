@@ -133,6 +133,10 @@ import {
   type EnterprisePositionRoleMapping,
 } from './enterprise-client.js';
 import {
+  EnterpriseE2eeCrypto,
+  EnterpriseE2eeKeyVault,
+} from './enterprise-e2ee.js';
+import {
   ENTERPRISE_TRAY_POPOVER_WIDTH,
   enterpriseTrayPopoverHeight,
   positionEnterpriseTrayPopover,
@@ -465,6 +469,10 @@ const IPC = {
   enterpriseMessagesUnread: 'otto:enterprise-messages-unread',
   enterpriseMessageSend: 'otto:enterprise-message-send',
   enterpriseMessageAttachmentRead: 'otto:enterprise-message-attachment-read',
+  enterpriseE2eeDevicesList: 'otto:enterprise-e2ee-devices-list',
+  enterpriseE2eeDeviceRevoke: 'otto:enterprise-e2ee-device-revoke',
+  enterpriseE2eeRecoveryExport: 'otto:enterprise-e2ee-recovery-export',
+  enterpriseE2eeRecoveryImport: 'otto:enterprise-e2ee-recovery-import',
   enterpriseAtoaInbox: 'otto:enterprise-atoa-inbox',
   enterpriseParkServicePush: 'otto:enterprise-park-service-push',
   enterpriseParkView: 'otto:enterprise-park-view',
@@ -559,6 +567,11 @@ async function synchronizeAuthenticatedEnterpriseAccount(
     (next) => serverManager.setAuthenticatedEnterpriseAccount(next),
   );
   if (!account) return;
+  try {
+    await enterpriseClient.ensureE2eeDeviceReady();
+  } catch (error) {
+    console.warn('[otto-desktop] E2EE device registration failed:', error);
+  }
   const identity = accountDataSyncIdentity(account);
   if (!identity) return;
   try {
@@ -580,6 +593,32 @@ async function synchronizeAuthenticatedEnterpriseAccount(
   }
   void enterpriseSkillUsageReporter.poll();
 }
+function assertEnterpriseE2eeSecureStorage(): void {
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error('系统安全存储不可用，端到端加密私聊已安全停用');
+  }
+  if (
+    process.platform === 'linux' &&
+    safeStorage.getSelectedStorageBackend() === 'basic_text'
+  ) {
+    throw new Error('Linux 系统密钥库未解锁，不能使用不安全的 basic_text 保存私聊密钥');
+  }
+}
+
+const enterpriseE2eeVault = new EnterpriseE2eeKeyVault({
+  directory: path.join(app.getPath('userData'), 'enterprise-e2ee'),
+  deviceName: () => `${os.hostname()} (${process.platform})`,
+  protect(plaintext) {
+    assertEnterpriseE2eeSecureStorage();
+    return safeStorage.encryptString(plaintext).toString('base64');
+  },
+  unprotect(protectedValue) {
+    assertEnterpriseE2eeSecureStorage();
+    return safeStorage.decryptString(Buffer.from(protectedValue, 'base64'));
+  },
+});
+const enterpriseE2ee = new EnterpriseE2eeCrypto(enterpriseE2eeVault);
+
 const enterpriseClient = new EnterpriseClient(enterpriseFetch, () => {
   resetEnterpriseModuleUpdateState();
   // 任一受保护接口返回 401 都会走这里：立即持久化清 token，并通知 renderer
@@ -595,7 +634,7 @@ const enterpriseClient = new EnterpriseClient(enterpriseFetch, () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(IPC.enterpriseSessionInvalidated);
   }
-});
+}, enterpriseE2ee);
 const enterpriseSkillUsageReporter = new EnterpriseSkillUsageReporter({
   skillsRoot: userSkillsRootDir,
   usageFile: () => path.join(worklogRootDir(), 'skill_usage.jsonl'),
@@ -2307,6 +2346,60 @@ function registerIpc(): void {
         throw new Error('附件信息不正确');
       }
       return enterpriseClient.getDirectMessageAttachment(attachmentId);
+    },
+  );
+  ipcMain.handle(IPC.enterpriseE2eeDevicesList, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.listOwnE2eeDevices(true);
+  });
+  ipcMain.handle(
+    IPC.enterpriseE2eeDeviceRevoke,
+    async (_event, deviceId: unknown) => {
+      loadEnterpriseSession();
+      if (typeof deviceId !== 'string' || !deviceId || deviceId.length > 200) {
+        throw new Error('E2EE device id is invalid');
+      }
+      await enterpriseClient.revokeOwnE2eeDevice(deviceId);
+    },
+  );
+  ipcMain.handle(
+    IPC.enterpriseE2eeRecoveryExport,
+    async (_event, passphrase: unknown) => {
+      loadEnterpriseSession();
+      if (typeof passphrase !== 'string' || passphrase.length > 1024) {
+        throw new Error('E2EE recovery passphrase is invalid');
+      }
+      const account = enterpriseClient.authenticatedAccountSnapshot();
+      const session = enterpriseClient.snapshot();
+      if (!account || !session.serverUrl) throw new Error('enterprise session has expired');
+      return enterpriseE2eeVault.exportRecoveryBundle(
+        session.serverUrl,
+        account.id,
+        passphrase,
+      );
+    },
+  );
+  ipcMain.handle(
+    IPC.enterpriseE2eeRecoveryImport,
+    async (_event, bundle: unknown, passphrase: unknown) => {
+      loadEnterpriseSession();
+      if (
+        typeof bundle !== 'string' ||
+        bundle.length > 10 * 1024 * 1024 ||
+        typeof passphrase !== 'string' ||
+        passphrase.length > 1024
+      ) {
+        throw new Error('E2EE recovery input is invalid');
+      }
+      const account = enterpriseClient.authenticatedAccountSnapshot();
+      const session = enterpriseClient.snapshot();
+      if (!account || !session.serverUrl) throw new Error('enterprise session has expired');
+      enterpriseE2eeVault.importRecoveryBundle(
+        session.serverUrl,
+        account.id,
+        bundle,
+        passphrase,
+      );
     },
   );
   ipcMain.handle(IPC.enterpriseAtoaInbox, async () => {

@@ -29,6 +29,13 @@ export const COLLABORATION_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor = {
         content_iv TEXT,
         content_auth_tag TEXT,
         content_key_version INTEGER,
+        e2ee_protocol_version INTEGER,
+        e2ee_sender_device_id TEXT,
+        e2ee_ciphertext TEXT,
+        e2ee_nonce TEXT,
+        e2ee_signature TEXT,
+        e2ee_envelopes_json TEXT,
+        in_reply_to_message_id TEXT,
         content_type TEXT NOT NULL DEFAULT 'message'
           CHECK(content_type IN ('message', 'atoa_request', 'atoa_response')),
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -49,9 +56,25 @@ export const COLLABORATION_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor = {
         content BLOB NOT NULL,
         storage_backend TEXT NOT NULL DEFAULT 'sqlite',
         storage_key TEXT,
+        e2ee_nonce TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         FOREIGN KEY (message_id) REFERENCES direct_messages(id) ON DELETE CASCADE,
         FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS e2ee_devices (
+        organization_id TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        device_name TEXT NOT NULL,
+        identity_signing_public_key TEXT NOT NULL,
+        device_exchange_public_key TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+        revoked_at TEXT,
+        PRIMARY KEY (organization_id, account_id, device_id),
+        FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+        FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
       );
 
       CREATE INDEX IF NOT EXISTS idx_account_presence_org_seen
@@ -65,6 +88,8 @@ export const COLLABORATION_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor = {
         );
       CREATE INDEX IF NOT EXISTS idx_direct_message_attachments_message
         ON direct_message_attachments(message_id, ordinal);
+      CREATE INDEX IF NOT EXISTS idx_e2ee_devices_active
+        ON e2ee_devices(organization_id, account_id, revoked_at, created_at);
     `);
 
     const attachmentColumns = new Set(
@@ -82,6 +107,11 @@ export const COLLABORATION_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor = {
     if (!attachmentColumns.has('storage_key')) {
       database.exec(
         'ALTER TABLE direct_message_attachments ADD COLUMN storage_key TEXT',
+      );
+    }
+    if (!attachmentColumns.has('e2ee_nonce')) {
+      database.exec(
+        'ALTER TABLE direct_message_attachments ADD COLUMN e2ee_nonce TEXT',
       );
     }
     const messageColumns = new Set(
@@ -102,6 +132,13 @@ export const COLLABORATION_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor = {
     addMessageColumn('content_iv', 'TEXT');
     addMessageColumn('content_auth_tag', 'TEXT');
     addMessageColumn('content_key_version', 'INTEGER');
+    addMessageColumn('e2ee_protocol_version', 'INTEGER');
+    addMessageColumn('e2ee_sender_device_id', 'TEXT');
+    addMessageColumn('e2ee_ciphertext', 'TEXT');
+    addMessageColumn('e2ee_nonce', 'TEXT');
+    addMessageColumn('e2ee_signature', 'TEXT');
+    addMessageColumn('e2ee_envelopes_json', 'TEXT');
+    addMessageColumn('in_reply_to_message_id', 'TEXT');
     addMessageColumn(
       'content_type',
       "TEXT NOT NULL DEFAULT 'message' CHECK(content_type IN ('message', 'atoa_request', 'atoa_response'))",
