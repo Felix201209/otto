@@ -69,8 +69,12 @@ archives is intentionally unrecoverable.
 
 `.github/workflows/sqlcipher-native.yml` builds pinned official SQLCipher for
 Windows x64, macOS x64/arm64, and Linux x64/arm64. Each Electron-ABI artifact
-must pass correct-key, wrong-key, encrypted-header, and
-`cipher_integrity_check` behavior tests. Packaging then checks the platform
-binary magic and manifest SHA-256 before copying it outside `app.asar`.
+must pass correct-key, wrong-key, encrypted-header, ordinary-Python-SQLite
+rejection, and `cipher_integrity_check` behavior tests. Every target emits a
+checksummed CycloneDX 1.5 SBOM identifying SQLCipher and better-sqlite3. The
+matrix verifier checks the platform binary magic, manifest and SBOM SHA-256,
+then GitHub records build provenance for each binding. The release workflow
+verifies those attestations before copying the target binding outside
+`app.asar`; installer signing and packaged-runtime checks remain mandatory.
 
 Third-party notices are in `native/sqlcipher/THIRD_PARTY_NOTICES.md`.

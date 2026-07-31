@@ -3,6 +3,7 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -114,6 +115,7 @@ export function verifyPackagedRuntime(
   const sqlCipherDirectory = path.join(path.dirname(archivePath), 'sqlcipher');
   const sqlCipherBinding = path.join(sqlCipherDirectory, 'better_sqlite3.node');
   const sqlCipherManifest = path.join(sqlCipherDirectory, 'manifest.json');
+  const sqlCipherSbom = path.join(sqlCipherDirectory, 'sbom.cdx.json');
   const sqlCipherNotices = path.join(
     sqlCipherDirectory,
     'THIRD_PARTY_NOTICES.md',
@@ -121,6 +123,7 @@ export function verifyPackagedRuntime(
   for (const required of [
     sqlCipherBinding,
     sqlCipherManifest,
+    sqlCipherSbom,
     sqlCipherNotices,
   ]) {
     if (!existsSync(required)) {
@@ -140,6 +143,24 @@ export function verifyPackagedRuntime(
     throw new Error(
       `packaged SQLCipher resource has wrong platform format: ${sqlCipherBinding}`,
     );
+  }
+  const nativeSha256 = createHash('sha256')
+    .update(readFileSync(sqlCipherBinding))
+    .digest('hex');
+  const manifest = readJson(sqlCipherManifest);
+  if (
+    manifest.format !== 2 ||
+    manifest.sha256 !== nativeSha256 ||
+    manifest.plainSqliteRejected !== true ||
+    manifest.sbom?.path !== 'sbom.cdx.json'
+  ) {
+    throw new Error('packaged SQLCipher manifest verification failed');
+  }
+  const sbomSha256 = createHash('sha256')
+    .update(readFileSync(sqlCipherSbom))
+    .digest('hex');
+  if (manifest.sbom.sha256 !== sbomSha256) {
+    throw new Error('packaged SQLCipher SBOM checksum verification failed');
   }
 
   if (platform === 'win32') {

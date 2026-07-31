@@ -56,12 +56,13 @@ export function verifySqlCipherNativeTarget(rootDirectory, target) {
   }
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   for (const [field, expected] of [
-    ['format', 1],
+    ['format', 2],
     ['target', target],
     ['platform', platform],
     ['arch', arch],
     ['runtime', 'electron'],
     ['cipherSelfTest', true],
+    ['plainSqliteRejected', true],
     ['license', 'BSD-3-Clause'],
   ]) {
     if (manifest[field] !== expected) {
@@ -85,8 +86,41 @@ export function verifySqlCipherNativeTarget(rootDirectory, target) {
       `SQLCipher ${target} binding checksum does not match its manifest`,
     );
   }
+  if (
+    !manifest.sbom ||
+    manifest.sbom.format !== 'CycloneDX' ||
+    manifest.sbom.path !== 'sbom.cdx.json' ||
+    typeof manifest.sbom.sha256 !== 'string'
+  ) {
+    throw new Error(`SQLCipher ${target} manifest SBOM metadata is invalid`);
+  }
+  const sbomPath = path.join(targetDirectory, manifest.sbom.path);
+  if (!fs.existsSync(sbomPath)) {
+    throw new Error(`SQLCipher ${target} SBOM is missing`);
+  }
+  if (sha256(sbomPath) !== manifest.sbom.sha256) {
+    throw new Error(
+      `SQLCipher ${target} SBOM checksum does not match its manifest`,
+    );
+  }
+  const sbom = JSON.parse(fs.readFileSync(sbomPath, 'utf8'));
+  if (sbom.bomFormat !== 'CycloneDX' || sbom.specVersion !== '1.5') {
+    throw new Error(`SQLCipher ${target} SBOM must be CycloneDX 1.5`);
+  }
+  const components = Array.isArray(sbom.components) ? sbom.components : [];
+  for (const dependency of ['SQLCipher', 'better-sqlite3']) {
+    if (!components.some((component) => component?.name === dependency)) {
+      throw new Error(`SQLCipher ${target} SBOM is missing ${dependency}`);
+    }
+  }
+  const sbomBindingHash = sbom.metadata?.component?.hashes?.find(
+    (entry) => entry?.alg === 'SHA-256',
+  )?.content;
+  if (sbomBindingHash !== actualSha256) {
+    throw new Error(`SQLCipher ${target} SBOM binding checksum is invalid`);
+  }
   assertNativeMagic(bindingPath, platform);
-  return { ...manifest, bindingPath, manifestPath };
+  return { ...manifest, bindingPath, manifestPath, sbomPath };
 }
 
 export function verifySqlCipherNativeAssets(rootDirectory, targets) {

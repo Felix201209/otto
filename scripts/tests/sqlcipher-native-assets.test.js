@@ -22,8 +22,32 @@ function fixture(input = {}) {
     input.binding ?? Buffer.from([0x7f, 0x45, 0x4c, 0x46, 1, 2, 3]);
   fs.writeFileSync(path.join(directory, 'better_sqlite3.node'), binding);
   const [platform, arch] = target.split('-');
+  const sbom = {
+    bomFormat: 'CycloneDX',
+    specVersion: '1.5',
+    version: 1,
+    metadata: {
+      component: {
+        type: 'file',
+        name: 'better_sqlite3.node',
+        hashes: [
+          {
+            alg: 'SHA-256',
+            content: createHash('sha256').update(binding).digest('hex'),
+          },
+        ],
+      },
+    },
+    components: [
+      { type: 'library', name: 'SQLCipher', version: '4.16.0' },
+      { type: 'library', name: 'better-sqlite3', version: '12.11.1' },
+    ],
+    ...input.sbom,
+  };
+  const sbomBytes = Buffer.from(`${JSON.stringify(sbom, null, 2)}\n`);
+  fs.writeFileSync(path.join(directory, 'sbom.cdx.json'), sbomBytes);
   const manifest = {
-    format: 1,
+    format: 2,
     target,
     platform,
     arch,
@@ -32,8 +56,14 @@ function fixture(input = {}) {
     sqlcipherVersion: '4.16.0',
     betterSqlite3Version: '12.11.1',
     cipherSelfTest: true,
+    plainSqliteRejected: true,
     license: 'BSD-3-Clause',
     sha256: createHash('sha256').update(binding).digest('hex'),
+    sbom: {
+      format: 'CycloneDX',
+      path: 'sbom.cdx.json',
+      sha256: createHash('sha256').update(sbomBytes).digest('hex'),
+    },
     ...input.manifest,
   };
   fs.writeFileSync(
@@ -61,6 +91,7 @@ describe('SQLCipher native asset gate', () => {
         target: 'linux-x64',
         sqlcipherVersion: '4.16.0',
         cipherSelfTest: true,
+        plainSqliteRejected: true,
       },
     );
   });
@@ -85,5 +116,35 @@ describe('SQLCipher native asset gate', () => {
     expect(() => verifySqlCipherNativeTarget(input.root, input.target)).toThrow(
       /cipherSelfTest must be true/i,
     );
+  });
+
+  it('requires proof that ordinary SQLite rejected the encrypted database', () => {
+    const input = fixture({ manifest: { plainSqliteRejected: false } });
+    expect(() => verifySqlCipherNativeTarget(input.root, input.target)).toThrow(
+      /plainSqliteRejected must be true/i,
+    );
+  });
+
+  it('requires a checksummed CycloneDX SBOM that identifies both native dependencies', () => {
+    const missingComponent = fixture({
+      sbom: {
+        components: [{ type: 'library', name: 'SQLCipher', version: '4.16.0' }],
+      },
+    });
+    expect(() =>
+      verifySqlCipherNativeTarget(
+        missingComponent.root,
+        missingComponent.target,
+      ),
+    ).toThrow(/SBOM.*better-sqlite3/i);
+
+    const tampered = fixture();
+    fs.appendFileSync(
+      path.join(tampered.root, tampered.target, 'sbom.cdx.json'),
+      'tampered',
+    );
+    expect(() =>
+      verifySqlCipherNativeTarget(tampered.root, tampered.target),
+    ).toThrow(/SBOM checksum/i);
   });
 });

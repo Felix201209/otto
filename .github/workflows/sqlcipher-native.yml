@@ -3,9 +3,29 @@ name: SQLCipher native assets
 on:
   workflow_dispatch:
   workflow_call:
+  pull_request:
+    paths:
+      - '.github/workflows/sqlcipher-native.yml'
+      - 'package-lock.json'
+      - 'packages/desktop/package.json'
+      - 'packages/server/package.json'
+      - 'scripts/finalize-sqlcipher-native-asset.mjs'
+      - 'scripts/verify-sqlcipher-native-assets.mjs'
+      - 'scripts/tests/sqlcipher-native-assets.test.js'
+  push:
+    paths:
+      - '.github/workflows/sqlcipher-native.yml'
+      - 'package-lock.json'
+      - 'packages/desktop/package.json'
+      - 'packages/server/package.json'
+      - 'scripts/finalize-sqlcipher-native-asset.mjs'
+      - 'scripts/verify-sqlcipher-native-assets.mjs'
+      - 'scripts/tests/sqlcipher-native-assets.test.js'
 
 permissions:
   contents: read
+  id-token: write
+  attestations: write
 
 env:
   SQLCIPHER_TAG: v4.16.0
@@ -42,6 +62,10 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
       - name: Install locked JavaScript dependencies without registry native prebuilds
         run: npm ci --ignore-scripts
@@ -180,6 +204,10 @@ jobs:
           node-version: 24
           package-manager-cache: false
       - run: node scripts/verify-sqlcipher-native-assets.mjs
+      - name: Attest verified native bindings
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: native/sqlcipher/*/better_sqlite3.node
       - uses: actions/upload-artifact@v7
         with:
           name: sqlcipher-native-matrix

@@ -48,7 +48,7 @@ function copySqlCipherNativeAsset(context) {
       : path.join(context.appOutDir, 'resources');
   const destination = path.join(resourcesRoot, 'sqlcipher');
   mkdirSync(destination, { recursive: true });
-  for (const name of ['better_sqlite3.node', 'manifest.json']) {
+  for (const name of ['better_sqlite3.node', 'manifest.json', 'sbom.cdx.json']) {
     copyFileSync(
       path.join(sourceRoot, target, name),
       path.join(destination, name),

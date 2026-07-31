@@ -2,7 +2,8 @@
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -19,6 +20,37 @@ function requiredArgument(name) {
 
 function rawKey(key) {
   return `"x'${key.toString('hex')}'"`;
+}
+
+function assertOrdinarySqliteRejects(databasePath) {
+  const probe = [
+    'import sqlite3, sys',
+    'database = sqlite3.connect(sys.argv[1])',
+    "database.execute('SELECT name FROM sqlite_master').fetchall()",
+  ].join('; ');
+  const candidates =
+    process.platform === 'win32' ? ['python'] : ['python3', 'python'];
+  for (const command of candidates) {
+    const result = spawnSync(command, ['-c', probe, databasePath], {
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    if (result.error?.code === 'ENOENT') continue;
+    if (result.error) {
+      throw new Error(
+        `ordinary SQLite probe failed to execute: ${result.error.message}`,
+      );
+    }
+    if (result.status === 0) {
+      throw new Error(
+        'ordinary SQLite unexpectedly opened the encrypted database',
+      );
+    }
+    return true;
+  }
+  throw new Error(
+    'Python sqlite3 is required for the ordinary SQLite rejection probe',
+  );
 }
 
 function smokeTest(bindingPath) {
@@ -50,6 +82,8 @@ function smokeTest(bindingPath) {
       throw new Error('native asset created a plaintext SQLite header');
     }
 
+    const plainSqliteRejected = assertOrdinarySqliteRejects(databasePath);
+
     const reopened = new BetterSqlite3(databasePath, {
       nativeBinding: bindingPath,
     });
@@ -76,7 +110,7 @@ function smokeTest(bindingPath) {
       wrong.close();
     }
     if (!rejected) throw new Error('SQLCipher wrong-key read was not rejected');
-    return cipherVersion;
+    return { cipherVersion, plainSqliteRejected };
   } finally {
     key.fill(0);
     fs.rmSync(directory, { recursive: true, force: true });
@@ -92,7 +126,7 @@ function main() {
   if (!fs.existsSync(bindingPath))
     throw new Error(`binding does not exist: ${bindingPath}`);
 
-  const cipherVersion = smokeTest(bindingPath);
+  const { cipherVersion, plainSqliteRejected } = smokeTest(bindingPath);
   const targetDirectory = path.join(outputRoot, target);
   fs.mkdirSync(targetDirectory, { recursive: true });
   const outputBinding = path.join(targetDirectory, 'better_sqlite3.node');
@@ -109,8 +143,51 @@ function main() {
       'utf8',
     ),
   );
+  const bindingSha256 = createHash('sha256')
+    .update(fs.readFileSync(outputBinding))
+    .digest('hex');
+  const sourceRevision = process.env.SQLCIPHER_SOURCE_REVISION || 'unknown';
+  const sbom = {
+    bomFormat: 'CycloneDX',
+    specVersion: '1.5',
+    serialNumber: `urn:uuid:${randomUUID()}`,
+    version: 1,
+    metadata: {
+      timestamp: new Date().toISOString(),
+      component: {
+        type: 'file',
+        name: 'better_sqlite3.node',
+        version: serverPackage.dependencies['better-sqlite3'],
+        hashes: [{ alg: 'SHA-256', content: bindingSha256 }],
+      },
+    },
+    components: [
+      {
+        type: 'library',
+        name: 'SQLCipher',
+        version: cipherVersion,
+        licenses: [{ license: { id: 'BSD-3-Clause' } }],
+        externalReferences: [
+          {
+            type: 'vcs',
+            url: `https://github.com/sqlcipher/sqlcipher/tree/${sourceRevision}`,
+          },
+        ],
+      },
+      {
+        type: 'library',
+        name: 'better-sqlite3',
+        version: serverPackage.dependencies['better-sqlite3'],
+        purl: `pkg:npm/better-sqlite3@${serverPackage.dependencies['better-sqlite3']}`,
+      },
+    ],
+  };
+  const sbomPath = path.join(targetDirectory, 'sbom.cdx.json');
+  fs.writeFileSync(sbomPath, `${JSON.stringify(sbom, null, 2)}\n`, {
+    mode: 0o600,
+  });
   const manifest = {
-    format: 1,
+    format: 2,
     target,
     platform: targetMatch[1],
     arch: targetMatch[2],
@@ -119,13 +196,19 @@ function main() {
     sqlcipherVersion: cipherVersion,
     betterSqlite3Version: serverPackage.dependencies['better-sqlite3'],
     cipherSelfTest: true,
+    plainSqliteRejected,
     license: 'BSD-3-Clause',
     source: 'https://github.com/sqlcipher/sqlcipher',
-    sourceRevision: process.env.SQLCIPHER_SOURCE_REVISION || 'unknown',
+    sourceRevision,
     buildCommit: process.env.GITHUB_SHA || 'local',
-    sha256: createHash('sha256')
-      .update(fs.readFileSync(outputBinding))
-      .digest('hex'),
+    sha256: bindingSha256,
+    sbom: {
+      format: 'CycloneDX',
+      path: 'sbom.cdx.json',
+      sha256: createHash('sha256')
+        .update(fs.readFileSync(sbomPath))
+        .digest('hex'),
+    },
   };
   fs.writeFileSync(
     path.join(targetDirectory, 'manifest.json'),
