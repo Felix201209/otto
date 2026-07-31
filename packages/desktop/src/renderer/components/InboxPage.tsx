@@ -27,6 +27,8 @@ export interface InboxPageProps {
   enterpriseAccount?: EnterpriseAccount;
   enterpriseUnreadCounts?: Record<string, number>;
   onOpenDirectChat?: (peerAccountId: string) => void;
+  /** 打开某会话后将该 peer 标记为已读（联动导航未读角标）。 */
+  onMessageRead?: (peerAccountId: string) => void;
   onBack: () => void;
 }
 
@@ -45,6 +47,7 @@ export function InboxPage({
   enterpriseAccount,
   enterpriseUnreadCounts = {},
   onOpenDirectChat,
+  onMessageRead,
   onBack,
 }: InboxPageProps): React.JSX.Element {
   const [filter, setFilter] = useState<InboxFilter>('all');
@@ -146,7 +149,7 @@ export function InboxPage({
     [conversations],
   );
 
-  // —— 加载选中会话的消息 ——
+  // —— 加载选中会话的消息，并标记该 peer 已读 ——
   useEffect(() => {
     if (!selectedPeer) { setMessages([]); return; }
     let cancelled = false;
@@ -156,8 +159,9 @@ export function InboxPage({
     }).catch(() => { /* 忽略 */ }).finally(() => {
       if (!cancelled) setMessagesLoading(false);
     });
+    onMessageRead?.(selectedPeer);
     return () => { cancelled = true; };
-  }, [selectedPeer]);
+  }, [selectedPeer, onMessageRead]);
 
   const selectedMember = useMemo(
     () => orgMembers.find((m) => m.id === selectedPeer) ?? null,

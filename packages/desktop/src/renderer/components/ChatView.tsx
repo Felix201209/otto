@@ -296,7 +296,7 @@ export function ChatView({
             title={modelManagementLabel}
             aria-label={modelManagementLabel}
           >
-            Settings
+            设置
           </button>
           <button
             type="button"
@@ -305,7 +305,7 @@ export function ChatView({
             title="专家面板"
             aria-label="专家面板"
           >
-            Workspace
+            专家
           </button>
         </div>
       </header>

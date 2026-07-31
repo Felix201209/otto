@@ -916,6 +916,7 @@ function OttoWorkspaceApp({
               requestId: (cur?.requestId ?? 0) + 1,
             }));
           }}
+          onMessageRead={markEnterpriseDirectMessageRead}
           onBack={() => setMainView('chat')}
         />
       ) : mainView === 'work' ? (
@@ -953,11 +954,11 @@ function OttoWorkspaceApp({
         <section className="otto-workspace-page" aria-label="Workspace">
           <header className="otto-workspace-page__head">
             <div>
-              <div className="otto-workspace-page__title">Workspace</div>
-              <div className="otto-workspace-page__subtitle">Agents, tools, documents, memory and worklog</div>
+              <div className="otto-workspace-page__title">专家与工作区</div>
+              <div className="otto-workspace-page__subtitle">专家、常用命令、文档、企业记忆与工作日志</div>
             </div>
             <button type="button" className="otto-workspace-page__back" onClick={() => setMainView('chat')}>
-              Back to chat
+              返回对话
             </button>
           </header>
           <RightPanel
