@@ -128,7 +128,7 @@ export class DiscoveredMCPTool extends BaseTool<ToolParams, ToolResult> {
   async execute(
     params: ToolParams,
     signal: AbortSignal,
-    updateOutput?: (output: string) => void,
+    _updateOutput?: (output: string) => void,
   ): Promise<ToolResult> {
     // 🎯 检查是否已被取消
     if (signal.aborted) {
@@ -151,7 +151,6 @@ export class DiscoveredMCPTool extends BaseTool<ToolParams, ToolResult> {
     const responseParts: Part[] = await this.executeWithCancellation(
       functionCalls,
       signal,
-      updateOutput,
     );
 
     // fix name override for functionResponse
@@ -173,7 +172,6 @@ export class DiscoveredMCPTool extends BaseTool<ToolParams, ToolResult> {
   private async executeWithCancellation(
     functionCalls: FunctionCall[],
     signal: AbortSignal,
-    updateOutput?: (output: string) => void,
   ): Promise<Part[]> {
     // 创建一个Promise来处理MCP调用
     const mcpCallPromise = this.mcpTool.callTool(functionCalls);

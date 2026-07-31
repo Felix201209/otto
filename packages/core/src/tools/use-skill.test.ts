@@ -18,8 +18,8 @@ const mockSkillsPaths = {
 };
 
 // Create mock class constructors that can be configured per test
-let mockLoaderInstance: any = null;
-let mockInjectorInstance: any = null;
+let mockLoaderInstance: unknown = null;
+let mockInjectorInstance: unknown = null;
 
 // Mock the skills module - all variables must be inline
 vi.mock('../skills/index.js', async () => {
@@ -87,7 +87,7 @@ describe('UseSkillTool', () => {
 
   describe('validateToolParams', () => {
     it('should return error for missing skillName', () => {
-      const result = useSkillTool.validateToolParams({} as any);
+      const result = useSkillTool.validateToolParams({} as unknown as Parameters<typeof useSkillTool.validateToolParams>[0]);
       expect(result).toContain('skillName is required');
     });
 

@@ -9,7 +9,6 @@ import { BaseTool, Icon, ToolResult, ToolExecutionServices } from './tools.js';
 import { Config } from '../config/config.js';
 import { Type } from '@google/genai';
 import { SchemaValidator } from '../utils/schemaValidator.js';
-import { t } from '../utils/simpleI18n.js';
 
 interface BatchToolParams {
     tool_calls: Array<{
@@ -88,7 +87,7 @@ Example (when appropriate - 5+ independent file reads):
             if (typeof call === 'string') {
                 try {
                     callObj = JSON.parse(call);
-                } catch (e) {
+                } catch (_e) {
                     console.warn('[BatchTool] Failed to parse stringified tool call:', call);
                     return { tool: 'unknown', parameters: {} };
                 }
@@ -100,8 +99,9 @@ Example (when appropriate - 5+ independent file reads):
 
             // Handle property aliases
             const record = callObj as Record<string, unknown>;
-            const toolName = typeof (record.tool ?? record.name ?? record.function ?? record.tool_name) === 'string'
-              ? (record.tool ?? record.name ?? record.function ?? record.tool_name) as string : 'unknown';
+            const toolName = [record.tool, record.name, record.function, record.tool_name]
+              .find((candidate): candidate is string => typeof candidate === 'string' && candidate.length > 0)
+              ?? 'unknown';
             const parameters = record.parameters ?? record.args ?? record.arguments;
 
             return { tool: toolName, parameters: parameters && typeof parameters === 'object' ? parameters as Record<string, unknown> : {} };

@@ -33,6 +33,8 @@ import { getMemoryPressureMonitor } from '../services/memoryPressureMonitor.js';
 // Type alias for easier usage within this module
 type SubAgentDisplayData = SubAgentDisplay;
 type SubAgentToolCall = SubAgentDisplay['toolCalls'][0];
+interface StatusChangeEvent { status: string; summary?: string; error?: string; currentTurn?: number }
+interface SubAgentEvent { type: string; turnNumber?: number; filesCreated?: string[]; commandsRun?: string[] }
 
 /**
  * 创建初始的SubAgent显示数据
@@ -556,7 +558,7 @@ export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
    */
   private handleStatusChangeEvent(
     displayData: SubAgentDisplayData,
-    statusEvent: any
+    statusEvent: StatusChangeEvent
   ): SubAgentDisplayData {
     const updates: Partial<SubAgentDisplayData> = {};
 
@@ -601,7 +603,7 @@ export class TaskTool extends BaseTool<TaskToolParams, ToolResult> {
    */
   private handleSubAgentEvent(
     displayData: SubAgentDisplayData,
-    event: any
+    event: SubAgentEvent
   ): SubAgentDisplayData {
     const updates: Partial<SubAgentDisplayData> = {};
 

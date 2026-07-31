@@ -29,8 +29,9 @@ async function trySymlinkDir(target: string, linkPath: string): Promise<boolean>
   try {
     await fs.symlink(target, linkPath, 'dir');
     return true;
-  } catch (err: any) {
-    if (err.code === 'EPERM' || err.code === 'ENOSYS') {
+    } catch (err: unknown) {
+      const code = (err as { code?: string }).code;
+      if (code === 'EPERM' || code === 'ENOSYS') {
       return false;
     }
     throw err;
@@ -156,8 +157,9 @@ describe('fs-helpers (symlink follow)', () => {
       await fs.writeFile(targetFile, 'hi');
       try {
         await fs.symlink(targetFile, link, 'file');
-      } catch (err: any) {
-        if (err.code === 'EPERM' || err.code === 'ENOSYS') return;
+      } catch (err: unknown) {
+        const code = (err as { code?: string }).code;
+        if (code === 'EPERM' || code === 'ENOSYS') return;
         throw err;
       }
 

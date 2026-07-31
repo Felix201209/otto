@@ -115,7 +115,7 @@ describe('autoLintChecker', () => {
     beforeEach(() => {
       mockConfig = {
         getVsCodePluginMode: vi.fn(),
-      } as any;
+      } as unknown as Config;
     });
 
     afterEach(() => {

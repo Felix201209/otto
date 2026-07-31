@@ -11,7 +11,6 @@ import {
   MarketplaceConfig,
   MarketplaceSource,
   InstalledPluginInfo,
-  SkillErrorCode,
 } from './skill-types.js';
 
 describe('SettingsManager', () => {

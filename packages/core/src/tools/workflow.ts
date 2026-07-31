@@ -11,7 +11,6 @@ import {
   Icon,
   ToolCallConfirmationDetails,
   ToolWorkflowConfirmationDetails,
-  WorkflowPhase,
   ToolConfirmationOutcome,
   ToolExecutionServices,
 } from './tools.js';
@@ -19,7 +18,6 @@ import { ToolRegistry } from './tool-registry.js';
 import { Config } from '../config/config.js';
 import { WorkflowAgentBridge } from '../core/workflowAgentBridge.js';
 import { runWorkflowScript, extractMeta } from '../core/workflowRunner.js';
-import { ToolExecutionContext } from '../core/toolSchedulerAdapter.js';
 import { WorkflowRegistry } from '../core/workflowRegistry.js';
 import { getAgentResourceBudget } from '../core/agentResourceBudget.js';
 

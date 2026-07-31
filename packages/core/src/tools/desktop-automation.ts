@@ -463,7 +463,7 @@ $h=$t.MainWindowHandle; if($h -eq [IntPtr]::Zero){throw "No main window: ${this.
   }
   private async winWaitForApp(app: string, timeout: number): Promise<string> {
     try {
-      const o=await this.ps('$d='+timeout+';$sw=[Diagnostics.Stopwatch]::StartNew();'+
+      await this.ps('$d='+timeout+';$sw=[Diagnostics.Stopwatch]::StartNew();'+
       'while($sw.ElapsedMilliseconds -lt $d){$p=Get-Process "'+this.pe(this.wpn(app))+'" -ErrorAction SilentlyContinue;if($p){$p.ProcessName;exit}}'+
       'throw "timeout"');
           return 'App running: '+app;

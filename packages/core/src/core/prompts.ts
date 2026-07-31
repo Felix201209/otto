@@ -29,7 +29,6 @@ import { LSPFindReferencesTool } from '../tools/lsp/lsp-find-references.js';
 import { LSPDocumentSymbolsTool } from '../tools/lsp/lsp-document-symbols.js';
 import { LSPWorkspaceSymbolsTool } from '../tools/lsp/lsp-workspace-symbols.js';
 import { LSPImplementationTool } from '../tools/lsp/lsp-implementation.js';
-import { TaskPrompts } from './taskPrompts.js';
 import { getSkillsContext } from '../skills/skills-integration.js';
 import { PromptRegistry } from '../prompts/prompt-registry.js';
 import type { AgentStyle } from '../config/projectSettings.js';
@@ -1067,7 +1066,7 @@ function getMcpPromptsContext(promptRegistry?: PromptRegistry): string {
     }
 
     return `${lines.join('\n')}\n`;
-  } catch (error) {
+  } catch (_error) {
     // MCP prompts system not available or failed to load
     return '';
   }

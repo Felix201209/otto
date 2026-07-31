@@ -326,7 +326,7 @@ function formatDecisionsForFile(decisions: MemoryPackage['decisionHistory']): st
   return text + '\n';
 }
 
-async function writeInheritedMemory(content: string, userId: string): Promise<void> {
+async function writeInheritedMemory(content: string, _userId: string): Promise<void> {
   const empFile = path.join(MEMORY_DIR, 'employee.markdown');
   try {
     let existing = '';

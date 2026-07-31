@@ -10,7 +10,6 @@ import * as path from 'path';
 import * as os from 'os';
 import {
   KnowledgeCapturePipeline,
-  getKnowledgeCapturePipeline,
   resetKnowledgeCapturePipeline,
 } from '../knowledge/knowledgeCapturePipeline.js';
 import { LocalKnowledgeStore } from '../knowledge/localKnowledgeStore.js';
@@ -94,7 +93,7 @@ describe('KnowledgeCapturePipeline', () => {
       ];
 
       // First run
-      const result1 = await pipeline.runFromMessages(messages, 'test-session-4');
+      await pipeline.runFromMessages(messages, 'test-session-4');
       // Second run with same content
       const result2 = await pipeline.runFromMessages(messages, 'test-session-4');
 

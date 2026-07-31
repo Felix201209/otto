@@ -36,7 +36,6 @@ describe('Logger', () => {
   const testSessionId = 'test-session-id';
   let testGeminiDir: string;
   let testLogFilePath: string;
-  let testCheckpointFilePath: string;
 
   beforeEach(async () => {
     vi.resetAllMocks();

@@ -7,7 +7,6 @@
 import { DiagConsoleLogger, DiagLogLevel, diag } from '@opentelemetry/api';
 import type { Config } from '../config/config.js';
 import { SERVICE_NAME } from './constants.js';
-import { initializeMetrics } from './metrics.js';
 
 // For troubleshooting, set the log level to DiagLogLevel.DEBUG
 diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.INFO);

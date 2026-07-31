@@ -7,7 +7,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { PostCompactRestorationService } from './postCompactRestorationService.js';
 import * as fs from 'fs';
-import * as path from 'path';
 
 vi.mock('fs', () => ({
   statSync: vi.fn(),
@@ -77,13 +76,12 @@ describe('PostCompactRestorationService', () => {
     });
 
     it('should generate restoration content for tracked files', async () => {
-      const filePath = path.resolve('/path/to/file.ts');
       service.trackFileRead('/path/to/file.ts');
 
       vi.mocked(fs.statSync).mockReturnValue({
         isFile: () => true,
         size: 50,
-      } as any);
+      } as unknown as fs.Stats);
       vi.mocked(fs.readFileSync).mockReturnValue('const x = 1;');
 
       const result = await service.generateRestorationContent();
@@ -93,13 +91,12 @@ describe('PostCompactRestorationService', () => {
     });
 
     it('should truncate large files', async () => {
-      const filePath = path.resolve('/path/to/large.ts');
       service.trackFileRead('/path/to/large.ts');
 
       vi.mocked(fs.statSync).mockReturnValue({
         isFile: () => true,
         size: 200,
-      } as any);
+      } as unknown as fs.Stats);
       vi.mocked(fs.readFileSync).mockReturnValue('x'.repeat(200));
 
       const result = await service.generateRestorationContent();
@@ -124,7 +121,7 @@ describe('PostCompactRestorationService', () => {
       vi.mocked(fs.statSync).mockReturnValue({
         isFile: () => true,
         size: 2 * 1024 * 1024, // 2MB
-      } as any);
+      } as unknown as fs.Stats);
 
       const result = await service.generateRestorationContent();
       expect(result).toBeNull();
@@ -139,7 +136,7 @@ describe('PostCompactRestorationService', () => {
       vi.mocked(fs.statSync).mockReturnValue({
         isFile: () => true,
         size: 20,
-      } as any);
+      } as unknown as fs.Stats);
       vi.mocked(fs.readFileSync).mockReturnValue('content');
 
       const result = await service.generateRestorationContent();

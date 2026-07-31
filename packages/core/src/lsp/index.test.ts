@@ -60,13 +60,13 @@ describe('LSPManager robustness', () => {
     const { fakeProcess, serverConnection } = createDuplexTransport();
 
     // Override servers with a fake .py server.
-    (manager as any).servers = [
+    (manager as unknown as { servers: unknown[] }).servers = [
       {
         id: 'pyright',
         displayName: 'Fake Pyright',
         extensions: ['.py'],
         root: async () => tempRootDir,
-        spawn: async () => ({ process: fakeProcess as any }),
+        spawn: async () => ({ process: fakeProcess as unknown as import('node:child_process').ChildProcess }),
       },
     ];
 

@@ -268,7 +268,6 @@ export class EnterpriseSync {
       .filter((u) => u.is_active)
       .map((u) => {
         const normalizedRole = normalizeRole(u.job_title || '');
-        const deptId = u.department_ids[0] || 'general';
         return {
           id: u.open_id,
           companyId: config.companyId,

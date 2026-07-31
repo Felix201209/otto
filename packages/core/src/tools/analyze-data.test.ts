@@ -29,7 +29,7 @@ describe('AnalyzeDataTool', () => {
 
   // --- Validation ---
   it('rejects missing input_path', () => {
-    expect(tool.validateToolParams({ operation: 'summary' } as any)).not.toBeNull();
+    expect(tool.validateToolParams({ operation: 'summary' } as unknown as Parameters<typeof tool.validateToolParams>[0])).not.toBeNull();
   });
   it('rejects relative input_path', () => {
     expect(tool.validateToolParams({ input_path: 'data.csv', operation: 'summary' })).toContain('absolute');

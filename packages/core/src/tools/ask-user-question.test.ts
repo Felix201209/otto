@@ -4,13 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { AskUserQuestionTool } from './ask-user-question.js';
 import {
   ToolConfirmationOutcome,
   ToolQuestionConfirmationDetails,
 } from './tools.js';
 import type { Config } from '../config/config.js';
+import type { AskUserQuestionParams } from './ask-user-question.js';
 
 function makeConfig(): Config {
   return {} as Config;
@@ -43,12 +44,12 @@ describe('AskUserQuestionTool', () => {
 
   describe('validateToolParams', () => {
     it('accepts a valid single-question payload', () => {
-      expect(tool.validateToolParams(makeParams() as any)).toBeNull();
+      expect(tool.validateToolParams(makeParams() as unknown as AskUserQuestionParams)).toBeNull();
     });
 
     it('rejects empty questions array', () => {
       expect(
-        tool.validateToolParams({ questions: [] } as any),
+        tool.validateToolParams({ questions: [] } as unknown as AskUserQuestionParams),
       ).toMatch(/At least one question/);
     });
 
@@ -62,7 +63,7 @@ describe('AskUserQuestionTool', () => {
         ],
       }));
       expect(
-        tool.validateToolParams({ questions } as any),
+        tool.validateToolParams({ questions } as unknown as AskUserQuestionParams),
       ).toMatch(/At most 4 questions/);
     });
 
@@ -87,12 +88,12 @@ describe('AskUserQuestionTool', () => {
               ],
             },
           ],
-        } as any),
+        } as unknown as AskUserQuestionParams),
       ).toMatch(/Duplicate question text/);
     });
 
     it('heals and truncates header longer than 12 characters', () => {
-      const params: any = {
+      const params: AskUserQuestionParams = {
         questions: [
           {
             question: 'Q?',
@@ -109,7 +110,7 @@ describe('AskUserQuestionTool', () => {
     });
 
     it('heals missing description and strings in options array', () => {
-      const params: any = {
+      const params: AskUserQuestionParams = {
         questions: [
           {
             question: 'Q?',
@@ -136,7 +137,7 @@ describe('AskUserQuestionTool', () => {
               options: [{ label: 'only', description: 'one' }],
             },
           ],
-        } as any),
+        } as unknown as AskUserQuestionParams),
       ).toMatch(/2-4 options/);
     });
 
@@ -153,7 +154,7 @@ describe('AskUserQuestionTool', () => {
               ],
             },
           ],
-        } as any),
+        } as unknown as AskUserQuestionParams),
       ).toMatch(/Duplicate option label/);
     });
 
@@ -170,7 +171,7 @@ describe('AskUserQuestionTool', () => {
               ],
             },
           ],
-        } as any),
+        } as unknown as AskUserQuestionParams),
       ).toMatch(/Do not include an "Other" option/);
     });
 
@@ -188,7 +189,7 @@ describe('AskUserQuestionTool', () => {
               ],
             },
           ],
-        } as any),
+        } as unknown as AskUserQuestionParams),
       ).toMatch(/Preview is not supported on multiSelect/);
     });
   });
@@ -196,18 +197,18 @@ describe('AskUserQuestionTool', () => {
   describe('shouldConfirmExecute', () => {
     it('returns a question confirmation for valid params', async () => {
       const details = await tool.shouldConfirmExecute(
-        makeParams() as any,
+        makeParams() as unknown as AskUserQuestionParams,
         new AbortController().signal,
       );
       expect(details).not.toBe(false);
-      expect((details as any).type).toBe('question');
+      expect((details as ToolQuestionConfirmationDetails).type).toBe('question');
       expect((details as ToolQuestionConfirmationDetails).questions).toHaveLength(1);
-      expect(typeof (details as any).onConfirm).toBe('function');
+      expect(typeof (details as ToolQuestionConfirmationDetails).onConfirm).toBe('function');
     });
 
     it('returns false for invalid params (execute will produce error)', async () => {
       const result = await tool.shouldConfirmExecute(
-        { questions: [] } as any,
+        { questions: [] } as unknown as AskUserQuestionParams,
         new AbortController().signal,
       );
       expect(result).toBe(false);
@@ -218,7 +219,7 @@ describe('AskUserQuestionTool', () => {
     it('captures answers via onConfirm and renders them to the LLM', async () => {
       const params = makeParams();
       const details = (await tool.shouldConfirmExecute(
-        params as any,
+        params as unknown as AskUserQuestionParams,
         new AbortController().signal,
       )) as ToolQuestionConfirmationDetails;
 
@@ -228,7 +229,7 @@ describe('AskUserQuestionTool', () => {
       });
 
       const result = await tool.execute(
-        params as any,
+        params as unknown as AskUserQuestionParams,
         new AbortController().signal,
       );
       expect(result.llmContent).toMatch(/User has answered/);
@@ -239,14 +240,14 @@ describe('AskUserQuestionTool', () => {
     it('handles cancel path', async () => {
       const params = makeParams();
       const details = (await tool.shouldConfirmExecute(
-        params as any,
+        params as unknown as AskUserQuestionParams,
         new AbortController().signal,
       )) as ToolQuestionConfirmationDetails;
 
       await details.onConfirm(ToolConfirmationOutcome.Cancel);
 
       const result = await tool.execute(
-        params as any,
+        params as unknown as AskUserQuestionParams,
         new AbortController().signal,
       );
       expect(result.llmContent).toMatch(/declined/i);
@@ -255,7 +256,7 @@ describe('AskUserQuestionTool', () => {
     it('handles feedback (Chat about this / Skip interview) path', async () => {
       const params = makeParams();
       const details = (await tool.shouldConfirmExecute(
-        params as any,
+        params as unknown as AskUserQuestionParams,
         new AbortController().signal,
       )) as ToolQuestionConfirmationDetails;
 
@@ -265,7 +266,7 @@ describe('AskUserQuestionTool', () => {
       });
 
       const result = await tool.execute(
-        params as any,
+        params as unknown as AskUserQuestionParams,
         new AbortController().signal,
       );
       expect(result.llmContent).toMatch(/clarify/);
@@ -289,7 +290,7 @@ describe('AskUserQuestionTool', () => {
         ],
       };
       const details = (await tool.shouldConfirmExecute(
-        params as any,
+        params as unknown as AskUserQuestionParams,
         new AbortController().signal,
       )) as ToolQuestionConfirmationDetails;
       await details.onConfirm(ToolConfirmationOutcome.ProceedOnce, {
@@ -302,7 +303,7 @@ describe('AskUserQuestionTool', () => {
         },
       });
       const result = await tool.execute(
-        params as any,
+        params as unknown as AskUserQuestionParams,
         new AbortController().signal,
       );
       expect(result.llmContent).toMatch(/selected preview/);
@@ -325,14 +326,14 @@ describe('AskUserQuestionTool', () => {
         ],
       };
       const details = (await tool.shouldConfirmExecute(
-        params as any,
+        params as unknown as AskUserQuestionParams,
         new AbortController().signal,
       )) as ToolQuestionConfirmationDetails;
       await details.onConfirm(ToolConfirmationOutcome.ProceedOnce, {
         answers: { 'Which features?': 'Search, Auth, Dark mode' },
       });
       const result = await tool.execute(
-        params as any,
+        params as unknown as AskUserQuestionParams,
         new AbortController().signal,
       );
       expect(result.llmContent).toMatch(/"Which features\?"="Search, Auth, Dark mode"/);
@@ -351,7 +352,7 @@ describe('AskUserQuestionTool', () => {
     });
 
     it('exposes a meaningful pre-execution description', () => {
-      expect(tool.getDescription(makeParams() as any)).toMatch(/Ask:/);
+      expect(tool.getDescription(makeParams() as unknown as AskUserQuestionParams)).toMatch(/Ask:/);
       expect(
         tool.getDescription({
           questions: [
@@ -372,7 +373,7 @@ describe('AskUserQuestionTool', () => {
               ],
             },
           ],
-        } as any),
+        } as unknown as AskUserQuestionParams),
       ).toMatch(/Ask 2 questions/);
     });
   });

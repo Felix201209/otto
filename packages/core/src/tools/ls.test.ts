@@ -4,11 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { LSTool, LSToolParams, FileEntry } from './ls.js';
+import { LSTool, LSToolParams } from './ls.js';
 import path from 'path';
 import fs from 'fs/promises';
 import os from 'os';
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { FileDiscoveryService } from '../services/fileDiscoveryService.js';
 import { Config, DEFAULT_FILE_FILTERING_OPTIONS } from '../config/config.js';
 

@@ -7,9 +7,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   TaskWatchdog,
-  getTaskWatchdog,
   resetTaskWatchdog,
-  type WatchdogState,
 } from '../services/taskWatchdog.js';
 
 describe('TaskWatchdog', () => {

@@ -10,6 +10,13 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AudioReaderTool } from './audio-reader.js';
 import { createMockConfig } from '../utils/test-helpers.js';
+import type { Config } from '../config/config.js';
+
+type AudioTestConfig = Config & {
+  getModel: () => string;
+  getCustomModelConfig: () => Record<string, unknown>;
+  getOttoClient: ReturnType<typeof vi.fn>;
+};
 
 describe('AudioReaderTool', () => {
   let tempDir: string;
@@ -40,7 +47,7 @@ describe('AudioReaderTool', () => {
     const localTranscriber = vi.fn().mockResolvedValue('local transcript');
     const config = createMockConfig({
       getTargetDir: () => tempDir,
-    }) as any;
+    }) as unknown as AudioTestConfig;
     config.getModel = () => 'custom:openai:gpt-4o-audio-preview@abc123';
     config.getCustomModelConfig = () => ({
       enabled: true,
@@ -72,7 +79,7 @@ describe('AudioReaderTool', () => {
     const getOttoClient = vi.fn();
     const config = createMockConfig({
       getTargetDir: () => tempDir,
-    }) as any;
+    }) as unknown as AudioTestConfig;
     config.getModel = () => 'custom:openai:doubao-pro@abc123';
     config.getCustomModelConfig = () => ({
       enabled: true,
@@ -100,7 +107,7 @@ describe('AudioReaderTool', () => {
   it('explains local setup options when a custom text model has no local ASR', async () => {
     const config = createMockConfig({
       getTargetDir: () => tempDir,
-    }) as any;
+    }) as unknown as AudioTestConfig;
     config.getModel = () => 'custom:openai:doubao-pro@abc123';
     config.getCustomModelConfig = () => ({
       enabled: true,

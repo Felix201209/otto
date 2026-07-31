@@ -32,6 +32,7 @@ import { SchemaValidator } from '../utils/schemaValidator.js';
 import { Config } from '../config/config.js';
 import { OrgMemoryStore } from '../memory/orgMemoryStore.js';
 import { CodebaseMemoryProvider } from '../memory/codebaseMemoryProvider.js';
+import type { Permission } from '../memory/orgMemoryTypes.js';
 import { createProjectArchiveSummary, createSkillCandidate } from '../memory/skillFormation.js';
 import type { OrgMemoryRecord, ProjectRecord, ProjectType, UsageRecord } from '../memory/orgMemoryTypes.js';
 import { findMostSimilarTopic, DEFAULT_MERGE_THRESHOLD, type TopicCandidate } from '../utils/topicSimilarity.js';
@@ -190,7 +191,7 @@ FILES CREATED:
     if (err) return { llmContent: err, returnDisplay: err };
 
     // 权限检查：按操作类型映射所需权限
-    const permissionMap: Record<string, string> = {
+    const permissionMap: Record<string, Permission> = {
       learn: 'memory:team:write',
       recall: 'memory:team:read',
       onboard: 'memory:team:write',
@@ -210,12 +211,13 @@ FILES CREATED:
       try {
         const { getEnterpriseSync } = await import('../orchestration/enterpriseSync.js');
         const sync = getEnterpriseSync(this.config.getProjectRoot());
-        const userId = (this.config as any).getFeishuUser?.() || 'local';
+        const provider = this.config as Config & { getFeishuUser?: () => string };
+        const userId = provider.getFeishuUser?.() || 'local';
         // 本地桌面/CLI 用户是其本机数据的所有者；企业 License 只约束已识别的
         // 飞书成员。否则本机存在 enterprise.json、但当前请求没有飞书 open_id 时，
         // 会把所有本地记忆操作误判为无权限，并让测试受真实机器配置污染。
         if (userId !== 'local') {
-          const hasPermission = await sync.checkPermission(userId, requiredPermission as any).catch(() => true);
+          const hasPermission = await sync.checkPermission(userId, requiredPermission).catch(() => true);
           if (!hasPermission) {
             return {
               llmContent: `权限不足：需要 ${requiredPermission} 权限`,

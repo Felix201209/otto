@@ -169,7 +169,6 @@ Important:
       });
 
       if (matchingSkills.length === 0) {
-        const availableSkills = skills.map((s: Skill) => `${s.name} (id: ${s.id})`).join(', ');
         const availableNames = skills.map((s: Skill) => s.name).sort().join(', ');
         const availableIds = skills.map((s: Skill) => s.id).sort().join(', ');
 

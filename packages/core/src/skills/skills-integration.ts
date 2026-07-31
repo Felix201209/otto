@@ -4,7 +4,7 @@
  * Provides Skills context to the AI system prompt
  */
 
-import { SkillContextInjector, SkillLoadLevel } from './index.js';
+import { SkillContextInjector } from './index.js';
 import { seedDefaultSkills } from './seed-skills.js';
 
 let cachedSkillsContext: string | null = null;

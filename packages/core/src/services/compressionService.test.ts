@@ -7,6 +7,9 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Content } from '../types/extendedContent.js';
+import type { Config } from '../config/config.js';
+import type { OttoClient } from '../core/client.js';
+import type { ContentGenerator } from '../core/contentGenerator.js';
 import { CompressionService, findIndexAfterFraction } from './compressionService.js';
 
 // Mock dependencies
@@ -16,7 +19,7 @@ vi.mock('../core/prompts.js', () => ({
 }));
 
 vi.mock('../core/tokenLimits.js', () => ({
-  tokenLimit: (model: string) => 1000 // Mock token limit
+  tokenLimit: (_model: string) => 1000 // Mock token limit
 }));
 
 vi.mock('../utils/messageInspectors.js', () => ({
@@ -26,10 +29,11 @@ vi.mock('../utils/messageInspectors.js', () => ({
 
 describe('CompressionService', () => {
   let compressionService: CompressionService;
-  let mockContentGenerator: any;
-  let mockGeminiClient: any;
-  let mockChat: any;
-  let mockConfig: any;
+  type MockFn = ReturnType<typeof vi.fn>;
+  let mockContentGenerator: ContentGenerator & { countTokens: MockFn; generateContent: MockFn };
+  let mockGeminiClient: OttoClient & { getContentGenerator: MockFn; createTemporaryChat: MockFn };
+  let mockChat: { sendMessage: MockFn; setHistory: MockFn; getHistory: MockFn; setTools: MockFn };
+  let mockConfig: Config & { getToolRegistry: MockFn };
 
   beforeEach(() => {
     compressionService = new CompressionService({
@@ -41,7 +45,7 @@ describe('CompressionService', () => {
     mockContentGenerator = {
       countTokens: vi.fn(),
       generateContent: vi.fn(),
-    };
+    } as unknown as ContentGenerator & { countTokens: MockFn; generateContent: MockFn };
 
     mockChat = {
       sendMessage: vi.fn(),
@@ -53,13 +57,13 @@ describe('CompressionService', () => {
     mockGeminiClient = {
       getContentGenerator: vi.fn().mockReturnValue(mockContentGenerator),
       createTemporaryChat: vi.fn().mockResolvedValue(mockChat),
-    };
+    } as unknown as OttoClient & { getContentGenerator: MockFn; createTemporaryChat: MockFn };
 
     mockConfig = {
       getToolRegistry: vi.fn().mockResolvedValue({
         getFunctionDeclarations: vi.fn().mockReturnValue([])
       })
-    };
+    } as unknown as Config & { getToolRegistry: MockFn };
   });
 
   describe('findIndexAfterFraction', () => {
@@ -229,7 +233,7 @@ describe('CompressionService', () => {
         { role: 'model', parts: [{ text: 'Got it!' }] }, // 环境确认
         { role: 'user', parts: [{ text: 'Task 1' }] },
         { role: 'model', parts: [{ text: 'Response 1' }] },
-        { role: 'user', parts: [{ functionResponse: { name: 'tool', response: { output: 'result' } } }] } as any, // 工具响应
+        { role: 'user', parts: [{ functionResponse: { name: 'tool', response: { output: 'result' } } }] } as unknown as Content, // 工具响应
         { role: 'model', parts: [{ text: 'Tool result processed' }] },
         { role: 'user', parts: [{ text: 'Task 2' }] },
         { role: 'model', parts: [{ text: 'Response 2' }] },

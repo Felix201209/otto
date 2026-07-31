@@ -17,6 +17,8 @@ import {
 } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { FunctionDeclaration, mcpToTool } from '@google/genai';
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import type { PromptRegistry } from '../prompts/prompt-registry.js';
 
 vi.mock('@google/genai');
 // vi.mock('@modelcontextprotocol/sdk/client/index.js');
@@ -41,14 +43,14 @@ describe('mcp-client', () => {
           ],
         }),
       };
-      vi.mocked(mcpToTool).mockReturnValue(mockMcpCallableTool as any);
+      vi.mocked(mcpToTool).mockReturnValue(mockMcpCallableTool as unknown as ReturnType<typeof mcpToTool>);
 
       const mockConfig = new MCPServerConfig();
 
       const tools = await discoverTools(
         'server1',
         mockConfig,
-        mockClient as any,
+        mockClient as unknown as Client,
       );
 
       expect(tools.length).toBe(1);
@@ -69,8 +71,8 @@ describe('mcp-client', () => {
 
       await discoverPrompts(
         'server1',
-        mockClient as any,
-        mockPromptRegistry as any,
+        mockClient as unknown as Client,
+        mockPromptRegistry as unknown as PromptRegistry,
       );
 
       expect(mockClient.request).toHaveBeenCalledWith(
@@ -88,8 +90,8 @@ describe('mcp-client', () => {
 
       await discoverPrompts(
         'server1',
-        mockClient as any,
-        mockPromptRegistry as any,
+        mockClient as unknown as Client,
+        mockPromptRegistry as unknown as PromptRegistry,
       );
 
       expect(mockPromptRegistry.registerPrompt).not.toHaveBeenCalled();
@@ -101,7 +103,7 @@ describe('mcp-client', () => {
       };
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-      await discoverPrompts('server1', mockClient as any, {} as any);
+      await discoverPrompts('server1', mockClient as unknown as Client, {} as unknown as PromptRegistry);
 
       expect(consoleSpy).toHaveBeenCalled();
     });

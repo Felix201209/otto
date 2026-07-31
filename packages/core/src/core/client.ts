@@ -55,7 +55,6 @@ import { GoalAchievedTool } from '../tools/goal-achieved.js';
 import { getKnowledgeCapturePipeline } from '../knowledge/knowledgeCapturePipeline.js';
 import {
   SessionMemoryInjector,
-  type MemoryInjection,
 } from '../memory/sessionMemoryInjector.js';
 import { assembleRelevantLayeredMemory } from '../memory/memoryRecall.js';
 import { FileMemoryProvider } from '../memory/memoryProvider.js';

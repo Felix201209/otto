@@ -11,7 +11,6 @@ import { HookAggregator } from './hookAggregator.js';
 import { HookPlanner } from './hookPlanner.js';
 import { HookEventHandler } from './hookEventHandler.js';
 import type { HookRegistryEntry } from './hookRegistry.js';
-import { debugLogger } from '../utils/debugLogger.js';
 
 /**
  * Main hook system that coordinates all hook-related functionality

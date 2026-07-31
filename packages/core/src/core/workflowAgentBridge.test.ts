@@ -48,7 +48,7 @@ vi.mock('./workflowRegistry.js', () => ({
 function makeBridge(opts: {
   maxConcurrency?: number;
   maxAgents?: number;
-  subAgentResult?: Partial<{ success: boolean; summary: string; error: string; tokenUsage: any }>;
+  subAgentResult?: Partial<{ success: boolean; summary: string; error: string; tokenUsage: unknown }>;
 } = {}): WorkflowAgentBridge {
   const mockConfig = {
     getProjectRoot: () => '/tmp/test',
@@ -169,8 +169,8 @@ describe('WorkflowAgentBridge.run — result.data fallback', () => {
     const result = await bridge.run({ prompt: 'analyze' });
 
     expect(result.data).toBeDefined();
-    expect((result.data as any)._parse_failed).toBe(true);
-    expect((result.data as any).text).toBe('This is a plain text summary with no JSON.');
+    expect((result.data as Record<string, unknown>)._parse_failed).toBe(true);
+    expect((result.data as Record<string, unknown>).text).toBe('This is a plain text summary with no JSON.');
   });
 
   it('parses JSON when sub-agent returns valid JSON', async () => {
@@ -184,7 +184,7 @@ describe('WorkflowAgentBridge.run — result.data fallback', () => {
     const result = await bridge.run({ prompt: 'analyze' });
 
     expect(result.data).toEqual({ files: ['a.ts', 'b.ts'], coverage: 92 });
-    expect((result.data as any)._parse_failed).toBeUndefined();
+    expect((result.data as Record<string, unknown>)._parse_failed).toBeUndefined();
   });
 
   it('extracts JSON block from prose when schema mode is not used', async () => {
@@ -197,8 +197,8 @@ describe('WorkflowAgentBridge.run — result.data fallback', () => {
 
     const result = await bridge.run({ prompt: 'analyze' });
 
-    expect((result.data as any).issues).toHaveLength(1);
-    expect((result.data as any)._parse_failed).toBeUndefined();
+    expect((result.data as Record<string, unknown>).issues).toHaveLength(1);
+    expect((result.data as Record<string, unknown>)._parse_failed).toBeUndefined();
   });
 
   it('strips markdown fences and parses JSON in schema mode', async () => {
@@ -214,7 +214,7 @@ describe('WorkflowAgentBridge.run — result.data fallback', () => {
       schema: { type: 'object', properties: { files: { type: 'array' } }, required: ['files'] },
     });
 
-    expect((result.data as any).files).toEqual(['a.ts']);
+    expect((result.data as Record<string, unknown>).files).toEqual(['a.ts']);
   });
 });
 
@@ -237,16 +237,12 @@ describe('WorkflowAgentBridge — max_agents limit', () => {
 
 describe('WorkflowAgentBridge.runParallel — concurrency', () => {
   it('executes all tasks and returns results in original order', async () => {
-    let callOrder = 0;
     (SubAgent as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
-      executeTask: vi.fn().mockImplementation(async (prompt: string) => {
-        callOrder++;
-        return {
+      executeTask: vi.fn().mockImplementation(async (prompt: string) => ({
           success: true,
           summary: `result-for-${prompt}`,
           tokenUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
-      }),
+        })),
     }));
 
     const ctrl = new AbortController();

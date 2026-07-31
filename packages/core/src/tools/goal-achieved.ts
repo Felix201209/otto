@@ -10,7 +10,6 @@ import { Config } from '../config/config.js';
 import { SchemaValidator } from '../utils/schemaValidator.js';
 import { todoStore } from './todo-store.js';
 import { runGoalEvaluation } from '../agents/runGoalEvaluation.js';
-import { SceneType } from '../core/sceneManager.js';
 
 /**
  * Parameters for the GoalAchievedTool.

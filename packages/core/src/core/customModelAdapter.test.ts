@@ -9,6 +9,8 @@ import { callOpenAICompatibleModelStream, callAnthropicModelStream, callOpenAICo
 import { MESSAGE_ROLES } from '../config/messageRoles.js';
 import type { CustomModelConfig } from '../types/customModel.js';
 
+type LooseJson = { [key: string]: LooseJson; [index: number]: LooseJson; length: number };
+
 // 为了测试内部函数，需要导出它（见下方的导出添加）
 // 如果无法导出，可以通过流式测试间接验证
 
@@ -123,7 +125,7 @@ describe('customModelAdapter - Image Content Support', () => {
 
   describe('OpenAI image format conversion', () => {
     it('should convert Gemini inlineData to OpenAI image_url format', async () => {
-      let capturedBody: any;
+      let capturedBody: LooseJson;
       const mockResponse = {
         ok: true,
         json: async () => ({
@@ -157,7 +159,7 @@ describe('customModelAdapter - Image Content Support', () => {
         ],
       };
 
-      await callOpenAICompatibleModel(modelConfig as any, request);
+      await callOpenAICompatibleModel(modelConfig as unknown as CustomModelConfig, request);
 
       // Verify the request body was converted correctly
       expect(capturedBody.messages).toHaveLength(1);
@@ -181,7 +183,7 @@ describe('customModelAdapter - Image Content Support', () => {
     });
 
     it('should handle multiple images in a single message', async () => {
-      let capturedBody: any;
+      let capturedBody: LooseJson;
       const mockResponse = {
         ok: true,
         json: async () => ({
@@ -216,7 +218,7 @@ describe('customModelAdapter - Image Content Support', () => {
         ],
       };
 
-      await callOpenAICompatibleModel(modelConfig as any, request);
+      await callOpenAICompatibleModel(modelConfig as unknown as CustomModelConfig, request);
 
       expect(capturedBody.messages[0].content).toHaveLength(3);
       expect(capturedBody.messages[0].content[1].image_url.url).toBe('data:image/jpeg;base64,base64data1');
@@ -260,7 +262,7 @@ describe('customModelAdapter - Image Content Support', () => {
         ],
       };
 
-      const response = await callOpenAICompatibleModel(modelConfig as any, request);
+      const response = await callOpenAICompatibleModel(modelConfig as unknown as CustomModelConfig, request);
       const parts = response.candidates?.[0]?.content?.parts;
       expect(parts).toHaveLength(2);
       expect(parts?.[0]).toEqual({ reasoning: 'Let me analyze the request...' });
@@ -268,7 +270,7 @@ describe('customModelAdapter - Image Content Support', () => {
     });
 
     it('should attach reasoning_content in contentsToMessages when tool calls are present', async () => {
-      let capturedBody: any;
+      let capturedBody: LooseJson;
       const mockResponse = {
         ok: true,
         json: async () => ({
@@ -313,7 +315,7 @@ describe('customModelAdapter - Image Content Support', () => {
         ],
       };
 
-      await callOpenAICompatibleModel(modelConfig as any, request);
+      await callOpenAICompatibleModel(modelConfig as unknown as CustomModelConfig, request);
 
       // Verify that pure reasoning is attached to the assistant tool call. The
       // protocol safety layer also closes the unfinished call with a matching
@@ -328,7 +330,7 @@ describe('customModelAdapter - Image Content Support', () => {
     });
 
     it('should NOT attach reasoning_content in contentsToMessages when no tool calls are present', async () => {
-      let capturedBody: any;
+      let capturedBody: LooseJson;
       const mockResponse = {
         ok: true,
         json: async () => ({
@@ -373,7 +375,7 @@ describe('customModelAdapter - Image Content Support', () => {
         ],
       };
 
-      await callOpenAICompatibleModel(modelConfig as any, request);
+      await callOpenAICompatibleModel(modelConfig as unknown as CustomModelConfig, request);
 
       // Verify that pure reasoning message is filtered, and NOT attached to the text message (saving tokens per DeepSeek doc)
       expect(capturedBody.messages).toHaveLength(2); // user message, followed by assistant text message
@@ -385,7 +387,7 @@ describe('customModelAdapter - Image Content Support', () => {
 
   describe('Anthropic image format conversion', () => {
     it('should convert Gemini inlineData to Anthropic image format', async () => {
-      let capturedBody: any;
+      let capturedBody: LooseJson;
       const mockResponse = {
         ok: true,
         json: async () => ({
@@ -420,7 +422,7 @@ describe('customModelAdapter - Image Content Support', () => {
         ],
       };
 
-      await callAnthropicModel(modelConfig as any, request);
+      await callAnthropicModel(modelConfig as unknown as CustomModelConfig, request);
 
       // Verify the request body was converted correctly
       expect(capturedBody.messages).toHaveLength(1);
@@ -447,7 +449,7 @@ describe('customModelAdapter - Image Content Support', () => {
     });
 
     it('should handle multiple images in a single message', async () => {
-      let capturedBody: any;
+      let capturedBody: LooseJson;
       const mockResponse = {
         ok: true,
         json: async () => ({
@@ -483,7 +485,7 @@ describe('customModelAdapter - Image Content Support', () => {
         ],
       };
 
-      await callAnthropicModel(modelConfig as any, request);
+      await callAnthropicModel(modelConfig as unknown as CustomModelConfig, request);
 
       expect(capturedBody.messages[0].content).toHaveLength(3);
       expect(capturedBody.messages[0].content[1]).toEqual({
@@ -505,7 +507,7 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
 
   describe('System message format', () => {
     it('should convert system messages to Anthropic array format', async () => {
-      let capturedBody: any;
+      let capturedBody: LooseJson;
       const mockResponse = {
         ok: true,
         json: async () => ({
@@ -541,7 +543,7 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
         ],
       };
 
-      await callAnthropicModel(modelConfig as any, request);
+      await callAnthropicModel(modelConfig as unknown as CustomModelConfig, request);
 
       // System should be an array with type: 'text' and auto-added cache_control
       expect(Array.isArray(capturedBody.system)).toBe(true);
@@ -554,7 +556,7 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
     });
 
     it('should auto-add cache_control to system messages', async () => {
-      let capturedBody: any;
+      let capturedBody: LooseJson;
       const mockResponse = {
         ok: true,
         json: async () => ({
@@ -590,14 +592,14 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
         ],
       };
 
-      await callAnthropicModel(modelConfig as any, request);
+      await callAnthropicModel(modelConfig as unknown as CustomModelConfig, request);
 
       // cache_control should be auto-added to system messages
       expect(capturedBody.system[0].cache_control).toEqual({ type: 'ephemeral' });
     });
 
     it('should auto-add cache_control to last user message text block', async () => {
-      let capturedBody: any;
+      let capturedBody: LooseJson;
       const mockResponse = {
         ok: true,
         json: async () => ({
@@ -632,7 +634,7 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
         ],
       };
 
-      await callAnthropicModel(modelConfig as any, request);
+      await callAnthropicModel(modelConfig as unknown as CustomModelConfig, request);
 
       // Only the last text block should have cache_control
       expect(capturedBody.messages[0].content[0].cache_control).toBeUndefined();
@@ -640,7 +642,7 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
     });
 
     it('should only add cache_control to the LAST user message in multi-turn conversation', async () => {
-      let capturedBody: any;
+      let capturedBody: LooseJson;
       const mockResponse = {
         ok: true,
         json: async () => ({
@@ -683,7 +685,7 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
         ],
       };
 
-      await callAnthropicModel(modelConfig as any, request);
+      await callAnthropicModel(modelConfig as unknown as CustomModelConfig, request);
 
       // First user message should NOT have cache_control
       expect(capturedBody.messages[0].content[0].cache_control).toBeUndefined();
@@ -697,7 +699,7 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
     });
 
     it('should discard empty or whitespace-only text blocks from user and system messages', async () => {
-      let capturedBody: any;
+      let capturedBody: LooseJson;
       const mockResponse = {
         ok: true,
         json: async () => ({
@@ -741,7 +743,7 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
         ],
       };
 
-      await callAnthropicModel(modelConfig as any, request);
+      await callAnthropicModel(modelConfig as unknown as CustomModelConfig, request);
 
       // System should have only 1 block, and its cache_control is set
       expect(capturedBody.system).toHaveLength(1);
@@ -755,7 +757,7 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
     });
 
     it('should auto-add cache_control to other non-text block types if no text block is present in user message', async () => {
-      let capturedBody: any;
+      let capturedBody: LooseJson;
       const mockResponse = {
         ok: true,
         json: async () => ({
@@ -794,7 +796,7 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
         ],
       };
 
-      await callAnthropicModel(modelConfig as any, request);
+      await callAnthropicModel(modelConfig as unknown as CustomModelConfig, request);
 
       // Should be 1 image block with cache_control added
       expect(capturedBody.messages[0].content).toHaveLength(1);
@@ -805,7 +807,7 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
 
   describe('Extended thinking support', () => {
     it('should use Bedrock adaptive thinking schema for Claude Opus 4.7 with xhigh effort in streaming calls', async () => {
-      let capturedBody: any;
+      let capturedBody: LooseJson;
       const mockResponse = {
         ok: true,
         body: {
@@ -854,8 +856,8 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
         ],
       };
 
-      const responses: any[] = [];
-      for await (const response of callAnthropicModelStream(modelConfig as any, request)) {
+      const responses: LooseJson[] = [];
+      for await (const response of callAnthropicModelStream(modelConfig as unknown as CustomModelConfig, request)) {
         responses.push(response);
       }
 
@@ -870,7 +872,7 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
     });
 
     it('should use adaptive thinking schema for hyphenated Claude Opus 4.7 in auto mode', async () => {
-      let capturedBody: any;
+      let capturedBody: LooseJson;
       const mockResponse = {
         ok: true,
         json: async () => ({
@@ -903,7 +905,7 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
         ],
       };
 
-      await callAnthropicModel(modelConfig as any, request);
+      await callAnthropicModel(modelConfig as unknown as CustomModelConfig, request);
 
       expect(capturedBody.thinking).toEqual({
         type: 'adaptive',
@@ -915,7 +917,7 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
     });
 
     it('should use budget_tokens capped at 10000 when enableThinking is true', async () => {
-      let capturedBody: any;
+      let capturedBody: LooseJson;
       const mockResponse = {
         ok: true,
         json: async () => ({
@@ -949,7 +951,7 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
         ],
       };
 
-      await callAnthropicModel(modelConfig as any, request);
+      await callAnthropicModel(modelConfig as unknown as CustomModelConfig, request);
 
       // budget_tokens should be capped at 31999 (official recommended value)
       expect(capturedBody.thinking).toEqual({
@@ -961,7 +963,7 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
     });
 
     it('should auto-enable thinking for all Anthropic models when enableThinking is undefined', async () => {
-      let capturedBody: any;
+      let capturedBody: LooseJson;
       const mockResponse = {
         ok: true,
         json: async () => ({
@@ -994,7 +996,7 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
         ],
       };
 
-      await callAnthropicModel(modelConfig as any, request);
+      await callAnthropicModel(modelConfig as unknown as CustomModelConfig, request);
 
       // Should auto-enable thinking for all Anthropic models
       expect(capturedBody.thinking).toEqual({
@@ -1004,7 +1006,7 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
     });
 
     it('should respect explicit enableThinking=false to disable thinking', async () => {
-      let capturedBody: any;
+      let capturedBody: LooseJson;
       const mockResponse = {
         ok: true,
         json: async () => ({
@@ -1037,7 +1039,7 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
         ],
       };
 
-      await callAnthropicModel(modelConfig as any, request);
+      await callAnthropicModel(modelConfig as unknown as CustomModelConfig, request);
 
       // Should respect explicit disable
       expect(capturedBody.thinking).toBeUndefined();
@@ -1076,7 +1078,7 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
         ],
       };
 
-      const response = await callAnthropicModel(modelConfig as any, request);
+      const response = await callAnthropicModel(modelConfig as unknown as CustomModelConfig, request);
 
       const parts = response.candidates?.[0]?.content?.parts;
       expect(parts).toHaveLength(2);
@@ -1088,7 +1090,7 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
 
   describe('Tool input_schema with additionalProperties', () => {
     it('should include additionalProperties: false in tool input_schema', async () => {
-      let capturedBody: any;
+      let capturedBody: LooseJson;
       const mockResponse = {
         ok: true,
         json: async () => ({
@@ -1133,7 +1135,7 @@ describe('customModelAdapter - Anthropic API Compatibility', () => {
         },
       };
 
-      await callAnthropicModel(modelConfig as any, request);
+      await callAnthropicModel(modelConfig as unknown as CustomModelConfig, request);
 
       expect(capturedBody.tools).toHaveLength(1);
       expect(capturedBody.tools[0].input_schema.additionalProperties).toBe(false);
@@ -1202,8 +1204,8 @@ describe('customModelAdapter - Streaming Tool Calls', () => {
         },
       };
 
-      const responses: any[] = [];
-      for await (const response of callOpenAICompatibleModelStream(modelConfig as any, request)) {
+      const responses: LooseJson[] = [];
+      for await (const response of callOpenAICompatibleModelStream(modelConfig as unknown as CustomModelConfig, request)) {
         responses.push(response);
       }
 
@@ -1213,12 +1215,12 @@ describe('customModelAdapter - Streaming Tool Calls', () => {
       // 检查最后一个有效的响应应该包含完整的工具调用
       const toolCallResponse = responses.find(r => {
         const parts = r.candidates?.[0]?.content?.parts;
-        return parts && parts.some((p: any) => p.functionCall);
+        return parts && parts.some((p: LooseJson) => p.functionCall);
       });
 
       expect(toolCallResponse).toBeDefined();
       if (toolCallResponse) {
-        const functionCall = toolCallResponse.candidates[0].content.parts.find((p: any) => p.functionCall)?.functionCall;
+        const functionCall = toolCallResponse.candidates[0].content.parts.find((p: LooseJson) => p.functionCall)?.functionCall;
         expect(functionCall).toBeDefined();
         expect(functionCall?.name).toBe('search');
         expect(functionCall?.args).toEqual({ query: 'test' });
@@ -1285,19 +1287,19 @@ describe('customModelAdapter - Streaming Tool Calls', () => {
         },
       };
 
-      const responses: any[] = [];
-      for await (const response of callOpenAICompatibleModelStream(modelConfig as any, request)) {
+      const responses: LooseJson[] = [];
+      for await (const response of callOpenAICompatibleModelStream(modelConfig as unknown as CustomModelConfig, request)) {
         responses.push(response);
       }
 
       const toolCallResponse = responses.find(r => {
         const parts = r.candidates?.[0]?.content?.parts;
-        return parts && parts.some((p: any) => p.functionCall);
+        return parts && parts.some((p: LooseJson) => p.functionCall);
       });
 
       expect(toolCallResponse).toBeDefined();
       if (toolCallResponse) {
-        const functionCall = toolCallResponse.candidates[0].content.parts.find((p: any) => p.functionCall)?.functionCall;
+        const functionCall = toolCallResponse.candidates[0].content.parts.find((p: LooseJson) => p.functionCall)?.functionCall;
         expect(functionCall).toBeDefined();
         // 验证工具名称已被 trim
         expect(functionCall?.name).toBe('read_file'); // 不是 " read_file"
@@ -1367,20 +1369,20 @@ describe('customModelAdapter - Streaming Tool Calls', () => {
         },
       };
 
-      const responses: any[] = [];
-      for await (const response of callAnthropicModelStream(modelConfig as any, request)) {
+      const responses: LooseJson[] = [];
+      for await (const response of callAnthropicModelStream(modelConfig as unknown as CustomModelConfig, request)) {
         responses.push(response);
       }
 
       // 应该收到工具调用响应
       const toolCallResponse = responses.find(r => {
         const parts = r.candidates?.[0]?.content?.parts;
-        return parts && parts.some((p: any) => p.functionCall);
+        return parts && parts.some((p: LooseJson) => p.functionCall);
       });
 
       expect(toolCallResponse).toBeDefined();
       if (toolCallResponse) {
-        const functionCall = toolCallResponse.candidates[0].content.parts.find((p: any) => p.functionCall)?.functionCall;
+        const functionCall = toolCallResponse.candidates[0].content.parts.find((p: LooseJson) => p.functionCall)?.functionCall;
         expect(functionCall).toBeDefined();
         expect(functionCall?.name).toBe('search');
         expect(functionCall?.args).toEqual({ query: 'test' });
@@ -1443,8 +1445,8 @@ describe('customModelAdapter - Streaming Tool Calls', () => {
         ],
       };
 
-      const responses: any[] = [];
-      for await (const response of callAnthropicModelStream(modelConfig as any, request)) {
+      const responses: LooseJson[] = [];
+      for await (const response of callAnthropicModelStream(modelConfig as unknown as CustomModelConfig, request)) {
         responses.push(response);
       }
 
@@ -1520,8 +1522,8 @@ describe('customModelAdapter - Streaming Tool Calls', () => {
         ],
       };
 
-      const responses: any[] = [];
-      for await (const response of callAnthropicModelStream(modelConfig as any, request)) {
+      const responses: LooseJson[] = [];
+      for await (const response of callAnthropicModelStream(modelConfig as unknown as CustomModelConfig, request)) {
         responses.push(response);
       }
 
@@ -1598,8 +1600,8 @@ describe('customModelAdapter - Streaming Tool Calls', () => {
         ],
       };
 
-      const responses: any[] = [];
-      for await (const response of callAnthropicModelStream(modelConfig as any, request)) {
+      const responses: LooseJson[] = [];
+      for await (const response of callAnthropicModelStream(modelConfig as unknown as CustomModelConfig, request)) {
         responses.push(response);
       }
 
@@ -1607,21 +1609,21 @@ describe('customModelAdapter - Streaming Tool Calls', () => {
       // 应该收到 3 个独立的 reasoning 响应（每个 thinking_delta 一个）
       const reasoningResponses = responses.filter(r => {
         const parts = r.candidates?.[0]?.content?.parts;
-        return parts && parts.some((p: any) => p.reasoning !== undefined);
+        return parts && parts.some((p: LooseJson) => p.reasoning !== undefined);
       });
 
       expect(reasoningResponses.length).toBe(3); // 3 个 thinking_delta 块
 
       // 验证每个 reasoning 块的内容
       const reasoningTexts = reasoningResponses.map(r =>
-        r.candidates[0].content.parts.find((p: any) => p.reasoning)?.reasoning
+        r.candidates[0].content.parts.find((p: LooseJson) => p.reasoning)?.reasoning
       );
       expect(reasoningTexts).toEqual(['Let me ', 'think about ', 'this...']);
 
       // 验证 text 响应也正常
       const textResponse = responses.find(r => {
         const parts = r.candidates?.[0]?.content?.parts;
-        return parts && parts.some((p: any) => p.text !== undefined);
+        return parts && parts.some((p: LooseJson) => p.text !== undefined);
       });
       expect(textResponse).toBeDefined();
       expect(textResponse?.candidates[0].content.parts[0].text).toBe('Here is my answer');
@@ -1684,19 +1686,19 @@ describe('customModelAdapter - Streaming Tool Calls', () => {
         },
       };
 
-      const responses: any[] = [];
-      for await (const response of callAnthropicModelStream(modelConfig as any, request)) {
+      const responses: LooseJson[] = [];
+      for await (const response of callAnthropicModelStream(modelConfig as unknown as CustomModelConfig, request)) {
         responses.push(response);
       }
 
       const toolCallResponse = responses.find(r => {
         const parts = r.candidates?.[0]?.content?.parts;
-        return parts && parts.some((p: any) => p.functionCall);
+        return parts && parts.some((p: LooseJson) => p.functionCall);
       });
 
       expect(toolCallResponse).toBeDefined();
       if (toolCallResponse) {
-        const functionCall = toolCallResponse.candidates[0].content.parts.find((p: any) => p.functionCall)?.functionCall;
+        const functionCall = toolCallResponse.candidates[0].content.parts.find((p: LooseJson) => p.functionCall)?.functionCall;
         expect(functionCall).toBeDefined();
         // 验证工具名称已被 trim
         expect(functionCall?.name).toBe('read_file'); // 不是 " read_file"
@@ -1714,7 +1716,7 @@ describe('customModelAdapter - OpenAI Responses API', () => {
   describe('Non-streaming', () => {
     it('should call /responses endpoint and parse output items', async () => {
       let capturedUrl = '';
-      let capturedBody: any;
+      let capturedBody: LooseJson;
       const mockResponse = {
         ok: true,
         json: async () => ({
@@ -1755,7 +1757,7 @@ describe('customModelAdapter - OpenAI Responses API', () => {
         ],
       };
 
-      const result = await callOpenAIResponsesModel(modelConfig as any, request);
+      const result = await callOpenAIResponsesModel(modelConfig as unknown as CustomModelConfig, request);
 
       // Verify URL uses /responses endpoint
       expect(capturedUrl).toBe('https://api.openai.com/v1/responses');
@@ -1782,7 +1784,7 @@ describe('customModelAdapter - OpenAI Responses API', () => {
     });
 
     it('should format multi-turn conversation with function calls as flat items', async () => {
-      let capturedBody: any;
+      let capturedBody: LooseJson;
       const mockResponse = {
         ok: true,
         json: async () => ({
@@ -1826,7 +1828,7 @@ describe('customModelAdapter - OpenAI Responses API', () => {
         ],
       };
 
-      await callOpenAIResponsesModel(modelConfig as any, request);
+      await callOpenAIResponsesModel(modelConfig as unknown as CustomModelConfig, request);
 
       // Verify input is a flat array of heterogeneous items:
       // user msg(1) + function_call(1) + function_call_output(1) + assistant text(1) + function_call(1) + function_call_output(1) = 6
@@ -1863,7 +1865,7 @@ describe('customModelAdapter - OpenAI Responses API', () => {
     });
 
     it('should convert uppercase schema types to lowercase in tool parameters', async () => {
-      let capturedBody: any;
+      let capturedBody: LooseJson;
       const mockResponse = {
         ok: true,
         json: async () => ({
@@ -1918,7 +1920,7 @@ describe('customModelAdapter - OpenAI Responses API', () => {
         },
       };
 
-      await callOpenAIResponsesModel(modelConfig as any, request);
+      await callOpenAIResponsesModel(modelConfig as unknown as CustomModelConfig, request);
 
       // Verify all types were lowercased
       const tool = capturedBody.tools[0];
@@ -1932,7 +1934,7 @@ describe('customModelAdapter - OpenAI Responses API', () => {
     });
 
     it('should coerce string-typed numeric schema keywords to numbers', async () => {
-      let capturedBody: any;
+      let capturedBody: LooseJson;
       const mockResponse = {
         ok: true,
         json: async () => ({
@@ -1988,7 +1990,7 @@ describe('customModelAdapter - OpenAI Responses API', () => {
         },
       };
 
-      await callOpenAIResponsesModel(modelConfig as any, request);
+      await callOpenAIResponsesModel(modelConfig as unknown as CustomModelConfig, request);
 
       const tool = capturedBody.tools[0];
       // Verify string numbers were coerced to actual numbers
@@ -2051,7 +2053,7 @@ describe('customModelAdapter - OpenAI Responses API', () => {
         },
       };
 
-      const result = await callOpenAIResponsesModel(modelConfig as any, request);
+      const result = await callOpenAIResponsesModel(modelConfig as unknown as CustomModelConfig, request);
 
       const parts = result.candidates?.[0]?.content?.parts;
       expect(parts).toHaveLength(1);
@@ -2114,15 +2116,15 @@ describe('customModelAdapter - OpenAI Responses API', () => {
         ],
       };
 
-      const responses: any[] = [];
-      for await (const response of callOpenAIResponsesModelStream(modelConfig as any, request)) {
+      const responses: LooseJson[] = [];
+      for await (const response of callOpenAIResponsesModelStream(modelConfig as unknown as CustomModelConfig, request)) {
         responses.push(response);
       }
 
       // Should receive text chunks
       const textResponses = responses.filter(r => {
         const parts = r.candidates?.[0]?.content?.parts;
-        return parts && parts.some((p: any) => p.text);
+        return parts && parts.some((p: LooseJson) => p.text);
       });
       expect(textResponses).toHaveLength(2);
       expect(textResponses[0].candidates[0].content.parts[0].text).toBe('Hello ');
@@ -2191,20 +2193,20 @@ describe('customModelAdapter - OpenAI Responses API', () => {
         },
       };
 
-      const responses: any[] = [];
-      for await (const response of callOpenAIResponsesModelStream(modelConfig as any, request)) {
+      const responses: LooseJson[] = [];
+      for await (const response of callOpenAIResponsesModelStream(modelConfig as unknown as CustomModelConfig, request)) {
         responses.push(response);
       }
 
       // Should receive function call
       const toolCallResponse = responses.find(r => {
         const parts = r.candidates?.[0]?.content?.parts;
-        return parts && parts.some((p: any) => p.functionCall);
+        return parts && parts.some((p: LooseJson) => p.functionCall);
       });
 
       expect(toolCallResponse).toBeDefined();
       if (toolCallResponse) {
-        const functionCall = toolCallResponse.candidates[0].content.parts.find((p: any) => p.functionCall)?.functionCall;
+        const functionCall = toolCallResponse.candidates[0].content.parts.find((p: LooseJson) => p.functionCall)?.functionCall;
         expect(functionCall?.name).toBe('search');
         expect(functionCall?.args).toEqual({ query: 'test' });
         expect(functionCall?.id).toBe('call_123');
@@ -2218,7 +2220,7 @@ describe('customModelAdapter - OpenAI Responses API', () => {
     it('should request reasoning.summary="detailed" for gpt-5.x to actually emit thinking', async () => {
       // Probe-confirmed (2026-05-26): EasyRouter gateway silently drops
       // reasoning summary chunks unless summary='detailed' is explicit.
-      let capturedBody: any;
+      let capturedBody: LooseJson;
       const mockResponse = {
         ok: true,
         body: {
@@ -2258,7 +2260,7 @@ describe('customModelAdapter - OpenAI Responses API', () => {
 
       // Drain stream
 
-      for await (const _ of callOpenAIResponsesModelStream(modelConfig as any, request)) {
+      for await (const _ of callOpenAIResponsesModelStream(modelConfig as unknown as CustomModelConfig, request)) {
         // no-op
       }
 
@@ -2306,20 +2308,20 @@ describe('customModelAdapter - OpenAI Responses API', () => {
       };
       const request = { contents: [{ role: MESSAGE_ROLES.USER, parts: [{ text: 'hi' }] }] };
 
-      const responses: any[] = [];
-      for await (const r of callOpenAIResponsesModelStream(modelConfig as any, request)) {
+      const responses: LooseJson[] = [];
+      for await (const r of callOpenAIResponsesModelStream(modelConfig as unknown as CustomModelConfig, request)) {
         responses.push(r);
       }
 
       const reasoningParts = responses.flatMap(r =>
-        (r.candidates?.[0]?.content?.parts || []).filter((p: any) => 'reasoning' in p)
+        (r.candidates?.[0]?.content?.parts || []).filter((p: LooseJson) => 'reasoning' in p)
       );
       expect(reasoningParts).toHaveLength(2);
       expect(reasoningParts[0].reasoning).toBe('Let me think… ');
       expect(reasoningParts[1].reasoning).toBe('the answer is 9.');
 
       const textParts = responses.flatMap(r =>
-        (r.candidates?.[0]?.content?.parts || []).filter((p: any) => 'text' in p)
+        (r.candidates?.[0]?.content?.parts || []).filter((p: LooseJson) => 'text' in p)
       );
       expect(textParts).toHaveLength(1);
       expect(textParts[0].text).toBe('9 sheep.');
@@ -2357,15 +2359,15 @@ describe('customModelAdapter - OpenAI Responses API', () => {
       };
       const request = { contents: [{ role: MESSAGE_ROLES.USER, parts: [{ text: 'hi' }] }] };
 
-      const result = await callOpenAIResponsesModel(modelConfig as any, request);
+      const result = await callOpenAIResponsesModel(modelConfig as unknown as CustomModelConfig, request);
       const parts = result.candidates?.[0]?.content?.parts || [];
-      const reasoning = parts.filter((p: any) => 'reasoning' in p);
-      const text = parts.filter((p: any) => 'text' in p);
+      const reasoning = parts.filter((p: LooseJson) => 'reasoning' in p);
+      const text = parts.filter((p: LooseJson) => 'text' in p);
       expect(reasoning).toHaveLength(2);
-      expect((reasoning[0] as any).reasoning).toBe('First I count the surviving sheep.');
-      expect((reasoning[1] as any).reasoning).toBe('Answer: 9.');
+      expect((reasoning[0] as LooseJson).reasoning).toBe('First I count the surviving sheep.');
+      expect((reasoning[1] as LooseJson).reasoning).toBe('Answer: 9.');
       expect(text).toHaveLength(1);
-      expect((text[0] as any).text).toBe('9 sheep.');
+      expect((text[0] as LooseJson).text).toBe('9 sheep.');
     });
   });
 });
@@ -2389,7 +2391,7 @@ describe('callGeminiNativeModel', () => {
 
   it('builds /v1beta/models/{id}:generateContent URL with ?key= and forwards thinkingConfig for Gemini 2.5', async () => {
     let capturedUrl: string | undefined;
-    let capturedBody: any;
+    let capturedBody: LooseJson;
     global.fetch = vi.fn().mockImplementation(async (url, options) => {
       capturedUrl = String(url);
       capturedBody = JSON.parse(options.body);
@@ -2414,7 +2416,7 @@ describe('callGeminiNativeModel', () => {
     };
     const request = { contents: [{ role: MESSAGE_ROLES.USER, parts: [{ text: 'hi' }] }] };
 
-    const result = await callGeminiNativeModel(modelConfig as any, request);
+    const result = await callGeminiNativeModel(modelConfig as unknown as CustomModelConfig, request);
 
     // URL: /v1 → /v1beta normalisation, then :generateContent + ?key=
     expect(capturedUrl).toBe('https://llm-endpoint.net/v1beta/models/gemini-2.5-pro:generateContent?key=sk-test');
@@ -2429,7 +2431,7 @@ describe('callGeminiNativeModel', () => {
   });
 
   it('uses thinkingLevel for Gemini 3 / 3.5 family', async () => {
-    let capturedBody: any;
+    let capturedBody: LooseJson;
     global.fetch = vi.fn().mockImplementation(async (_url, options) => {
       capturedBody = JSON.parse(options.body);
       return {
@@ -2447,7 +2449,7 @@ describe('callGeminiNativeModel', () => {
       displayName: 'gemini-3.5-flash',
     };
     await callGeminiNativeModel(
-      modelConfig as any,
+      modelConfig as unknown as CustomModelConfig,
       { contents: [{ role: MESSAGE_ROLES.USER, parts: [{ text: 'hi' }] }] },
     );
     const tc = capturedBody.generationConfig.thinkingConfig;
@@ -2457,7 +2459,7 @@ describe('callGeminiNativeModel', () => {
   });
 
   it('disables thinking when modelConfig.thinking.mode === "off"', async () => {
-    let capturedBody: any;
+    let capturedBody: LooseJson;
     global.fetch = vi.fn().mockImplementation(async (_url, options) => {
       capturedBody = JSON.parse(options.body);
       return {
@@ -2476,7 +2478,7 @@ describe('callGeminiNativeModel', () => {
       thinking: { mode: 'off' as const },
     };
     await callGeminiNativeModel(
-      modelConfig as any,
+      modelConfig as unknown as CustomModelConfig,
       { contents: [{ role: MESSAGE_ROLES.USER, parts: [{ text: 'hi' }] }] },
     );
     expect(capturedBody.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
@@ -2487,7 +2489,7 @@ describe('callGeminiNativeModel', () => {
     //   "json: cannot unmarshal string into Go struct field .systemInstruction
     //    of type OttoChatContent"
     // — so we must convert any non-canonical shape on the client side.
-    let capturedBody: any;
+    let capturedBody: LooseJson;
     global.fetch = vi.fn().mockImplementation(async (_url, options) => {
       capturedBody = JSON.parse(options.body);
       return {
@@ -2505,7 +2507,7 @@ describe('callGeminiNativeModel', () => {
       displayName: 'gemini-2.5-flash',
     };
     await callGeminiNativeModel(
-      modelConfig as any,
+      modelConfig as unknown as CustomModelConfig,
       {
         contents: [{ role: MESSAGE_ROLES.USER, parts: [{ text: 'hi' }] }],
         config: { systemInstruction: 'You are helpful.' },
@@ -2515,7 +2517,7 @@ describe('callGeminiNativeModel', () => {
   });
 
   it('normalises a { text } shorthand systemInstruction to canonical form', async () => {
-    let capturedBody: any;
+    let capturedBody: LooseJson;
     global.fetch = vi.fn().mockImplementation(async (_url, options) => {
       capturedBody = JSON.parse(options.body);
       return {
@@ -2531,7 +2533,7 @@ describe('callGeminiNativeModel', () => {
       displayName: 'gemini-2.5-flash',
     };
     await callGeminiNativeModel(
-      modelConfig as any,
+      modelConfig as unknown as CustomModelConfig,
       {
         contents: [{ role: MESSAGE_ROLES.USER, parts: [{ text: 'hi' }] }],
         config: { systemInstruction: { text: 'Be concise.' } },
@@ -2541,7 +2543,7 @@ describe('callGeminiNativeModel', () => {
   });
 
   it('passes through a canonical systemInstruction unchanged', async () => {
-    let capturedBody: any;
+    let capturedBody: LooseJson;
     global.fetch = vi.fn().mockImplementation(async (_url, options) => {
       capturedBody = JSON.parse(options.body);
       return {
@@ -2558,7 +2560,7 @@ describe('callGeminiNativeModel', () => {
     };
     const canonical = { parts: [{ text: 'Already shaped.' }] };
     await callGeminiNativeModel(
-      modelConfig as any,
+      modelConfig as unknown as CustomModelConfig,
       {
         contents: [{ role: MESSAGE_ROLES.USER, parts: [{ text: 'hi' }] }],
         config: { systemInstruction: canonical },
@@ -2572,7 +2574,7 @@ describe('callGeminiNativeModel', () => {
     // Stripping the marker would cause HTTP 400:
     //   "Function call is missing a thought_signature in functionCall parts"
     // — see scripts/replay-gemini-dump.mjs for the reproduction.
-    let capturedBody: any;
+    let capturedBody: LooseJson;
     global.fetch = vi.fn().mockImplementation(async (_url, options) => {
       capturedBody = JSON.parse(options.body);
       return {
@@ -2587,7 +2589,7 @@ describe('callGeminiNativeModel', () => {
       apiKey: 'sk-test',
       displayName: 'gemini-3.5-flash',
     };
-    await callGeminiNativeModel(modelConfig as any, {
+    await callGeminiNativeModel(modelConfig as unknown as CustomModelConfig, {
       contents: [
         { role: MESSAGE_ROLES.USER, parts: [{ text: '前50个质数' }] },
         {
@@ -2620,7 +2622,7 @@ describe('callGeminiNativeModel', () => {
   });
 
   it('drops empty / unknown parts so Gemini never sees an empty Content (HTTP 400)', async () => {
-    let capturedBody: any;
+    let capturedBody: LooseJson;
     global.fetch = vi.fn().mockImplementation(async (_url, options) => {
       capturedBody = JSON.parse(options.body);
       return {
@@ -2635,11 +2637,11 @@ describe('callGeminiNativeModel', () => {
       apiKey: 'sk-test',
       displayName: 'gemini-2.5-flash',
     };
-    await callGeminiNativeModel(modelConfig as any, {
+    await callGeminiNativeModel(modelConfig as unknown as CustomModelConfig, {
       contents: [
         { role: MESSAGE_ROLES.USER, parts: [{ text: 'hi' }] },
         // turn that would only contain UI-only parts → must be dropped entirely
-        { role: MESSAGE_ROLES.MODEL, parts: [{ reasoning: '' }, { someUnknownShape: 1 } as any] },
+        { role: MESSAGE_ROLES.MODEL, parts: [{ reasoning: '' }, { someUnknownShape: 1 } as unknown as LooseJson] },
       ],
     });
 
@@ -2648,7 +2650,7 @@ describe('callGeminiNativeModel', () => {
   });
 
   it('passes through canonical functionCall / functionResponse parts unchanged', async () => {
-    let capturedBody: any;
+    let capturedBody: LooseJson;
     global.fetch = vi.fn().mockImplementation(async (_url, options) => {
       capturedBody = JSON.parse(options.body);
       return {
@@ -2663,7 +2665,7 @@ describe('callGeminiNativeModel', () => {
       apiKey: 'sk-test',
       displayName: 'gemini-2.5-flash',
     };
-    await callGeminiNativeModel(modelConfig as any, {
+    await callGeminiNativeModel(modelConfig as unknown as CustomModelConfig, {
       contents: [
         { role: MESSAGE_ROLES.USER, parts: [{ text: 'use a tool' }] },
         {
@@ -2709,7 +2711,7 @@ describe('callGeminiNativeModel', () => {
       displayName: 'gemini-2.5-pro',
     };
     const result = await callGeminiNativeModel(
-      modelConfig as any,
+      modelConfig as unknown as CustomModelConfig,
       { contents: [{ role: MESSAGE_ROLES.USER, parts: [{ text: 'hi' }] }] },
     );
     const parts = result.candidates?.[0]?.content?.parts || [];
@@ -2754,11 +2756,11 @@ describe('callGeminiNativeModel', () => {
       displayName: 'gemini-2.5-flash',
     };
     const result = await callGeminiNativeModel(
-      modelConfig as any,
+      modelConfig as unknown as CustomModelConfig,
       { contents: [{ role: MESSAGE_ROLES.USER, parts: [{ text: 'hi again' }] }] },
     );
 
-    const usage = result.usageMetadata as any;
+    const usage = result.usageMetadata as unknown as LooseJson;
     // Original Gemini fields preserved (SessionManager + cost calculator
     // still read these directly).
     expect(usage.cachedContentTokenCount).toBe(3059);
@@ -2792,11 +2794,11 @@ describe('callGeminiNativeModel', () => {
       displayName: 'gemini-2.5-flash',
     };
     const result = await callGeminiNativeModel(
-      modelConfig as any,
+      modelConfig as unknown as CustomModelConfig,
       { contents: [{ role: MESSAGE_ROLES.USER, parts: [{ text: 'hi' }] }] },
     );
 
-    const usage = result.usageMetadata as any;
+    const usage = result.usageMetadata as unknown as LooseJson;
     expect(usage.cachedContentTokenCount).toBeUndefined();
     // Critically: do NOT add cacheReadInputTokens=0 on a miss — that would
     // be indistinguishable from a real-but-zero hit and confuses cost calcs.
@@ -2857,29 +2859,29 @@ describe('callGeminiNativeModelStream', () => {
       apiKey: 'sk-test',
       displayName: 'gemini-2.5-pro',
     };
-    const responses: any[] = [];
+    const responses: LooseJson[] = [];
     for await (const r of callGeminiNativeModelStream(
-      modelConfig as any,
+      modelConfig as unknown as CustomModelConfig,
       { contents: [{ role: MESSAGE_ROLES.USER, parts: [{ text: 'hi' }] }] },
     )) {
       responses.push(r);
     }
 
-    const reasoning = responses.flatMap((r: any) => (r.candidates?.[0]?.content?.parts || []).filter((p: any) => 'reasoning' in p));
+    const reasoning = responses.flatMap((r: LooseJson) => (r.candidates?.[0]?.content?.parts || []).filter((p: LooseJson) => 'reasoning' in p));
     expect(reasoning).toHaveLength(1);
     expect(reasoning[0].reasoning).toBe('Thinking…');
 
-    const text = responses.flatMap((r: any) => (r.candidates?.[0]?.content?.parts || []).filter((p: any) => 'text' in p));
+    const text = responses.flatMap((r: LooseJson) => (r.candidates?.[0]?.content?.parts || []).filter((p: LooseJson) => 'text' in p));
     expect(text).toHaveLength(1);
     expect(text[0].text).toBe('Hello');
 
-    const fnResp = responses.find((r: any) => (r.candidates?.[0]?.content?.parts || []).some((p: any) => p.functionCall));
+    const fnResp = responses.find((r: LooseJson) => (r.candidates?.[0]?.content?.parts || []).some((p: LooseJson) => p.functionCall));
     expect(fnResp).toBeDefined();
     expect(fnResp!.functionCalls).toBeDefined();
     expect(fnResp!.functionCalls![0].name).toBe('list_directory');
     expect(fnResp!.functionCalls![0].args).toEqual({ path: '/' });
 
-    const usage = responses.find((r: any) => r.usageMetadata);
+    const usage = responses.find((r: LooseJson) => r.usageMetadata);
     expect(usage).toBeDefined();
     expect(usage.usageMetadata.totalTokenCount).toBe(20);
   });
@@ -2898,7 +2900,7 @@ describe('callGeminiNativeModelStream', () => {
       displayName: 'gemini-3.5-flash',
     };
     for await (const _ of callGeminiNativeModelStream(
-      modelConfig as any,
+      modelConfig as unknown as CustomModelConfig,
       { contents: [{ role: MESSAGE_ROLES.USER, parts: [{ text: 'hi' }] }] },
     )) {
       void _;
@@ -2922,7 +2924,7 @@ describe('callGeminiNativeModelStream', () => {
       displayName: 'gemini-2.5-pro',
     };
     for await (const _ of callGeminiNativeModelStream(
-      modelConfig as any,
+      modelConfig as unknown as CustomModelConfig,
       { contents: [{ role: MESSAGE_ROLES.USER, parts: [{ text: 'hi' }] }] },
     )) {
       void _;
@@ -2961,15 +2963,15 @@ describe('callGeminiNativeModelStream', () => {
       apiKey: 'sk-test',
       displayName: 'gemini-2.5-flash',
     };
-    const responses: any[] = [];
+    const responses: LooseJson[] = [];
     for await (const r of callGeminiNativeModelStream(
-      modelConfig as any,
+      modelConfig as unknown as CustomModelConfig,
       { contents: [{ role: MESSAGE_ROLES.USER, parts: [{ text: 'hi again' }] }] },
     )) {
       responses.push(r);
     }
 
-    const usageResp = responses.find((r: any) => r.usageMetadata);
+    const usageResp = responses.find((r: LooseJson) => r.usageMetadata);
     expect(usageResp).toBeDefined();
     const u = usageResp.usageMetadata;
     expect(u.cachedContentTokenCount).toBe(3059);   // original preserved
@@ -3044,7 +3046,7 @@ describe('sanitiseGeminiToolSchema - GenAI v1beta schema cleanup', () => {
         active: { type: 'boolean' },
         tags: { type: 'array', items: { type: 'string' } },
       },
-    }) as any;
+    }) as LooseJson;
     expect(out.type).toBe('OBJECT');
     expect(out.properties.name.type).toBe('STRING');
     expect(out.properties.age.type).toBe('INTEGER');
@@ -3058,7 +3060,7 @@ describe('sanitiseGeminiToolSchema - GenAI v1beta schema cleanup', () => {
     const out = sanitiseGeminiToolSchemaExport({
       type: 'OBJECT',
       properties: { p: { type: 'STRING' } },
-    }) as any;
+    }) as LooseJson;
     expect(out.type).toBe('OBJECT');
     expect(out.properties.p.type).toBe('STRING');
   });
@@ -3067,7 +3069,7 @@ describe('sanitiseGeminiToolSchema - GenAI v1beta schema cleanup', () => {
     const out = sanitiseGeminiToolSchemaExport({
       type: 'string',
       const: 'fixed-value',
-    }) as any;
+    }) as LooseJson;
     expect(out.const).toBeUndefined();
     expect(out.enum).toEqual(['fixed-value']);
   });
@@ -3077,7 +3079,7 @@ describe('sanitiseGeminiToolSchema - GenAI v1beta schema cleanup', () => {
       type: 'string',
       const: 'a',
       enum: ['x', 'y'],
-    }) as any;
+    }) as LooseJson;
     expect(out.const).toBeUndefined();
     expect(out.enum).toEqual(['x', 'y']);
   });
@@ -3086,7 +3088,7 @@ describe('sanitiseGeminiToolSchema - GenAI v1beta schema cleanup', () => {
     const out = sanitiseGeminiToolSchemaExport({
       oneOf: [{ type: 'string' }, { type: 'integer' }],
       allOf: [{ type: 'object', properties: { a: { type: 'string' } } }],
-    }) as any;
+    }) as LooseJson;
     expect(out.oneOf).toBeUndefined();
     expect(out.allOf).toBeUndefined();
     expect(Array.isArray(out.anyOf)).toBe(true);
@@ -3107,7 +3109,7 @@ describe('sanitiseGeminiToolSchema - GenAI v1beta schema cleanup', () => {
       minItems: '0', minLength: '1', minProperties: '0', minimum: 0,
       pattern: '^a', propertyOrdering: ['a', 'b'], required: ['a'],
       properties: { a: { type: 'string' } },
-    }) as any;
+    }) as LooseJson;
     expect(out.title).toBe('T');
     expect(out.description).toBe('d');
     expect(out.nullable).toBe(true);
@@ -3137,7 +3139,7 @@ describe('sanitiseGeminiToolSchema - GenAI v1beta schema cleanup', () => {
           },
         },
       },
-    }) as any;
+    }) as LooseJson;
     expect(out.properties.nested.$schema).toBeUndefined();
     expect(out.properties.nested.items.$schema).toBeUndefined();
     expect(out.properties.nested.items.additionalProperties).toBeUndefined();
@@ -3188,7 +3190,7 @@ describe('sanitiseGeminiTools - functionDeclarations cleanup at the wire boundar
       ],
     }];
 
-    const out = sanitiseGeminiToolsExport(tools) as any[];
+    const out = sanitiseGeminiToolsExport(tools) as LooseJson[];
     expect(out).toHaveLength(1);
     expect(out[0].functionDeclarations).toHaveLength(2);
 
@@ -3231,7 +3233,7 @@ describe('sanitiseGeminiTools - functionDeclarations cleanup at the wire boundar
   });
 
   it('end-to-end: callGeminiNativeModel\'s wire body has no $schema / additionalProperties for MCP tools', async () => {
-    let capturedBody: any;
+    let capturedBody: LooseJson;
     global.fetch = vi.fn().mockImplementation(async (_url, options) => {
       capturedBody = JSON.parse(options.body);
       return {
@@ -3272,7 +3274,7 @@ describe('sanitiseGeminiTools - functionDeclarations cleanup at the wire boundar
       },
     };
 
-    await callGeminiNativeModel(modelConfig as any, request as any);
+    await callGeminiNativeModel(modelConfig as unknown as CustomModelConfig, request as unknown as LooseJson);
 
     // The wire payload that actually went out is what the upstream
     // validator would have rejected.

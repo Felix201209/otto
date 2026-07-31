@@ -13,6 +13,7 @@ import {
 import type { Config } from '../config/config.js';
 import * as acpClient from '../acp-client/acpAgentClient.js';
 import { getBackgroundTaskManager } from '../services/backgroundTaskManager.js';
+import type { RunTaskOptions } from '../acp-client/acpAgentClient.js';
 
 vi.mock('../acp-client/acpAgentClient.js', () => ({
   runDelegatedTask: vi.fn(),
@@ -291,7 +292,7 @@ describe('DelegateToAgentTool', () => {
 
   it('mode="stream": pipes session updates to updateOutput in real time', async () => {
     // The runDelegatedTask mock invokes its onUpdate as the agent emits.
-    runDelegatedTask.mockImplementation(async (opts: any) => {
+    runDelegatedTask.mockImplementation(async (opts: RunTaskOptions) => {
       opts.onUpdate?.('📖 Read foo.ts');
       opts.onUpdate?.('🔧 Edit foo.ts');
       opts.onUpdate?.('✅ Tests pass');

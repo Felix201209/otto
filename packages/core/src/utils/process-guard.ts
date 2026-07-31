@@ -5,7 +5,7 @@
  * Adds mandatory timeouts, graceful SIGTERM -> SIGKILL escalation.
  */
 
-import { exec, ChildProcess } from 'child_process';
+import { exec } from 'child_process';
 import { ToolError, ToolErrorCode } from './tool-error.js';
 
 export interface ExecOptions {

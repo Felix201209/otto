@@ -257,7 +257,7 @@ export class GitService {
     try {
       await fs.access(gitDir);
       isRepoDefined = true;
-    } catch (error) {
+    } catch (_error) {
       isRepoDefined = false;
     }
 
@@ -316,7 +316,7 @@ export class GitService {
 
     try {
       await fs.access(gitDir);
-    } catch (error) {
+    } catch (_error) {
       console.log(`[CHECKPOINT DEBUG] Shadow git repository does not exist, creating...`);
       try {
         await this.setupShadowGitRepository();

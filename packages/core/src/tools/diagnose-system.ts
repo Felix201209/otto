@@ -1,8 +1,6 @@
 /**
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import os from 'os';
 import {
   BaseTool, ToolResult, ToolCallConfirmationDetails,
@@ -10,10 +8,9 @@ import {
 } from './tools.js';
 import { Type } from '@google/genai';
 import { SchemaValidator } from '../utils/schemaValidator.js';
-import { Config, ApprovalMode } from '../config/config.js';
+import { Config } from '../config/config.js';
 import { ProcessGuard } from '../utils/process-guard.js';
 
-const execAsync = promisify(exec);
 
 export interface DiagnoseSystemToolParams {
   action: 'system_info'|'disk_health'|'disk_usage'|'memory'|'network'|'processes'|'cleanup'|'battery'|'startup'|'bluetooth'|'printer'|'brew_doctor'|'repair_permissions';

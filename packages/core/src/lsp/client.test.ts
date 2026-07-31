@@ -13,6 +13,7 @@ import {
   WriteableStreamMessageWriter,
 } from 'vscode-jsonrpc';
 import { createLSPClient, stopLSPClient } from './client.js';
+import type { MessageConnection } from 'vscode-jsonrpc';
 
 type FakeProcess = {
   stdin: PassThrough;
@@ -42,7 +43,7 @@ function createDuplexTransport(): {
 async function runHandshakeScenario(input: {
   serverID: string;
   root: string;
-  scenario: (serverConnection: any) => Promise<void>;
+  scenario: (serverConnection: MessageConnection) => Promise<void>;
 }) {
   const { fakeProcess, serverReader, serverWriter } = createDuplexTransport();
 
@@ -64,7 +65,7 @@ async function runHandshakeScenario(input: {
 
   const client = await createLSPClient({
     serverID: input.serverID,
-    server: { process: fakeProcess as any },
+    server: { process: fakeProcess as unknown as import('node:child_process').ChildProcess },
     root: input.root,
   });
 
@@ -175,7 +176,7 @@ describe('LSP createLSPClient handshake robustness', () => {
       const root = path.resolve(process.cwd());
       const client = await createLSPClient({
         serverID: 'pyright',
-        server: { process: fakeProcess as any },
+        server: { process: fakeProcess as unknown as import('node:child_process').ChildProcess },
         root,
       });
 

@@ -7,7 +7,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   SessionMemoryInjector,
-  type MemoryInjection,
 } from './sessionMemoryInjector.js';
 import {
   type MemorySubsystem,
@@ -26,7 +25,7 @@ function makeMockMemorySubsystem(
     async capture(_event: MemoryEvent): Promise<void> {},
     async search(
       _query: string,
-      _opts?: any,
+      _opts?: unknown,
     ): Promise<MemorySearchResult[]> {
       if (shouldThrow) throw new Error('search failed');
       return entries;
@@ -154,8 +153,8 @@ describe('SessionMemoryInjector', () => {
       const injector = new SessionMemoryInjector(makeMockMemorySubsystem([]));
 
       // Directly test the decay function (it's a method, access via any cast)
-      const freshScore = (injector as any).applyTimeDecay(10, new Date().toISOString(), Date.now());
-      const oldScore = (injector as any).applyTimeDecay(10, oldDate, Date.now());
+      const freshScore = (injector as unknown as { applyTimeDecay: (score: number, date: string, now: number) => number }).applyTimeDecay(10, new Date().toISOString(), Date.now());
+      const oldScore = (injector as unknown as { applyTimeDecay: (score: number, date: string, now: number) => number }).applyTimeDecay(10, oldDate, Date.now());
 
       // Fresh → minimal decay
       expect(freshScore).toBeGreaterThan(8);
@@ -198,7 +197,7 @@ describe('SessionMemoryInjector', () => {
 
       // Only entries that fit within 500-token budget should be included
       const totalContentTokens = result.entries.reduce(
-        (sum, e) => sum + (injector as any).estimateTokens(e.entry.content),
+        (sum, e) => sum + (injector as unknown as { estimateTokens: (content: string) => number }).estimateTokens(e.entry.content),
         0,
       );
       expect(totalContentTokens).toBeLessThanOrEqual(500);
@@ -363,7 +362,7 @@ describe('SessionMemoryInjector', () => {
     it('preserves fresh entries', () => {
       const injector = new SessionMemoryInjector(makeMockMemorySubsystem());
       const now = Date.now();
-      const score = (injector as any).applyTimeDecay(10, new Date(now).toISOString(), now);
+      const score = (injector as unknown as { applyTimeDecay: (score: number, date: string, now: number) => number }).applyTimeDecay(10, new Date(now).toISOString(), now);
       expect(score).toBeGreaterThan(9.5);
     });
 
@@ -371,13 +370,13 @@ describe('SessionMemoryInjector', () => {
       const injector = new SessionMemoryInjector(makeMockMemorySubsystem());
       const now = Date.now();
       const old = new Date(now - 28 * 24 * 60 * 60 * 1000).toISOString(); // 28 days = 2 half-lives
-      const score = (injector as any).applyTimeDecay(10, old, now);
+      const score = (injector as unknown as { applyTimeDecay: (score: number, date: string, now: number) => number }).applyTimeDecay(10, old, now);
       expect(score).toBeCloseTo(2.5, 1); // 10 * 0.5^2 = 2.5
     });
 
     it('handles invalid timestamp gracefully', () => {
       const injector = new SessionMemoryInjector(makeMockMemorySubsystem());
-      const score = (injector as any).applyTimeDecay(10, 'not-a-date', Date.now());
+      const score = (injector as unknown as { applyTimeDecay: (score: number, date: string, now: number) => number }).applyTimeDecay(10, 'not-a-date', Date.now());
       expect(score).toBe(10); // no decay on error
     });
   });

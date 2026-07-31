@@ -44,7 +44,7 @@ describe('ReadLintsTool', () => {
 
   it('should return error when callback not set', async () => {
     // Ensure no callback is set
-    ReadLintsTool.setCallback(null as any);
+    ReadLintsTool.setCallback(null as unknown as Parameters<typeof ReadLintsTool.setCallback>[0]);
 
     const params: ReadLintsParams = {};
     const signal = new AbortController().signal;

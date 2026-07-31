@@ -87,7 +87,7 @@ describe('ConvertDocumentTool', () => {
     expect(err).toContain('output_path');
   });
   it('requires output_format', () => {
-    const err = tool.validateToolParams({ input_path: '/tmp/x.md' } as any);
+    const err = tool.validateToolParams({ input_path: '/tmp/x.md' } as unknown as Parameters<typeof tool.validateToolParams>[0]);
     expect(err).toContain('output_format');
   });
 

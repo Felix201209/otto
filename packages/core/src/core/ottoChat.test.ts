@@ -17,6 +17,8 @@ import { Config } from '../config/config.js';
 import { setSimulate429 } from '../utils/testUtils.js';
 import { SceneType } from './sceneManager.js';
 
+type LooseToolDeclaration = { functionDeclarations?: Array<{ name?: string }> };
+
 // Mocks
 const mockModelsModule = {
   generateContent: vi.fn(),
@@ -167,7 +169,7 @@ describe('OttoChat', () => {
       expect(history.length).toBe(3);
       expect(history[0].role).toBe('user');
       expect(history[1].role).toBe('model');
-      expect((history[1].parts?.[0] as any).reasoning).toBe(
+      expect((history[1].parts?.[0] as unknown as { reasoning?: string }).reasoning).toBe(
         'Let me think about this...',
       );
       expect(history[2].role).toBe('model');
@@ -539,7 +541,7 @@ describe('OttoChat', () => {
       const history = chat.getHistory();
       expect(history.length).toBe(3);
       expect(history[0]).toEqual(userInput);
-      expect((history[1].parts?.[0] as any).reasoning).toBe('thinking step 1');
+      expect((history[1].parts?.[0] as unknown as { reasoning?: string }).reasoning).toBe('thinking step 1');
       expect(history[2].parts?.[0]?.text).toBe('final answer');
     });
 
@@ -555,7 +557,7 @@ describe('OttoChat', () => {
       const history = chat.getHistory();
       expect(history.length).toBe(3);
       // 第二条仍是 reasoning，没有被合并到 text 里
-      expect((history[1].parts?.[0] as any).reasoning).toBe('inner thought');
+      expect((history[1].parts?.[0] as unknown as { reasoning?: string }).reasoning).toBe('inner thought');
       expect(history[1].parts?.[0]?.text).toBeUndefined();
       // 第三条是纯 text
       expect(history[2].parts?.[0]?.text).toBe('visible answer');
@@ -787,9 +789,9 @@ describe('filterToolsByMessage (workflow gate)', () => {
     );
 
     const callArg = vi.mocked(mockModelsModule.generateContentStream).mock.calls[0][0];
-    const decls = (callArg.config?.tools as any[])?.[0]?.functionDeclarations ?? [];
-    expect(decls.map((d: any) => d.name)).not.toContain('workflow');
-    expect(decls.map((d: any) => d.name)).toContain('shell');
+    const decls = (callArg.config?.tools as unknown as LooseToolDeclaration[])?.[0]?.functionDeclarations ?? [];
+    expect(decls.map((d) => d.name)).not.toContain('workflow');
+    expect(decls.map((d) => d.name)).toContain('shell');
   });
 
   it('keeps workflow tool when message contains trigger word "workflow"', async () => {
@@ -800,8 +802,8 @@ describe('filterToolsByMessage (workflow gate)', () => {
     );
 
     const callArg = vi.mocked(mockModelsModule.generateContentStream).mock.calls[0][0];
-    const decls = (callArg.config?.tools as any[])?.[0]?.functionDeclarations ?? [];
-    expect(decls.map((d: any) => d.name)).toContain('workflow');
+    const decls = (callArg.config?.tools as unknown as LooseToolDeclaration[])?.[0]?.functionDeclarations ?? [];
+    expect(decls.map((d) => d.name)).toContain('workflow');
   });
 
   it('trigger word match is case-insensitive (WORKFLOW, Workflow)', async () => {
@@ -813,8 +815,8 @@ describe('filterToolsByMessage (workflow gate)', () => {
         SceneType.CHAT_CONVERSATION,
       );
       const callArg = vi.mocked(mockModelsModule.generateContentStream).mock.calls.at(-1)![0];
-      const decls = (callArg.config?.tools as any[])?.[0]?.functionDeclarations ?? [];
-      expect(decls.map((d: any) => d.name)).toContain('workflow');
+      const decls = (callArg.config?.tools as unknown as LooseToolDeclaration[])?.[0]?.functionDeclarations ?? [];
+      expect(decls.map((d) => d.name)).toContain('workflow');
     }
   });
 
@@ -835,7 +837,7 @@ describe('filterToolsByMessage (workflow gate)', () => {
     );
 
     const callArg = vi.mocked(mockModelsModule.generateContentStream).mock.calls[0][0];
-    const decls = (callArg.config?.tools as any[])?.[0]?.functionDeclarations ?? [];
-    expect(decls.map((d: any) => d.name)).not.toContain('workflow');
+    const decls = (callArg.config?.tools as unknown as LooseToolDeclaration[])?.[0]?.functionDeclarations ?? [];
+    expect(decls.map((d) => d.name)).not.toContain('workflow');
   });
 });
