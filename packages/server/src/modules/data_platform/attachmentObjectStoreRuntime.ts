@@ -39,6 +39,12 @@ export type AttachmentObjectStoreConfig =
       presignTtlSeconds: number;
     };
 
+export interface AttachmentObjectStoreRuntime {
+  config: AttachmentObjectStoreConfig;
+  store: AttachmentObjectStore;
+  close(): void;
+}
+
 function booleanSetting(input: {
   name: string;
   value: string | undefined;
@@ -170,7 +176,7 @@ export function createAttachmentObjectStoreRuntime(input: {
   environment?: AttachmentObjectStoreEnvironment;
   encryptedStore?: EncryptedObjectStore;
   s3ClientFactory?: (config: S3ClientConfig) => S3CommandClient;
-}): { config: AttachmentObjectStoreConfig; store: AttachmentObjectStore } {
+}): AttachmentObjectStoreRuntime {
   const config = resolveAttachmentObjectStoreConfig(
     input.environment ?? process.env,
   );
@@ -183,6 +189,7 @@ export function createAttachmentObjectStoreRuntime(input: {
       store: createLocalAttachmentObjectStore({
         encryptedStore: input.encryptedStore,
       }),
+      close() {},
     };
   }
 
@@ -202,5 +209,8 @@ export function createAttachmentObjectStoreRuntime(input: {
       kmsKeyId: config.kmsKeyId,
       presignTtlSeconds: config.presignTtlSeconds,
     }),
+    close() {
+      client.destroy?.();
+    },
   };
 }

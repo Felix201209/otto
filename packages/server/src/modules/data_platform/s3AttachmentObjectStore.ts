@@ -27,6 +27,7 @@ import {
 
 export interface S3CommandClient {
   send(command: unknown): Promise<Record<string, unknown>>;
+  destroy?(): void;
 }
 
 export type S3Presign = (

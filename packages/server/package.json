@@ -7,6 +7,7 @@
   "bin": {
     "otto-server": "dist/bin.js",
     "otto-database-encryption": "dist/src/modules/data_platform/databaseEncryptionCli.js",
+    "otto-enterprise-infrastructure": "dist/src/modules/data_platform/enterpriseInfrastructureCli.js",
     "otto-enterprise-postgres": "dist/src/modules/data_platform/postgresDatabaseCli.js"
   },
   "scripts": {
@@ -15,6 +16,7 @@
     "enterprise": "node dist/src/enterprise/bin.js",
     "enterprise:seed": "node dist/src/enterprise/bin.js --seed",
     "enterprise:postgres:prepare": "node dist/src/modules/data_platform/postgresDatabaseCli.js",
+    "enterprise:infrastructure:check": "node dist/src/modules/data_platform/enterpriseInfrastructureCli.js",
     "lint": "eslint . --ext .ts,.tsx",
     "format": "prettier --write .",
     "test": "vitest run",
@@ -32,6 +34,7 @@
     "better-sqlite3": "12.11.1",
     "otto-core": "file:../core",
     "pg": "8.22.0",
+    "redis": "4.7.1",
     "ws": "^8.21.1"
   },
   "devDependencies": {

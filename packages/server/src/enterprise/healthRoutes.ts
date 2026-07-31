@@ -52,6 +52,7 @@ export function handleHealthRoute({
       startedAt: deploymentInfo.startedAt,
       runtimeVersion: process.version,
       db: 'connected',
+      storageTopology: db.getEnterpriseServiceTopology(),
       sms: { configured: smsConfigured },
       repairNotifications: {
         sms: repairSmsConfigured,
@@ -78,6 +79,7 @@ export function handleHealthRoute({
       schemaVersion: null,
       capabilities: [...capabilities],
       db: 'unavailable',
+      storageTopology: db.getEnterpriseServiceTopology(),
       error: 'enterprise database unavailable',
     });
   }

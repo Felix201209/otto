@@ -1,8 +1,9 @@
 /**
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  *
- * Enterprise SQLite database - all data stored on admin/owner device.
- * Zero cloud dependency. All data is local.
+ * Legacy synchronous enterprise repositories. Local/offline mode uses
+ * SQLite/SQLCipher; clustered PostgreSQL mode is rejected here until each
+ * route repository has moved to its asynchronous contract.
  * 存储层通过 data_platform 使用 Node 内置 node:sqlite，无原生依赖。
  */
 
@@ -14,9 +15,10 @@ import {
   createDataPlatformComposition,
   createFileEncryptionKeyProvider,
   createSqlCipherFileRuntime,
+  describeEnterpriseServiceTopology,
   parseSqlCipherRuntimeMode,
   requireLocalSqliteTopology,
-  resolveEnterpriseDatabaseTopology,
+  resolveEnterpriseServiceTopology,
   Database,
 } from '../modules/data_platform/index.js';
 import { createAuthorizationComposition } from '../modules/authorization/index.js';
@@ -193,12 +195,11 @@ const DATA_DIR =
   process.env.OTTO_ENTERPRISE_DIR ||
   path.join(os.homedir(), '.otto-enterprise');
 const DB_PATH = path.join(DATA_DIR, 'data.db');
-requireLocalSqliteTopology(
-  resolveEnterpriseDatabaseTopology({
-    environment: process.env,
-    sqliteDatabasePath: DB_PATH,
-  }),
-);
+const ENTERPRISE_SERVICE_TOPOLOGY = resolveEnterpriseServiceTopology({
+  environment: process.env,
+  sqliteDatabasePath: DB_PATH,
+});
+requireLocalSqliteTopology(ENTERPRISE_SERVICE_TOPOLOGY.database);
 const DATABASE_ENCRYPTION_MODE = parseSqlCipherRuntimeMode();
 const SQLCIPHER_RUNTIME =
   DATABASE_ENCRYPTION_MODE === 'required'
@@ -381,6 +382,11 @@ export function closeEnterpriseDatabase(): void {
 }
 
 export const getDB = dataPlatform.getDatabase;
+
+/** Credential-free storage topology for diagnostics and readiness output. */
+export function getEnterpriseServiceTopology() {
+  return describeEnterpriseServiceTopology(ENTERPRISE_SERVICE_TOPOLOGY);
+}
 
 /** 执行真实读查询，供 HTTP readiness 判断数据库与 schema 是否可用。 */
 export const getDatabaseReadiness = dataPlatform.getReadiness;
