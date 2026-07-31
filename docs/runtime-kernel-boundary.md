@@ -7,6 +7,8 @@
 
 This document defines the **minimal runtime kernel** — the set of modules that form the irreducible core of Otto's agent runtime. Everything outside this boundary is optional, replaceable, or UI-specific.
 
+For AtomCode-informed changes, also follow [AtomCode Reuse Boundary](./atomcode-reuse-boundary.md). It prevents architecture reference work from becoming a kernel replacement or a second state owner.
+
 ## Kernel Responsibilities
 
 The kernel owns these lifecycle-critical concerns:

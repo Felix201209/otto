@@ -1,5 +1,31 @@
 # Checkpointing
 
+> Otto-specific checkpointing. This document supersedes the inherited Gemini CLI
+> command examples below; Otto does not expose Gemini's `/restore` command or
+> use `~/.gemini` storage.
+
+## Otto Runtime Checkpoints
+
+Otto persists two independent recovery records under `~/.otto-user/checkpoints/`:
+
+1. `turn-{turnId}.json` is a crash-recovery record owned by
+   `TurnCheckpointManager`. It contains the active turn state, completed tools,
+   result summaries, and replay classification. `NEVER_REPLAYED` actions are
+   skipped after recovery; a checkpoint never authorizes repeating an
+   irreversible action.
+2. `{sessionId}.cp.json` is a session-resume record owned by
+   `SessionCheckpointService`. It contains the session summary, context summary,
+   project/channel metadata, and pending-task signal.
+
+File-edit history is separate: `GitService` keeps an isolated shadow Git
+repository under `~/.otto-user/history/<project-hash>`. It must never mutate
+the user's repository or be treated as automatic rollback permission.
+
+For the runtime ownership and non-migration rules, see
+[AtomCode Reuse Boundary](./atomcode-reuse-boundary.md).
+
+## Historical Gemini CLI Reference
+
 The Gemini CLI includes a Checkpointing feature that automatically saves a snapshot of your project's state before any file modifications are made by AI-powered tools. This allows you to safely experiment with and apply code changes, knowing you can instantly revert back to the state before the tool was run.
 
 ## How It Works

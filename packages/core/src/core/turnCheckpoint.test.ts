@@ -120,6 +120,20 @@ describe('TurnCheckpointManager — save & load', () => {
     expect(loaded!.turnId).toBe('turn-recent');
     expect(loaded!.state).toBe(TurnState.EXECUTING_TOOL);
   });
+
+  it('preserves checkpoint write order when saves share a clock tick', async () => {
+    const old = makeCheckpoint({ turnId: 'turn-same-tick-old' });
+    const recent = makeCheckpoint({ turnId: 'turn-same-tick-recent' });
+    old.sessionId = recent.sessionId;
+
+    await manager.save(old);
+    await manager.save(recent);
+
+    expect(new Date(recent.timestamp).getTime()).toBeGreaterThan(
+      new Date(old.timestamp).getTime(),
+    );
+    expect((await manager.load(old.sessionId))?.turnId).toBe(recent.turnId);
+  });
 });
 
 // ---------------------------------------------------------------------------
