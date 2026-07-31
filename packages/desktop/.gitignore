@@ -13,3 +13,5 @@ setup-preview-dist/
 
 # Windows 打包用的 ripgrep 二进制（fetch-win-ripgrep.mjs 下载，可重生成）
 vendor/
+
+dist-preview/
