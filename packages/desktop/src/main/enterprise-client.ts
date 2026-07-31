@@ -372,6 +372,42 @@ export interface EnterpriseModuleUpdateManifest {
   catalog: Array<{ module: string; features: string[] }>;
 }
 
+export interface EnterpriseUpdateManifestReference {
+  url: string;
+  sha256: string;
+}
+
+export interface EnterpriseResolvedUpdatePolicy {
+  version: 1;
+  deploymentId: string;
+  distributionId: string;
+  currentVersion: string;
+  decision: 'update' | 'none';
+  reason: 'update_available' | 'up_to_date' | 'outside_rollout' | 'no_active_release';
+  release: {
+    id: string;
+    version: string;
+    sourceCommit: string;
+    channel: 'canary' | 'stable' | 'required';
+    mandatory: boolean;
+    rolloutPercent: number;
+    notes: string;
+    fullManifest: EnterpriseUpdateManifestReference | null;
+    incrementalManifest: EnterpriseUpdateManifestReference | null;
+    publishedAt: string;
+  } | null;
+  issuedAtMs: number;
+  expiresAtMs: number;
+}
+
+export type EnterpriseUpdatePolicyResult =
+  | { status: 'resolved'; policy: EnterpriseResolvedUpdatePolicy; verifiedKeyId: string }
+  | {
+      status: 'not_configured';
+      reason: 'online_license_required' | 'verification_key_missing';
+    }
+  | { status: 'unavailable'; error: string };
+
 export type EnterprisePositionRoleMapping = 'member' | 'department_admin' | 'enterprise_admin';
 
 export interface EnterpriseOrganizationPosition {
@@ -1540,6 +1576,18 @@ export class EnterpriseClient {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     await this.assertCompatibleServer(this.serverUrl, ['modular_update_push_v1']);
     return this.request('/enterprise/modules/updates/client');
+  }
+
+  async getDeploymentUpdatePolicy(input: {
+    distributionId: string;
+    currentVersion: string;
+  }): Promise<EnterpriseUpdatePolicyResult> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['signed_update_policy_v1']);
+    return this.request('/enterprise/deployment/update-policy', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
   }
 
   async updateOrganizationFeatures(

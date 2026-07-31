@@ -64,6 +64,7 @@ const MEMBER_ROUTES = new Set([
   '/enterprise/park-resources',
   '/enterprise/park-statistics/inbox',
   '/enterprise/modules/updates/client',
+  '/enterprise/deployment/update-policy',
   '/enterprise/account-sync',
   '/enterprise/privacy',
   '/enterprise/privacy/accept',

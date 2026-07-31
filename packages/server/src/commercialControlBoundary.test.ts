@@ -42,6 +42,9 @@ describe('commercial_control module boundary', () => {
     );
     expect(commercialControl.handleDeploymentRoute).toBeTypeOf('function');
     expect(commercialControl.handleModuleUpdateRoute).toBeTypeOf('function');
+    expect(commercialControl.resolveDeploymentUpdatePolicy).toBeTypeOf(
+      'function',
+    );
     expect(commercialControl.PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR.id).toBe(
       'commercial_control_private_deployment',
     );

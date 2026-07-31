@@ -382,6 +382,7 @@ export const {
   importDeploymentLicense,
   importDeploymentLicenseLease,
   refreshDeploymentLicenseLease,
+  resolveDeploymentUpdatePolicy,
   getTelemetrySettings,
   updateTelemetrySettings,
   recordTelemetryEvent,

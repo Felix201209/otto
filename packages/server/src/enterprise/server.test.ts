@@ -544,6 +544,7 @@ describe('受保护 vs 公开路由边界', () => {
       'admin_console',
       'account_deletion',
       'data_governance_v1',
+      'signed_update_policy_v1',
       'privacy_self_service',
       'multi_organization',
       'direct_messages',

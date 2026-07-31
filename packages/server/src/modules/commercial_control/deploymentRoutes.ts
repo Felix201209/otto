@@ -4,6 +4,7 @@ import type {
   DeploymentTelemetrySettings,
   PrivateDeploymentStatus,
 } from './deploymentTypes.js';
+import type { DeploymentUpdatePolicyResult } from './updatePolicyClient.js';
 
 export interface DeploymentRoutePrincipal {
   organizationId: string;
@@ -50,6 +51,10 @@ export interface DeploymentRouteServices {
   exportDeploymentDiagnostics(input?: {
     includeRedactedSamples?: boolean;
   }): Record<string, unknown>;
+  resolveDeploymentUpdatePolicy(input: {
+    distributionId: string;
+    currentVersion: string;
+  }): Promise<DeploymentUpdatePolicyResult>;
 }
 
 export interface DeploymentRouteDeps {
@@ -59,6 +64,7 @@ export interface DeploymentRouteDeps {
   res: ServerResponse;
   url: URL;
   principal: DeploymentRoutePrincipal | null;
+  memberPrincipal?: DeploymentRoutePrincipal | null;
   services: DeploymentRouteServices;
   readBody(req: IncomingMessage): Promise<Record<string, unknown>>;
   sendJSON(res: ServerResponse, status: number, data: unknown): void;
@@ -71,10 +77,31 @@ export async function handleDeploymentRoute({
   res,
   url,
   principal,
+  memberPrincipal,
   services,
   readBody,
   sendJSON,
 }: DeploymentRouteDeps): Promise<boolean> {
+  if (path === '/enterprise/deployment/update-policy' && method === 'POST') {
+    if (!memberPrincipal) {
+      sendJSON(res, 401, { error: 'member authentication required' });
+      return true;
+    }
+    const body = await readBody(req);
+    const distributionId = typeof body.distributionId === 'string'
+      ? body.distributionId.trim()
+      : '';
+    const currentVersion = typeof body.currentVersion === 'string'
+      ? body.currentVersion.trim()
+      : '';
+    const result = await services.resolveDeploymentUpdatePolicy({
+      distributionId,
+      currentVersion,
+    });
+    sendJSON(res, 200, result);
+    return true;
+  }
+
   if (path === '/enterprise/deployment/status' && method === 'GET') {
     sendJSON(res, 200, {
       ...services.getPrivateDeploymentStatus(),

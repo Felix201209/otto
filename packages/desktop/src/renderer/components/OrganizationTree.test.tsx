@@ -924,8 +924,10 @@ describe('OrganizationTree', () => {
     ensureOrganizationTreeOpen();
     fireEvent.click(await screen.findByRole('button', { name: /Bob/ }));
     expect(await screen.findByText('旧消息')).toBeTruthy();
-    expect(scrollIntoView).toHaveBeenCalled();
-    expect(onMessageRead).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(scrollIntoView).toHaveBeenCalled();
+      expect(onMessageRead).toHaveBeenCalledTimes(1);
+    });
 
     scrollIntoView.mockClear();
     const messagePoll = intervals.find((interval) => interval.delay === 2_000);
@@ -935,8 +937,10 @@ describe('OrganizationTree', () => {
     });
 
     expect(await screen.findByText('轮询到的新消息')).toBeTruthy();
-    expect(scrollIntoView).toHaveBeenCalled();
-    expect(onMessageRead).toHaveBeenCalledTimes(2);
+    await waitFor(() => {
+      expect(scrollIntoView).toHaveBeenCalled();
+      expect(onMessageRead).toHaveBeenCalledTimes(2);
+    });
     expect(onMessageRead).toHaveBeenLastCalledWith('acc_2');
 
     scrollIntoView.mockClear();

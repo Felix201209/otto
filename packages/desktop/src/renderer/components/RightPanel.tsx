@@ -605,7 +605,11 @@ export function RightPanel({
 
   if (collapsed && presentation === 'panel') {
     return (
-      <aside className="otto-right-panel otto-right-panel--collapsed" aria-label="右侧功能栏（已折叠）">
+      <aside
+        className="otto-right-panel otto-right-panel--collapsed"
+        aria-label="右侧功能栏（已折叠）"
+        aria-busy={busy}
+      >
         <button type="button" className="otto-right-panel__edge" onClick={() => setCollapsed(false)} aria-label="展开右侧功能栏">
           ‹
         </button>
@@ -619,7 +623,10 @@ export function RightPanel({
   }
 
   return (
-    <aside className={`otto-right-panel otto-right-panel--${presentation}`}>
+    <aside
+      className={`otto-right-panel otto-right-panel--${presentation}`}
+      aria-busy={busy}
+    >
       {presentation === 'panel' ? (
         <button type="button" className="otto-right-panel__edge" onClick={() => setCollapsed(true)} aria-label="折叠右侧功能栏">›</button>
       ) : null}

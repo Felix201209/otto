@@ -826,6 +826,34 @@ function latestLicensePayload(
   }
 }
 
+export interface DeploymentUpdatePolicyCredentials {
+  licenseId: string;
+  deploymentId: string;
+  machineFingerprint: string;
+  leaseEndpoint: string;
+  leaseToken: string;
+}
+
+/** Returns decrypted credentials only to the in-process commercial control composition. */
+export function getDeploymentUpdatePolicyCredentials(
+  store: DeploymentRepositoryStore,
+): DeploymentUpdatePolicyCredentials | null {
+  const license = getDeploymentLicense(store);
+  if (license.id === 'unlicensed' || license.offline || !license.lease.endpoint) {
+    return null;
+  }
+  const payload = latestLicensePayload(store);
+  const leaseToken = payload.leaseToken;
+  if (typeof leaseToken !== 'string' || leaseToken.length < 32) return null;
+  return {
+    licenseId: license.id,
+    deploymentId: license.deploymentId,
+    machineFingerprint: getMachineFingerprint(),
+    leaseEndpoint: license.lease.endpoint,
+    leaseToken,
+  };
+}
+
 /** Migrates legacy plaintext lease and telemetry tokens before accepting traffic. */
 export function ensureDeploymentLicenseSecretsEncrypted(
   store: DeploymentRepositoryStore,

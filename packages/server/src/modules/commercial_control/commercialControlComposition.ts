@@ -12,6 +12,7 @@ import {
   flushTelemetryQueue as flushTelemetryQueueInRepository,
   getDeploymentId as getDeploymentIdFromRepository,
   getDeploymentLicense as getDeploymentLicenseFromRepository,
+  getDeploymentUpdatePolicyCredentials,
   getMachineFingerprint as getMachineFingerprintFromRepository,
   getPrivateDeploymentStatus as getPrivateDeploymentStatusFromRepository,
   getTelemetryQueueSummary as getTelemetryQueueSummaryFromRepository,
@@ -25,6 +26,7 @@ import {
   refreshDeploymentLicenseLease as refreshDeploymentLicenseLeaseInRepository,
   updateTelemetrySettings as updateTelemetrySettingsInRepository,
 } from './deploymentRepository.js';
+import { resolveDeploymentUpdatePolicy } from './updatePolicyClient.js';
 import { createDeploymentSettingsRepository } from './deploymentSettingsRepository.js';
 import {
   getModuleUpdateManifestFromStore,
@@ -121,6 +123,16 @@ export function createCommercialControlComposition(
     refreshDeploymentLicenseLease: (
       fetchImpl?: Parameters<typeof refreshDeploymentLicenseLeaseInRepository>[1],
     ) => refreshDeploymentLicenseLeaseInRepository(deploymentStore, fetchImpl),
+    resolveDeploymentUpdatePolicy: (
+      input: { distributionId: string; currentVersion: string },
+      fetchImpl?: typeof fetch,
+    ) => resolveDeploymentUpdatePolicy({
+      credentials: getDeploymentUpdatePolicyCredentials(deploymentStore),
+      verificationPublicKeys: options.licenseVerificationPublicKeys(),
+      distributionId: input.distributionId,
+      currentVersion: input.currentVersion,
+      fetchImpl,
+    }),
     getTelemetrySettings: () =>
       getTelemetrySettingsFromRepository(deploymentStore),
     updateTelemetrySettings: (
