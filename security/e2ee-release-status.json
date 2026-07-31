@@ -1,0 +1,29 @@
+{
+  "format": 1,
+  "protocol": {
+    "id": "device-envelope-v1",
+    "implementation": "otto-legacy-envelope",
+    "externalAuditCompleted": false,
+    "prekeyHandshake": false,
+    "doubleRatchet": false,
+    "multiDeviceSessions": false,
+    "safetyStateReset": false,
+    "forwardSecrecy": false,
+    "postCompromiseSecurity": false
+  },
+  "deviceTrust": {
+    "safetyNumbers": true,
+    "qrVerification": true,
+    "outOfBandDeviceApproval": true,
+    "keyTransparency": true,
+    "keyTransparencyMode": "server-hash-chain-not-externally-witnessed"
+  },
+  "auditReports": [],
+  "releaseApproved": false,
+  "prohibitedClaims": [
+    "Signal-grade security",
+    "complete forward secrecy",
+    "post-compromise security",
+    "protection from a malicious device-directory server"
+  ]
+}

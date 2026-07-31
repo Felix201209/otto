@@ -32,9 +32,27 @@ export interface EnterpriseE2eeDeviceBundle {
   deviceName: string;
   identitySigningPublicKey: string;
   deviceExchangePublicKey: string;
+  keyFingerprint: string;
+  approvalState: 'pending' | 'approved';
+  approvedByDeviceId: string | null;
+  approvedAt: string | null;
+  isCurrentDevice?: boolean;
   createdAt: string;
   lastSeenAt: string;
   revokedAt: string | null;
+}
+
+export interface EnterpriseE2eeDeviceVerification {
+  safetyNumber: string;
+  qrPayload: string;
+  deviceFingerprints: [string, string];
+}
+
+export interface EnterpriseE2eeDeviceApproval {
+  approverDeviceId: string;
+  targetDeviceId: string;
+  targetKeyFingerprint: string;
+  signature: string;
 }
 
 export interface EnterpriseE2eeEnvelope {
@@ -163,6 +181,69 @@ function privatePem(key: ReturnType<typeof createPrivateKey>): string {
   return key.export({ type: 'pkcs8', format: 'pem' }).toString();
 }
 
+export function enterpriseE2eeDeviceKeyFingerprint(
+  device: Pick<
+    EnterpriseE2eeDeviceBundle,
+    'identitySigningPublicKey' | 'deviceExchangePublicKey'
+  >,
+): string {
+  const signing = publicPem(createPublicKey(device.identitySigningPublicKey));
+  const exchange = publicPem(createPublicKey(device.deviceExchangePublicKey));
+  return createHash('sha256')
+    .update('otto:e2ee-device-fingerprint:v1\n')
+    .update(signing)
+    .update('\n')
+    .update(exchange)
+    .digest('hex');
+}
+
+export function enterpriseE2eeDeviceVerification(
+  first: EnterpriseE2eeDeviceBundle,
+  second: EnterpriseE2eeDeviceBundle,
+): EnterpriseE2eeDeviceVerification {
+  const identities = [first, second]
+    .map((device) => ({
+      accountId: device.accountId,
+      deviceId: device.deviceId,
+      keyFingerprint:
+        device.keyFingerprint || enterpriseE2eeDeviceKeyFingerprint(device),
+    }))
+    .sort((left, right) =>
+      `${left.accountId}:${left.deviceId}`.localeCompare(
+        `${right.accountId}:${right.deviceId}`,
+      ),
+    );
+  const canonical = JSON.stringify({ v: 1, devices: identities });
+  const digest = createHash('sha512')
+    .update('otto:e2ee-safety-number:v1\n')
+    .update(canonical)
+    .digest();
+  const groups = Array.from({ length: 12 }, (_, index) =>
+    String(digest.readUInt32BE(index * 4) % 100_000).padStart(5, '0'),
+  );
+  return {
+    safetyNumber: groups.join(' '),
+    qrPayload: `otto-e2ee-verify:v1:${Buffer.from(canonical).toString('base64url')}`,
+    deviceFingerprints: [
+      identities[0]!.keyFingerprint,
+      identities[1]!.keyFingerprint,
+    ],
+  };
+}
+
+export function enterpriseE2eeDeviceApprovalSignaturePayload(input: {
+  organizationId: string;
+  accountId: string;
+  approverDeviceId: string;
+  targetDeviceId: string;
+  targetKeyFingerprint: string;
+}): Buffer {
+  return Buffer.from(
+    `otto:e2ee-device-approval:v1\n${JSON.stringify(input)}`,
+    'utf8',
+  );
+}
+
 function newDeviceKeySet(deviceName: string, now: Date): DeviceKeySet {
   const identity = generateKeyPairSync('ed25519');
   const exchange = generateKeyPairSync('x25519');
@@ -201,8 +282,10 @@ function validateKeySet(value: unknown): DeviceKeySet {
   if (
     signingPrivate.asymmetricKeyType !== 'ed25519' ||
     exchangePrivate.asymmetricKeyType !== 'x25519' ||
-    publicPem(createPublicKey(signingPrivate)) !== result.identitySigningPublicKey ||
-    publicPem(createPublicKey(exchangePrivate)) !== result.deviceExchangePublicKey
+    publicPem(createPublicKey(signingPrivate)) !==
+      result.identitySigningPublicKey ||
+    publicPem(createPublicKey(exchangePrivate)) !==
+      result.deviceExchangePublicKey
   ) {
     throw new Error('E2EE device key set does not match its public keys');
   }
@@ -229,7 +312,8 @@ function validateKeyring(
   const active = validateKeySet(raw.active);
   const historical = raw.historical.map(validateKeySet);
   const ids = [active, ...historical].map((item) => item.deviceId);
-  if (new Set(ids).size !== ids.length) throw new Error('E2EE keyring contains duplicate devices');
+  if (new Set(ids).size !== ids.length)
+    throw new Error('E2EE keyring contains duplicate devices');
   return { v: 1, serverScope, accountId, active, historical };
 }
 
@@ -237,11 +321,23 @@ function atomicWrite(filePath: string, content: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
   const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
   try {
-    fs.writeFileSync(temporaryPath, content, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    fs.writeFileSync(temporaryPath, content, {
+      encoding: 'utf8',
+      mode: 0o600,
+      flag: 'wx',
+    });
     fs.renameSync(temporaryPath, filePath);
-    try { fs.chmodSync(filePath, 0o600); } catch { /* Windows ACLs are authoritative. */ }
+    try {
+      fs.chmodSync(filePath, 0o600);
+    } catch {
+      /* Windows ACLs are authoritative. */
+    }
   } finally {
-    try { fs.unlinkSync(temporaryPath); } catch { /* already renamed */ }
+    try {
+      fs.unlinkSync(temporaryPath);
+    } catch {
+      /* already renamed */
+    }
   }
 }
 
@@ -304,8 +400,15 @@ export class EnterpriseE2eeKeyVault {
     return rotated;
   }
 
-  exportRecoveryBundle(serverScope: string, accountId: string, passphrase: string): string {
-    if (passphrase.length < 12) throw new Error('E2EE recovery passphrase must contain at least 12 characters');
+  exportRecoveryBundle(
+    serverScope: string,
+    accountId: string,
+    passphrase: string,
+  ): string {
+    if (passphrase.length < 12)
+      throw new Error(
+        'E2EE recovery passphrase must contain at least 12 characters',
+      );
     const keyring = this.loadOrCreate(serverScope, accountId);
     const salt = randomBytes(16);
     const nonce = randomBytes(12);
@@ -318,7 +421,11 @@ export class EnterpriseE2eeKeyVault {
     const cipher = createCipheriv('aes-256-gcm', key, nonce);
     cipher.setAAD(Buffer.from('otto-e2ee-recovery-v1', 'utf8'));
     const body = Buffer.from(JSON.stringify(keyring), 'utf8');
-    const ciphertext = Buffer.concat([cipher.update(body), cipher.final(), cipher.getAuthTag()]);
+    const ciphertext = Buffer.concat([
+      cipher.update(body),
+      cipher.final(),
+      cipher.getAuthTag(),
+    ]);
     const recovery: RecoveryPackage = {
       v: 1,
       kdf: 'scrypt',
@@ -343,14 +450,19 @@ export class EnterpriseE2eeKeyVault {
     } catch {
       throw new Error('E2EE recovery bundle is invalid');
     }
-    if (recovery.v !== 1 || recovery.kdf !== 'scrypt' || recovery.cipher !== 'aes-256-gcm') {
+    if (
+      recovery.v !== 1 ||
+      recovery.kdf !== 'scrypt' ||
+      recovery.cipher !== 'aes-256-gcm'
+    ) {
       throw new Error('E2EE recovery bundle version is unsupported');
     }
     try {
       const salt = Buffer.from(recovery.salt, 'base64');
       const nonce = Buffer.from(recovery.nonce, 'base64');
       const sealed = Buffer.from(recovery.ciphertext, 'base64');
-      if (salt.length !== 16 || nonce.length !== 12 || sealed.length <= 16) throw new Error('invalid');
+      if (salt.length !== 16 || nonce.length !== 12 || sealed.length <= 16)
+        throw new Error('invalid');
       const key = scryptSync(passphrase, salt, 32, {
         N: 1 << 15,
         r: 8,
@@ -364,7 +476,11 @@ export class EnterpriseE2eeKeyVault {
         decipher.update(sealed.subarray(0, sealed.length - 16)),
         decipher.final(),
       ]).toString('utf8');
-      const recovered = validateKeyring(JSON.parse(plaintext), serverScope, accountId);
+      const recovered = validateKeyring(
+        JSON.parse(plaintext),
+        serverScope,
+        accountId,
+      );
       const local = this.loadOrCreate(serverScope, accountId);
       const historicalById = new Map(
         [recovered.active, ...recovered.historical, ...local.historical]
@@ -378,19 +494,34 @@ export class EnterpriseE2eeKeyVault {
       this.save(merged);
       return merged;
     } catch (error) {
-      if (error instanceof Error && error.message.startsWith('E2EE keyring')) throw error;
+      if (error instanceof Error && error.message.startsWith('E2EE keyring'))
+        throw error;
       throw new Error('E2EE recovery bundle or passphrase is invalid');
     }
   }
 }
 
-function aesEncrypt(key: Buffer, plaintext: Buffer, nonce: Buffer, aad: string): Buffer {
+function aesEncrypt(
+  key: Buffer,
+  plaintext: Buffer,
+  nonce: Buffer,
+  aad: string,
+): Buffer {
   const cipher = createCipheriv('aes-256-gcm', key, nonce);
   cipher.setAAD(Buffer.from(aad, 'utf8'));
-  return Buffer.concat([cipher.update(plaintext), cipher.final(), cipher.getAuthTag()]);
+  return Buffer.concat([
+    cipher.update(plaintext),
+    cipher.final(),
+    cipher.getAuthTag(),
+  ]);
 }
 
-function aesDecrypt(key: Buffer, sealed: Buffer, nonce: Buffer, aad: string): Buffer {
+function aesDecrypt(
+  key: Buffer,
+  sealed: Buffer,
+  nonce: Buffer,
+  aad: string,
+): Buffer {
   if (sealed.length <= 16) throw new Error('E2EE ciphertext is truncated');
   const decipher = createDecipheriv('aes-256-gcm', key, nonce);
   decipher.setAAD(Buffer.from(aad, 'utf8'));
@@ -410,7 +541,11 @@ function messageAad(
   return `otto:e2ee:message:v1:${organizationId}:${messageId}:${senderAccountId}:${recipientAccountId}`;
 }
 
-function envelopeAad(messageId: string, accountId: string, deviceId: string): string {
+function envelopeAad(
+  messageId: string,
+  accountId: string,
+  deviceId: string,
+): string {
   return `otto:e2ee:envelope:v1:${messageId}:${accountId}:${deviceId}`;
 }
 
@@ -429,18 +564,24 @@ function deriveEnvelopeKey(
     privateKey: createPrivateKey(privateKeyPem),
     publicKey: createPublicKey(publicKeyPem),
   });
-  return Buffer.from(hkdfSync(
-    'sha256',
-    secret,
-    Buffer.from(messageId, 'utf8'),
-    Buffer.from(`otto-e2ee-envelope-key-v1:${accountId}:${deviceId}`, 'utf8'),
-    32,
-  ));
+  return Buffer.from(
+    hkdfSync(
+      'sha256',
+      secret,
+      Buffer.from(messageId, 'utf8'),
+      Buffer.from(`otto-e2ee-envelope-key-v1:${accountId}:${deviceId}`, 'utf8'),
+      32,
+    ),
+  );
 }
 
 function envelopeDigest(envelopes: readonly EnterpriseE2eeEnvelope[]): string {
   const canonical = [...envelopes]
-    .sort((a, b) => `${a.accountId}:${a.deviceId}`.localeCompare(`${b.accountId}:${b.deviceId}`))
+    .sort((a, b) =>
+      `${a.accountId}:${a.deviceId}`.localeCompare(
+        `${b.accountId}:${b.deviceId}`,
+      ),
+    )
     .map((envelope) => ({
       accountId: envelope.accountId,
       deviceId: envelope.deviceId,
@@ -448,7 +589,9 @@ function envelopeDigest(envelopes: readonly EnterpriseE2eeEnvelope[]): string {
       wrappedKey: envelope.wrappedKey,
       nonce: envelope.nonce,
     }));
-  return createHash('sha256').update(JSON.stringify(canonical)).digest('base64');
+  return createHash('sha256')
+    .update(JSON.stringify(canonical))
+    .digest('base64');
 }
 
 function signaturePayload(input: {
@@ -485,14 +628,20 @@ function signaturePayload(input: {
 
 function parsePlaintextPayload(value: Buffer): PlaintextPayload {
   let parsed: unknown;
-  try { parsed = JSON.parse(value.toString('utf8')); } catch { throw new Error('decrypted E2EE payload is invalid'); }
+  try {
+    parsed = JSON.parse(value.toString('utf8'));
+  } catch {
+    throw new Error('decrypted E2EE payload is invalid');
+  }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('decrypted E2EE payload is invalid');
   }
   const payload = parsed as PlaintextPayload;
   if (
     payload.v !== 1 ||
-    !['message', 'atoa_request', 'atoa_response'].includes(payload.contentType) ||
+    !['message', 'atoa_request', 'atoa_response'].includes(
+      payload.contentType,
+    ) ||
     typeof payload.content !== 'string' ||
     payload.content.length > 4000 ||
     !Array.isArray(payload.attachments) ||
@@ -506,17 +655,66 @@ function parsePlaintextPayload(value: Buffer): PlaintextPayload {
 export class EnterpriseE2eeCrypto {
   constructor(private readonly vault: EnterpriseE2eeKeyVault) {}
 
-  localDevice(serverScope: string, accountId: string): EnterpriseE2eeDeviceBundle {
+  localDevice(
+    serverScope: string,
+    accountId: string,
+  ): EnterpriseE2eeDeviceBundle {
     const active = this.vault.loadOrCreate(serverScope, accountId).active;
-    return {
+    const device = {
       accountId,
       deviceId: active.deviceId,
       deviceName: active.deviceName,
       identitySigningPublicKey: active.identitySigningPublicKey,
       deviceExchangePublicKey: active.deviceExchangePublicKey,
+      approvalState: 'approved' as const,
+      approvedByDeviceId: null,
+      approvedAt: active.createdAt,
       createdAt: active.createdAt,
       lastSeenAt: active.createdAt,
       revokedAt: null,
+    };
+    return {
+      ...device,
+      keyFingerprint: enterpriseE2eeDeviceKeyFingerprint(device),
+    };
+  }
+
+  signDeviceApproval(input: {
+    serverScope: string;
+    organizationId: string;
+    accountId: string;
+    targetDevice: EnterpriseE2eeDeviceBundle;
+  }): EnterpriseE2eeDeviceApproval {
+    if (input.targetDevice.accountId !== input.accountId) {
+      throw new Error(
+        'only a device belonging to the current account can be approved',
+      );
+    }
+    const active = this.vault.loadOrCreate(
+      input.serverScope,
+      input.accountId,
+    ).active;
+    if (active.deviceId === input.targetDevice.deviceId) {
+      throw new Error('a device cannot approve itself');
+    }
+    const approval = {
+      organizationId: input.organizationId,
+      accountId: input.accountId,
+      approverDeviceId: active.deviceId,
+      targetDeviceId: input.targetDevice.deviceId,
+      targetKeyFingerprint:
+        input.targetDevice.keyFingerprint ||
+        enterpriseE2eeDeviceKeyFingerprint(input.targetDevice),
+    };
+    return {
+      approverDeviceId: approval.approverDeviceId,
+      targetDeviceId: approval.targetDeviceId,
+      targetKeyFingerprint: approval.targetKeyFingerprint,
+      signature: sign(
+        null,
+        enterpriseE2eeDeviceApprovalSignaturePayload(approval),
+        active.identitySigningPrivateKey,
+      ).toString('base64'),
     };
   }
 
@@ -540,25 +738,50 @@ export class EnterpriseE2eeCrypto {
     attachments?: EnterpriseE2eePlainAttachmentUpload[];
     messageId?: string;
   }): EnterpriseE2eeSendPayload {
-    const keyring = this.vault.loadOrCreate(input.serverScope, input.senderAccountId);
-    const activeDevices = input.devices.filter((device) => device.revokedAt === null);
-    const participantIds = new Set([input.senderAccountId, input.recipientAccountId]);
-    const envelopeDevices = activeDevices.filter((device) => participantIds.has(device.accountId));
-    if (!envelopeDevices.some((device) => device.accountId === input.senderAccountId)) {
+    const keyring = this.vault.loadOrCreate(
+      input.serverScope,
+      input.senderAccountId,
+    );
+    const activeDevices = input.devices.filter(
+      (device) => device.revokedAt === null,
+    );
+    const participantIds = new Set([
+      input.senderAccountId,
+      input.recipientAccountId,
+    ]);
+    const envelopeDevices = activeDevices.filter((device) =>
+      participantIds.has(device.accountId),
+    );
+    if (
+      !envelopeDevices.some(
+        (device) => device.accountId === input.senderAccountId,
+      )
+    ) {
       throw new Error('current account has no active E2EE device');
     }
-    if (!envelopeDevices.some((device) => device.accountId === input.recipientAccountId)) {
+    if (
+      !envelopeDevices.some(
+        (device) => device.accountId === input.recipientAccountId,
+      )
+    ) {
       throw new Error('recipient has no active E2EE device');
     }
-    const uniqueDevices = new Set(envelopeDevices.map((device) => `${device.accountId}:${device.deviceId}`));
-    if (uniqueDevices.size !== envelopeDevices.length) throw new Error('E2EE device directory contains duplicates');
+    const uniqueDevices = new Set(
+      envelopeDevices.map((device) => `${device.accountId}:${device.deviceId}`),
+    );
+    if (uniqueDevices.size !== envelopeDevices.length)
+      throw new Error('E2EE device directory contains duplicates');
     const messageId = input.messageId ?? randomUUID();
     const messageKey = randomBytes(32);
     const attachments = (input.attachments ?? []).map((attachment) => {
       const attachmentId = randomUUID();
       const nonce = randomBytes(12);
       const plaintext = Buffer.from(attachment.data, 'base64');
-      if (!plaintext.length || plaintext.length !== attachment.size || plaintext.toString('base64') !== attachment.data) {
+      if (
+        !plaintext.length ||
+        plaintext.length !== attachment.size ||
+        plaintext.toString('base64') !== attachment.data
+      ) {
         throw new Error('E2EE attachment content is invalid');
       }
       return {
@@ -737,28 +960,37 @@ export class EnterpriseE2eeCrypto {
     });
     let payload: PlaintextPayload;
     try {
-      payload = parsePlaintextPayload(aesDecrypt(
-        key,
-        Buffer.from(message.ciphertext, 'base64'),
-        Buffer.from(message.nonce, 'base64'),
-        messageAad(
-          input.organizationId,
-          message.id,
-          message.senderAccountId,
-          message.recipientAccountId,
+      payload = parsePlaintextPayload(
+        aesDecrypt(
+          key,
+          Buffer.from(message.ciphertext, 'base64'),
+          Buffer.from(message.nonce, 'base64'),
+          messageAad(
+            input.organizationId,
+            message.id,
+            message.senderAccountId,
+            message.recipientAccountId,
+          ),
         ),
-      ));
+      );
     } catch (error) {
-      if (error instanceof Error && error.message.startsWith('decrypted E2EE')) throw error;
+      if (error instanceof Error && error.message.startsWith('decrypted E2EE'))
+        throw error;
       throw new Error('E2EE message authentication failed');
     }
     if (payload.contentType !== message.contentType) {
-      throw new Error('E2EE content type metadata does not match the encrypted body');
+      throw new Error(
+        'E2EE content type metadata does not match the encrypted body',
+      );
     }
     const wireAttachmentIds = message.attachments.map((item) => item.id).sort();
     const bodyAttachmentIds = payload.attachments.map((item) => item.id).sort();
-    if (JSON.stringify(wireAttachmentIds) !== JSON.stringify(bodyAttachmentIds)) {
-      throw new Error('E2EE attachment metadata does not match the encrypted body');
+    if (
+      JSON.stringify(wireAttachmentIds) !== JSON.stringify(bodyAttachmentIds)
+    ) {
+      throw new Error(
+        'E2EE attachment metadata does not match the encrypted body',
+      );
     }
     return {
       id: message.id,
@@ -769,7 +1001,9 @@ export class EnterpriseE2eeCrypto {
       inReplyToMessageId: message.inReplyToMessageId,
       createdAt: message.createdAt,
       readAt: message.readAt,
-      attachments: payload.attachments.map(({ nonce: _nonce, ...attachment }) => attachment),
+      attachments: payload.attachments.map(
+        ({ nonce: _nonce, ...attachment }) => attachment,
+      ),
     };
   }
 
@@ -779,24 +1013,34 @@ export class EnterpriseE2eeCrypto {
     accountId: string;
     message: EnterpriseE2eeWireMessage;
     attachment: EnterpriseE2eeAttachmentCiphertext;
-  }): { id: string; fileName: string; mimeType: string; size: number; data: string } {
+  }): {
+    id: string;
+    fileName: string;
+    mimeType: string;
+    size: number;
+    data: string;
+  } {
     const key = this.messageKey({
       serverScope: input.serverScope,
       accountId: input.accountId,
       message: input.message,
     });
-    const payload = parsePlaintextPayload(aesDecrypt(
-      key,
-      Buffer.from(input.message.ciphertext, 'base64'),
-      Buffer.from(input.message.nonce, 'base64'),
-      messageAad(
-        input.organizationId,
-        input.message.id,
-        input.message.senderAccountId,
-        input.message.recipientAccountId,
+    const payload = parsePlaintextPayload(
+      aesDecrypt(
+        key,
+        Buffer.from(input.message.ciphertext, 'base64'),
+        Buffer.from(input.message.nonce, 'base64'),
+        messageAad(
+          input.organizationId,
+          input.message.id,
+          input.message.senderAccountId,
+          input.message.recipientAccountId,
+        ),
       ),
-    ));
-    const metadata = payload.attachments.find((item) => item.id === input.attachment.id);
+    );
+    const metadata = payload.attachments.find(
+      (item) => item.id === input.attachment.id,
+    );
     if (!metadata || metadata.nonce !== input.attachment.nonce) {
       throw new Error('E2EE attachment metadata is invalid');
     }
@@ -814,12 +1058,14 @@ export class EnterpriseE2eeCrypto {
       envelopes: input.message.envelopes,
       attachments: [input.attachment],
     };
-    if (!verify(
-      null,
-      signaturePayload(signatureInput),
-      input.message.senderIdentitySigningPublicKey,
-      Buffer.from(input.message.signature, 'base64'),
-    )) {
+    if (
+      !verify(
+        null,
+        signaturePayload(signatureInput),
+        input.message.senderIdentitySigningPublicKey,
+        Buffer.from(input.message.signature, 'base64'),
+      )
+    ) {
       throw new Error('E2EE message signature is invalid');
     }
     let plaintext: Buffer;
@@ -833,7 +1079,8 @@ export class EnterpriseE2eeCrypto {
     } catch {
       throw new Error('E2EE attachment authentication failed');
     }
-    if (plaintext.length !== metadata.size) throw new Error('E2EE attachment size mismatch');
+    if (plaintext.length !== metadata.size)
+      throw new Error('E2EE attachment size mismatch');
     return {
       id: metadata.id,
       fileName: metadata.fileName,

@@ -69,10 +69,33 @@ export const COLLABORATION_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor = {
         device_name TEXT NOT NULL,
         identity_signing_public_key TEXT NOT NULL,
         device_exchange_public_key TEXT NOT NULL,
+        key_fingerprint TEXT NOT NULL CHECK(length(key_fingerprint) = 64),
+        approval_state TEXT NOT NULL
+          CHECK(approval_state IN ('pending', 'approved')),
+        approved_by_device_id TEXT,
+        approved_at TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
         revoked_at TEXT,
         PRIMARY KEY (organization_id, account_id, device_id),
+        FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+        FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS e2ee_key_transparency_log (
+        organization_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL CHECK(sequence > 0),
+        account_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        event TEXT NOT NULL
+          CHECK(event IN ('bootstrap_approved', 'registered_pending', 'approved', 'revoked')),
+        key_fingerprint TEXT NOT NULL CHECK(length(key_fingerprint) = 64),
+        actor_device_id TEXT,
+        previous_hash TEXT NOT NULL CHECK(length(previous_hash) = 64),
+        entry_hash TEXT NOT NULL CHECK(length(entry_hash) = 64),
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (organization_id, account_id, sequence),
+        UNIQUE (organization_id, account_id, entry_hash),
         FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
         FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
       );
@@ -88,8 +111,8 @@ export const COLLABORATION_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor = {
         );
       CREATE INDEX IF NOT EXISTS idx_direct_message_attachments_message
         ON direct_message_attachments(message_id, ordinal);
-      CREATE INDEX IF NOT EXISTS idx_e2ee_devices_active
-        ON e2ee_devices(organization_id, account_id, revoked_at, created_at);
+      CREATE INDEX IF NOT EXISTS idx_e2ee_key_transparency_account
+        ON e2ee_key_transparency_log(organization_id, account_id, sequence);
     `);
 
     const attachmentColumns = new Set(
@@ -143,7 +166,37 @@ export const COLLABORATION_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor = {
       'content_type',
       "TEXT NOT NULL DEFAULT 'message' CHECK(content_type IN ('message', 'atoa_request', 'atoa_response'))",
     );
+    const deviceColumns = new Set(
+      (
+        database.prepare('PRAGMA table_info(e2ee_devices)').all() as Array<{
+          name: string;
+        }>
+      ).map((column) => column.name),
+    );
+    const addDeviceColumn = (name: string, definition: string) => {
+      if (!deviceColumns.has(name)) {
+        database.exec(
+          `ALTER TABLE e2ee_devices ADD COLUMN ${name} ${definition}`,
+        );
+      }
+    };
+    addDeviceColumn('key_fingerprint', "TEXT NOT NULL DEFAULT ''");
+    addDeviceColumn(
+      'approval_state',
+      "TEXT NOT NULL DEFAULT 'approved' CHECK(approval_state IN ('pending', 'approved'))",
+    );
+    addDeviceColumn('approved_by_device_id', 'TEXT');
+    addDeviceColumn('approved_at', 'TEXT');
     database.exec(`
+      DROP INDEX IF EXISTS idx_e2ee_devices_active;
+      CREATE INDEX idx_e2ee_devices_active
+        ON e2ee_devices(
+          organization_id,
+          account_id,
+          approval_state,
+          revoked_at,
+          created_at
+        );
       CREATE INDEX IF NOT EXISTS idx_direct_messages_type
         ON direct_messages(
           organization_id,

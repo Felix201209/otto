@@ -231,7 +231,7 @@ const PRIVACY_DELETION_LEDGER_KEY_PATH = path.join(
 );
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
-export const ENTERPRISE_SCHEMA_VERSION = 19;
+export const ENTERPRISE_SCHEMA_VERSION = 20;
 export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
@@ -815,7 +815,9 @@ export const {
   getDirectMessageAttachment,
   listDirectMessages,
   getE2eeAttachment,
+  approveE2eeDevice,
   listE2eeDevices,
+  listE2eeKeyTransparency,
   listE2eeDirectMessages,
   listPendingE2eeAtoaRequests,
   listUnreadE2eeNotifications,

@@ -2,7 +2,7 @@
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, verify } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +11,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   EnterpriseE2eeCrypto,
   EnterpriseE2eeKeyVault,
+  enterpriseE2eeDeviceApprovalSignaturePayload,
+  enterpriseE2eeDeviceVerification,
   type EnterpriseE2eeDeviceBundle,
   type EnterpriseE2eeSendPayload,
   type EnterpriseE2eeWireMessage,
@@ -19,7 +21,8 @@ import {
 const roots: string[] = [];
 
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true });
 });
 
 function createEndpoint(deviceName: string) {
@@ -29,9 +32,12 @@ function createEndpoint(deviceName: string) {
     directory: root,
     deviceName: () => deviceName,
     now: () => new Date('2026-07-31T00:00:00.000Z'),
-    protect: (plaintext) => `protected:${Buffer.from(plaintext).toString('base64')}`,
+    protect: (plaintext) =>
+      `protected:${Buffer.from(plaintext).toString('base64')}`,
     unprotect: (protectedValue) =>
-      Buffer.from(protectedValue.slice('protected:'.length), 'base64').toString('utf8'),
+      Buffer.from(protectedValue.slice('protected:'.length), 'base64').toString(
+        'utf8',
+      ),
   });
   return { root, vault, crypto: new EnterpriseE2eeCrypto(vault) };
 }
@@ -66,6 +72,41 @@ function wire(
 }
 
 describe('enterprise private-chat E2EE', () => {
+  it('derives symmetric safety numbers and signs out-of-band device approvals locally', () => {
+    const aliceOne = createEndpoint('Alice one');
+    const aliceTwo = createEndpoint('Alice two');
+    const first = aliceOne.crypto.localDevice('https://otto.test', 'alice');
+    const second = aliceTwo.crypto.localDevice('https://otto.test', 'alice');
+
+    const forward = enterpriseE2eeDeviceVerification(first, second);
+    const reverse = enterpriseE2eeDeviceVerification(second, first);
+    expect(forward.safetyNumber).toMatch(/^(\d{5} ){11}\d{5}$/);
+    expect(reverse).toEqual(forward);
+    expect(forward.qrPayload).toMatch(/^otto-e2ee-verify:v1:/);
+
+    const approval = aliceOne.crypto.signDeviceApproval({
+      serverScope: 'https://otto.test',
+      organizationId: 'org-a',
+      accountId: 'alice',
+      targetDevice: second,
+    });
+    expect(approval.targetKeyFingerprint).toBe(second.keyFingerprint);
+    expect(
+      verify(
+        null,
+        enterpriseE2eeDeviceApprovalSignaturePayload({
+          organizationId: 'org-a',
+          accountId: 'alice',
+          approverDeviceId: approval.approverDeviceId,
+          targetDeviceId: approval.targetDeviceId,
+          targetKeyFingerprint: approval.targetKeyFingerprint,
+        }),
+        first.identitySigningPublicKey,
+        Buffer.from(approval.signature, 'base64'),
+      ),
+    ).toBe(true);
+  });
+
   it('encrypts for sender and recipient devices and detects message tampering', () => {
     const alice = createEndpoint('Alice laptop');
     const bob = createEndpoint('Bob laptop');
@@ -82,30 +123,38 @@ describe('enterprise private-chat E2EE', () => {
       messageId: 'message-1',
     });
     expect(JSON.stringify(encrypted)).not.toContain('only the endpoints');
-    expect(encrypted.envelopes.map((item) => `${item.accountId}:${item.deviceId}`)).toEqual([
-      `alice:${aliceDevice.deviceId}`,
-      `bob:${bobDevice.deviceId}`,
-    ]);
+    expect(
+      encrypted.envelopes.map((item) => `${item.accountId}:${item.deviceId}`),
+    ).toEqual([`alice:${aliceDevice.deviceId}`, `bob:${bobDevice.deviceId}`]);
     const message = wire(encrypted, aliceDevice);
-    expect(bob.crypto.decryptMessage({
-      serverScope: 'https://otto.test',
-      organizationId: 'org-a',
-      accountId: 'bob',
-      message,
-    }).content).toBe('only the endpoints can read this');
-    expect(alice.crypto.decryptMessage({
-      serverScope: 'https://otto.test',
-      organizationId: 'org-a',
-      accountId: 'alice',
-      message,
-    }).content).toBe('only the endpoints can read this');
+    expect(
+      bob.crypto.decryptMessage({
+        serverScope: 'https://otto.test',
+        organizationId: 'org-a',
+        accountId: 'bob',
+        message,
+      }).content,
+    ).toBe('only the endpoints can read this');
+    expect(
+      alice.crypto.decryptMessage({
+        serverScope: 'https://otto.test',
+        organizationId: 'org-a',
+        accountId: 'alice',
+        message,
+      }).content,
+    ).toBe('only the endpoints can read this');
 
-    expect(() => bob.crypto.decryptMessage({
-      serverScope: 'https://otto.test',
-      organizationId: 'org-a',
-      accountId: 'bob',
-      message: { ...message, ciphertext: Buffer.from('tampered plus tag value').toString('base64') },
-    })).toThrow('signature is invalid');
+    expect(() =>
+      bob.crypto.decryptMessage({
+        serverScope: 'https://otto.test',
+        organizationId: 'org-a',
+        accountId: 'bob',
+        message: {
+          ...message,
+          ciphertext: Buffer.from('tampered plus tag value').toString('base64'),
+        },
+      }),
+    ).toThrow('signature is invalid');
   });
 
   it('encrypts attachment bodies and metadata and authenticates downloads', () => {
@@ -122,44 +171,54 @@ describe('enterprise private-chat E2EE', () => {
       content: 'see attachment',
       contentType: 'message',
       devices: [aliceDevice, bobDevice],
-      attachments: [{
-        fileName: 'secret-plan.txt',
-        mimeType: 'text/plain',
-        size: body.length,
-        data: body.toString('base64'),
-      }],
+      attachments: [
+        {
+          fileName: 'secret-plan.txt',
+          mimeType: 'text/plain',
+          size: body.length,
+          data: body.toString('base64'),
+        },
+      ],
       messageId: 'message-attachment',
     });
     expect(JSON.stringify(encrypted)).not.toContain('secret-plan.txt');
     expect(JSON.stringify(encrypted)).not.toContain('confidential attachment');
     const message = wire(encrypted, aliceDevice);
-    expect(bob.crypto.decryptMessage({
-      serverScope: 'https://otto.test',
-      organizationId: 'org-a',
-      accountId: 'bob',
-      message,
-    }).attachments).toMatchObject([{ fileName: 'secret-plan.txt', size: body.length }]);
-    expect(bob.crypto.decryptAttachment({
-      serverScope: 'https://otto.test',
-      organizationId: 'org-a',
-      accountId: 'bob',
-      message,
-      attachment: encrypted.attachments[0]!,
-    })).toMatchObject({
+    expect(
+      bob.crypto.decryptMessage({
+        serverScope: 'https://otto.test',
+        organizationId: 'org-a',
+        accountId: 'bob',
+        message,
+      }).attachments,
+    ).toMatchObject([{ fileName: 'secret-plan.txt', size: body.length }]);
+    expect(
+      bob.crypto.decryptAttachment({
+        serverScope: 'https://otto.test',
+        organizationId: 'org-a',
+        accountId: 'bob',
+        message,
+        attachment: encrypted.attachments[0]!,
+      }),
+    ).toMatchObject({
       fileName: 'secret-plan.txt',
       data: body.toString('base64'),
     });
     const tampered = {
       ...encrypted.attachments[0]!,
-      ciphertext: Buffer.from('tampered attachment plus auth tag').toString('base64'),
+      ciphertext: Buffer.from('tampered attachment plus auth tag').toString(
+        'base64',
+      ),
     };
-    expect(() => bob.crypto.decryptAttachment({
-      serverScope: 'https://otto.test',
-      organizationId: 'org-a',
-      accountId: 'bob',
-      message,
-      attachment: tampered,
-    })).toThrow('authentication failed');
+    expect(() =>
+      bob.crypto.decryptAttachment({
+        serverScope: 'https://otto.test',
+        organizationId: 'org-a',
+        accountId: 'bob',
+        message,
+        attachment: tampered,
+      }),
+    ).toThrow('authentication failed');
   });
 
   it('covers every active device and stops targeting a revoked device', () => {
@@ -193,9 +252,12 @@ describe('enterprise private-chat E2EE', () => {
       devices: devices.map((device) =>
         device.deviceId === revokedId
           ? { ...device, revokedAt: '2026-07-31T01:00:00.000Z' }
-          : device),
+          : device,
+      ),
     });
-    expect(second.envelopes.some((item) => item.deviceId === revokedId)).toBe(false);
+    expect(second.envelopes.some((item) => item.deviceId === revokedId)).toBe(
+      false,
+    );
   });
 
   it('imports a passphrase recovery bundle as historical keys on a new device', () => {
@@ -220,33 +282,47 @@ describe('enterprise private-chat E2EE', () => {
     );
 
     const newBob = createEndpoint('New Bob');
-    const newDeviceBeforeImport = newBob.crypto.localDevice('https://otto.test', 'bob');
+    const newDeviceBeforeImport = newBob.crypto.localDevice(
+      'https://otto.test',
+      'bob',
+    );
     newBob.vault.importRecoveryBundle(
       'https://otto.test',
       'bob',
       recovery,
       'correct horse battery staple',
     );
-    expect(newBob.crypto.localDevice('https://otto.test', 'bob').deviceId)
-      .toBe(newDeviceBeforeImport.deviceId);
-    expect(newBob.crypto.decryptMessage({
-      serverScope: 'https://otto.test',
-      organizationId: 'org-a',
-      accountId: 'bob',
-      message: wire(encrypted, aliceDevice),
-    }).content).toBe('recoverable history');
-    expect(() => newBob.vault.importRecoveryBundle(
-      'https://otto.test',
-      'bob',
-      recovery,
-      'wrong passphrase',
-    )).toThrow('bundle or passphrase is invalid');
+    expect(newBob.crypto.localDevice('https://otto.test', 'bob').deviceId).toBe(
+      newDeviceBeforeImport.deviceId,
+    );
+    expect(
+      newBob.crypto.decryptMessage({
+        serverScope: 'https://otto.test',
+        organizationId: 'org-a',
+        accountId: 'bob',
+        message: wire(encrypted, aliceDevice),
+      }).content,
+    ).toBe('recoverable history');
+    expect(() =>
+      newBob.vault.importRecoveryBundle(
+        'https://otto.test',
+        'bob',
+        recovery,
+        'wrong passphrase',
+      ),
+    ).toThrow('bundle or passphrase is invalid');
   });
 
   it('keeps raw private keys out of the vault file', () => {
     const endpoint = createEndpoint('Protected device');
     const device = endpoint.crypto.localDevice('https://otto.test', 'alice');
-    const files = readFileSync(join(endpoint.root, `${createHash('sha256').update('https://otto.test\0alice').digest('hex')}.keyring`), 'utf8');
+    const files = readFileSync(
+      join(
+        endpoint.root,
+        `${createHash('sha256').update('https://otto.test\0alice').digest('hex')}.keyring`,
+      ),
+      'utf8',
+    );
     expect(files).toMatch(/^protected:/);
     expect(files).not.toContain(device.identitySigningPublicKey);
   });

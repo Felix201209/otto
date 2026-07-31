@@ -51,22 +51,38 @@ renderer only after signature and AEAD authentication succeeds.
 
 ## Multiple devices, revocation, and recovery
 
-The server device directory can contain multiple active devices per account.
-New messages contain a key envelope for every active device on both sides.
-Revoked devices are excluded from all subsequent messages, and messages signed
-by a revoked device are rejected.
+The first device for an account is explicitly recorded as a trust-on-first-use
+(TOFU) bootstrap. Every later device starts in `pending` state and receives no
+message envelopes until an existing approved device signs an approval over the
+new device ID and its combined Ed25519/X25519 fingerprint. The approval
+signature is created in Electron main; private identity keys never enter the
+renderer or server. New messages contain a key envelope for every approved,
+active device on both sides. Revoked devices are excluded from all subsequent
+messages, and messages signed by a revoked device are rejected.
+
+Each bootstrap, pending registration, approval, and revocation is appended to a
+per-account SHA-256 hash chain with a monotonic sequence and previous-entry
+hash. Clients can retrieve and validate this auditable history. The chain is
+still hosted by the enterprise server: without an independent witness it can
+detect corruption and inconsistent history obtained by a client, but it cannot
+by itself prevent a malicious server from presenting a forked history.
 
 The preload API exposes:
 
 - `enterpriseE2eeDevicesList()`
+- `enterpriseE2eeDeviceVerification(deviceId)`
+- `enterpriseE2eeDeviceApprove(deviceId)`
 - `enterpriseE2eeDeviceRevoke(deviceId)`
 - `enterpriseE2eeRecoveryExport(passphrase)`
 - `enterpriseE2eeRecoveryImport(bundle, passphrase)`
 
 The same operations are available to users under **Settings → Privacy & data
 → End-to-end encrypted private chat**. Device registration and revocation are
-written to the enterprise security audit log; revocation requires an explicit
-second confirmation in the desktop UI.
+audited. A trusted device displays a deterministic 60-digit safety number and a
+locally generated QR code for a pending device. The user must compare either through an
+independent channel before explicitly approving it. Device registration,
+approval, and revocation are written to the enterprise security audit log;
+revocation requires an explicit second confirmation in the desktop UI.
 
 Recovery bundles are encrypted with scrypt and AES-256-GCM. Importing a bundle
 on another device keeps that device's freshly generated active identity while
@@ -105,8 +121,17 @@ for every message, but compromise of a device's long-lived X25519 private key
 can expose recorded messages that contain an envelope for that device. Forward
 secrecy and post-compromise security require a future ratcheting protocol.
 
-The server-hosted device directory is trusted in v1. Immutable device IDs stop
-accidental or API-level key rebinding, but there is not yet a key-transparency
-log, safety-number comparison, or out-of-band approval for a newly registered
-device. Those controls are required to defend against a malicious directory
-server or a stolen account session registering an attacker-controlled device.
+Protocol v1 now has immutable device IDs, signed new-device approval, safety
+numbers/QR comparison, and an auditable server-hosted key-history chain. These
+controls reduce the risk from a stolen account session, but they do not make
+the enterprise directory independently trustworthy: a malicious server can
+still fork the history unless clients gossip tree heads or verify them through
+an external witness.
+
+Formal releases run `scripts/verify-e2ee-release-readiness.mjs` and fail closed.
+The checked-in status intentionally reports that prekey handshakes, Double
+Ratchet sessions, safety-state reset, forward secrecy, post-compromise
+security, an external audit, and explicit security release approval are still
+missing. Otto must not claim Signal-grade security until a reviewed,
+license-compatible protocol implementation and audit artifacts satisfy that
+gate.

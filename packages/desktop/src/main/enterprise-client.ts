@@ -5,10 +5,12 @@
  * 企业服务器，也永远拿不到会话令牌。
  */
 
-import type {
-  EnterpriseE2eeCrypto,
-  EnterpriseE2eeDeviceBundle,
-  EnterpriseE2eeWireMessage,
+import {
+  enterpriseE2eeDeviceVerification,
+  type EnterpriseE2eeDeviceVerification,
+  type EnterpriseE2eeCrypto,
+  type EnterpriseE2eeDeviceBundle,
+  type EnterpriseE2eeWireMessage,
 } from './enterprise-e2ee.js';
 
 export interface EnterpriseAccount {
@@ -113,7 +115,13 @@ export interface EnterpriseKnowledgeRecordInput {
   category: string;
   content: string;
   confidence: number;
-  sourceType?: 'manual' | 'auto_capture' | 'work_result' | 'task_log' | 'document' | 'offboarding';
+  sourceType?:
+    | 'manual'
+    | 'auto_capture'
+    | 'work_result'
+    | 'task_log'
+    | 'document'
+    | 'offboarding';
   sourceLabel?: string;
   sourceSessionId?: string;
   sourceFingerprint?: string;
@@ -127,12 +135,17 @@ export interface EnterpriseKnowledgeRecordInput {
 export interface EnterpriseKnowledgeRecordResult {
   status: 'added' | 'exists' | 'observed' | 'duplicate' | 'promoted';
   added: boolean;
-  outcome?: 'added' | 'updated' | 'unchanged' | 'observed' | 'duplicate' | 'promoted';
+  outcome?:
+    'added' | 'updated' | 'unchanged' | 'observed' | 'duplicate' | 'promoted';
   reviewStatus?: EnterpriseKnowledgeItem['status'];
   knowledgeId?: number;
   retention?: {
     promoted: boolean;
-    reason: 'incubating' | 'long_term_recurrence' | 'cross_member_corroboration' | 'high_impact_verified';
+    reason:
+      | 'incubating'
+      | 'long_term_recurrence'
+      | 'cross_member_corroboration'
+      | 'high_impact_verified';
     evidenceCount: number;
     distinctSessionCount: number;
     distinctContributorCount: number;
@@ -151,7 +164,13 @@ export interface EnterpriseKnowledgeItem {
   content: string;
   contributor: string | null;
   confidence: number;
-  sourceType: 'manual' | 'auto_capture' | 'work_result' | 'task_log' | 'document' | 'offboarding';
+  sourceType:
+    | 'manual'
+    | 'auto_capture'
+    | 'work_result'
+    | 'task_log'
+    | 'document'
+    | 'offboarding';
   sourceLabel: string | null;
   status: 'pending_review' | 'active' | 'archived';
   version: number;
@@ -182,7 +201,8 @@ export interface EnterpriseKnowledgeRevision {
 export type EnterpriseSkillVisibility = 'department' | 'company';
 export type EnterpriseSkillStatus = 'pending_review' | 'active' | 'archived';
 export type EnterpriseSkillScope = 'department' | 'company' | 'mine' | 'review';
-export type EnterpriseSkillSort = 'recommended' | 'rating' | 'installs' | 'usage' | 'newest';
+export type EnterpriseSkillSort =
+  'recommended' | 'rating' | 'installs' | 'usage' | 'newest';
 
 export interface EnterpriseSkillMarketItem {
   id: string;
@@ -211,11 +231,13 @@ export interface EnterpriseSkillMarketItem {
 }
 
 export interface EnterpriseSkillLeaderboard {
-  skills: Array<EnterpriseSkillMarketItem & {
-    rank: number;
-    score: number;
-    successRate: number;
-  }>;
+  skills: Array<
+    EnterpriseSkillMarketItem & {
+      rank: number;
+      score: number;
+      successRate: number;
+    }
+  >;
   contributors: Array<{
     rank: number;
     accountId: string | null;
@@ -283,7 +305,9 @@ interface EnterpriseKnowledgeRevisionRow {
   createdAt?: string;
 }
 
-function mapEnterpriseKnowledgeItem(item: EnterpriseKnowledgeRow): EnterpriseKnowledgeItem {
+function mapEnterpriseKnowledgeItem(
+  item: EnterpriseKnowledgeRow,
+): EnterpriseKnowledgeItem {
   return {
     id: String(item.id),
     organizationId: item.organizationId || item.organization_id || '',
@@ -301,18 +325,27 @@ function mapEnterpriseKnowledgeItem(item: EnterpriseKnowledgeRow): EnterpriseKno
     reviewedBy: item.reviewedBy ?? item.reviewed_by ?? null,
     reviewedAt: item.reviewedAt ?? item.reviewed_at ?? null,
     createdAt: item.createdAt || item.created_at || '',
-    updatedAt: item.updatedAt || item.updated_at || item.createdAt || item.created_at || '',
+    updatedAt:
+      item.updatedAt ||
+      item.updated_at ||
+      item.createdAt ||
+      item.created_at ||
+      '',
     ...((item.evidenceCount ?? item.evidence_count) !== undefined
       ? { evidenceCount: item.evidenceCount ?? item.evidence_count }
       : {}),
     ...((item.distinctSessionCount ?? item.distinct_session_count) !== undefined
-      ? { distinctSessionCount: item.distinctSessionCount ?? item.distinct_session_count }
-      : {}),
-    ...((item.distinctContributorCount ?? item.distinct_contributor_count) !== undefined
       ? {
-        distinctContributorCount:
-          item.distinctContributorCount ?? item.distinct_contributor_count,
-      }
+          distinctSessionCount:
+            item.distinctSessionCount ?? item.distinct_session_count,
+        }
+      : {}),
+    ...((item.distinctContributorCount ?? item.distinct_contributor_count) !==
+    undefined
+      ? {
+          distinctContributorCount:
+            item.distinctContributorCount ?? item.distinct_contributor_count,
+        }
       : {}),
     ...((item.firstObservedAt ?? item.first_observed_at) !== undefined
       ? { firstObservedAt: item.firstObservedAt ?? item.first_observed_at }
@@ -356,7 +389,8 @@ export interface EnterpriseOrganizationFeatures {
   skill_market: boolean;
 }
 
-export type EnterpriseModuleUpdateRollout = 'off' | 'canary' | 'stable' | 'required';
+export type EnterpriseModuleUpdateRollout =
+  'off' | 'canary' | 'stable' | 'required';
 
 export interface EnterpriseModuleUpdateDescriptor {
   module: string;
@@ -378,7 +412,8 @@ export interface EnterpriseModuleUpdateManifest {
   catalog: Array<{ module: string; features: string[] }>;
 }
 
-export type EnterprisePositionRoleMapping = 'member' | 'department_admin' | 'enterprise_admin';
+export type EnterprisePositionRoleMapping =
+  'member' | 'department_admin' | 'enterprise_admin';
 
 export interface EnterpriseOrganizationPosition {
   id: string;
@@ -549,8 +584,7 @@ export interface EnterpriseDirectMessageAttachmentUpload {
   data: string;
 }
 
-export interface EnterpriseDirectMessageAttachmentDownload
-  extends EnterpriseDirectMessageAttachment {
+export interface EnterpriseDirectMessageAttachmentDownload extends EnterpriseDirectMessageAttachment {
   data: string;
 }
 
@@ -592,7 +626,8 @@ export interface EnterpriseAtoaInboxMessage extends EnterpriseDirectMessage {
 
 export interface EnterpriseRepairTicketHistoryEntry {
   id: string;
-  action: 'created' | 'accept' | 'respond' | 'transfer' | 'complete' | 'confirm';
+  action:
+    'created' | 'accept' | 'respond' | 'transfer' | 'complete' | 'confirm';
   statusBefore: string | null;
   statusAfter: string;
   responseType: string | null;
@@ -707,9 +742,7 @@ export interface EnterpriseParkResources {
 }
 
 export type EnterpriseAccountSyncScope =
-  | 'personal_memory'
-  | 'worklog'
-  | 'auto_skills';
+  'personal_memory' | 'worklog' | 'auto_skills';
 
 export interface EnterpriseAccountSyncFile {
   path: string;
@@ -791,8 +824,14 @@ export interface EnterpriseDataGovernanceProfile {
   authorization: {
     deploymentId: string;
     license: {
-      status: string; plan: string; expiresAt: string; seatLimit: number;
-      activeSeatCount: number; modules: string[]; offline: boolean; enforce: boolean;
+      status: string;
+      plan: string;
+      expiresAt: string;
+      seatLimit: number;
+      activeSeatCount: number;
+      modules: string[];
+      offline: boolean;
+      enforce: boolean;
     };
     telemetry: { enabled: boolean; contentMode: string };
     dataBoundary: Record<string, unknown>;
@@ -824,11 +863,15 @@ interface EnterpriseRequestBehavior {
   timeoutMs?: number;
 }
 
-const ENTERPRISE_SERVER_UPGRADE_ERROR = '企业服务器版本过旧或功能不完整，请联系管理员升级后重试';
+const ENTERPRISE_SERVER_UPGRADE_ERROR =
+  '企业服务器版本过旧或功能不完整，请联系管理员升级后重试';
 const ENTERPRISE_AUTH_SUPERSEDED_ERROR = '认证操作已被新的请求替代，请重试';
 
 class EnterpriseRequestError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
     super(message);
   }
 }
@@ -851,19 +894,24 @@ function normalizeServerUrl(input: string): string {
   } catch {
     throw new Error('服务器地址格式不正确');
   }
-  if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password) {
+  if (
+    (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+    url.username ||
+    url.password
+  ) {
     throw new Error('服务器地址必须使用 http(s)，且不能包含账号密码');
   }
-  if (url.search || url.hash) throw new Error('服务器地址不能包含查询参数或片段');
-  const isLocalDevelopment = url.hostname === 'localhost'
-    || url.hostname === '127.0.0.1'
-    || url.hostname === '[::1]';
+  if (url.search || url.hash)
+    throw new Error('服务器地址不能包含查询参数或片段');
+  const isLocalDevelopment =
+    url.hostname === 'localhost' ||
+    url.hostname === '127.0.0.1' ||
+    url.hostname === '[::1]';
   if (url.protocol !== 'https:' && !isLocalDevelopment) {
     throw new Error('公网企业服务器必须使用 HTTPS');
   }
-  const pathPrefix = url.pathname === '/'
-    ? ''
-    : url.pathname.replace(/\/+$/, '');
+  const pathPrefix =
+    url.pathname === '/' ? '' : url.pathname.replace(/\/+$/, '');
   return `${url.origin}${pathPrefix}`;
 }
 
@@ -876,7 +924,9 @@ function e2eeProtocolMetadata(content: string): {
   }
   if (content.startsWith('OTTO_ATOA_RESPONSE ')) {
     try {
-      const parsed = JSON.parse(content.slice('OTTO_ATOA_RESPONSE '.length)) as unknown;
+      const parsed = JSON.parse(
+        content.slice('OTTO_ATOA_RESPONSE '.length),
+      ) as unknown;
       if (
         parsed &&
         typeof parsed === 'object' &&
@@ -912,7 +962,9 @@ export class EnterpriseClient {
 
   restore(session: StoredSession): void {
     this.authOperationGeneration += 1;
-    this.setServerUrl(session.serverUrl ? normalizeServerUrl(session.serverUrl) : '');
+    this.setServerUrl(
+      session.serverUrl ? normalizeServerUrl(session.serverUrl) : '',
+    );
     this.token = session.token;
     this.currentAccount = null;
   }
@@ -927,7 +979,7 @@ export class EnterpriseClient {
    */
   authenticatedAccountSnapshot(): EnterpriseAccount | null {
     return this.currentAccount
-      ? JSON.parse(JSON.stringify(this.currentAccount)) as EnterpriseAccount
+      ? (JSON.parse(JSON.stringify(this.currentAccount)) as EnterpriseAccount)
       : null;
   }
 
@@ -942,11 +994,14 @@ export class EnterpriseClient {
       'authorizationToken',
     );
     const requestToken = hasExplicitAuthorization
-      ? behavior.authorizationToken ?? null
+      ? (behavior.authorizationToken ?? null)
       : this.token;
     if (!requestServerUrl) throw new Error('请先填写企业服务器地址');
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), behavior.timeoutMs ?? 10_000);
+    const timer = setTimeout(
+      () => controller.abort(),
+      behavior.timeoutMs ?? 10_000,
+    );
     try {
       const headers: Record<string, string> = {
         accept: 'application/json',
@@ -962,23 +1017,29 @@ export class EnterpriseClient {
         headers,
         signal: controller.signal,
       });
-      const body = await response.json().catch(() => ({})) as { error?: string } & T;
+      const body = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      } & T;
       if (!response.ok) {
         if (
-          response.status === 401
-          && !behavior.preserveSessionOnUnauthorized
-          && requestServerUrl === this.serverUrl
-          && requestToken !== null
-          && requestToken === this.token
+          response.status === 401 &&
+          !behavior.preserveSessionOnUnauthorized &&
+          requestServerUrl === this.serverUrl &&
+          requestToken !== null &&
+          requestToken === this.token
         ) {
           this.invalidateSession();
         }
-        throw new EnterpriseRequestError(body.error || `服务器返回 ${response.status}`, response.status);
+        throw new EnterpriseRequestError(
+          body.error || `服务器返回 ${response.status}`,
+          response.status,
+        );
       }
       return body;
     } catch (error) {
       if (error instanceof EnterpriseRequestError) throw error;
-      if (error instanceof Error && error.name === 'AbortError') throw new Error('连接企业服务器超时');
+      if (error instanceof Error && error.name === 'AbortError')
+        throw new Error('连接企业服务器超时');
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(`无法连接企业服务器：${message}`);
     } finally {
@@ -986,7 +1047,11 @@ export class EnterpriseClient {
     }
   }
 
-  async loginWithPassword(serverUrl: string, identifier: string, password: string): Promise<{
+  async loginWithPassword(
+    serverUrl: string,
+    identifier: string,
+    password: string,
+  ): Promise<{
     account: EnterpriseAccount;
     expiresAt: string;
   }> {
@@ -998,13 +1063,17 @@ export class EnterpriseClient {
       account: EnterpriseAccount;
       token: string;
       expiresAt: string;
-    }>('/enterprise/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ identifier, password }),
-    }, {
-      serverUrl: targetServerUrl,
-      authorizationToken: null,
-    });
+    }>(
+      '/enterprise/auth/login',
+      {
+        method: 'POST',
+        body: JSON.stringify({ identifier, password }),
+      },
+      {
+        serverUrl: targetServerUrl,
+        authorizationToken: null,
+      },
+    );
     this.assertAuthOperationCurrent(generation, targetServerUrl);
     this.token = result.token;
     this.currentAccount = result.account;
@@ -1012,18 +1081,25 @@ export class EnterpriseClient {
     return { account: result.account, expiresAt: result.expiresAt };
   }
 
-  async requestLoginCode(serverUrl: string, phone: string): Promise<SmsLoginChallenge> {
+  async requestLoginCode(
+    serverUrl: string,
+    phone: string,
+  ): Promise<SmsLoginChallenge> {
     const targetServerUrl = normalizeServerUrl(serverUrl);
     const generation = this.beginAuthOperation(targetServerUrl);
     await this.assertCompatibleServer(targetServerUrl, ['sms_login']);
     this.assertAuthOperationCurrent(generation, targetServerUrl);
-    const challenge = await this.request<SmsLoginChallenge>('/enterprise/auth/sms/request', {
-      method: 'POST',
-      body: JSON.stringify({ phone }),
-    }, {
-      serverUrl: targetServerUrl,
-      authorizationToken: null,
-    });
+    const challenge = await this.request<SmsLoginChallenge>(
+      '/enterprise/auth/sms/request',
+      {
+        method: 'POST',
+        body: JSON.stringify({ phone }),
+      },
+      {
+        serverUrl: targetServerUrl,
+        authorizationToken: null,
+      },
+    );
     this.assertAuthOperationCurrent(generation, targetServerUrl);
     return challenge;
   }
@@ -1041,13 +1117,17 @@ export class EnterpriseClient {
       account: EnterpriseAccount;
       token: string;
       expiresAt: string;
-    }>('/enterprise/auth/sms/verify', {
-      method: 'POST',
-      body: JSON.stringify(input),
-    }, {
-      serverUrl: targetServerUrl,
-      authorizationToken: null,
-    });
+    }>(
+      '/enterprise/auth/sms/verify',
+      {
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+      {
+        serverUrl: targetServerUrl,
+        authorizationToken: null,
+      },
+    );
     this.assertAuthOperationCurrent(generation, targetServerUrl);
     this.token = result.token;
     this.currentAccount = result.account;
@@ -1069,19 +1149,24 @@ export class EnterpriseClient {
         : ['sms_registration', 'personal_registration'],
     );
     this.assertAuthOperationCurrent(generation, targetServerUrl);
-    const challenge = await this.request<SmsChallenge>('/enterprise/auth/register/sms/request', {
-      method: 'POST',
-      body: JSON.stringify({
-        phone,
-        ...(inviteCode.trim() ? { inviteCode } : {}),
-      }),
-    }, {
-      serverUrl: targetServerUrl,
-      authorizationToken: null,
-    });
+    const challenge = await this.request<SmsChallenge>(
+      '/enterprise/auth/register/sms/request',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          phone,
+          ...(inviteCode.trim() ? { inviteCode } : {}),
+        }),
+      },
+      {
+        serverUrl: targetServerUrl,
+        authorizationToken: null,
+      },
+    );
     this.assertAuthOperationCurrent(generation, targetServerUrl);
-    this.pendingRegistrationMode = challenge.registrationMode
-      ?? (inviteCode.trim() ? 'enterprise' : 'personal');
+    this.pendingRegistrationMode =
+      challenge.registrationMode ??
+      (inviteCode.trim() ? 'enterprise' : 'personal');
     return challenge;
   }
 
@@ -1109,13 +1194,17 @@ export class EnterpriseClient {
       account: EnterpriseAccount;
       token: string;
       expiresAt: string;
-    }>('/enterprise/auth/register/sms/verify', {
-      method: 'POST',
-      body: JSON.stringify(input),
-    }, {
-      serverUrl: targetServerUrl,
-      authorizationToken: null,
-    });
+    }>(
+      '/enterprise/auth/register/sms/verify',
+      {
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+      {
+        serverUrl: targetServerUrl,
+        authorizationToken: null,
+      },
+    );
     this.assertAuthOperationCurrent(generation, targetServerUrl);
     this.token = result.token;
     this.currentAccount = result.account;
@@ -1124,34 +1213,46 @@ export class EnterpriseClient {
   }
 
   async getSession(): Promise<EnterpriseSessionResult> {
-    if (!this.serverUrl || !this.token) return { serverUrl: this.serverUrl, account: null };
+    if (!this.serverUrl || !this.token)
+      return { serverUrl: this.serverUrl, account: null };
     const targetServerUrl = this.serverUrl;
     const targetToken = this.token;
     const generation = this.authOperationGeneration;
     try {
       await this.assertCompatibleServer(targetServerUrl, ['password_auth']);
-      if (!this.isSessionSnapshotCurrent(generation, targetServerUrl, targetToken)) {
+      if (
+        !this.isSessionSnapshotCurrent(generation, targetServerUrl, targetToken)
+      ) {
         return this.currentSessionResult();
       }
-      const result = await this.request<{ account: EnterpriseAccount }>('/enterprise/auth/me', {}, {
-        serverUrl: targetServerUrl,
-        authorizationToken: targetToken,
-        preserveSessionOnUnauthorized: true,
-      });
-      if (!this.isSessionSnapshotCurrent(generation, targetServerUrl, targetToken)) {
+      const result = await this.request<{ account: EnterpriseAccount }>(
+        '/enterprise/auth/me',
+        {},
+        {
+          serverUrl: targetServerUrl,
+          authorizationToken: targetToken,
+          preserveSessionOnUnauthorized: true,
+        },
+      );
+      if (
+        !this.isSessionSnapshotCurrent(generation, targetServerUrl, targetToken)
+      ) {
         return this.currentSessionResult();
       }
       this.currentAccount = result.account;
       return { serverUrl: targetServerUrl, account: result.account };
     } catch (error) {
-      if (!this.isSessionSnapshotCurrent(generation, targetServerUrl, targetToken)) {
+      if (
+        !this.isSessionSnapshotCurrent(generation, targetServerUrl, targetToken)
+      ) {
         return this.currentSessionResult();
       }
       if (error instanceof EnterpriseRequestError && error.status === 401) {
         this.invalidateSession();
         return { serverUrl: targetServerUrl, account: null };
       }
-      const connectionError = error instanceof Error ? error.message : String(error);
+      const connectionError =
+        error instanceof Error ? error.message : String(error);
       return { serverUrl: targetServerUrl, account: null, connectionError };
     }
   }
@@ -1163,27 +1264,40 @@ export class EnterpriseClient {
     this.token = null;
     this.currentAccount = null;
     if (!targetServerUrl || !targetToken) return;
-    await this.request('/enterprise/auth/logout', { method: 'POST' }, {
-      serverUrl: targetServerUrl,
-      authorizationToken: targetToken,
-      preserveSessionOnUnauthorized: true,
-    });
+    await this.request(
+      '/enterprise/auth/logout',
+      { method: 'POST' },
+      {
+        serverUrl: targetServerUrl,
+        authorizationToken: targetToken,
+        preserveSessionOnUnauthorized: true,
+      },
+    );
   }
 
-  async joinOrganization(inviteCode: string): Promise<{ account: EnterpriseAccount }> {
-    if (!this.token || !this.currentAccount) throw new Error('登录已失效，请重新登录');
+  async joinOrganization(
+    inviteCode: string,
+  ): Promise<{ account: EnterpriseAccount }> {
+    if (!this.token || !this.currentAccount)
+      throw new Error('登录已失效，请重新登录');
     if (this.currentAccount.accountType !== 'personal') {
       throw new Error('当前账号已经属于企业');
     }
     const normalizedInviteCode = inviteCode.trim();
-    if (!/^[A-HJ-NP-Za-km-z2-9]{4}-[A-HJ-NP-Za-km-z2-9]{4}-[A-HJ-NP-Za-km-z2-9]{4}$/.test(normalizedInviteCode)) {
+    if (
+      !/^[A-HJ-NP-Za-km-z2-9]{4}-[A-HJ-NP-Za-km-z2-9]{4}-[A-HJ-NP-Za-km-z2-9]{4}$/.test(
+        normalizedInviteCode,
+      )
+    ) {
       throw new Error('请输入有效的 12 位大小写敏感企业邀请码');
     }
     const requestGeneration = this.authOperationGeneration;
     const requestToken = this.token;
     const requestServerUrl = this.serverUrl;
     const personalAccountId = this.currentAccount.id;
-    await this.assertCompatibleServer(this.serverUrl, ['personal_enterprise_upgrade']);
+    await this.assertCompatibleServer(this.serverUrl, [
+      'personal_enterprise_upgrade',
+    ]);
     let joinError: unknown;
     try {
       const result = await this.request<{ account: EnterpriseAccount }>(
@@ -1198,16 +1312,18 @@ export class EnterpriseClient {
           preserveSessionOnUnauthorized: true,
         },
       );
-      if (!this.isSessionSnapshotCurrent(
-        requestGeneration,
-        requestServerUrl,
-        requestToken,
-      )) {
+      if (
+        !this.isSessionSnapshotCurrent(
+          requestGeneration,
+          requestServerUrl,
+          requestToken,
+        )
+      ) {
         throw new Error(ENTERPRISE_AUTH_SUPERSEDED_ERROR);
       }
       if (
-        result?.account?.id === personalAccountId
-        && result.account.accountType === 'enterprise'
+        result?.account?.id === personalAccountId &&
+        result.account.accountType === 'enterprise'
       ) {
         this.currentAccount = result.account;
         return result;
@@ -1216,11 +1332,13 @@ export class EnterpriseClient {
         '企业服务器返回的升级身份不完整',
       );
     } catch (error) {
-      if (!this.isSessionSnapshotCurrent(
-        requestGeneration,
-        requestServerUrl,
-        requestToken,
-      )) {
+      if (
+        !this.isSessionSnapshotCurrent(
+          requestGeneration,
+          requestServerUrl,
+          requestToken,
+        )
+      ) {
         throw new Error(ENTERPRISE_AUTH_SUPERSEDED_ERROR);
       }
       joinError = error;
@@ -1238,36 +1356,42 @@ export class EnterpriseClient {
         },
       );
     } catch (error) {
-      if (!this.isSessionSnapshotCurrent(
-        requestGeneration,
-        requestServerUrl,
-        requestToken,
-      )) {
+      if (
+        !this.isSessionSnapshotCurrent(
+          requestGeneration,
+          requestServerUrl,
+          requestToken,
+        )
+      ) {
         throw new Error(ENTERPRISE_AUTH_SUPERSEDED_ERROR);
       }
-      const joinMessage = joinError instanceof Error ? joinError.message : String(joinError);
-      const reconciliationMessage = error instanceof Error ? error.message : String(error);
+      const joinMessage =
+        joinError instanceof Error ? joinError.message : String(joinError);
+      const reconciliationMessage =
+        error instanceof Error ? error.message : String(error);
       throw new EnterpriseJoinStateUncertainError(
         `无法确认企业升级结果：${joinMessage}；身份对账失败：${reconciliationMessage}`,
       );
     }
-    if (!this.isSessionSnapshotCurrent(
-      requestGeneration,
-      requestServerUrl,
-      requestToken,
-    )) {
+    if (
+      !this.isSessionSnapshotCurrent(
+        requestGeneration,
+        requestServerUrl,
+        requestToken,
+      )
+    ) {
       throw new Error(ENTERPRISE_AUTH_SUPERSEDED_ERROR);
     }
     if (
-      reconciliation.account?.id === personalAccountId
-      && reconciliation.account.accountType === 'enterprise'
+      reconciliation.account?.id === personalAccountId &&
+      reconciliation.account.accountType === 'enterprise'
     ) {
       this.currentAccount = reconciliation.account;
       return { account: reconciliation.account };
     }
     if (
-      reconciliation.account?.id === personalAccountId
-      && reconciliation.account.accountType === 'personal'
+      reconciliation.account?.id === personalAccountId &&
+      reconciliation.account.accountType === 'personal'
     ) {
       throw joinError;
     }
@@ -1277,33 +1401,49 @@ export class EnterpriseClient {
   }
 
   async listAccounts(): Promise<EnterpriseAccount[]> {
-    return (await this.request<{ accounts: EnterpriseAccount[] }>('/enterprise/accounts')).accounts;
+    return (
+      await this.request<{ accounts: EnterpriseAccount[] }>(
+        '/enterprise/accounts',
+      )
+    ).accounts;
   }
 
   async createAccount(input: AccountCreateInput): Promise<EnterpriseAccount> {
-    return (await this.request<{ account: EnterpriseAccount }>('/enterprise/accounts', {
-      method: 'POST', body: JSON.stringify(input),
-    })).account;
+    return (
+      await this.request<{ account: EnterpriseAccount }>(
+        '/enterprise/accounts',
+        {
+          method: 'POST',
+          body: JSON.stringify(input),
+        },
+      )
+    ).account;
   }
 
-  async updateAccount(id: string, input: AccountUpdateInput): Promise<EnterpriseAccount> {
+  async updateAccount(
+    id: string,
+    input: AccountUpdateInput,
+  ): Promise<EnterpriseAccount> {
     const previous = this.currentAccount;
     const requestGeneration = this.authOperationGeneration;
     const requestToken = this.token;
-    const account = (await this.request<{ account: EnterpriseAccount }>(
-      `/enterprise/accounts/${encodeURIComponent(id)}`,
-      { method: 'PATCH', body: JSON.stringify(input) },
-    )).account;
+    const account = (
+      await this.request<{ account: EnterpriseAccount }>(
+        `/enterprise/accounts/${encodeURIComponent(id)}`,
+        { method: 'PATCH', body: JSON.stringify(input) },
+      )
+    ).account;
     if (
-      previous?.id === id
-      && requestGeneration === this.authOperationGeneration
-      && requestToken === this.token
+      previous?.id === id &&
+      requestGeneration === this.authOperationGeneration &&
+      requestToken === this.token
     ) {
-      const sessionWasRevoked = input.password !== undefined
-        || (input.status !== undefined && input.status !== previous.status)
-        || (input.isAdmin !== undefined && input.isAdmin !== previous.isAdmin)
-        || input.departmentId !== undefined
-        || input.positionId !== undefined;
+      const sessionWasRevoked =
+        input.password !== undefined ||
+        (input.status !== undefined && input.status !== previous.status) ||
+        (input.isAdmin !== undefined && input.isAdmin !== previous.isAdmin) ||
+        input.departmentId !== undefined ||
+        input.positionId !== undefined;
       if (sessionWasRevoked) this.invalidateSession();
       else this.currentAccount = account;
     }
@@ -1361,7 +1501,9 @@ export class EnterpriseClient {
     });
   }
 
-  async recordKnowledge(input: EnterpriseKnowledgeRecordInput): Promise<EnterpriseKnowledgeRecordResult> {
+  async recordKnowledge(
+    input: EnterpriseKnowledgeRecordInput,
+  ): Promise<EnterpriseKnowledgeRecordResult> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     return this.request('/enterprise/knowledge', {
       method: 'POST',
@@ -1369,22 +1511,25 @@ export class EnterpriseClient {
     });
   }
 
-  async listKnowledge(input: {
-    query?: string;
-    department?: string;
-    includeReview?: boolean;
-    status?: EnterpriseKnowledgeItem['status'];
-  } = {}): Promise<EnterpriseKnowledgeItem[]> {
+  async listKnowledge(
+    input: {
+      query?: string;
+      department?: string;
+      includeReview?: boolean;
+      status?: EnterpriseKnowledgeItem['status'];
+    } = {},
+  ): Promise<EnterpriseKnowledgeItem[]> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     const params = new URLSearchParams();
     if (input.query?.trim()) params.set('q', input.query.trim());
-    if (input.department?.trim()) params.set('department', input.department.trim());
+    if (input.department?.trim())
+      params.set('department', input.department.trim());
     if (input.includeReview) params.set('includeReview', 'true');
     if (input.status) params.set('status', input.status);
     const suffix = params.toString() ? `?${params}` : '';
-    const response = await this.request<{ knowledge: EnterpriseKnowledgeRow[] }>(
-      `/enterprise/knowledge${suffix}`,
-    );
+    const response = await this.request<{
+      knowledge: EnterpriseKnowledgeRow[];
+    }>(`/enterprise/knowledge${suffix}`);
     return response.knowledge.map(mapEnterpriseKnowledgeItem);
   }
 
@@ -1398,19 +1543,25 @@ export class EnterpriseClient {
       `/enterprise/knowledge/${encodeURIComponent(id)}/review`,
       {
         method: 'POST',
-        body: JSON.stringify({ action, ...(note?.trim() ? { note: note.trim() } : {}) }),
+        body: JSON.stringify({
+          action,
+          ...(note?.trim() ? { note: note.trim() } : {}),
+        }),
       },
     );
     return mapEnterpriseKnowledgeItem(response.knowledge);
   }
 
-  async reviseKnowledge(id: string, input: {
-    title: string;
-    category: string;
-    content: string;
-    confidence?: number;
-    changeNote?: string;
-  }): Promise<EnterpriseKnowledgeItem> {
+  async reviseKnowledge(
+    id: string,
+    input: {
+      title: string;
+      category: string;
+      content: string;
+      confidence?: number;
+      changeNote?: string;
+    },
+  ): Promise<EnterpriseKnowledgeItem> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     const response = await this.request<{ knowledge: EnterpriseKnowledgeRow }>(
       `/enterprise/knowledge/${encodeURIComponent(id)}`,
@@ -1419,11 +1570,13 @@ export class EnterpriseClient {
     return mapEnterpriseKnowledgeItem(response.knowledge);
   }
 
-  async listKnowledgeRevisions(id: string): Promise<EnterpriseKnowledgeRevision[]> {
+  async listKnowledgeRevisions(
+    id: string,
+  ): Promise<EnterpriseKnowledgeRevision[]> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    const response = await this.request<{ revisions: EnterpriseKnowledgeRevisionRow[] }>(
-      `/enterprise/knowledge/${encodeURIComponent(id)}/revisions`,
-    );
+    const response = await this.request<{
+      revisions: EnterpriseKnowledgeRevisionRow[];
+    }>(`/enterprise/knowledge/${encodeURIComponent(id)}/revisions`);
     return response.revisions.map((item) => ({
       id: String(item.id),
       knowledgeId: String(item.knowledgeId ?? item.knowledge_id ?? id),
@@ -1438,20 +1591,24 @@ export class EnterpriseClient {
     }));
   }
 
-  async listEnterpriseSkills(input: {
-    scope?: EnterpriseSkillScope;
-    query?: string;
-    sort?: EnterpriseSkillSort;
-  } = {}): Promise<EnterpriseSkillMarketItem[]> {
+  async listEnterpriseSkills(
+    input: {
+      scope?: EnterpriseSkillScope;
+      query?: string;
+      sort?: EnterpriseSkillSort;
+    } = {},
+  ): Promise<EnterpriseSkillMarketItem[]> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(this.serverUrl, ['enterprise_skill_market_v1']);
+    await this.assertCompatibleServer(this.serverUrl, [
+      'enterprise_skill_market_v1',
+    ]);
     const params = new URLSearchParams();
     if (input.scope) params.set('scope', input.scope);
     if (input.query?.trim()) params.set('q', input.query.trim());
     if (input.sort) params.set('sort', input.sort);
-    const response = await this.request<{ skills: EnterpriseSkillMarketItem[] }>(
-      `/enterprise/skills${params.size > 0 ? `?${params}` : ''}`,
-    );
+    const response = await this.request<{
+      skills: EnterpriseSkillMarketItem[];
+    }>(`/enterprise/skills${params.size > 0 ? `?${params}` : ''}`);
     return response.skills;
   }
 
@@ -1460,9 +1617,14 @@ export class EnterpriseClient {
     description: string;
     content: string;
     visibility: EnterpriseSkillVisibility;
-  }): Promise<{ outcome: 'submitted' | 'exists'; skill: EnterpriseSkillMarketItem }> {
+  }): Promise<{
+    outcome: 'submitted' | 'exists';
+    skill: EnterpriseSkillMarketItem;
+  }> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(this.serverUrl, ['enterprise_skill_market_v1']);
+    await this.assertCompatibleServer(this.serverUrl, [
+      'enterprise_skill_market_v1',
+    ]);
     return this.request('/enterprise/skills', {
       method: 'POST',
       body: JSON.stringify(input),
@@ -1475,7 +1637,9 @@ export class EnterpriseClient {
     visibility?: EnterpriseSkillVisibility,
   ): Promise<EnterpriseSkillMarketItem> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(this.serverUrl, ['enterprise_skill_market_v1']);
+    await this.assertCompatibleServer(this.serverUrl, [
+      'enterprise_skill_market_v1',
+    ]);
     const response = await this.request<{ skill: EnterpriseSkillMarketItem }>(
       `/enterprise/skills/${encodeURIComponent(id)}/review`,
       { method: 'POST', body: JSON.stringify({ action, visibility }) },
@@ -1483,19 +1647,30 @@ export class EnterpriseClient {
     return response.skill;
   }
 
-  async installEnterpriseSkill(id: string): Promise<EnterpriseSkillMarketItem & { content: string }> {
+  async installEnterpriseSkill(
+    id: string,
+  ): Promise<EnterpriseSkillMarketItem & { content: string }> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(this.serverUrl, ['enterprise_skill_market_v1']);
-    const response = await this.request<{ skill: EnterpriseSkillMarketItem & { content: string } }>(
-      `/enterprise/skills/${encodeURIComponent(id)}/install`,
-      { method: 'POST', body: '{}' },
-    );
+    await this.assertCompatibleServer(this.serverUrl, [
+      'enterprise_skill_market_v1',
+    ]);
+    const response = await this.request<{
+      skill: EnterpriseSkillMarketItem & { content: string };
+    }>(`/enterprise/skills/${encodeURIComponent(id)}/install`, {
+      method: 'POST',
+      body: '{}',
+    });
     return response.skill;
   }
 
-  async rateEnterpriseSkill(id: string, score: number): Promise<EnterpriseSkillMarketItem> {
+  async rateEnterpriseSkill(
+    id: string,
+    score: number,
+  ): Promise<EnterpriseSkillMarketItem> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(this.serverUrl, ['enterprise_skill_market_v1']);
+    await this.assertCompatibleServer(this.serverUrl, [
+      'enterprise_skill_market_v1',
+    ]);
     const response = await this.request<{ skill: EnterpriseSkillMarketItem }>(
       `/enterprise/skills/${encodeURIComponent(id)}/rating`,
       { method: 'POST', body: JSON.stringify({ score }) },
@@ -1509,7 +1684,9 @@ export class EnterpriseClient {
     eventId: string,
   ): Promise<EnterpriseSkillMarketItem> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(this.serverUrl, ['enterprise_skill_market_v1']);
+    await this.assertCompatibleServer(this.serverUrl, [
+      'enterprise_skill_market_v1',
+    ]);
     const response = await this.request<{ skill: EnterpriseSkillMarketItem }>(
       `/enterprise/skills/${encodeURIComponent(id)}/usage`,
       { method: 'POST', body: JSON.stringify({ success, eventId }) },
@@ -1519,18 +1696,18 @@ export class EnterpriseClient {
 
   async getEnterpriseSkillLeaderboard(): Promise<EnterpriseSkillLeaderboard> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(this.serverUrl, ['enterprise_skill_market_v1']);
+    await this.assertCompatibleServer(this.serverUrl, [
+      'enterprise_skill_market_v1',
+    ]);
     return this.request('/enterprise/skills/leaderboard');
   }
 
   async listAccountSyncSnapshots(): Promise<EnterpriseAccountSyncSnapshot[]> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     await this.assertCompatibleServer(this.serverUrl, ['account_data_sync_v1']);
-    const response = await this.request<{ snapshots: EnterpriseAccountSyncSnapshot[] }>(
-      '/enterprise/account-sync',
-      {},
-      { timeoutMs: 30_000 },
-    );
+    const response = await this.request<{
+      snapshots: EnterpriseAccountSyncSnapshot[];
+    }>('/enterprise/account-sync', {}, { timeoutMs: 30_000 });
     return response.snapshots;
   }
 
@@ -1542,7 +1719,9 @@ export class EnterpriseClient {
   }): Promise<EnterpriseAccountSyncSnapshot> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     await this.assertCompatibleServer(this.serverUrl, ['account_data_sync_v1']);
-    const response = await this.request<{ snapshot: EnterpriseAccountSyncSnapshot }>(
+    const response = await this.request<{
+      snapshot: EnterpriseAccountSyncSnapshot;
+    }>(
       '/enterprise/account-sync',
       {
         method: 'PUT',
@@ -1568,15 +1747,21 @@ export class EnterpriseClient {
 
   async getOrganizationFeatures(): Promise<EnterpriseOrganizationFeatures> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(this.serverUrl, ['organization_feature_switches_v1']);
-    return (await this.request<{ features: EnterpriseOrganizationFeatures }>(
-      '/enterprise/organization/features',
-    )).features;
+    await this.assertCompatibleServer(this.serverUrl, [
+      'organization_feature_switches_v1',
+    ]);
+    return (
+      await this.request<{ features: EnterpriseOrganizationFeatures }>(
+        '/enterprise/organization/features',
+      )
+    ).features;
   }
 
   async getModuleUpdates(): Promise<EnterpriseModuleUpdateManifest> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(this.serverUrl, ['modular_update_push_v1']);
+    await this.assertCompatibleServer(this.serverUrl, [
+      'modular_update_push_v1',
+    ]);
     return this.request('/enterprise/modules/updates/client');
   }
 
@@ -1584,39 +1769,61 @@ export class EnterpriseClient {
     patch: Partial<EnterpriseOrganizationFeatures>,
   ): Promise<EnterpriseOrganizationFeatures> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(this.serverUrl, ['organization_feature_switches_v1']);
-    return (await this.request<{ features: EnterpriseOrganizationFeatures }>(
-      '/enterprise/organization/features',
-      { method: 'PATCH', body: JSON.stringify(patch) },
-    )).features;
+    await this.assertCompatibleServer(this.serverUrl, [
+      'organization_feature_switches_v1',
+    ]);
+    return (
+      await this.request<{ features: EnterpriseOrganizationFeatures }>(
+        '/enterprise/organization/features',
+        { method: 'PATCH', body: JSON.stringify(patch) },
+      )
+    ).features;
   }
 
-  async listOrganizationDepartments(): Promise<EnterpriseOrganizationDepartment[]> {
+  async listOrganizationDepartments(): Promise<
+    EnterpriseOrganizationDepartment[]
+  > {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(this.serverUrl, ['organization_structure_v1']);
-    return (await this.request<{ structure: EnterpriseOrganizationDepartment[] }>(
-      '/enterprise/organization/departments',
-    )).structure;
+    await this.assertCompatibleServer(this.serverUrl, [
+      'organization_structure_v1',
+    ]);
+    return (
+      await this.request<{ structure: EnterpriseOrganizationDepartment[] }>(
+        '/enterprise/organization/departments',
+      )
+    ).structure;
   }
 
-  async createOrganizationDepartment(name: string): Promise<EnterpriseOrganizationDepartment> {
-    return (await this.request<{ department: EnterpriseOrganizationDepartment }>(
-      '/enterprise/organization/departments',
-      { method: 'POST', body: JSON.stringify({ name }) },
-    )).department;
+  async createOrganizationDepartment(
+    name: string,
+  ): Promise<EnterpriseOrganizationDepartment> {
+    return (
+      await this.request<{ department: EnterpriseOrganizationDepartment }>(
+        '/enterprise/organization/departments',
+        { method: 'POST', body: JSON.stringify({ name }) },
+      )
+    ).department;
   }
 
-  async updateOrganizationDepartment(id: string, name: string): Promise<EnterpriseOrganizationDepartment> {
-    return (await this.request<{ department: EnterpriseOrganizationDepartment }>(
-      `/enterprise/organization/departments/${encodeURIComponent(id)}`,
-      { method: 'PATCH', body: JSON.stringify({ name }) },
-    )).department;
+  async updateOrganizationDepartment(
+    id: string,
+    name: string,
+  ): Promise<EnterpriseOrganizationDepartment> {
+    return (
+      await this.request<{ department: EnterpriseOrganizationDepartment }>(
+        `/enterprise/organization/departments/${encodeURIComponent(id)}`,
+        { method: 'PATCH', body: JSON.stringify({ name }) },
+      )
+    ).department;
   }
 
   async deleteOrganizationDepartment(id: string): Promise<void> {
-    await this.request(`/enterprise/organization/departments/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-    });
+    await this.request(
+      `/enterprise/organization/departments/${encodeURIComponent(id)}`,
+      {
+        method: 'DELETE',
+      },
+    );
   }
 
   async createOrganizationPosition(input: {
@@ -1624,96 +1831,159 @@ export class EnterpriseClient {
     title: string;
     roleMapping: EnterprisePositionRoleMapping;
   }): Promise<EnterpriseOrganizationPosition> {
-    return (await this.request<{ position: EnterpriseOrganizationPosition }>(
-      '/enterprise/organization/positions',
-      { method: 'POST', body: JSON.stringify(input) },
-    )).position;
+    return (
+      await this.request<{ position: EnterpriseOrganizationPosition }>(
+        '/enterprise/organization/positions',
+        { method: 'POST', body: JSON.stringify(input) },
+      )
+    ).position;
   }
 
-  async updateOrganizationPosition(id: string, input: {
-    title?: string;
-    roleMapping?: EnterprisePositionRoleMapping;
-  }): Promise<EnterpriseOrganizationPosition> {
-    return (await this.request<{ position: EnterpriseOrganizationPosition }>(
-      `/enterprise/organization/positions/${encodeURIComponent(id)}`,
-      { method: 'PATCH', body: JSON.stringify(input) },
-    )).position;
+  async updateOrganizationPosition(
+    id: string,
+    input: {
+      title?: string;
+      roleMapping?: EnterprisePositionRoleMapping;
+    },
+  ): Promise<EnterpriseOrganizationPosition> {
+    return (
+      await this.request<{ position: EnterpriseOrganizationPosition }>(
+        `/enterprise/organization/positions/${encodeURIComponent(id)}`,
+        { method: 'PATCH', body: JSON.stringify(input) },
+      )
+    ).position;
   }
 
   async deleteOrganizationPosition(id: string): Promise<void> {
-    await this.request(`/enterprise/organization/positions/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-    });
+    await this.request(
+      `/enterprise/organization/positions/${encodeURIComponent(id)}`,
+      {
+        method: 'DELETE',
+      },
+    );
   }
 
   async getParkView(): Promise<EnterprisePark | null> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    return (await this.request<{ park: EnterprisePark | null }>('/enterprise/park/view')).park;
+    return (
+      await this.request<{ park: EnterprisePark | null }>(
+        '/enterprise/park/view',
+      )
+    ).park;
   }
 
-  async registerPark(input: { name: string; slug?: string; brandName?: string }): Promise<EnterprisePark> {
-    return (await this.request<{ park: EnterprisePark }>('/enterprise/park/manage', {
-      method: 'POST', body: JSON.stringify(input),
-    })).park;
+  async registerPark(input: {
+    name: string;
+    slug?: string;
+    brandName?: string;
+  }): Promise<EnterprisePark> {
+    return (
+      await this.request<{ park: EnterprisePark }>('/enterprise/park/manage', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      })
+    ).park;
   }
 
-  async joinPark(input: { inviteCode: string; address: string; roomNumber: string }): Promise<EnterprisePark> {
-    return (await this.request<{ park: EnterprisePark }>('/enterprise/park/join', {
-      method: 'POST', body: JSON.stringify(input),
-    })).park;
+  async joinPark(input: {
+    inviteCode: string;
+    address: string;
+    roomNumber: string;
+  }): Promise<EnterprisePark> {
+    return (
+      await this.request<{ park: EnterprisePark }>('/enterprise/park/join', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      })
+    ).park;
   }
 
   async updateParkTenantProfile(input: {
     address: string;
     roomNumber: string;
   }): Promise<EnterpriseParkTenantProfile> {
-    return (await this.request<{ profile: EnterpriseParkTenantProfile }>('/enterprise/park/profile', {
-      method: 'PATCH', body: JSON.stringify(input),
-    })).profile;
+    return (
+      await this.request<{ profile: EnterpriseParkTenantProfile }>(
+        '/enterprise/park/profile',
+        {
+          method: 'PATCH',
+          body: JSON.stringify(input),
+        },
+      )
+    ).profile;
   }
 
-  async issueParkInvite(maxUses?: number | null): Promise<EnterpriseParkInvite> {
-    return (await this.request<{ invite: EnterpriseParkInvite }>('/enterprise/park/invite', {
-      method: 'POST', body: JSON.stringify({ maxUses: maxUses ?? null }),
-    })).invite;
+  async issueParkInvite(
+    maxUses?: number | null,
+  ): Promise<EnterpriseParkInvite> {
+    return (
+      await this.request<{ invite: EnterpriseParkInvite }>(
+        '/enterprise/park/invite',
+        {
+          method: 'POST',
+          body: JSON.stringify({ maxUses: maxUses ?? null }),
+        },
+      )
+    ).invite;
   }
 
-  async listParkTenantOrganizations(): Promise<EnterpriseParkTenantOrganization[]> {
-    return (await this.request<{ organizations: EnterpriseParkTenantOrganization[] }>(
-      '/enterprise/park/tenants',
-    )).organizations;
+  async listParkTenantOrganizations(): Promise<
+    EnterpriseParkTenantOrganization[]
+  > {
+    return (
+      await this.request<{ organizations: EnterpriseParkTenantOrganization[] }>(
+        '/enterprise/park/tenants',
+      )
+    ).organizations;
   }
 
   async getParkStatistics(): Promise<EnterpriseParkStatistics> {
-    await this.assertCompatibleServer(this.serverUrl, ['park_service_statistics_v1']);
-    return (await this.request<{ statistics: EnterpriseParkStatistics }>(
-      '/enterprise/park/statistics',
-    )).statistics;
+    await this.assertCompatibleServer(this.serverUrl, [
+      'park_service_statistics_v1',
+    ]);
+    return (
+      await this.request<{ statistics: EnterpriseParkStatistics }>(
+        '/enterprise/park/statistics',
+      )
+    ).statistics;
   }
 
   async listParkSpecialists(): Promise<EnterpriseParkSpecialist[]> {
-    return (await this.request<{ specialists: EnterpriseParkSpecialist[] }>(
-      '/enterprise/park/specialists',
-    )).specialists;
+    return (
+      await this.request<{ specialists: EnterpriseParkSpecialist[] }>(
+        '/enterprise/park/specialists',
+      )
+    ).specialists;
   }
 
-  async setParkSpecialist(serviceId: string, accountId: string): Promise<EnterpriseParkSpecialist> {
-    return (await this.request<{ specialist: EnterpriseParkSpecialist }>(
-      '/enterprise/park/specialists',
-      { method: 'POST', body: JSON.stringify({ serviceId, accountId }) },
-    )).specialist;
+  async setParkSpecialist(
+    serviceId: string,
+    accountId: string,
+  ): Promise<EnterpriseParkSpecialist> {
+    return (
+      await this.request<{ specialist: EnterpriseParkSpecialist }>(
+        '/enterprise/park/specialists',
+        { method: 'POST', body: JSON.stringify({ serviceId, accountId }) },
+      )
+    ).specialist;
   }
 
-  async removeParkSpecialist(serviceId: string, accountId: string): Promise<void> {
+  async removeParkSpecialist(
+    serviceId: string,
+    accountId: string,
+  ): Promise<void> {
     await this.request('/enterprise/park/specialists', {
-      method: 'DELETE', body: JSON.stringify({ serviceId, accountId }),
+      method: 'DELETE',
+      body: JSON.stringify({ serviceId, accountId }),
     });
   }
 
   async listParkServices(): Promise<EnterpriseParkService[]> {
-    return (await this.request<{ services: EnterpriseParkService[] }>(
-      '/enterprise/park/services',
-    )).services;
+    return (
+      await this.request<{ services: EnterpriseParkService[] }>(
+        '/enterprise/park/services',
+      )
+    ).services;
   }
 
   async updateParkService(input: {
@@ -1722,10 +1992,12 @@ export class EnterpriseClient {
     enabled?: boolean;
     config?: Record<string, string>;
   }): Promise<EnterpriseParkService> {
-    return (await this.request<{ service: EnterpriseParkService }>(
-      '/enterprise/park/services',
-      { method: 'PATCH', body: JSON.stringify(input) },
-    )).service;
+    return (
+      await this.request<{ service: EnterpriseParkService }>(
+        '/enterprise/park/services',
+        { method: 'PATCH', body: JSON.stringify(input) },
+      )
+    ).service;
   }
 
   private requireE2eeContext(): {
@@ -1762,14 +2034,19 @@ export class EnterpriseClient {
       },
     );
     if (response.device.revokedAt) {
-      throw new Error('this E2EE device was revoked; recover or create a new trusted device');
+      throw new Error(
+        'this E2EE device was revoked; recover or create a new trusted device',
+      );
     }
     return response.device;
   }
 
   async ensureE2eeDeviceReady(): Promise<EnterpriseE2eeDeviceBundle> {
-    if (!this.token) throw new Error('enterprise session has expired; please sign in again');
-    await this.assertCompatibleServer(this.serverUrl, ['e2ee_private_messages_v1']);
+    if (!this.token)
+      throw new Error('enterprise session has expired; please sign in again');
+    await this.assertCompatibleServer(this.serverUrl, [
+      'e2ee_private_messages_v1',
+    ]);
     return this.registerLocalE2eeDevice();
   }
 
@@ -1781,12 +2058,16 @@ export class EnterpriseClient {
     const query = new URLSearchParams();
     query.append('accountId', account.id);
     query.append('accountId', peerAccountId);
-    return (await this.request<{ devices: EnterpriseE2eeDeviceBundle[] }>(
-      `/enterprise/e2ee/devices?${query.toString()}`,
-    )).devices;
+    return (
+      await this.request<{ devices: EnterpriseE2eeDeviceBundle[] }>(
+        `/enterprise/e2ee/devices?${query.toString()}`,
+      )
+    ).devices;
   }
 
-  private decryptE2eeMessage(message: EnterpriseE2eeWireMessage): EnterpriseDirectMessage {
+  private decryptE2eeMessage(
+    message: EnterpriseE2eeWireMessage,
+  ): EnterpriseDirectMessage {
     const { crypto, account, serverScope } = this.requireE2eeContext();
     const decrypted = crypto.decryptMessage({
       serverScope,
@@ -1811,22 +2092,85 @@ export class EnterpriseClient {
   async listOwnE2eeDevices(
     includeRevoked = true,
   ): Promise<EnterpriseE2eeDeviceBundle[]> {
-    if (!this.token) throw new Error('enterprise session has expired; please sign in again');
-    await this.assertCompatibleServer(this.serverUrl, ['e2ee_private_messages_v1']);
+    if (!this.token)
+      throw new Error('enterprise session has expired; please sign in again');
+    await this.assertCompatibleServer(this.serverUrl, [
+      'e2ee_private_messages_v1',
+      'e2ee_device_trust_v1',
+    ]);
     const { account } = this.requireE2eeContext();
     await this.registerLocalE2eeDevice();
     const query = new URLSearchParams({
       accountId: account.id,
       includeRevoked: String(includeRevoked),
+      includePending: 'true',
     });
-    return (await this.request<{ devices: EnterpriseE2eeDeviceBundle[] }>(
-      `/enterprise/e2ee/devices?${query.toString()}`,
-    )).devices;
+    const devices = (
+      await this.request<{ devices: EnterpriseE2eeDeviceBundle[] }>(
+        `/enterprise/e2ee/devices?${query.toString()}`,
+      )
+    ).devices;
+    const localDeviceId = this.requireE2eeContext().crypto.localDevice(
+      this.serverUrl,
+      account.id,
+    ).deviceId;
+    return devices.map((device) => ({
+      ...device,
+      isCurrentDevice: device.deviceId === localDeviceId,
+    }));
+  }
+
+  async approveOwnE2eeDevice(
+    deviceId: string,
+  ): Promise<EnterpriseE2eeDeviceBundle> {
+    if (!this.token)
+      throw new Error('enterprise session has expired; please sign in again');
+    await this.assertCompatibleServer(this.serverUrl, [
+      'e2ee_private_messages_v1',
+      'e2ee_device_trust_v1',
+    ]);
+    const { crypto, account, serverScope } = this.requireE2eeContext();
+    const devices = await this.listOwnE2eeDevices(true);
+    const targetDevice = devices.find((device) => device.deviceId === deviceId);
+    if (!targetDevice) throw new Error('E2EE device not found');
+    const approval = crypto.signDeviceApproval({
+      serverScope,
+      organizationId: account.organizationId,
+      accountId: account.id,
+      targetDevice,
+    });
+    return (
+      await this.request<{ device: EnterpriseE2eeDeviceBundle }>(
+        `/enterprise/e2ee/devices/${encodeURIComponent(deviceId)}/approve`,
+        {
+          method: 'POST',
+          body: JSON.stringify(approval),
+        },
+      )
+    ).device;
+  }
+
+  async getOwnE2eeDeviceVerification(
+    deviceId: string,
+  ): Promise<EnterpriseE2eeDeviceVerification> {
+    if (!this.token)
+      throw new Error('enterprise session has expired; please sign in again');
+    const { crypto, account, serverScope } = this.requireE2eeContext();
+    const devices = await this.listOwnE2eeDevices(true);
+    const targetDevice = devices.find((device) => device.deviceId === deviceId);
+    if (!targetDevice) throw new Error('E2EE device not found');
+    return enterpriseE2eeDeviceVerification(
+      crypto.localDevice(serverScope, account.id),
+      targetDevice,
+    );
   }
 
   async revokeOwnE2eeDevice(deviceId: string): Promise<void> {
-    if (!this.token) throw new Error('enterprise session has expired; please sign in again');
-    await this.assertCompatibleServer(this.serverUrl, ['e2ee_private_messages_v1']);
+    if (!this.token)
+      throw new Error('enterprise session has expired; please sign in again');
+    await this.assertCompatibleServer(this.serverUrl, [
+      'e2ee_private_messages_v1',
+    ]);
     const { crypto, account, serverScope } = this.requireE2eeContext();
     const local = crypto.localDevice(serverScope, account.id);
     await this.request(
@@ -1839,28 +2183,39 @@ export class EnterpriseClient {
     }
   }
 
-  async listDirectMessages(peerAccountId: string): Promise<EnterpriseDirectMessage[]> {
+  async listDirectMessages(
+    peerAccountId: string,
+  ): Promise<EnterpriseDirectMessage[]> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     await this.assertCompatibleServer(this.serverUrl, [
       'direct_messages',
       'e2ee_private_messages_v1',
     ]);
     await this.registerLocalE2eeDevice();
-    const messages = (await this.request<{ messages: EnterpriseE2eeWireMessage[] }>(
-      '/enterprise/messages/' + encodeURIComponent(peerAccountId),
-    )).messages;
+    const messages = (
+      await this.request<{ messages: EnterpriseE2eeWireMessage[] }>(
+        '/enterprise/messages/' + encodeURIComponent(peerAccountId),
+      )
+    ).messages;
     return messages.map((message) => this.decryptE2eeMessage(message));
   }
-  async listUnreadDirectMessageNotifications(): Promise<EnterpriseUnreadMessageNotification[]> {
+  async listUnreadDirectMessageNotifications(): Promise<
+    EnterpriseUnreadMessageNotification[]
+  > {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(this.serverUrl, ['unread_message_notifications_v1']);
+    await this.assertCompatibleServer(this.serverUrl, [
+      'unread_message_notifications_v1',
+    ]);
     try {
-      return (await this.request<{ notifications: EnterpriseUnreadMessageNotification[] }>(
-        '/enterprise/messages/unread',
-      )).notifications;
+      return (
+        await this.request<{
+          notifications: EnterpriseUnreadMessageNotification[];
+        }>('/enterprise/messages/unread')
+      ).notifications;
     } catch (error) {
       // 管理员主动关闭企业消息是正常配置态；后台轮询不应弹错误或重试刷屏。
-      if (error instanceof EnterpriseRequestError && error.status === 403) return [];
+      if (error instanceof EnterpriseRequestError && error.status === 403)
+        return [];
       throw error;
     }
   }
@@ -1890,14 +2245,16 @@ export class EnterpriseClient {
       devices,
       attachments,
     });
-    const message = (await this.request<{ message: EnterpriseE2eeWireMessage }>(
-      '/enterprise/messages/' + encodeURIComponent(peerAccountId),
-      {
-        method: 'POST',
-        body: JSON.stringify(encrypted),
-      },
-      { timeoutMs: attachments.length > 0 ? 60_000 : 10_000 },
-    )).message;
+    const message = (
+      await this.request<{ message: EnterpriseE2eeWireMessage }>(
+        '/enterprise/messages/' + encodeURIComponent(peerAccountId),
+        {
+          method: 'POST',
+          body: JSON.stringify(encrypted),
+        },
+        { timeoutMs: attachments.length > 0 ? 60_000 : 10_000 },
+      )
+    ).message;
     return this.decryptE2eeMessage(message);
   }
 
@@ -1935,14 +2292,16 @@ export class EnterpriseClient {
       'e2ee_private_messages_v1',
     ]);
     await this.registerLocalE2eeDevice();
-    const requests = (await this.request<{
-      requests: Array<EnterpriseE2eeWireMessage & {
-        peerAccountId: string;
-        peer: EnterpriseAtoaInboxMessage['peer'];
-      }>;
-    }>(
-      '/enterprise/atoa/inbox',
-    )).requests;
+    const requests = (
+      await this.request<{
+        requests: Array<
+          EnterpriseE2eeWireMessage & {
+            peerAccountId: string;
+            peer: EnterpriseAtoaInboxMessage['peer'];
+          }
+        >;
+      }>('/enterprise/atoa/inbox')
+    ).requests;
     return requests.map((request) => ({
       ...this.decryptE2eeMessage(request),
       peerAccountId: request.peerAccountId,
@@ -1954,7 +2313,11 @@ export class EnterpriseClient {
     recipientAccountId: string;
     serviceId: string;
     note?: string | null;
-  }): Promise<{ message?: EnterpriseDirectMessage; publication?: EnterpriseParkPublication; recipientCount?: number }> {
+  }): Promise<{
+    message?: EnterpriseDirectMessage;
+    publication?: EnterpriseParkPublication;
+    recipientCount?: number;
+  }> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     return this.request('/enterprise/park-services/push', {
       method: 'POST',
@@ -1964,22 +2327,30 @@ export class EnterpriseClient {
 
   async listParkPublications(): Promise<EnterpriseParkPublication[]> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    return (await this.request<{ publications: EnterpriseParkPublication[] }>(
-      '/enterprise/park-services/publications',
-    )).publications;
+    return (
+      await this.request<{ publications: EnterpriseParkPublication[] }>(
+        '/enterprise/park-services/publications',
+      )
+    ).publications;
   }
 
-  async listParkAnnouncementResults(): Promise<EnterpriseParkAnnouncementResult[]> {
-    return (await this.request<{ announcements: EnterpriseParkAnnouncementResult[] }>(
-      '/enterprise/park-services/announcement-results',
-    )).announcements;
+  async listParkAnnouncementResults(): Promise<
+    EnterpriseParkAnnouncementResult[]
+  > {
+    return (
+      await this.request<{ announcements: EnterpriseParkAnnouncementResult[] }>(
+        '/enterprise/park-services/announcement-results',
+      )
+    ).announcements;
   }
 
   async listParkSurveyResults(): Promise<EnterpriseParkSurveyResult[]> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    return (await this.request<{ surveys: EnterpriseParkSurveyResult[] }>(
-      '/enterprise/park-services/survey-results',
-    )).surveys;
+    return (
+      await this.request<{ surveys: EnterpriseParkSurveyResult[] }>(
+        '/enterprise/park-services/survey-results',
+      )
+    ).surveys;
   }
 
   async getParkResources(): Promise<EnterpriseParkResources> {
@@ -1989,44 +2360,55 @@ export class EnterpriseClient {
 
   async readParkPublication(id: string): Promise<EnterpriseParkPublication> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    return (await this.request<{ publication: EnterpriseParkPublication }>(
-      `/enterprise/park-services/publications/${encodeURIComponent(id)}/read`,
-      { method: 'POST' },
-    )).publication;
+    return (
+      await this.request<{ publication: EnterpriseParkPublication }>(
+        `/enterprise/park-services/publications/${encodeURIComponent(id)}/read`,
+        { method: 'POST' },
+      )
+    ).publication;
   }
 
-  async submitParkSurvey(id: string, responseData: Record<string, string>): Promise<EnterpriseParkPublication> {
+  async submitParkSurvey(
+    id: string,
+    responseData: Record<string, string>,
+  ): Promise<EnterpriseParkPublication> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    return (await this.request<{ publication: EnterpriseParkPublication }>(
-      `/enterprise/park-services/publications/${encodeURIComponent(id)}/submit`,
-      { method: 'POST', body: JSON.stringify({ responseData }) },
-    )).publication;
+    return (
+      await this.request<{ publication: EnterpriseParkPublication }>(
+        `/enterprise/park-services/publications/${encodeURIComponent(id)}/submit`,
+        { method: 'POST', body: JSON.stringify({ responseData }) },
+      )
+    ).publication;
   }
 
   async getOrganizationInvite(): Promise<EnterpriseOrganizationInviteContext> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(
-      this.serverUrl,
-      ['organization_invites', 'position_invites'],
-    );
+    await this.assertCompatibleServer(this.serverUrl, [
+      'organization_invites',
+      'position_invites',
+    ]);
     return this.request('/enterprise/organization/invite');
   }
 
-  async issueOrganizationInvite(input: {
-    defaultDepartment?: string | null;
-    departmentId?: string | null;
-    positionId?: string | null;
-    positionTitle?: string | null;
-    defaultRole?: string | null;
-    maxUses?: number | null;
-  } = {}): Promise<EnterpriseOrganizationInviteContext & {
-    invite: EnterpriseOrganizationInvite;
-  }> {
+  async issueOrganizationInvite(
+    input: {
+      defaultDepartment?: string | null;
+      departmentId?: string | null;
+      positionId?: string | null;
+      positionTitle?: string | null;
+      defaultRole?: string | null;
+      maxUses?: number | null;
+    } = {},
+  ): Promise<
+    EnterpriseOrganizationInviteContext & {
+      invite: EnterpriseOrganizationInvite;
+    }
+  > {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(
-      this.serverUrl,
-      ['organization_invites', 'position_invites'],
-    );
+    await this.assertCompatibleServer(this.serverUrl, [
+      'organization_invites',
+      'position_invites',
+    ]);
     return this.request('/enterprise/organization/invite', {
       method: 'POST',
       body: JSON.stringify({
@@ -2041,11 +2423,19 @@ export class EnterpriseClient {
   }
 
   async ticketInbox(): Promise<EnterpriseRepairTicket[]> {
-    return (await this.request<{ tickets: EnterpriseRepairTicket[] }>('/enterprise/tickets/inbox')).tickets;
+    return (
+      await this.request<{ tickets: EnterpriseRepairTicket[] }>(
+        '/enterprise/tickets/inbox',
+      )
+    ).tickets;
   }
 
   async listTickets(): Promise<EnterpriseRepairTicket[]> {
-    return (await this.request<{ tickets: EnterpriseRepairTicket[] }>('/enterprise/tickets')).tickets;
+    return (
+      await this.request<{ tickets: EnterpriseRepairTicket[] }>(
+        '/enterprise/tickets',
+      )
+    ).tickets;
   }
 
   async submitTicket(input: {
@@ -2060,34 +2450,43 @@ export class EnterpriseClient {
     contact?: string;
     contactPhone?: string;
   }): Promise<EnterpriseRepairTicket> {
-    return (await this.request<{ ticket: EnterpriseRepairTicket }>('/enterprise/tickets', {
-      method: 'POST', body: JSON.stringify(input),
-    })).ticket;
+    return (
+      await this.request<{ ticket: EnterpriseRepairTicket }>(
+        '/enterprise/tickets',
+        {
+          method: 'POST',
+          body: JSON.stringify(input),
+        },
+      )
+    ).ticket;
   }
 
   async readTicket(id: string): Promise<EnterpriseRepairTicket> {
-    return (await this.request<{ ticket: EnterpriseRepairTicket }>(
-      `/enterprise/tickets/${encodeURIComponent(id)}/read`,
-      { method: 'POST' },
-    )).ticket;
+    return (
+      await this.request<{ ticket: EnterpriseRepairTicket }>(
+        `/enterprise/tickets/${encodeURIComponent(id)}/read`,
+        { method: 'POST' },
+      )
+    ).ticket;
   }
 
-  async updateTicket(id: string, input: {
-    action:
-      | 'respond'
-      | 'accept'
-      | 'complete'
-      | 'confirm'
-      | 'respond_and_transfer';
-    responseType?: string;
-    responseText?: string;
-    transferDepartment?: string;
-    transferNote?: string;
-  }): Promise<EnterpriseRepairTicket> {
-    return (await this.request<{ ticket: EnterpriseRepairTicket }>(
-      `/enterprise/tickets/${encodeURIComponent(id)}/action`,
-      { method: 'POST', body: JSON.stringify(input) },
-    )).ticket;
+  async updateTicket(
+    id: string,
+    input: {
+      action:
+        'respond' | 'accept' | 'complete' | 'confirm' | 'respond_and_transfer';
+      responseType?: string;
+      responseText?: string;
+      transferDepartment?: string;
+      transferNote?: string;
+    },
+  ): Promise<EnterpriseRepairTicket> {
+    return (
+      await this.request<{ ticket: EnterpriseRepairTicket }>(
+        `/enterprise/tickets/${encodeURIComponent(id)}/action`,
+        { method: 'POST', body: JSON.stringify(input) },
+      )
+    ).ticket;
   }
 
   private setServerUrl(serverUrl: string): void {
@@ -2106,8 +2505,14 @@ export class EnterpriseClient {
     return this.authOperationGeneration;
   }
 
-  private assertAuthOperationCurrent(generation: number, serverUrl: string): void {
-    if (generation !== this.authOperationGeneration || serverUrl !== this.serverUrl) {
+  private assertAuthOperationCurrent(
+    generation: number,
+    serverUrl: string,
+  ): void {
+    if (
+      generation !== this.authOperationGeneration ||
+      serverUrl !== this.serverUrl
+    ) {
       throw new Error(ENTERPRISE_AUTH_SUPERSEDED_ERROR);
     }
   }
@@ -2117,9 +2522,11 @@ export class EnterpriseClient {
     serverUrl: string,
     token: string,
   ): boolean {
-    return generation === this.authOperationGeneration
-      && serverUrl === this.serverUrl
-      && token === this.token;
+    return (
+      generation === this.authOperationGeneration &&
+      serverUrl === this.serverUrl &&
+      token === this.token
+    );
   }
 
   private currentSessionResult(): EnterpriseSessionResult {
@@ -2134,8 +2541,10 @@ export class EnterpriseClient {
     requiredCapabilities: readonly string[],
   ): Promise<void> {
     if (
-      this.compatibleServerUrl === serverUrl
-      && requiredCapabilities.every((capability) => this.compatibleCapabilities.has(capability))
+      this.compatibleServerUrl === serverUrl &&
+      requiredCapabilities.every((capability) =>
+        this.compatibleCapabilities.has(capability),
+      )
     ) {
       return;
     }
@@ -2150,15 +2559,17 @@ export class EnterpriseClient {
         authorizationToken: null,
       },
     );
-    const capabilities = Array.isArray(health.capabilities)
-      && health.capabilities.every((capability) => typeof capability === 'string')
-      ? new Set(health.capabilities)
-      : null;
-    const isCompatible = health.status === 'ok'
-      && typeof health.apiVersion === 'number'
-      && health.apiVersion >= 2
-      && capabilities !== null
-      && requiredCapabilities.every((capability) => capabilities.has(capability));
+    const capabilities =
+      Array.isArray(health.capabilities) &&
+      health.capabilities.every((capability) => typeof capability === 'string')
+        ? new Set(health.capabilities)
+        : null;
+    const isCompatible =
+      health.status === 'ok' &&
+      typeof health.apiVersion === 'number' &&
+      health.apiVersion >= 2 &&
+      capabilities !== null &&
+      requiredCapabilities.every((capability) => capabilities.has(capability));
     if (!isCompatible) throw new Error(ENTERPRISE_SERVER_UPGRADE_ERROR);
 
     if (serverUrl === this.serverUrl) {

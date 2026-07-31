@@ -15,7 +15,10 @@ interface CommunicationRouteDeps {
   memberAccount: db.AccountView;
   atoaClaims: Map<string, number>;
   atoaClaimTtlMs: number;
-  readBody(req: IncomingMessage, maxLength?: number): Promise<Record<string, unknown>>;
+  readBody(
+    req: IncomingMessage,
+    maxLength?: number,
+  ): Promise<Record<string, unknown>>;
   sendJSON(res: ServerResponse, status: number, data: unknown): void;
 }
 
@@ -25,16 +28,20 @@ function organizationViewPayload(organizationId: string) {
   const employees = db.listEmployees(undefined, organizationId);
   const park = db.getParkForOrganization(organizationId);
   const presenceByAccountId = new Map(
-    db.listAccountPresence(organizationId).map((presence) => [presence.accountId, presence]),
+    db
+      .listAccountPresence(organizationId)
+      .map((presence) => [presence.accountId, presence]),
   );
   return {
-    organization: organization ? {
-      id: organization.id,
-      name: organization.name,
-      status: organization.status,
-      parkId: organization.parkId,
-      createdAt: organization.createdAt,
-    } : null,
+    organization: organization
+      ? {
+          id: organization.id,
+          name: organization.name,
+          status: organization.status,
+          parkId: organization.parkId,
+          createdAt: organization.createdAt,
+        }
+      : null,
     members: accounts.map((account) => ({
       id: account.id,
       username: account.username,
@@ -53,11 +60,13 @@ function organizationViewPayload(organizationId: string) {
     employeeCount: employees.length,
     structure: db.listOrganizationStructure(organizationId),
     features: db.getOrganizationFeatures(organizationId),
-    park: park ? {
-      ...park,
-      isAdminOrganization: park.adminOrganizationId === organizationId,
-      services: db.listParkServices(park.id),
-    } : null,
+    park: park
+      ? {
+          ...park,
+          isAdminOrganization: park.adminOrganizationId === organizationId,
+          services: db.listParkServices(park.id),
+        }
+      : null,
   };
 }
 
@@ -75,7 +84,9 @@ export async function handleCommunicationRoute({
 }: CommunicationRouteDeps): Promise<boolean> {
   if (path === '/enterprise/account-sync' && method === 'GET') {
     res.setHeader('Cache-Control', 'no-store');
-    sendJSON(res, 200, { snapshots: db.listAccountSyncSnapshots(memberAccount.id) });
+    sendJSON(res, 200, {
+      snapshots: db.listAccountSyncSnapshots(memberAccount.id),
+    });
     return true;
   }
 
@@ -98,10 +109,15 @@ export async function handleCommunicationRoute({
       sendJSON(res, 200, { snapshot });
     } catch (error) {
       if (error instanceof db.AccountSyncConflictError) {
-        sendJSON(res, 409, { error: error.message, currentVersion: error.currentVersion });
+        sendJSON(res, 409, {
+          error: error.message,
+          currentVersion: error.currentVersion,
+        });
         return true;
       }
-      sendJSON(res, 400, { error: error instanceof Error ? error.message : String(error) });
+      sendJSON(res, 400, {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
     return true;
   }
@@ -129,7 +145,8 @@ export async function handleCommunicationRoute({
 
   if (path === '/enterprise/presence/heartbeat' && method === 'POST') {
     const body = await readBody(req);
-    const clientId = typeof body.clientId === 'string' ? body.clientId : 'desktop';
+    const clientId =
+      typeof body.clientId === 'string' ? body.clientId : 'desktop';
     const presence = db.touchAccountPresence({
       organizationId: memberAccount.organizationId,
       accountId: memberAccount.id,
@@ -142,13 +159,16 @@ export async function handleCommunicationRoute({
   if (path === '/enterprise/e2ee/devices' && method === 'POST') {
     const body = await readBody(req, 16 * 1024);
     try {
-      const requestedDeviceId = typeof body.deviceId === 'string' ? body.deviceId : '';
-      const alreadyRegistered = db.listE2eeDevices({
-        organizationId: memberAccount.organizationId,
-        requesterAccountId: memberAccount.id,
-        accountIds: [memberAccount.id],
-        includeRevoked: true,
-      }).some((candidate) => candidate.deviceId === requestedDeviceId);
+      const requestedDeviceId =
+        typeof body.deviceId === 'string' ? body.deviceId : '';
+      const alreadyRegistered = db
+        .listE2eeDevices({
+          organizationId: memberAccount.organizationId,
+          requesterAccountId: memberAccount.id,
+          accountIds: [memberAccount.id],
+          includeRevoked: true,
+        })
+        .some((candidate) => candidate.deviceId === requestedDeviceId);
       const device = db.registerE2eeDevice({
         organizationId: memberAccount.organizationId,
         accountId: memberAccount.id,
@@ -178,7 +198,10 @@ export async function handleCommunicationRoute({
       sendJSON(res, 200, { device });
     } catch (error) {
       sendJSON(res, 400, {
-        error: error instanceof Error ? error.message : 'E2EE device registration failed',
+        error:
+          error instanceof Error
+            ? error.message
+            : 'E2EE device registration failed',
       });
     }
     return true;
@@ -192,12 +215,84 @@ export async function handleCommunicationRoute({
         requesterAccountId: memberAccount.id,
         accountIds: accountIds.length > 0 ? accountIds : [memberAccount.id],
         includeRevoked: url.searchParams.get('includeRevoked') === 'true',
+        includePending: url.searchParams.get('includePending') === 'true',
       });
       res.setHeader('Cache-Control', 'no-store');
       sendJSON(res, 200, { devices });
     } catch (error) {
       sendJSON(res, 400, {
-        error: error instanceof Error ? error.message : 'E2EE device lookup failed',
+        error:
+          error instanceof Error ? error.message : 'E2EE device lookup failed',
+      });
+    }
+    return true;
+  }
+
+  if (path === '/enterprise/e2ee/key-transparency' && method === 'GET') {
+    try {
+      const accountId = url.searchParams.get('accountId') || memberAccount.id;
+      const transparency = db.listE2eeKeyTransparency({
+        organizationId: memberAccount.organizationId,
+        requesterAccountId: memberAccount.id,
+        accountId,
+      });
+      res.setHeader('Cache-Control', 'no-store');
+      sendJSON(res, 200, { transparency });
+    } catch (error) {
+      sendJSON(res, 400, {
+        error:
+          error instanceof Error
+            ? error.message
+            : 'E2EE transparency lookup failed',
+      });
+    }
+    return true;
+  }
+
+  const approveDeviceMatch = path.match(
+    /^\/enterprise\/e2ee\/devices\/([^/]+)\/approve$/,
+  );
+  if (approveDeviceMatch && method === 'POST') {
+    let targetDeviceId = '';
+    try {
+      targetDeviceId = decodeURIComponent(approveDeviceMatch[1] ?? '');
+    } catch {
+      // Invalid identifiers are rejected by the repository.
+    }
+    const body = await readBody(req, 16 * 1024);
+    try {
+      const device = db.approveE2eeDevice({
+        organizationId: memberAccount.organizationId,
+        accountId: memberAccount.id,
+        approverDeviceId:
+          typeof body.approverDeviceId === 'string'
+            ? body.approverDeviceId
+            : '',
+        targetDeviceId,
+        targetKeyFingerprint:
+          typeof body.targetKeyFingerprint === 'string'
+            ? body.targetKeyFingerprint
+            : '',
+        signature: typeof body.signature === 'string' ? body.signature : '',
+      });
+      db.logAudit(
+        'e2ee_device_approved',
+        memberAccount.employeeId,
+        JSON.stringify({
+          accountId: memberAccount.id,
+          approverDeviceId: device.approvedByDeviceId,
+          targetDeviceId: device.deviceId,
+          targetKeyFingerprint: device.keyFingerprint,
+        }),
+        memberAccount.organizationId,
+      );
+      sendJSON(res, 200, { device });
+    } catch (error) {
+      sendJSON(res, 400, {
+        error:
+          error instanceof Error
+            ? error.message
+            : 'E2EE device approval failed',
       });
     }
     return true;
@@ -206,7 +301,9 @@ export async function handleCommunicationRoute({
   if (path.startsWith('/enterprise/e2ee/devices/') && method === 'DELETE') {
     let deviceId = '';
     try {
-      deviceId = decodeURIComponent(path.slice('/enterprise/e2ee/devices/'.length));
+      deviceId = decodeURIComponent(
+        path.slice('/enterprise/e2ee/devices/'.length),
+      );
     } catch {
       // Invalid identifiers are rejected by the repository.
     }
@@ -231,7 +328,10 @@ export async function handleCommunicationRoute({
       );
     } catch (error) {
       sendJSON(res, 400, {
-        error: error instanceof Error ? error.message : 'E2EE device revocation failed',
+        error:
+          error instanceof Error
+            ? error.message
+            : 'E2EE device revocation failed',
       });
     }
     return true;
@@ -263,10 +363,7 @@ export async function handleCommunicationRoute({
       return true;
     });
     const peer = claimed
-      ? db.getAccount(
-          claimed.peerAccountId,
-          memberAccount.organizationId,
-        )
+      ? db.getAccount(claimed.peerAccountId, memberAccount.organizationId)
       : null;
     sendJSON(res, 200, {
       requests:
@@ -290,7 +387,9 @@ export async function handleCommunicationRoute({
   }
 
   if (path === '/enterprise/messages/unread' && method === 'GET') {
-    if (!db.getOrganizationFeatures(memberAccount.organizationId).direct_messages) {
+    if (
+      !db.getOrganizationFeatures(memberAccount.organizationId).direct_messages
+    ) {
       sendJSON(res, 403, { error: '企业内部消息功能已由管理员关闭' });
       return true;
     }
@@ -306,13 +405,17 @@ export async function handleCommunicationRoute({
   }
 
   if (path.startsWith('/enterprise/message-attachments/') && method === 'GET') {
-    if (!db.getOrganizationFeatures(memberAccount.organizationId).direct_messages) {
+    if (
+      !db.getOrganizationFeatures(memberAccount.organizationId).direct_messages
+    ) {
       sendJSON(res, 403, { error: 'enterprise direct messages are disabled' });
       return true;
     }
     let attachmentId = '';
     try {
-      attachmentId = decodeURIComponent(path.slice('/enterprise/message-attachments/'.length));
+      attachmentId = decodeURIComponent(
+        path.slice('/enterprise/message-attachments/'.length),
+      );
     } catch {
       // Invalid encoded ids are handled as missing attachments.
     }
@@ -330,12 +433,19 @@ export async function handleCommunicationRoute({
     return true;
   }
 
-  if (path.startsWith('/enterprise/messages/') && (method === 'GET' || method === 'POST')) {
-    if (!db.getOrganizationFeatures(memberAccount.organizationId).direct_messages) {
+  if (
+    path.startsWith('/enterprise/messages/') &&
+    (method === 'GET' || method === 'POST')
+  ) {
+    if (
+      !db.getOrganizationFeatures(memberAccount.organizationId).direct_messages
+    ) {
       sendJSON(res, 403, { error: '企业内部消息功能已由管理员关闭' });
       return true;
     }
-    const peerAccountId = decodeURIComponent(path.slice('/enterprise/messages/'.length));
+    const peerAccountId = decodeURIComponent(
+      path.slice('/enterprise/messages/'.length),
+    );
     const peer = db.getAccount(peerAccountId, memberAccount.organizationId);
     if (!peer || peer.status !== 'active') {
       sendJSON(res, 404, { error: '成员不存在或已停用' });
@@ -346,12 +456,14 @@ export async function handleCommunicationRoute({
       return true;
     }
     if (method === 'GET') {
-      sendJSON(res, 200, { messages: db.listE2eeDirectMessages({
-        organizationId: memberAccount.organizationId,
-        accountId: memberAccount.id,
-        peerAccountId,
-        limit: Number(url.searchParams.get('limit') || 100),
-      }) });
+      sendJSON(res, 200, {
+        messages: db.listE2eeDirectMessages({
+          organizationId: memberAccount.organizationId,
+          accountId: memberAccount.id,
+          peerAccountId,
+          limit: Number(url.searchParams.get('limit') || 100),
+        }),
+      });
       return true;
     }
     const body = await readBody(req, 30 * 1024 * 1024);
@@ -377,7 +489,8 @@ export async function handleCommunicationRoute({
         senderDeviceId: body.senderDeviceId as string,
         protocolVersion: 1,
         contentType:
-          body.contentType === 'atoa_request' || body.contentType === 'atoa_response'
+          body.contentType === 'atoa_request' ||
+          body.contentType === 'atoa_response'
             ? body.contentType
             : 'message',
         inReplyToMessageId:
@@ -388,8 +501,8 @@ export async function handleCommunicationRoute({
         nonce: body.nonce as string,
         signature: body.signature as string,
         envelopes: body.envelopes as db.E2eeMessageEnvelope[],
-        attachments:
-          body.attachments as db.E2eeAttachmentCiphertextInput[] | undefined,
+        attachments: body.attachments as
+          db.E2eeAttachmentCiphertextInput[] | undefined,
       });
       if (message.inReplyToMessageId) {
         atoaClaims.delete(
@@ -398,7 +511,9 @@ export async function handleCommunicationRoute({
       }
       sendJSON(res, 201, { message });
     } catch (error) {
-      sendJSON(res, 400, { error: error instanceof Error ? error.message : '消息发送失败' });
+      sendJSON(res, 400, {
+        error: error instanceof Error ? error.message : '消息发送失败',
+      });
     }
     return true;
   }

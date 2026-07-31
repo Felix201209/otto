@@ -42,6 +42,7 @@
     "size:source:check": "node scripts/source-size-report.mjs --check",
     "validate:boundaries": "node scripts/validate-boundaries.mjs",
     "sqlcipher:native:verify": "node scripts/verify-sqlcipher-native-assets.mjs",
+    "security:e2ee:release:verify": "node scripts/verify-e2ee-release-readiness.mjs",
     "benchmark:low-resource-agents": "node scripts/low-resource-multi-agent-benchmark.mjs",
     "build": "node scripts/build.js",
     "build:packages": "npm run build --workspace=packages/core && npm run build --workspace=packages/server",

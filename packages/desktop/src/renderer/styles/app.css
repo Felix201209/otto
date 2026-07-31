@@ -5555,11 +5555,14 @@ h6.otto-prose__h {
 .otto-hub__e2ee-device{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:12px;padding:13px 15px;border-bottom:1px solid var(--otto-border)}
 .otto-hub__e2ee-device>div:first-child{min-width:0;display:grid;gap:4px}.otto-hub__e2ee-device strong{font-size:12px}.otto-hub__e2ee-device>div:first-child span{overflow:hidden;color:var(--otto-text-tertiary);font:10px/1.4 var(--otto-font-mono);text-overflow:ellipsis;white-space:nowrap}
 .otto-hub__e2ee-confirm{display:flex;gap:6px}
+.otto-hub__e2ee-verification{grid-column:1/-1;display:grid!important;grid-template-columns:150px minmax(0,1fr);gap:14px;align-items:center;padding:12px;border:1px solid var(--otto-border);border-radius:10px;background:var(--otto-bg-secondary)}
+.otto-hub__e2ee-verification>div{display:grid;gap:8px}.otto-hub__e2ee-verification code{font:12px/1.7 var(--otto-font-mono);word-spacing:3px}.otto-hub__e2ee-verification span{color:var(--otto-text-tertiary);font-size:11px;line-height:1.5}.otto-hub__e2ee-verification .otto-hub__btn{justify-self:start}
+.otto-hub__e2ee-qr{display:block;width:150px;height:150px;border-radius:6px;background:#fff}
 .otto-hub__e2ee-recovery{display:grid;gap:12px;padding:15px}
 .otto-hub__e2ee-recovery-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:8px;align-items:start}
 .otto-hub__e2ee-recovery-grid--import{grid-template-columns:minmax(0,2fr) minmax(0,1fr) auto;padding-top:12px;border-top:1px solid var(--otto-border)}
 .otto-hub__e2ee-recovery-grid textarea.otto-hub__input{min-height:68px;padding-top:10px;resize:vertical}
-@media(max-width:720px){.otto-hub__privacy-summary{grid-template-columns:1fr}.otto-hub__privacy-summary>div{border-right:0;border-bottom:1px solid var(--otto-border)!important}.otto-hub__privacy-summary>div:last-child{border-bottom:0!important}.otto-hub__privacy-delete,.otto-hub__e2ee-recovery-grid{grid-template-columns:1fr}.otto-hub__e2ee-device{grid-template-columns:minmax(0,1fr) auto}.otto-hub__e2ee-device>.otto-hub__btn,.otto-hub__e2ee-confirm{grid-column:1/-1;justify-self:start}.otto-hub__privacy-activities summary{align-items:flex-start;flex-direction:column}.otto-hub__privacy-activities dl>div{grid-template-columns:1fr;gap:2px}}
+@media(max-width:720px){.otto-hub__privacy-summary{grid-template-columns:1fr}.otto-hub__privacy-summary>div{border-right:0;border-bottom:1px solid var(--otto-border)!important}.otto-hub__privacy-summary>div:last-child{border-bottom:0!important}.otto-hub__privacy-delete,.otto-hub__e2ee-recovery-grid,.otto-hub__e2ee-verification{grid-template-columns:1fr}.otto-hub__e2ee-device{grid-template-columns:minmax(0,1fr) auto}.otto-hub__e2ee-device>.otto-hub__btn,.otto-hub__e2ee-confirm{grid-column:1/-1;justify-self:start}.otto-hub__privacy-activities summary{align-items:flex-start;flex-direction:column}.otto-hub__privacy-activities dl>div{grid-template-columns:1fr;gap:2px}}
 
 /* ── 园区服务插件（右下角悬浮小钮 + 居中对话框）─────────────────── */
 /* 入口小钮：默认弱化只露图标，不抢聊天注意力；hover 提亮并横向展开标签。 */

@@ -107,6 +107,7 @@ const API_V2_HEALTH = {
     'multi_organization',
     'direct_messages',
     'e2ee_private_messages_v1',
+    'e2ee_device_trust_v1',
     'direct_message_attachments_v1',
     'atoa',
     'position_invites',

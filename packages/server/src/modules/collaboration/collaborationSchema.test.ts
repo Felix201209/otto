@@ -43,19 +43,25 @@ describe('collaboration schema contributor', () => {
         COLLABORATION_SCHEMA_CONTRIBUTOR,
       ]);
 
-      const columns = database.prepare(
-        'PRAGMA table_info(direct_messages)',
-      ).all() as Array<{ name: string }>;
-      expect(columns.map((column) => column.name)).toEqual(expect.arrayContaining([
-        'content_ciphertext',
-        'content_iv',
-        'content_auth_tag',
-        'content_key_version',
-        'content_type',
-      ]));
-      expect(database.prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_direct_messages_type'",
-      ).get()).toEqual({ name: 'idx_direct_messages_type' });
+      const columns = database
+        .prepare('PRAGMA table_info(direct_messages)')
+        .all() as Array<{ name: string }>;
+      expect(columns.map((column) => column.name)).toEqual(
+        expect.arrayContaining([
+          'content_ciphertext',
+          'content_iv',
+          'content_auth_tag',
+          'content_key_version',
+          'content_type',
+        ]),
+      );
+      expect(
+        database
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_direct_messages_type'",
+          )
+          .get(),
+      ).toEqual({ name: 'idx_direct_messages_type' });
     } finally {
       database.close();
     }
@@ -79,6 +85,8 @@ describe('collaboration schema contributor', () => {
              'account_presence',
              'direct_messages',
              'direct_message_attachments',
+             'e2ee_devices',
+             'e2ee_key_transparency_log',
              'idx_account_presence_org_seen',
              'idx_direct_messages_conversation',
              'idx_direct_messages_type',
@@ -95,6 +103,8 @@ describe('collaboration schema contributor', () => {
         { type: 'table', name: 'account_presence' },
         { type: 'table', name: 'direct_message_attachments' },
         { type: 'table', name: 'direct_messages' },
+        { type: 'table', name: 'e2ee_devices' },
+        { type: 'table', name: 'e2ee_key_transparency_log' },
       ]);
     } finally {
       database.close();
