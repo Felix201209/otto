@@ -1461,7 +1461,11 @@ export class Config {
     // 语音输入：真管线在 scripts/voice_bridge.py（已并入）；运行时另需 ffmpeg + python3 +
     // 本地 whisper 或云端转写 API。缺依赖时工具 fail-loud，不影响其它能力。
     await registerLazyCoreTool('VoiceBridgeTool', 'voice_bridge', async () => (await import('../tools/voice-bridge.js')).VoiceBridgeTool, this); // 语音输入（录音→转写→润色成指令）
-    await registerLazyCoreTool('DoctorTool', 'doctor', async () => (await import('../tools/doctor.js')).DoctorTool, this); // 依赖体检（一次性自检上述能力所需的外部二进制/模块）
+    await registerLazyCoreTool('DoctorTool', 'doctor', async () => (await import('../tools/doctor.js')).DoctorTool, this); // 依赖体检
+
+    // —— RPA 录制与回放（EasyClaw 兼容）——
+    await registerLazyCoreTool('RPArecorderTool', 'rpa_recorder', async () => (await import('../tools/rpa-recorder.js')).RPArecorderTool, this);
+    await registerLazyCoreTool('RPAReplayTool', 'rpa_replay', async () => (await import('../tools/rpa-replay.js')).RPAReplayTool, this);
 
     // Delegate-to-external-agent (ACP client). Drives the user's local Claude
     // Code; gracefully reports a readable error if the bridge isn't installed.
