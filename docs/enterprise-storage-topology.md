@@ -48,7 +48,8 @@ The remaining cutover work is:
 1. port repositories to asynchronous PostgreSQL contracts;
 2. add a resumable SQLite-to-PostgreSQL importer with row-count and hash checks;
 3. switch routes only after import verification, with a documented rollback;
-4. add shared object-storage and cache adapters;
+4. wire the implemented [attachment object-storage adapters](./security/attachment-object-storage.md)
+   and a shared cache into the asynchronous enterprise routes;
 5. qualify multiple replicas, backup/PITR and automatic failover.
 
 Until those stages are complete, PostgreSQL mode is a preparation target and

@@ -32,6 +32,11 @@ IDs, timestamps, read state, protocol content type, A2A reply relation, and
 ciphertext sizes. Attachment names, MIME types, bodies, and private message
 text are inside authenticated ciphertext.
 
+The shared [attachment object-storage boundary](./attachment-object-storage.md)
+stores those client-encrypted bytes under opaque object IDs. PostgreSQL, not an
+object path, remains authoritative for tenant access, upload state, and quota;
+optional storage-provider SSE-KMS is only a second layer beneath E2EE.
+
 ## Local key custody
 
 Private keys are stored below Electron `userData/enterprise-e2ee` only after
