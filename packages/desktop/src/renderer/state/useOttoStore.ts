@@ -97,6 +97,8 @@ export interface OttoState {
     previousModel: string | null;
     previousSessionModel?: string;
   };
+  /** Latest versioned lifecycle event; the protocol is the source of truth. */
+  runtimeActivity?: Extract<ServerToClient, { type: 'runtime_activity' }>['payload'];
 }
 
 const initialState: OttoState = {
@@ -599,6 +601,9 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
       if (!s) return nextState;
       return upsertSession(nextState, { ...s, status });
     }
+
+    case 'runtime_activity':
+      return { ...state, runtimeActivity: frame.payload };
 
     case 'models_list': {
       const pending = state.pendingModelSwitch;

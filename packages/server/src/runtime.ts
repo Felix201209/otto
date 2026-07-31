@@ -456,6 +456,17 @@ export class CoreSessionRuntime implements SessionRuntime {
     this.abort?.abort();
   }
 
+  private publishRuntimeActivity(
+    kind: 'agent' | 'tool' | 'turn',
+    state: 'started' | 'streaming' | 'awaiting_confirmation' | 'completed' | 'cancelled' | 'failed',
+    detail?: string,
+  ): void {
+    this.store.publish(this.sessionId, {
+      type: 'runtime_activity',
+      payload: { contractVersion: 1, sessionId: this.sessionId, kind, state, detail, timestamp: Date.now() },
+    });
+  }
+
   /**
    * 回传一个待确认工具的应答，唤醒 runToolCalls 里挂起的等待。
    * callId 无对应挂起时静默忽略（幂等：迟到 / 重复应答无害）。
@@ -582,6 +593,7 @@ export class CoreSessionRuntime implements SessionRuntime {
 
     try {
       this.store.setStatus(this.sessionId, 'thinking');
+      this.publishRuntimeActivity('turn', 'started');
       let turnCount = 0;
       const maxTurns = this.config.getMaxSessionTurns();
 
@@ -630,6 +642,7 @@ export class CoreSessionRuntime implements SessionRuntime {
             );
 
             this.store.setStatus(this.sessionId, 'streaming');
+            this.publishRuntimeActivity('agent', 'streaming');
             for await (const resp of responseStream) {
               if (signal.aborted) break;
               if (resp.candidates?.[0]?.finishReason) {
@@ -745,6 +758,7 @@ export class CoreSessionRuntime implements SessionRuntime {
           }
 
           this.store.setStatus(this.sessionId, 'idle');
+          this.publishRuntimeActivity('turn', 'completed');
           break;
         }
 
@@ -830,6 +844,7 @@ export class CoreSessionRuntime implements SessionRuntime {
           });
         }
         this.fail('core_error', message);
+        this.publishRuntimeActivity('turn', 'failed', message);
       }
     } finally {
       signal.removeEventListener('abort', onAbort);
@@ -874,6 +889,7 @@ export class CoreSessionRuntime implements SessionRuntime {
     }
     if (cards.size > 0) {
       this.publishToolCards(cards, messageId);
+      this.publishRuntimeActivity('tool', 'started', `${cards.size} 个工具调用`);
     }
 
     // AbortSignal 只保证通知，不保证工具实现会配合退出。先把卡片与持久消息立即收口；
@@ -1181,6 +1197,7 @@ export class CoreSessionRuntime implements SessionRuntime {
       };
       cards.set(callId, awaitingCard);
       this.publishToolCards(cards, messageId);
+      this.publishRuntimeActivity('tool', 'awaiting_confirmation', awaitingCard.toolName);
       this.store.publish(this.sessionId, {
         type: 'tool_confirmation_request',
         payload: {
@@ -1272,6 +1289,7 @@ export class CoreSessionRuntime implements SessionRuntime {
       });
     }
     this.store.setStatus(this.sessionId, 'idle');
+    this.publishRuntimeActivity('turn', 'cancelled');
   }
 
   /**

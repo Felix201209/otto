@@ -976,6 +976,20 @@ export type SessionStatusMsg = Envelope<
   { sessionId: string; status: SessionStatus }
 >;
 
+/** Versioned, renderer-safe lifecycle signal. Unlike tool cards this remains
+ * meaningful when a turn has no visible text yet or ends before a card exists. */
+export type RuntimeActivityMsg = Envelope<
+  'runtime_activity',
+  {
+    contractVersion: 1;
+    sessionId: string;
+    kind: 'agent' | 'tool' | 'turn';
+    state: 'started' | 'streaming' | 'awaiting_confirmation' | 'completed' | 'cancelled' | 'failed';
+    detail?: string;
+    timestamp: number;
+  }
+>;
+
 /** 错误帧。 */
 export type ErrorMsg = Envelope<
   'error',
@@ -1404,6 +1418,7 @@ export type ServerToClient =
   | ToolCallsUpdateMsg
   | ToolConfirmationRequestMsg
   | SessionStatusMsg
+  | RuntimeActivityMsg
   | ErrorMsg
   | IncrementalUpdateAvailableMsg
   | ModelsListMsg
