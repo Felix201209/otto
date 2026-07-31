@@ -85,8 +85,10 @@ function relativeSessionGroups(groups: SessionGroup[]): SessionGroup[] {
 interface SidebarProps {
   groups: SessionGroup[];
   activeSessionId: string | null;
-  /** 当前是否停在「设置与诊断中心」页（高亮该入口）。 */
+  /** 当前是否停在「设置」页（高亮该入口）。 */
   hubActive?: boolean;
+  /** 当前主内容区视图，用于导航高亮。 */
+  activeView?: string;
   accountManagementActive?: boolean;
   /** 静默检查发现新版 → 设置入口亮一个不打扰的小圆点（无弹窗）。 */
   updateBadge?: boolean;
@@ -101,6 +103,7 @@ interface SidebarProps {
   onNewChat: () => void;
   onOpenHub: () => void;
   onOpenAccounts?: () => void;
+  onNavigate?: (view: 'chat' | 'organization' | 'inbox' | 'work' | 'hub') => void;
   onJoinEnterprise?: (input: { inviteCode: string }) => Promise<void>;
   onLogout?: () => void | Promise<void>;
   onEnterpriseMessageRead?: (peerAccountId: string) => void;
@@ -115,6 +118,7 @@ export function Sidebar({
   groups,
   activeSessionId,
   hubActive = false,
+  activeView = 'chat',
   accountManagementActive = false,
   updateBadge = false,
   productWorkspace = null,
@@ -128,6 +132,7 @@ export function Sidebar({
   onNewChat,
   onOpenHub,
   onOpenAccounts,
+  onNavigate,
   onJoinEnterprise,
   onLogout,
   onEnterpriseMessageRead,
@@ -178,6 +183,38 @@ export function Sidebar({
         <IconPlus size={15} />
         新建对话
       </button>
+
+      {/* 主导航：五个一级入口，各自映射到主内容区的完整页面。 */}
+      {onNavigate ? (
+        <nav className="otto-sidebar__nav" aria-label="主导航">
+          {([
+            { key: 'chat', label: '工作台', view: 'chat' },
+            { key: 'organization', label: '组织架构', view: 'organization' },
+            { key: 'inbox', label: '我的消息', view: 'inbox' },
+            { key: 'work', label: '我的工作', view: 'work' },
+            { key: 'hub', label: '设置', view: 'hub' },
+          ] as const).map((item) => {
+            const isActive = activeView === item.view;
+            const unread = item.key === 'inbox'
+              ? Object.values(enterpriseUnreadCounts).reduce((s, c) => s + c, 0)
+              : 0;
+            return (
+              <button
+                key={item.key}
+                type="button"
+                className={`otto-sidebar__navitem${isActive ? ' is-active' : ''}`}
+                aria-current={isActive ? 'page' : undefined}
+                onClick={() => onNavigate(item.view)}
+              >
+                <span>{item.label}</span>
+                {unread > 0 ? (
+                  <b role="status" aria-label={`${unread} 条未读`}>{unread > 99 ? '99+' : unread}</b>
+                ) : null}
+              </button>
+            );
+          })}
+        </nav>
+      ) : null}
 
       <div className="otto-sidebar__workspace">
         <OrganizationTree

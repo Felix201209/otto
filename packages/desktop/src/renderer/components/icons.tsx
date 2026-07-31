@@ -46,7 +46,7 @@ export function IconMicrophone({ size, className }: IconProps): React.JSX.Elemen
   );
 }
 
-/** 智能体/机器人：带天线的方脑袋 + 双眼 + 两侧耳，作「智能体」入口图标。 */
+/** 专家/机器人：带天线的方脑袋 + 双眼 + 两侧耳，作「专家」入口图标。 */
 export function IconAgent({ size, className }: IconProps): React.JSX.Element {
   return (
     <svg {...base(size)} className={className}>

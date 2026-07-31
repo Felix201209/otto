@@ -55,6 +55,9 @@ import { DayAgenda } from './components/DayAgenda.js';
 import { SkillZonePage } from './components/SkillZonePage.js';
 import { EnterpriseLoginPage } from './components/EnterpriseLoginPage.js';
 import { AccountManagementPage } from './components/AccountManagementPage.js';
+import { OrganizationPage } from './components/OrganizationPage.js';
+import { InboxPage } from './components/InboxPage.js';
+import { WorkPage } from './components/WorkPage.js';
 import { useEnterpriseAuth } from './state/useEnterpriseAuth.js';
 import type {
   EnterpriseAccount,
@@ -104,8 +107,9 @@ const SILENT_UPDATE_CHECK_DELAY_MS = 15_000;
 const ENTERPRISE_UNREAD_POLL_INTERVAL_MS = 5_000;
 const ENTERPRISE_PRESENCE_HEARTBEAT_MS = 20_000;
 
-/** 主内容区当前视图：对话 / 智能体 / 设置 / 设置与诊断中心——均为整页，不再是弹窗浮层。 */
-type MainView = 'chat' | 'agents' | 'settings' | 'hub' | 'agenda' | 'skillzone' | 'accounts';
+/** 主内容区当前视图：对话 / 专家 / 组织架构 / 我的消息 / 我的工作 / 设置——均为整页。 */
+type MainView = 'chat' | 'agents' | 'settings' | 'hub' | 'agenda' | 'skillzone' | 'accounts'
+  | 'organization' | 'inbox' | 'work';
 
 type PendingToolConsult = {
   member: EnterpriseOrganizationView['members'][number];
@@ -840,6 +844,7 @@ function OttoWorkspaceApp({
         groups={groups}
         activeSessionId={state.activeSessionId}
         hubActive={mainView === 'hub'}
+        activeView={mainView}
         accountManagementActive={mainView === 'accounts'}
         updateBadge={softwareUpdate.state.badgeVisible}
         onSelect={(id) => {
@@ -849,6 +854,10 @@ function OttoWorkspaceApp({
         onNewChat={handleNewChat}
         onOpenHub={() => openHub('prefs')}
         onOpenAccounts={() => setMainView('accounts')}
+        onNavigate={(view) => {
+          if (view === 'hub') openHub('prefs');
+          else setMainView(view);
+        }}
         onViewAll={() => setAllConvOpen(true)}
         onRename={actions.renameSession}
         onDelete={actions.deleteSession}
@@ -865,8 +874,41 @@ function OttoWorkspaceApp({
         unreadSessions={state.unreadSessions}
       />
 
-      {/* 主内容区：设置 / 智能体 / 设置诊断中心 / 对话，整页切换（不再是弹窗）。 */}
-      {mainView === 'settings' ? (
+      {/* 主内容区：组织架构 / 我的消息 / 我的工作 / 设置 / 专家 / 对话，整页切换。 */}
+      {mainView === 'organization' ? (
+        <OrganizationPage
+          enterpriseAccount={account}
+          organizationRefreshRevision={organizationRefreshRevision}
+          schedules={product.state.schedules}
+          enterpriseUnreadCounts={enterpriseUnreadCounts}
+          enterpriseDirectChatOpenRequest={enterpriseDirectChatOpenRequest}
+          onMessageRead={markEnterpriseDirectMessageRead}
+          onBack={() => setMainView('chat')}
+        />
+      ) : mainView === 'inbox' ? (
+        <InboxPage
+          enterpriseAccount={account}
+          enterpriseUnreadCounts={enterpriseUnreadCounts}
+          onOpenDirectChat={(peerId) => {
+            setMainView('chat');
+            setOrganizationOpenRequest((r) => r + 1);
+            setEnterpriseDirectChatOpenRequest((cur) => ({
+              peerAccountId: peerId,
+              requestId: (cur?.requestId ?? 0) + 1,
+            }));
+          }}
+          onBack={() => setMainView('chat')}
+        />
+      ) : mainView === 'work' ? (
+        <WorkPage
+          schedules={product.state.schedules}
+          selectedDate={selectedDate}
+          onSelectDate={product.actions.selectDate}
+          onCreateSchedule={product.actions.createSchedule}
+          onDeleteSchedule={product.actions.deleteSchedule}
+          onBack={() => setMainView('chat')}
+        />
+      ) : mainView === 'settings' ? (
         <SetupPanel
           models={state.models}
           saving={saving}

@@ -28,7 +28,7 @@ import {
   IconTerminal,
 } from './icons.js';
 
-type TabType = 'agents' | 'tools' | 'documents' | 'memory' | 'worklog';
+type TabType = 'agents' | 'documents' | 'worklog';
 
 // server 构建产物更新前也保持 renderer 可独立 typecheck；字段由当前协议快照提供。
 type AuthenticatedWorkspaceSnapshot = ProductWorkspaceSnapshot & {
@@ -49,9 +49,7 @@ interface EnterpriseKnowledgeItem {
 
 const TAB_LABEL: Record<TabType, string> = {
   agents: '专家',
-  tools: '工具',
   documents: '文档',
-  memory: '企业记忆',
   worklog: '工作日志',
 };
 
@@ -141,12 +139,8 @@ export function RightPanel({
     : null;
   const [enterpriseKnowledgeEnabled, setEnterpriseKnowledgeEnabled] = useState(false);
   const tabs = useMemo<TabType[]>(
-    () => mode === 'enterprise'
-      ? enterpriseKnowledgeEnabled
-        ? ['agents', 'tools', 'documents', 'memory', 'worklog']
-        : ['agents', 'tools', 'documents', 'worklog']
-      : ['agents', 'tools', 'documents', 'worklog'],
-    [enterpriseKnowledgeEnabled, mode],
+    () => ['agents', 'documents', 'worklog'],
+    [],
   );
   const [activeTab, setActiveTab] = useState<TabType>('agents');
   const [collapsed, setCollapsed] = useState(false);
@@ -310,7 +304,7 @@ export function RightPanel({
   }, [activeTab, refreshWorkLog]);
 
   useEffect(() => {
-    if (activeTab === 'memory' && enterpriseKnowledgeEnabled) void refreshEnterpriseKnowledge();
+    if (activeTab === 'documents' && enterpriseKnowledgeEnabled) void refreshEnterpriseKnowledge();
   }, [activeTab, enterpriseKnowledgeEnabled, refreshEnterpriseKnowledge]);
 
   const worklogByDate = useMemo(
@@ -342,7 +336,7 @@ export function RightPanel({
       setCustomAgentError(
         error instanceof Error && error.message
           ? error.message
-          : '创建智能体失败，请重试',
+          : '创建专家失败，请重试',
       );
     } finally {
       setCustomAgentBusy(false);
@@ -421,7 +415,7 @@ export function RightPanel({
                   onClick={() => setDevelopmentOpen((value) => !value)}
                   aria-expanded={developmentOpen}
                 >
-                  <span>开发 AI 智能体</span>
+                  <span>开发 AI 专家</span>
                   <IconChevronDown
                     size={14}
                     className={`otto-right-panel__grouphead-chev${developmentOpen ? '' : ' is-collapsed'}`}
@@ -451,7 +445,7 @@ export function RightPanel({
             <div className="otto-right-panel__waist" role="separator" />
             <div className="otto-custom-agents__head">
               <div>
-                <strong>我的智能体</strong>
+                <strong>我的专家</strong>
                 <span>按当前账号保存，不会扩展账号权限</span>
               </div>
               <button
@@ -461,7 +455,7 @@ export function RightPanel({
                   setCreateAgentOpen(true);
                 }}
               >
-                创建智能体
+                创建专家
               </button>
             </div>
             {customAgents.length > 0 ? (
@@ -488,7 +482,7 @@ export function RightPanel({
                       aria-label={`删除${agent.name}`}
                       title={`删除${agent.name}`}
                       onClick={() => {
-                        if (window.confirm(`确定删除自定义智能体“${agent.name}”吗？`)) {
+                        if (window.confirm(`确定删除自定义专家“${agent.name}”吗？`)) {
                           onDeleteCustomAgent(agent.id);
                         }
                       }}
@@ -500,7 +494,7 @@ export function RightPanel({
               </div>
             ) : (
               <div className="otto-custom-agents__empty">
-                创建专属职责的工作智能体，之后可从这里继续启动。
+                创建专属职责的工作专家，之后可从这里继续启动。
               </div>
             )}
 
@@ -551,11 +545,8 @@ export function RightPanel({
                 </article>
               ))}
             </div>
-          </div>
-        ) : null}
-
-        {activeTab === 'tools' ? (
-          <div>
+            {/* 常用命令合入专家 tab：工具是专家的调用方式。 */}
+            <div className="otto-right-panel__waist" role="separator" />
             <div className="otto-right-panel__head">常用命令</div>
             <div className="otto-right-panel__hint">点击把命令填入输入框，回车执行</div>
             <div className="otto-tool-list">
@@ -595,48 +586,49 @@ export function RightPanel({
                 return window.otto.saveTextFile(file.name, content);
               }}
             />
-          </div>
-        ) : null}
-
-        {activeTab === 'memory' && enterpriseKnowledgeEnabled ? (
-          <div>
-            <div className="otto-worklog-panel__head">
-              <div>
-                <strong>企业记忆</strong>
-                <span>组织与部门沉淀的真实知识</span>
-              </div>
-              <button type="button" disabled={knowledgeLoading} onClick={() => void refreshEnterpriseKnowledge()}>
-                {knowledgeLoading ? '加载中' : '刷新'}
-              </button>
-            </div>
-            {knowledgeError ? (
-              <div className="otto-right-panel__empty">
-                企业记忆加载失败：{knowledgeError}
-              </div>
-            ) : knowledgeLoading && knowledgeItems.length === 0 ? (
-              <div className="otto-right-panel__empty">正在加载企业记忆…</div>
-            ) : knowledgeItems.length === 0 ? (
-              <div className="otto-right-panel__empty">
-                暂无企业记忆。Otto 会在企业会话中把已确认、已去重的工作知识同步到这里。
-              </div>
-            ) : (
-              <div className="otto-enterprise-memory-list">
-                {knowledgeItems.map((item) => (
-                  <article key={item.id} className="otto-enterprise-memory-card">
-                    <div className="otto-enterprise-memory-card__meta">
-                      <span>{item.department || '全组织'}</span>
-                      <span>{item.category}</span>
-                      <span>{Math.round(item.confidence * 100)}%</span>
-                    </div>
-                    <p>{item.content}</p>
-                    <div className="otto-enterprise-memory-card__foot">
-                      {item.contributor ? <span>{item.contributor}</span> : <span>系统沉淀</span>}
-                      <span>{formatEnterpriseMemoryDate(item.createdAt)}</span>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            )}
+            {/* 企业记忆合入文档 tab：知识和文档都是信息载体。 */}
+            {mode === 'enterprise' && enterpriseKnowledgeEnabled ? (
+              <>
+                <div className="otto-right-panel__waist" role="separator" />
+                <div className="otto-worklog-panel__head">
+                  <div>
+                    <strong>企业记忆</strong>
+                    <span>组织与部门沉淀的真实知识</span>
+                  </div>
+                  <button type="button" disabled={knowledgeLoading} onClick={() => void refreshEnterpriseKnowledge()}>
+                    {knowledgeLoading ? '加载中' : '刷新'}
+                  </button>
+                </div>
+                {knowledgeError ? (
+                  <div className="otto-right-panel__empty">
+                    企业记忆加载失败：{knowledgeError}
+                  </div>
+                ) : knowledgeLoading && knowledgeItems.length === 0 ? (
+                  <div className="otto-right-panel__empty">正在加载企业记忆…</div>
+                ) : knowledgeItems.length === 0 ? (
+                  <div className="otto-right-panel__empty">
+                    暂无企业记忆。Otto 会在企业会话中把已确认、已去重的工作知识同步到这里。
+                  </div>
+                ) : (
+                  <div className="otto-enterprise-memory-list">
+                    {knowledgeItems.map((item) => (
+                      <article key={item.id} className="otto-enterprise-memory-card">
+                        <div className="otto-enterprise-memory-card__meta">
+                          <span>{item.department || '全组织'}</span>
+                          <span>{item.category}</span>
+                          <span>{Math.round(item.confidence * 100)}%</span>
+                        </div>
+                        <p>{item.content}</p>
+                        <div className="otto-enterprise-memory-card__foot">
+                          {item.contributor ? <span>{item.contributor}</span> : <span>系统沉淀</span>}
+                          <span>{formatEnterpriseMemoryDate(item.createdAt)}</span>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : null}
           </div>
         ) : null}
 
@@ -697,16 +689,16 @@ export function RightPanel({
             className="otto-custom-agent-dialog"
             role="dialog"
             aria-modal="true"
-            aria-label="创建智能体"
+            aria-label="创建专家"
           >
             <div className="otto-custom-agent-dialog__head">
               <div>
-                <strong>创建智能体</strong>
+                <strong>创建专家</strong>
                 <span>定义工作职责，权限仍以当前登录账号为准</span>
               </div>
               <button
                 type="button"
-                aria-label="关闭创建智能体"
+                aria-label="关闭创建专家"
                 disabled={customAgentBusy}
                 onClick={closeCreateAgent}
               >
@@ -715,7 +707,7 @@ export function RightPanel({
             </div>
             <form onSubmit={(event) => void submitCustomAgent(event)}>
               <label>
-                <span>智能体名称</span>
+                <span>专家名称</span>
                 <input
                   autoFocus
                   maxLength={40}

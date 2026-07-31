@@ -101,7 +101,7 @@ interface ChatViewProps {
   onRespondQuestion?: RespondQuestionFn;
   /** 打开「模型与 BYO-key 设置」面板（接到 Composer 模型菜单的「管理模型」入口）。 */
   onOpenSetup: () => void;
-  /** 切换右侧智能体面板显示/隐藏。 */
+  /** 切换右侧专家面板显示/隐藏。 */
   onToggleAgents: () => void;
   /** 斜杠命令 `/new`：新建会话（App handleNewChat）。 */
   onNewChat: () => void;
@@ -321,8 +321,8 @@ export function ChatView({
             type="button"
             className="otto-topbar-setup"
             onClick={onToggleAgents}
-            title="智能体面板"
-            aria-label="智能体面板"
+            title="专家面板"
+            aria-label="专家面板"
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
               <rect x="3" y="3" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.6" />

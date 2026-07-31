@@ -367,12 +367,11 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(parkOpen).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the Feishu status and multi-channel shortcuts in the tools tab', () => {
+  it('keeps the Feishu status and multi-channel shortcuts in the agents tab', () => {
     installBridge();
     render(<RightPanel busy={false} />);
 
-    fireEvent.click(screen.getByRole('tab', { name: '工具' }));
-
+    // 工具命令已合入专家 tab，不需要切换。
     expect(screen.getByText('/feishu-status')).toBeTruthy();
     expect(screen.getByText('/multi-channel')).toBeTruthy();
     expect(screen.getByText('点击把命令填入输入框，回车执行')).toBeTruthy();
@@ -396,7 +395,6 @@ describe('RightPanel fixed Agent catalog', () => {
 
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
       '专家',
-      '工具',
       '文档',
       '工作日志',
     ]);
@@ -558,7 +556,7 @@ describe('RightPanel fixed Agent catalog', () => {
 
     await waitFor(() => {
       expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-        '专家', '工具', '文档', '企业记忆', '工作日志',
+        '专家', '文档', '工作日志',
       ]);
     });
     fireEvent.click(screen.getByRole('button', { name: 'Skill 专区' }));
@@ -595,7 +593,8 @@ describe('RightPanel fixed Agent catalog', () => {
       />,
     );
 
-    fireEvent.click(await screen.findByRole('tab', { name: '企业记忆' }));
+    // 企业记忆已合入文档 tab
+    fireEvent.click(await screen.findByRole('tab', { name: '文档' }));
 
     expect(await screen.findByText('客户部署必须先完成企业邀请码校验。')).toBeTruthy();
     expect(screen.getByText('研发部')).toBeTruthy();
@@ -615,6 +614,7 @@ describe('RightPanel fixed Agent catalog', () => {
     );
 
     await waitFor(() => expect(bridge.enterpriseOrganizationFeaturesGet).toHaveBeenCalledOnce());
+    // 企业记忆合入文档 tab；未启用时文档 tab 内不显示企业记忆区域
     expect(screen.queryByRole('tab', { name: '企业记忆' })).toBeNull();
     expect(bridge.enterpriseKnowledgeList).not.toHaveBeenCalled();
   });
@@ -629,15 +629,16 @@ describe('RightPanel fixed Agent catalog', () => {
       />,
     );
 
-    const memoryTab = await screen.findByRole('tab', { name: '企业记忆' });
+    // 企业记忆合入文档 tab，先切到文档触发加载
+    const docsTab = await screen.findByRole('tab', { name: '文档' });
     bridge.enterpriseOrganizationFeaturesGet.mockRejectedValueOnce(
       new Error('组织功能快照暂时不可用'),
     );
-    fireEvent.click(memoryTab);
+    fireEvent.click(docsTab);
 
     await waitFor(() => {
       expect(bridge.enterpriseOrganizationFeaturesGet).toHaveBeenCalledTimes(2);
-      expect(screen.queryByRole('tab', { name: '企业记忆' })).toBeNull();
+      expect(screen.queryByText('企业记忆')).toBeNull();
     });
     expect(bridge.enterpriseKnowledgeList).not.toHaveBeenCalled();
   });
