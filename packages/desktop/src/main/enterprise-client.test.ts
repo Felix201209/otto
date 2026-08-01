@@ -2,6 +2,7 @@
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
 
+import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import {
   EnterpriseClient,
@@ -33,6 +34,7 @@ const E2EE_DEVICE = {
 function mockE2eeCrypto(input: {
   decryptContent?: string;
   decryptedAttachments?: Array<{ id: string; fileName: string; mimeType: string; size: number }>;
+  encryptedAttachments?: Array<{ id: string; ciphertext: string; nonce: string }>;
 } = {}): EnterpriseE2eeCrypto {
   return {
     localDevice: vi.fn(() => E2EE_DEVICE),
@@ -58,7 +60,7 @@ function mockE2eeCrypto(input: {
       nonce: 'AAAAAAAAAAAAAAAA',
       signature: 'c2lnbmF0dXJl',
       envelopes: [],
-      attachments: [],
+      attachments: input.encryptedAttachments ?? [],
     })),
     decryptMessage: vi.fn(({ message }: { message: EnterpriseE2eeWireMessage }) => ({
       id: message.id,
@@ -1640,5 +1642,189 @@ describe('EnterpriseClient', () => {
       success: true,
       eventId: 'a'.repeat(64),
     });
+  });
+
+  it('uploads E2EE ciphertext before sending PostgreSQL attachment references', async () => {
+    const ciphertext = Buffer.alloc(32, 5);
+    const checksum = createHash('sha256').update(ciphertext).digest('hex');
+    const encryptedAttachment = {
+      id: 'attachment-s3-1',
+      ciphertext: ciphertext.toString('base64'),
+      nonce: Buffer.alloc(12, 3).toString('base64'),
+    };
+    const responseMessage: EnterpriseE2eeWireMessage = {
+      id: 'message-1',
+      senderAccountId: 'acc_1',
+      recipientAccountId: 'acc_peer',
+      senderDeviceId: 'device-1',
+      senderIdentitySigningPublicKey: 'test signing key',
+      protocolVersion: 1,
+      contentType: 'message',
+      inReplyToMessageId: null,
+      ciphertext: 'ciphertext',
+      nonce: 'nonce',
+      signature: 'signature',
+      envelopes: [],
+      createdAt: '2026-08-01T00:00:00.000Z',
+      readAt: null,
+      attachments: [
+        {
+          id: encryptedAttachment.id,
+          ciphertextSize: ciphertext.length,
+          nonce: encryptedAttachment.nonce,
+        },
+      ],
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, {
+        ...API_V2_HEALTH,
+        capabilities: [
+          ...API_V2_HEALTH.capabilities,
+          'e2ee_attachment_objects_v1',
+        ],
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT,
+        token: 'session-token',
+        expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, { device: E2EE_DEVICE }))
+      .mockResolvedValueOnce(jsonResponse(200, emptyTransparency('acc_1')))
+      .mockResolvedValueOnce(jsonResponse(200, emptyTransparency('acc_peer')))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        devices: [
+          E2EE_DEVICE,
+          { ...E2EE_DEVICE, accountId: 'acc_peer', deviceId: 'peer-device' },
+        ],
+      }))
+      .mockResolvedValueOnce(jsonResponse(201, {
+        attachment: {
+          id: encryptedAttachment.id,
+          ciphertextBytes: ciphertext.length,
+          ciphertextSha256: checksum,
+        },
+      }))
+      .mockResolvedValueOnce(jsonResponse(201, { message: responseMessage }));
+    const client = new EnterpriseClient(
+      fetchMock as typeof fetch,
+      () => undefined,
+      mockE2eeCrypto({ encryptedAttachments: [encryptedAttachment] }),
+    );
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await client.sendDirectMessage('acc_peer', 'encrypted attachment', [
+      {
+        fileName: 'private.bin',
+        mimeType: 'application/octet-stream',
+        size: 16,
+        data: Buffer.alloc(16).toString('base64'),
+      },
+    ]);
+
+    expect(fetchMock.mock.calls[6]?.[0]).toBe(
+      'https://enterprise.otto.test/enterprise/attachments/inline',
+    );
+    const uploadBody = JSON.parse(
+      String((fetchMock.mock.calls[6]?.[1] as RequestInit).body),
+    ) as Record<string, unknown>;
+    expect(uploadBody).toMatchObject({
+      peerAccountId: 'acc_peer',
+      attachmentId: encryptedAttachment.id,
+      ciphertextSha256: checksum,
+    });
+    const messageBody = JSON.parse(
+      String((fetchMock.mock.calls[7]?.[1] as RequestInit).body),
+    ) as {
+      attachments: unknown[];
+      attachmentReferences: unknown[];
+    };
+    expect(messageBody.attachments).toEqual([]);
+    expect(messageBody.attachmentReferences).toEqual([
+      {
+        id: encryptedAttachment.id,
+        nonce: encryptedAttachment.nonce,
+        ciphertextBytes: ciphertext.length,
+        ciphertextSha256: checksum,
+      },
+    ]);
+    expect(JSON.stringify(messageBody)).not.toContain(
+      encryptedAttachment.ciphertext,
+    );
+  });
+
+  it('stops before local decryption when a presigned attachment fails integrity checks', async () => {
+    const responseMessage: EnterpriseE2eeWireMessage = {
+      id: 'message-1',
+      senderAccountId: 'acc_peer',
+      recipientAccountId: 'acc_1',
+      senderDeviceId: 'peer-device',
+      senderIdentitySigningPublicKey: 'test signing key',
+      protocolVersion: 1,
+      contentType: 'message',
+      inReplyToMessageId: null,
+      ciphertext: 'ciphertext',
+      nonce: 'nonce',
+      signature: 'signature',
+      envelopes: [],
+      createdAt: '2026-08-01T00:00:00.000Z',
+      readAt: null,
+      attachments: [
+        {
+          id: 'attachment-s3-1',
+          ciphertextSize: 32,
+          nonce: Buffer.alloc(12, 3).toString('base64'),
+        },
+      ],
+    };
+    const e2ee = mockE2eeCrypto();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT,
+        token: 'session-token',
+        expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        attachment: {
+          message: responseMessage,
+          attachment: {
+            id: 'attachment-s3-1',
+            nonce: Buffer.alloc(12, 3).toString('base64'),
+            ciphertextBytes: 32,
+            ciphertextSha256: '0'.repeat(64),
+            download: {
+              method: 'GET',
+              url: 'https://objects.otto.test/signed-object',
+              expiresInSeconds: 120,
+              requiredHeaders: {},
+            },
+          },
+        },
+      }))
+      .mockResolvedValueOnce(
+        new Response(Buffer.alloc(32, 9), { status: 200 }),
+      );
+    const client = new EnterpriseClient(
+      fetchMock as typeof fetch,
+      () => undefined,
+      e2ee,
+    );
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(
+      client.getDirectMessageAttachment('attachment-s3-1'),
+    ).rejects.toThrow('shared attachment download integrity check failed');
+    expect(fetchMock.mock.calls[3]?.[0]).toBe(
+      'https://objects.otto.test/signed-object',
+    );
+    expect(e2ee.decryptAttachment).not.toHaveBeenCalled();
   });
 });

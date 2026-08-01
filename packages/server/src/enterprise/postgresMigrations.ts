@@ -367,6 +367,60 @@ CREATE TABLE otto_sqlite_import_promotions (
   promoted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );`,
   },
+  {
+    version: 5,
+    name: 'attachment-tenant-authority',
+    sql: `
+ALTER TABLE attachment_storage_quotas
+  ADD CONSTRAINT attachment_storage_quotas_organization_fk
+  FOREIGN KEY (organization_id)
+  REFERENCES organizations(id) ON DELETE CASCADE;
+
+ALTER TABLE attachment_objects
+  ADD CONSTRAINT attachment_objects_organization_fk
+  FOREIGN KEY (organization_id)
+  REFERENCES organizations(id) ON DELETE CASCADE;
+
+ALTER TABLE attachment_objects
+  ADD CONSTRAINT attachment_objects_owner_fk
+  FOREIGN KEY (owner_account_id, organization_id)
+  REFERENCES accounts(id, organization_id) ON DELETE CASCADE;
+
+ALTER TABLE attachment_object_access
+  ADD CONSTRAINT attachment_object_access_account_fk
+  FOREIGN KEY (account_id, organization_id)
+  REFERENCES accounts(id, organization_id) ON DELETE CASCADE;
+
+ALTER TABLE attachment_objects
+  DROP CONSTRAINT attachment_objects_migration_state_check;
+ALTER TABLE attachment_objects
+  ADD CONSTRAINT attachment_objects_migration_state_check
+  CHECK (migration_state IN (
+    'none', 'copying', 'verified', 'failed', 'purging', 'orphan_cleaning'
+  ));
+
+ALTER TABLE direct_messages
+  ADD CONSTRAINT direct_messages_id_organization_unique
+  UNIQUE (id, organization_id);
+
+CREATE TABLE direct_message_attachment_objects (
+  attachment_id TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL,
+  ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 0 AND 5),
+  e2ee_nonce TEXT NOT NULL,
+  ciphertext_bytes BIGINT NOT NULL CHECK (ciphertext_bytes > 16),
+  ciphertext_sha256 TEXT NOT NULL CHECK (ciphertext_sha256 ~ '^[0-9a-f]{64}$'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (message_id, ordinal),
+  FOREIGN KEY (message_id, organization_id)
+    REFERENCES direct_messages(id, organization_id) ON DELETE CASCADE,
+  FOREIGN KEY (attachment_id, organization_id)
+    REFERENCES attachment_objects(id, organization_id) ON DELETE RESTRICT
+);
+CREATE INDEX direct_message_attachment_objects_message
+  ON direct_message_attachment_objects (message_id, ordinal);`,
+  },
 ];
 
 export const ENTERPRISE_POSTGRES_SCHEMA_VERSION =

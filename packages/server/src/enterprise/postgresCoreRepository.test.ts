@@ -25,7 +25,9 @@ function result<Row extends Record<string, unknown>>(
 
 describe('PostgreSQL enterprise core authority', () => {
   it('installs authoritative organization, account, session, audit and E2EE tables', () => {
-    const migration = ENTERPRISE_POSTGRES_MIGRATIONS.at(-1);
+    const migration = ENTERPRISE_POSTGRES_MIGRATIONS.find(
+      (candidate) => candidate.version === 4,
+    );
     expect(migration).toMatchObject({
       version: 4,
       name: 'enterprise-core-domain',
@@ -44,6 +46,24 @@ describe('PostgreSQL enterprise core authority', () => {
     }
     expect(migration!.sql).toContain('token_hash TEXT PRIMARY KEY');
     expect(migration!.sql).not.toContain('token TEXT PRIMARY KEY');
+  });
+
+  it('enforces attachment tenant and account ownership in PostgreSQL', () => {
+    const migration = ENTERPRISE_POSTGRES_MIGRATIONS.find(
+      (candidate) => candidate.version === 5,
+    );
+    expect(migration).toMatchObject({
+      name: 'attachment-tenant-authority',
+    });
+    expect(migration!.sql).toContain(
+      'FOREIGN KEY (owner_account_id, organization_id)',
+    );
+    expect(migration!.sql).toContain(
+      'FOREIGN KEY (account_id, organization_id)',
+    );
+    expect(migration!.sql).toContain(
+      'CREATE TABLE direct_message_attachment_objects',
+    );
   });
 
   it('normalizes mainland phone numbers without importing the SQLite repository', () => {
@@ -102,6 +122,44 @@ describe('PostgreSQL enterprise core authority', () => {
     expect(queries[0]!.values).not.toContain('Admin@Example.COM');
   });
 
+  it('claims only expired unbound S3 objects outside legal hold', async () => {
+    const queries: string[] = [];
+    const pool: PostgresPoolLike = {
+      connect: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        queries.push(sql);
+        return result([
+          {
+            id: 'att-unbound',
+            organization_id: 'org_default',
+            storage_key: 'attachments/v1/ab/opaque.bin',
+            ciphertext_bytes: 64,
+          },
+        ]);
+      }),
+      end: vi.fn(),
+    };
+    const repository = createPostgresEnterpriseCoreRepository({ pool });
+
+    await expect(
+      repository.claimExpiredUnboundAttachments({
+        before: '2026-08-01T00:00:00.000Z',
+      }),
+    ).resolves.toEqual([
+      {
+        id: 'att-unbound',
+        organizationId: 'org_default',
+        key: 'attachments/v1/ab/opaque.bin',
+        ciphertextBytes: 64,
+      },
+    ]);
+    expect(queries[0]).toContain('object.legal_hold = FALSE');
+    expect(queries[0]).toContain(
+      'NOT EXISTS (\n             SELECT 1 FROM direct_message_attachment_objects',
+    );
+    expect(queries[0]).toContain("migration_state = 'orphan_cleaning'");
+  });
+
   it('rolls back an account transaction when PostgreSQL rejects a write', async () => {
     const statements: string[] = [];
     const client: PostgresClientLike = {
@@ -149,7 +207,7 @@ describe('PostgreSQL enterprise core authority', () => {
     expect(client.release).toHaveBeenCalledOnce();
   });
 
-  it('rejects E2EE attachment writes until the shared S3 route is mounted', async () => {
+  it('rejects inline E2EE attachment bodies after the shared S3 route is mounted', async () => {
     const pool: PostgresPoolLike = {
       connect: vi.fn(),
       query: vi.fn(),
@@ -177,7 +235,7 @@ describe('PostgreSQL enterprise core authority', () => {
           },
         ],
       }),
-    ).rejects.toThrow('require the S3 route service');
+    ).rejects.toThrow('must be uploaded before sending the message');
     expect(pool.connect).not.toHaveBeenCalled();
   });
 });

@@ -18,18 +18,29 @@ import type {
   E2eeAttachmentCiphertextInput,
   E2eeMessageEnvelope,
 } from '../modules/collaboration/index.js';
+import { E2EE_ATTACHMENT_MAX_CIPHERTEXT_BYTES } from '../modules/collaboration/index.js';
 import {
   buildNodePostgresPoolConfig,
+  ciphertextSha256,
   createNodePostgresPool,
   createPostgresDatabaseLifecycle,
-  describeEnterpriseDatabaseTopology,
   resolveEnterpriseDatabaseTopology,
+  type ClusteredEnterpriseInfrastructureReadiness,
+  type AttachmentMultipartPart,
+  type createAttachmentStorageService,
   type PostgresDatabaseReadiness,
 } from '../modules/data_platform/index.js';
+import { createClusteredAttachmentMaintenance } from './clusteredAttachmentMaintenance.js';
+import {
+  createClusteredEnterpriseInfrastructure,
+  type ClusteredEnterpriseInfrastructure,
+} from './clusteredInfrastructure.js';
+import type { ClusteredEnterpriseSharedState } from './clusteredSharedState.js';
 import {
   createPostgresEnterpriseCoreRepository,
   type PostgresEnterpriseAccountView,
   type PostgresEnterpriseCoreRepository,
+  type PostgresE2eeAttachmentReferenceInput,
   type UpdatePostgresEnterpriseAccountInput,
 } from './postgresCoreRepository.js';
 import { ENTERPRISE_POSTGRES_MIGRATIONS } from './postgresMigrations.js';
@@ -44,8 +55,12 @@ export interface ClusteredEnterpriseServerOptions {
   adminToken?: string;
   appVersion?: string;
   buildCommit?: string;
+  infrastructure?: ClusteredEnterpriseInfrastructure;
+  /** @deprecated Inject the complete clustered infrastructure instead. */
   repository?: PostgresEnterpriseCoreRepository;
+  /** @deprecated Inject the complete clustered infrastructure instead. */
   databaseReadiness?: () => Promise<PostgresDatabaseReadiness>;
+  /** @deprecated Inject the complete clustered infrastructure instead. */
   closeDatabase?: () => Promise<void>;
   bootstrapAdmin?: {
     username: string;
@@ -55,6 +70,9 @@ export interface ClusteredEnterpriseServerOptions {
 }
 
 type JsonBody = Record<string, unknown>;
+type AttachmentStorageService = ReturnType<
+  typeof createAttachmentStorageService
+>;
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, {
@@ -120,6 +138,15 @@ function constantTimeTokenEqual(left: string, right: string): boolean {
 
 function routeErrorStatus(error: unknown): number {
   const message = error instanceof Error ? error.message : String(error);
+  if (
+    /redis|s3|shared infrastructure|database operation failed|econn|socket|timeout|timed out|connection closed/i.test(
+      message,
+    )
+  ) {
+    return 503;
+  }
+  if (/attachment access denied/i.test(message)) return 404;
+  if (/attachment storage quota exceeded/i.test(message)) return 413;
   if (/not found|unavailable/i.test(message)) return 404;
   if (/already|unique|duplicate|retain one active administrator/i.test(message)) {
     return 409;
@@ -130,15 +157,24 @@ function routeErrorStatus(error: unknown): number {
 function safeRouteError(error: unknown): string {
   const message = error instanceof Error ? error.message : 'request failed';
   if (/postgres(?:ql)?:\/\//i.test(message)) return 'database operation failed';
-  return message.slice(0, 500);
+  if (/redis(?:s)?:\/\/|s3|shared infrastructure|econn|socket/i.test(message)) {
+    return 'shared infrastructure operation failed';
+  }
+  return message
+    .replace(/https?:\/\/[^\s]+/giu, '[REDACTED]')
+    .slice(0, 500);
 }
 
 async function requireMember(
   repository: PostgresEnterpriseCoreRepository,
   req: IncomingMessage,
   res: ServerResponse,
+  sharedState?: ClusteredEnterpriseSharedState,
 ): Promise<PostgresEnterpriseAccountView | null> {
-  const account = await repository.getAccountBySession(bearerToken(req));
+  const token = bearerToken(req);
+  const account = sharedState
+    ? await sharedState.getAccountBySession(token)
+    : await repository.getAccountBySession(token);
   if (!account) {
     sendJson(res, 401, { error: 'login expired', code: 'AUTH_REQUIRED' });
     return null;
@@ -159,6 +195,7 @@ async function requireAdministrator(input: {
   req: IncomingMessage;
   res: ServerResponse;
   adminToken: string;
+  sharedState?: ClusteredEnterpriseSharedState;
 }): Promise<
   | { kind: 'system'; organizationId: string }
   | { kind: 'account'; organizationId: string; account: PostgresEnterpriseAccountView }
@@ -167,7 +204,12 @@ async function requireAdministrator(input: {
   if (isSystemAdmin(input.req, input.adminToken)) {
     return { kind: 'system', organizationId: input.repository.defaultOrganizationId };
   }
-  const account = await requireMember(input.repository, input.req, input.res);
+  const account = await requireMember(
+    input.repository,
+    input.req,
+    input.res,
+    input.sharedState,
+  );
   if (!account) return null;
   if (!account.isAdmin) {
     sendJson(input.res, 403, {
@@ -220,6 +262,41 @@ function accountPatch(
   };
 }
 
+function attachmentCiphertext(value: unknown): Buffer {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error('attachment ciphertext is required');
+  }
+  const normalized = value.trim();
+  const ciphertext = Buffer.from(normalized, 'base64');
+  if (
+    ciphertext.length <= 16 ||
+    ciphertext.length > E2EE_ATTACHMENT_MAX_CIPHERTEXT_BYTES ||
+    ciphertext.toString('base64').replace(/=+$/u, '') !==
+      normalized.replace(/=+$/u, '')
+  ) {
+    throw new Error('attachment ciphertext is invalid');
+  }
+  return ciphertext;
+}
+
+function publicAttachmentMetadata(metadata: {
+  id: string;
+  state: string;
+  ciphertextBytes: number;
+  ciphertextSha256: string;
+  encryption: string;
+  expiresAt: string;
+}) {
+  return {
+    id: metadata.id,
+    state: metadata.state,
+    ciphertextBytes: metadata.ciphertextBytes,
+    ciphertextSha256: metadata.ciphertextSha256,
+    encryption: metadata.encryption,
+    expiresAt: metadata.expiresAt,
+  };
+}
+
 export function createClusteredEnterpriseServer(
   repository: PostgresEnterpriseCoreRepository,
   options: {
@@ -229,6 +306,10 @@ export function createClusteredEnterpriseServer(
     appVersion?: string;
     buildCommit?: string;
     databaseReadiness?: () => Promise<PostgresDatabaseReadiness>;
+    infrastructureReadiness?: () => Promise<ClusteredEnterpriseInfrastructureReadiness>;
+    topologyDescription?: Record<string, unknown>;
+    sharedState?: ClusteredEnterpriseSharedState;
+    attachmentStorage?: AttachmentStorageService;
     startedAt?: string;
   } = {},
 ): {
@@ -248,10 +329,12 @@ export function createClusteredEnterpriseServer(
     const method = req.method || 'GET';
     try {
       if (path === '/enterprise/health' && method === 'GET') {
-        const [database, authority] = await Promise.all([
+        const [infrastructure, databaseProbe, authority] = await Promise.all([
+          options.infrastructureReadiness?.(),
           options.databaseReadiness?.(),
           repository.readiness(),
         ]);
+        const database = infrastructure?.database ?? databaseProbe ?? authority;
         sendJson(res, 200, {
           status: 'ok',
           apiVersion: 4,
@@ -260,16 +343,34 @@ export function createClusteredEnterpriseServer(
             buildCommit: options.buildCommit || 'unknown',
             startedAt,
           },
-          topology: { mode: 'clustered-enterprise', database: 'postgresql' },
-          database: database ?? authority,
+          topology:
+            options.topologyDescription ??
+            { mode: 'clustered-enterprise', database: 'postgresql' },
+          database,
+          services: infrastructure
+            ? {
+                cache: infrastructure.cache,
+                attachments: infrastructure.attachments,
+              }
+            : undefined,
           authority,
           capabilities: [
             'password_auth',
             'multi_organization',
             'organization_structure_v1',
+            'direct_messages',
+            'unread_message_notifications_v1',
             'e2ee_private_messages_v1',
             'e2ee_device_trust_v1',
             'postgresql_authority_v1',
+            ...(options.attachmentStorage
+              ? [
+                  'direct_message_attachments_v1',
+                  'e2ee_attachment_objects_v1',
+                  's3_multipart_uploads_v1',
+                ]
+              : []),
+            ...(options.sharedState ? ['redis_shared_state_v1'] : []),
           ],
         });
         return;
@@ -284,7 +385,9 @@ export function createClusteredEnterpriseServer(
               ? body.username
               : '';
         const password = typeof body.password === 'string' ? body.password : '';
-        const retryAfter = await repository.getLoginRetryAfter(identifier);
+        const retryAfter = options.sharedState
+          ? await options.sharedState.getLoginRetryAfter(identifier)
+          : await repository.getLoginRetryAfter(identifier);
         if (retryAfter > 0) {
           res.setHeader('Retry-After', String(retryAfter));
           sendJson(res, 429, {
@@ -298,6 +401,10 @@ export function createClusteredEnterpriseServer(
         if (!account) {
           const failureRetryAfter = await repository.recordLoginFailure(identifier);
           if (failureRetryAfter > 0) {
+            await options.sharedState?.recordLoginBlock(
+              identifier,
+              failureRetryAfter,
+            );
             res.setHeader('Retry-After', String(failureRetryAfter));
             sendJson(res, 429, {
               error: 'too many login attempts',
@@ -309,29 +416,55 @@ export function createClusteredEnterpriseServer(
           sendJson(res, 401, { error: 'account or password is invalid' });
           return;
         }
-        await repository.clearLoginFailures(identifier);
+        if (options.sharedState) {
+          await options.sharedState.clearLoginFailures(identifier);
+        } else {
+          await repository.clearLoginFailures(identifier);
+        }
         const session = await repository.createAuthSession(account.id);
+        await options.sharedState?.cacheSession(
+          session.token,
+          session.expiresAt,
+          account,
+        );
         sendJson(res, 200, { account, ...session });
         return;
       }
 
       if (path === '/enterprise/auth/me' && method === 'GET') {
-        const account = await requireMember(repository, req, res);
+        const account = await requireMember(
+          repository,
+          req,
+          res,
+          options.sharedState,
+        );
         if (account) sendJson(res, 200, { account });
         return;
       }
 
       if (path === '/enterprise/auth/logout' && method === 'POST') {
         const token = bearerToken(req);
-        const account = await requireMember(repository, req, res);
+        const account = await requireMember(
+          repository,
+          req,
+          res,
+          options.sharedState,
+        );
         if (!account) return;
-        await repository.revokeAuthSession(token);
+        if (options.sharedState) await options.sharedState.revokeSession(token);
+        else await repository.revokeAuthSession(token);
         sendJson(res, 200, { status: 'logged_out' });
         return;
       }
 
       if (path === '/enterprise/accounts' && method === 'GET') {
-        const principal = await requireAdministrator({ repository, req, res, adminToken });
+        const principal = await requireAdministrator({
+          repository,
+          req,
+          res,
+          adminToken,
+          sharedState: options.sharedState,
+        });
         if (!principal) return;
         sendJson(res, 200, {
           accounts: await repository.listAccounts(principal.organizationId),
@@ -340,7 +473,13 @@ export function createClusteredEnterpriseServer(
       }
 
       if (path === '/enterprise/accounts' && method === 'POST') {
-        const principal = await requireAdministrator({ repository, req, res, adminToken });
+        const principal = await requireAdministrator({
+          repository,
+          req,
+          res,
+          adminToken,
+          sharedState: options.sharedState,
+        });
         if (!principal) return;
         const body = await readJsonBody(req);
         const account = await repository.createAccount({
@@ -368,7 +507,13 @@ export function createClusteredEnterpriseServer(
 
       const accountRoute = /^\/enterprise\/accounts\/([^/]+)$/.exec(path);
       if (accountRoute && (method === 'PATCH' || method === 'DELETE')) {
-        const principal = await requireAdministrator({ repository, req, res, adminToken });
+        const principal = await requireAdministrator({
+          repository,
+          req,
+          res,
+          adminToken,
+          sharedState: options.sharedState,
+        });
         if (!principal) return;
         const accountId = decodeURIComponent(accountRoute[1]!);
         if (method === 'DELETE') {
@@ -385,7 +530,13 @@ export function createClusteredEnterpriseServer(
       }
 
       if (path === '/enterprise/audit' && method === 'GET') {
-        const principal = await requireAdministrator({ repository, req, res, adminToken });
+        const principal = await requireAdministrator({
+          repository,
+          req,
+          res,
+          adminToken,
+          sharedState: options.sharedState,
+        });
         if (!principal) return;
         sendJson(res, 200, {
           logs: await repository.listAuditLogs(
@@ -396,8 +547,204 @@ export function createClusteredEnterpriseServer(
         return;
       }
 
-      const member = await requireMember(repository, req, res);
+      const member = await requireMember(
+        repository,
+        req,
+        res,
+        options.sharedState,
+      );
       if (!member) return;
+
+      if (
+        options.attachmentStorage &&
+        path === '/enterprise/attachments/inline' &&
+        method === 'POST'
+      ) {
+        const body = await readJsonBody(req, E2EE_BODY_LIMIT);
+        const peerAccountId =
+          typeof body.peerAccountId === 'string' ? body.peerAccountId : '';
+        const peer = await repository.getAccount(
+          peerAccountId,
+          member.organizationId,
+        );
+        if (!peer || peer.status !== 'active') {
+          sendJson(res, 404, { error: 'member not found or disabled' });
+          return;
+        }
+        if (peer.id === member.id) {
+          sendJson(res, 400, { error: 'attachment peer must be another member' });
+          return;
+        }
+        const ciphertext = attachmentCiphertext(body.ciphertext);
+        const expectedChecksum =
+          typeof body.ciphertextSha256 === 'string'
+            ? body.ciphertextSha256
+            : ciphertextSha256(ciphertext);
+        const metadata = await options.attachmentStorage.putInlineCiphertext({
+          organizationId: member.organizationId,
+          accountId: member.id,
+          attachmentId:
+            typeof body.attachmentId === 'string' ? body.attachmentId : '',
+          ciphertext,
+          ciphertextSha256: expectedChecksum,
+          encryption: 'e2ee-client-v1',
+          authorizedAccountIds: [peer.id],
+        });
+        sendJson(res, 201, {
+          attachment: publicAttachmentMetadata(metadata),
+        });
+        return;
+      }
+
+      if (
+        options.attachmentStorage &&
+        path === '/enterprise/attachments/uploads' &&
+        method === 'POST'
+      ) {
+        const body = await readJsonBody(req, 32 * 1024);
+        const peerAccountId =
+          typeof body.peerAccountId === 'string' ? body.peerAccountId : '';
+        const peer = await repository.getAccount(
+          peerAccountId,
+          member.organizationId,
+        );
+        if (!peer || peer.status !== 'active') {
+          sendJson(res, 404, { error: 'member not found or disabled' });
+          return;
+        }
+        if (peer.id === member.id) {
+          sendJson(res, 400, { error: 'attachment peer must be another member' });
+          return;
+        }
+        const upload = await options.attachmentStorage.initiateMultipartUpload({
+          organizationId: member.organizationId,
+          accountId: member.id,
+          attachmentId:
+            typeof body.attachmentId === 'string' ? body.attachmentId : '',
+          ciphertextBytes: Number(body.ciphertextBytes),
+          ciphertextSha256:
+            typeof body.ciphertextSha256 === 'string'
+              ? body.ciphertextSha256
+              : '',
+          encryption: 'e2ee-client-v1',
+          authorizedAccountIds: [peer.id],
+        });
+        sendJson(res, 201, { upload: { attachmentId: upload.attachmentId } });
+        return;
+      }
+
+      const attachmentPartPresign =
+        /^\/enterprise\/attachments\/([^/]+)\/parts\/(\d+)\/presign$/.exec(
+          path,
+        );
+      if (
+        options.attachmentStorage &&
+        attachmentPartPresign &&
+        method === 'POST'
+      ) {
+        const body = await readJsonBody(req, 16 * 1024);
+        const request = await options.attachmentStorage.presignUploadPart({
+          organizationId: member.organizationId,
+          accountId: member.id,
+          attachmentId: decodeURIComponent(attachmentPartPresign[1]!),
+          partNumber: Number(attachmentPartPresign[2]),
+          ciphertextBytes: Number(body.ciphertextBytes),
+          ciphertextSha256:
+            typeof body.ciphertextSha256 === 'string'
+              ? body.ciphertextSha256
+              : '',
+        });
+        sendJson(res, 200, { request });
+        return;
+      }
+
+      const attachmentParts =
+        /^\/enterprise\/attachments\/([^/]+)\/parts$/.exec(path);
+      if (
+        options.attachmentStorage &&
+        attachmentParts &&
+        method === 'POST'
+      ) {
+        const body = await readJsonBody(req, 16 * 1024);
+        await options.attachmentStorage.recordUploadedPart({
+          organizationId: member.organizationId,
+          accountId: member.id,
+          attachmentId: decodeURIComponent(attachmentParts[1]!),
+          part: {
+            partNumber: Number(body.partNumber),
+            eTag: typeof body.eTag === 'string' ? body.eTag : '',
+            ciphertextBytes: Number(body.ciphertextBytes),
+            ciphertextSha256:
+              typeof body.ciphertextSha256 === 'string'
+                ? body.ciphertextSha256
+                : '',
+          },
+        });
+        sendJson(res, 200, { recorded: true });
+        return;
+      }
+
+      const attachmentComplete =
+        /^\/enterprise\/attachments\/([^/]+)\/complete$/.exec(path);
+      if (
+        options.attachmentStorage &&
+        attachmentComplete &&
+        method === 'POST'
+      ) {
+        const body = await readJsonBody(req, 512 * 1024);
+        const metadata = await options.attachmentStorage.completeMultipartUpload({
+          organizationId: member.organizationId,
+          accountId: member.id,
+          attachmentId: decodeURIComponent(attachmentComplete[1]!),
+          parts: Array.isArray(body.parts)
+            ? (body.parts as AttachmentMultipartPart[])
+            : [],
+        });
+        sendJson(res, 200, {
+          attachment: publicAttachmentMetadata(metadata),
+        });
+        return;
+      }
+
+      const attachmentResume =
+        /^\/enterprise\/attachments\/([^/]+)\/resume$/.exec(path);
+      if (
+        options.attachmentStorage &&
+        attachmentResume &&
+        method === 'GET'
+      ) {
+        const upload = await options.attachmentStorage.resumeMultipartUpload({
+          organizationId: member.organizationId,
+          accountId: member.id,
+          attachmentId: decodeURIComponent(attachmentResume[1]!),
+        });
+        sendJson(res, 200, { upload });
+        return;
+      }
+
+      const attachmentDownload =
+        /^\/enterprise\/attachments\/([^/]+)\/download$/.exec(path);
+      if (
+        options.attachmentStorage &&
+        attachmentDownload &&
+        method === 'GET'
+      ) {
+        const download = await options.attachmentStorage.download({
+          organizationId: member.organizationId,
+          accountId: member.id,
+          attachmentId: decodeURIComponent(attachmentDownload[1]!),
+        });
+        sendJson(res, 200, {
+          attachment:
+            download.kind === 'presigned'
+              ? download
+              : {
+                  ...download,
+                  ciphertext: download.ciphertext.toString('base64'),
+                },
+        });
+        return;
+      }
 
       if (path === '/enterprise/organization/view' && method === 'GET') {
         const [organization, members, structure, features] = await Promise.all([
@@ -633,6 +980,43 @@ export function createClusteredEnterpriseServer(
         return;
       }
 
+      const messageAttachmentRoute =
+        /^\/enterprise\/message-attachments\/([^/]+)$/.exec(path);
+      if (
+        options.attachmentStorage &&
+        messageAttachmentRoute &&
+        method === 'GET'
+      ) {
+        const authority = await repository.getE2eeAttachmentAuthority({
+          organizationId: member.organizationId,
+          accountId: member.id,
+          attachmentId: decodeURIComponent(messageAttachmentRoute[1]!),
+        });
+        if (!authority) {
+          sendJson(res, 404, {
+            error: 'attachment not found or access denied',
+          });
+          return;
+        }
+        const download = await options.attachmentStorage.download({
+          organizationId: member.organizationId,
+          accountId: member.id,
+          attachmentId: authority.attachment.id,
+        });
+        sendJson(res, 200, {
+          attachment: {
+            message: authority.message,
+            attachment: {
+              ...authority.attachment,
+              ...(download.kind === 'presigned'
+                ? { download: download.request }
+                : { ciphertext: download.ciphertext.toString('base64') }),
+            },
+          },
+        });
+        return;
+      }
+
       const messageRoute = /^\/enterprise\/messages\/([^/]+)$/.exec(path);
       if (messageRoute && (method === 'GET' || method === 'POST')) {
         const features = await repository.getOrganizationFeatures(member.organizationId);
@@ -683,6 +1067,9 @@ export function createClusteredEnterpriseServer(
           attachments: Array.isArray(body.attachments)
             ? (body.attachments as E2eeAttachmentCiphertextInput[])
             : [],
+          attachmentReferences: Array.isArray(body.attachmentReferences)
+            ? (body.attachmentReferences as PostgresE2eeAttachmentReferenceInput[])
+            : [],
         });
         sendJson(res, 201, { message });
         return;
@@ -705,83 +1092,90 @@ export function createClusteredEnterpriseServer(
 export async function startClusteredEnterpriseServer(
   options: ClusteredEnterpriseServerOptions = {},
 ): Promise<Server> {
-  const topology = resolveEnterpriseDatabaseTopology({
-    environment: process.env,
-    sqliteDatabasePath: 'clustered-mode-does-not-open-sqlite.db',
-  });
-  if (topology.backend !== 'postgresql') {
-    throw new Error('clustered enterprise server requires PostgreSQL mode');
-  }
-
-  let repository = options.repository;
-  let readiness = options.databaseReadiness;
-  let closeDatabase = options.closeDatabase;
-  if (!repository || !readiness || !closeDatabase) {
-    const pool = createNodePostgresPool(
-      buildNodePostgresPoolConfig({
-        connectionString: topology.connectionString,
-        environment: process.env,
-      }),
+  if (
+    !options.infrastructure &&
+    (options.repository || options.databaseReadiness || options.closeDatabase)
+  ) {
+    throw new Error(
+      'partial clustered dependency injection is forbidden; inject the complete infrastructure',
     );
-    const database = createPostgresDatabaseLifecycle({
-      pool,
-      migrations: ENTERPRISE_POSTGRES_MIGRATIONS,
-    });
-    try {
-      await database.initialize();
-    } catch (error) {
-      await database.close();
-      throw error;
-    }
-    repository = createPostgresEnterpriseCoreRepository({ pool });
-    readiness = database.getReadiness;
-    closeDatabase = database.close;
-  } else {
-    await readiness();
   }
+  const infrastructure =
+    options.infrastructure ??
+    (await createClusteredEnterpriseInfrastructure({ environment: process.env }));
+  const repository = infrastructure.repository;
 
-  if (options.bootstrapAdmin) {
-    const accounts = await repository.listAccounts(repository.defaultOrganizationId);
-    if (accounts.length > 0) {
-      await closeDatabase();
-      throw new Error('bootstrap refused: PostgreSQL accounts already exist');
+  try {
+    if (options.bootstrapAdmin) {
+      const accounts = await repository.listAccounts(
+        repository.defaultOrganizationId,
+      );
+      if (accounts.length > 0) {
+        throw new Error('bootstrap refused: PostgreSQL accounts already exist');
+      }
+      await repository.createAccount({
+        organizationId: repository.defaultOrganizationId,
+        username: options.bootstrapAdmin.username,
+        password: options.bootstrapAdmin.password,
+        name: options.bootstrapAdmin.name,
+        isAdmin: true,
+      });
     }
-    await repository.createAccount({
-      organizationId: repository.defaultOrganizationId,
-      username: options.bootstrapAdmin.username,
-      password: options.bootstrapAdmin.password,
-      name: options.bootstrapAdmin.name,
-      isAdmin: true,
-    });
-  }
 
-  const created = createClusteredEnterpriseServer(repository, {
-    host: options.host ?? process.env.OTTO_ENTERPRISE_HOST,
-    port:
-      options.port ??
-      Number(process.env.OTTO_ENTERPRISE_PORT || String(DEFAULT_PORT)),
-    adminToken:
-      options.adminToken ?? process.env.OTTO_ENTERPRISE_ADMIN_TOKEN,
-    appVersion: options.appVersion ?? process.env.OTTO_APP_VERSION,
-    buildCommit:
-      options.buildCommit ??
-      process.env.OTTO_BUILD_COMMIT ??
-      process.env.GITHUB_SHA,
-    databaseReadiness: readiness,
-  });
-  created.server.once('close', () => {
-    void closeDatabase!();
-  });
-  created.server.listen(created.port, created.host, () => {
-    const target = describeEnterpriseDatabaseTopology(topology);
+    const created = createClusteredEnterpriseServer(repository, {
+      host: options.host ?? process.env.OTTO_ENTERPRISE_HOST,
+      port:
+        options.port ??
+        Number(process.env.OTTO_ENTERPRISE_PORT || String(DEFAULT_PORT)),
+      adminToken:
+        options.adminToken ?? process.env.OTTO_ENTERPRISE_ADMIN_TOKEN,
+      appVersion: options.appVersion ?? process.env.OTTO_APP_VERSION,
+      buildCommit:
+        options.buildCommit ??
+        process.env.OTTO_BUILD_COMMIT ??
+        process.env.GITHUB_SHA,
+      infrastructureReadiness: infrastructure.getReadiness,
+      topologyDescription: infrastructure.topologyDescription,
+      sharedState: infrastructure.sharedState,
+      attachmentStorage: infrastructure.attachmentStorage,
+    });
+    const maintenance = createClusteredAttachmentMaintenance({
+      storage: infrastructure.attachmentStorage,
+      cache: infrastructure.cache,
+      attachmentAuthority: infrastructure.repository,
+      objectStore: infrastructure.attachmentStore,
+      onError(error) {
+        console.error(
+          `[Otto Enterprise] attachment maintenance failed: ${safeRouteError(error)}`,
+        );
+      },
+    });
+    created.server.once('close', () => {
+      maintenance.close();
+      void infrastructure.close();
+    });
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => reject(error);
+      created.server.once('error', onError);
+      created.server.listen(created.port, created.host, () => {
+        created.server.off('error', onError);
+        resolve();
+      });
+    });
+    maintenance.start();
     console.log(
       `[Otto Enterprise] PostgreSQL authority ready at http://${created.host}:${created.port}`,
     );
     console.log(
-      `[Otto Enterprise] database ${target.target}, replicas ${target.replicas}`,
+      `[Otto Enterprise] shared infrastructure ${JSON.stringify(
+        infrastructure.topologyDescription,
+      )}`,
     );
-  });
-  return created.server;
+    return created.server;
+  } catch (error) {
+    await infrastructure.close();
+    throw error;
+  }
 }
 
 export async function bootstrapClusteredEnterpriseAdmin(input: {

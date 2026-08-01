@@ -5,6 +5,8 @@
  * 企业服务器，也永远拿不到会话令牌。
  */
 
+import { createHash } from 'node:crypto';
+
 import {
   enterpriseE2eeDeviceVerification,
   type EnterpriseE2eeDeviceVerification,
@@ -2359,8 +2361,15 @@ export class EnterpriseClient {
     await this.assertCompatibleServer(this.serverUrl, [
       'direct_messages',
       'e2ee_private_messages_v1',
-      ...(attachments.length > 0 ? ['direct_message_attachments_v1'] : []),
     ]);
+    const usesSharedAttachmentObjects =
+      attachments.length > 0 &&
+      this.compatibleCapabilities.has('e2ee_attachment_objects_v1');
+    if (attachments.length > 0 && !usesSharedAttachmentObjects) {
+      await this.assertCompatibleServer(this.serverUrl, [
+        'direct_message_attachments_v1',
+      ]);
+    }
     const { crypto, account, serverScope } = this.requireE2eeContext();
     const devices = await this.e2eeDevicesForConversation(peerAccountId);
     const protocol = e2eeProtocolMetadata(content);
@@ -2375,12 +2384,62 @@ export class EnterpriseClient {
       devices,
       attachments,
     });
+    const attachmentReferences = usesSharedAttachmentObjects
+      ? await Promise.all(
+          encrypted.attachments.map(async (attachment) => {
+            const ciphertext = Buffer.from(attachment.ciphertext, 'base64');
+            const checksum = createHash('sha256')
+              .update(ciphertext)
+              .digest('hex');
+            const uploaded = await this.request<{
+              attachment: {
+                id: string;
+                ciphertextBytes: number;
+                ciphertextSha256: string;
+              };
+            }>(
+              '/enterprise/attachments/inline',
+              {
+                method: 'POST',
+                body: JSON.stringify({
+                  peerAccountId,
+                  attachmentId: attachment.id,
+                  ciphertext: attachment.ciphertext,
+                  ciphertextSha256: checksum,
+                }),
+              },
+              { timeoutMs: 60_000 },
+            );
+            if (
+              uploaded.attachment.id !== attachment.id ||
+              uploaded.attachment.ciphertextBytes !== ciphertext.length ||
+              uploaded.attachment.ciphertextSha256 !== checksum
+            ) {
+              throw new Error('shared attachment upload metadata is invalid');
+            }
+            return {
+              id: attachment.id,
+              nonce: attachment.nonce,
+              ciphertextBytes: ciphertext.length,
+              ciphertextSha256: checksum,
+            };
+          }),
+        )
+      : [];
     const message = (
       await this.request<{ message: EnterpriseE2eeWireMessage }>(
         '/enterprise/messages/' + encodeURIComponent(peerAccountId),
         {
           method: 'POST',
-          body: JSON.stringify(encrypted),
+          body: JSON.stringify(
+            usesSharedAttachmentObjects
+              ? {
+                  ...encrypted,
+                  attachments: [],
+                  attachmentReferences,
+                }
+              : encrypted,
+          ),
         },
         { timeoutMs: attachments.length > 0 ? 60_000 : 10_000 },
       )
@@ -2399,13 +2458,48 @@ export class EnterpriseClient {
     const download = await this.request<{
       attachment: {
         message: EnterpriseE2eeWireMessage;
-        attachment: { id: string; ciphertext: string; nonce: string };
+        attachment: {
+          id: string;
+          ciphertext?: string;
+          nonce: string;
+          ciphertextBytes?: number;
+          ciphertextSha256?: string;
+          download?: {
+            method: 'GET';
+            url: string;
+            expiresInSeconds: number;
+            requiredHeaders: Record<string, string>;
+          };
+        };
       };
     }>(
       '/enterprise/message-attachments/' + encodeURIComponent(attachmentId),
       {},
       { timeoutMs: 60_000 },
     );
+    let attachmentCiphertext = download.attachment.attachment.ciphertext;
+    const presigned = download.attachment.attachment.download;
+    if (!attachmentCiphertext && presigned) {
+      const response = await this.fetchImpl(presigned.url, {
+        method: presigned.method,
+        headers: presigned.requiredHeaders,
+      });
+      if (!response.ok) {
+        throw new Error(`shared attachment download failed: ${response.status}`);
+      }
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (
+        bytes.length !== download.attachment.attachment.ciphertextBytes ||
+        createHash('sha256').update(bytes).digest('hex') !==
+          download.attachment.attachment.ciphertextSha256
+      ) {
+        throw new Error('shared attachment download integrity check failed');
+      }
+      attachmentCiphertext = bytes.toString('base64');
+    }
+    if (!attachmentCiphertext) {
+      throw new Error('E2EE attachment ciphertext is unavailable');
+    }
     const { crypto, account, serverScope } = this.requireE2eeContext();
     const peerAccountId =
       download.attachment.message.senderAccountId === account.id
@@ -2433,7 +2527,11 @@ export class EnterpriseClient {
       organizationId: account.organizationId,
       accountId: account.id,
       message: download.attachment.message,
-      attachment: download.attachment.attachment,
+      attachment: {
+        id: download.attachment.attachment.id,
+        nonce: download.attachment.attachment.nonce,
+        ciphertext: attachmentCiphertext,
+      },
     });
   }
   async listAtoaInbox(): Promise<EnterpriseAtoaInboxMessage[]> {

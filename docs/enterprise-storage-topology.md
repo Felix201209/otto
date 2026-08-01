@@ -39,6 +39,8 @@ $env:OTTO_ATTACHMENT_OBJECT_STORE = 's3'
 $env:OTTO_S3_BUCKET = 'otto-private'
 $env:OTTO_S3_REGION = 'us-east-1'
 $env:OTTO_S3_BUCKET_PRIVATE_CONFIRMED = 'true'
+$env:OTTO_ATTACHMENT_MAX_BYTES = '10485776'
+$env:OTTO_ATTACHMENT_TENANT_QUOTA_BYTES = '107374182400'
 $env:OTTO_ENTERPRISE_CACHE_BACKEND = 'redis'
 $env:OTTO_REDIS_URL = 'rediss://default:<password>@redis.internal:6379/0'
 ```
@@ -100,15 +102,22 @@ downgrades to SQLite, process memory, or local attachment storage.
 The PostgreSQL lifecycle, migration control plane, resumable verified SQLite
 staging importer, S3 attachment adapter, Redis shared-cache/lease adapter,
 combined topology validation and production infrastructure preflight are
-implemented. PostgreSQL schema v4 now owns organizations, accounts, password
+implemented. PostgreSQL schema v5 now owns organizations, accounts, password
 sessions, organization structure and feature flags, audit events, E2EE device
-trust/transparency state, and encrypted direct messages. The enterprise
+trust/transparency state, encrypted direct messages, attachment ACLs and
+message-to-object references. The enterprise
 launcher selects an isolated asynchronous PostgreSQL server before importing
 the legacy SQLite module, so clustered mode cannot create a hidden `data.db`.
 
 The clustered server currently mounts health, password login/logout/session,
 account administration, organization view/structure/features, audit, E2EE
-device approval/revocation/transparency, and E2EE ciphertext message routes.
+device approval/revocation/transparency, E2EE ciphertext message routes, S3
+inline/multipart upload, resume, completion and authorized download routes.
+The production composition refuses to start unless PostgreSQL, Redis and the
+private S3 bucket all pass readiness. Session entries and active login blocks
+are mirrored into Redis with hashed keys; PostgreSQL remains authoritative.
+Attachment expiry, orphan and legacy-copy cleanup runs under a Redis lease so
+only one replica performs destructive maintenance at a time.
 Every route outside that migrated core returns
 `POSTGRES_ROUTE_NOT_MIGRATED` with HTTP 503 instead of reading or writing
 SQLite.
@@ -128,15 +137,24 @@ commits all supported tables plus an idempotent promotion receipt in one
 transaction. If message attachments exist it refuses cutover until the S3
 migration is run, so ciphertext cannot become inaccessible.
 
+The desktop client automatically selects shared attachment objects when the
+server advertises `e2ee_attachment_objects_v1`: it uploads client ciphertext,
+sends only its ID/nonce/size/checksum in the message request, and verifies the
+downloaded ciphertext before local decryption. Older local servers retain the
+legacy inline protocol. Object keys are not exposed as standalone API fields;
+they may appear only inside an opaque, short-lived presigned URL. E2EE file keys
+are never sent to Otto Server or the object store.
+
 The remaining cutover work is:
 
 1. port SMS registration, organization invites, account sync, knowledge,
    skills, park, ticketing, commercial-control and data-governance repositories;
-2. wire the implemented [attachment object-storage adapters](./security/attachment-object-storage.md)
-   and Redis cache/lease adapter into the asynchronous enterprise routes;
-3. promote attachment ciphertext to S3 and the remaining verified staging
+2. promote legacy SQLite attachment ciphertext to S3 with copy, checksum,
+   authority switch, dual-read grace and rollback rehearsal;
+3. promote the remaining verified staging
    tables to their PostgreSQL domain schemas;
-4. qualify multiple replicas, backup/PITR and automatic failover.
+4. qualify multiple replicas, backup/PITR, Redis failover, object lifecycle
+   rules and PostgreSQL automatic failover.
 
 The PostgreSQL core is a real write-serving authority, but until those stages
 are complete the full Otto Enterprise product must not be described as a

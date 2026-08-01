@@ -15,6 +15,7 @@ import {
 } from 'node:crypto';
 
 import {
+  E2EE_ATTACHMENT_MAX_CIPHERTEXT_BYTES,
   E2EE_ATTACHMENT_MAX_COUNT,
   E2EE_MESSAGE_MAX_CIPHERTEXT_BYTES,
   E2EE_PROTOCOL_VERSION,
@@ -150,6 +151,30 @@ export interface PostgresEnterpriseAuditRecord {
   createdAt: string;
 }
 
+export interface PostgresE2eeAttachmentReferenceInput {
+  id: string;
+  nonce: string;
+  ciphertextBytes: number;
+  ciphertextSha256: string;
+}
+
+export type SendPostgresE2eeDirectMessageInput =
+  SendE2eeDirectMessageInput & {
+    attachmentReferences?: PostgresE2eeAttachmentReferenceInput[];
+  };
+
+export interface PostgresE2eeAttachmentAuthority {
+  message: E2eeDirectMessageView;
+  attachment: PostgresE2eeAttachmentReferenceInput;
+}
+
+export interface PostgresUnboundAttachmentObject {
+  id: string;
+  organizationId: string;
+  key: string;
+  ciphertextBytes: number;
+}
+
 interface OrganizationRow extends Record<string, unknown> {
   id: string;
   name: string;
@@ -229,6 +254,9 @@ interface MessageRow extends Record<string, unknown> {
   sender_identity_signing_public_key: string;
   created_at: Date | string;
   read_at: Date | string | null;
+  attachment_refs:
+    | Array<{ id: string; ciphertextSize: number | string; nonce: string }>
+    | string;
 }
 
 type Queryable = Pick<PostgresPoolLike, 'query'> | Pick<PostgresClientLike, 'query'>;
@@ -307,6 +335,29 @@ function requireNonce(value: string, label: string): string {
     throw new Error(`${label} must be 12 bytes`);
   }
   return value;
+}
+
+function normalizeAttachmentReference(
+  value: PostgresE2eeAttachmentReferenceInput,
+): PostgresE2eeAttachmentReferenceInput {
+  const ciphertextBytes = Number(value.ciphertextBytes);
+  if (
+    !Number.isSafeInteger(ciphertextBytes) ||
+    ciphertextBytes <= 16 ||
+    ciphertextBytes > E2EE_ATTACHMENT_MAX_CIPHERTEXT_BYTES
+  ) {
+    throw new Error('attachment ciphertext size is invalid');
+  }
+  const ciphertextSha256 = value.ciphertextSha256.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/u.test(ciphertextSha256)) {
+    throw new Error('attachment ciphertext checksum is invalid');
+  }
+  return {
+    id: requiredIdentifier(value.id, 'attachment id'),
+    nonce: requireNonce(value.nonce, 'attachment nonce'),
+    ciphertextBytes,
+    ciphertextSha256,
+  };
 }
 
 function requirePublicKey(
@@ -417,7 +468,36 @@ function messageView(row: MessageRow): E2eeDirectMessageView {
     envelopes: parseEnvelopes(row.e2ee_envelopes),
     createdAt: iso(row.created_at)!,
     readAt: iso(row.read_at),
-    attachments: [],
+    attachments: (() => {
+      const parsed =
+        typeof row.attachment_refs === 'string'
+          ? (JSON.parse(row.attachment_refs) as unknown)
+          : row.attachment_refs;
+      if (!Array.isArray(parsed)) {
+        throw new Error('stored E2EE attachment references are invalid');
+      }
+      return parsed.map((value) => {
+        const reference = value as {
+          id?: unknown;
+          ciphertextSize?: unknown;
+          nonce?: unknown;
+        };
+        const ciphertextSize = Number(reference.ciphertextSize);
+        if (
+          typeof reference.id !== 'string' ||
+          !Number.isSafeInteger(ciphertextSize) ||
+          ciphertextSize <= 16 ||
+          typeof reference.nonce !== 'string'
+        ) {
+          throw new Error('stored E2EE attachment reference is invalid');
+        }
+        return {
+          id: reference.id,
+          ciphertextSize,
+          nonce: reference.nonce,
+        };
+      });
+    })(),
   };
 }
 
@@ -455,7 +535,16 @@ LEFT JOIN account_tags AS t
   ON t.account_id = a.id AND t.organization_id = a.organization_id`;
 
 const MESSAGE_SELECT = `
-SELECT m.*, d.identity_signing_public_key AS sender_identity_signing_public_key
+SELECT m.*, d.identity_signing_public_key AS sender_identity_signing_public_key,
+       COALESCE((
+         SELECT jsonb_agg(jsonb_build_object(
+           'id', attachment.attachment_id,
+           'ciphertextSize', attachment.ciphertext_bytes,
+           'nonce', attachment.e2ee_nonce
+         ) ORDER BY attachment.ordinal)
+         FROM direct_message_attachment_objects AS attachment
+         WHERE attachment.message_id = m.id
+       ), '[]'::jsonb) AS attachment_refs
 FROM direct_messages AS m
 JOIN e2ee_devices AS d
   ON d.organization_id = m.organization_id
@@ -1503,13 +1592,29 @@ export function createPostgresEnterpriseCoreRepository(input: {
     };
   }
 
-  async function sendE2eeDirectMessage(raw: SendE2eeDirectMessageInput): Promise<E2eeDirectMessageView> {
+  async function sendE2eeDirectMessage(
+    raw: SendPostgresE2eeDirectMessageInput,
+  ): Promise<E2eeDirectMessageView> {
     if (raw.protocolVersion !== E2EE_PROTOCOL_VERSION) throw new Error('E2EE protocol version is unsupported');
     if ((raw.attachments?.length ?? 0) > E2EE_ATTACHMENT_MAX_COUNT) {
       throw new Error('a message can contain at most 6 encrypted attachments');
     }
     if ((raw.attachments?.length ?? 0) > 0) {
-      throw new Error('clustered E2EE attachments require the S3 route service');
+      throw new Error(
+        'clustered E2EE attachments must be uploaded before sending the message',
+      );
+    }
+    const attachmentReferences = (raw.attachmentReferences ?? []).map(
+      normalizeAttachmentReference,
+    );
+    if (attachmentReferences.length > E2EE_ATTACHMENT_MAX_COUNT) {
+      throw new Error('a message can contain at most 6 encrypted attachments');
+    }
+    if (
+      new Set(attachmentReferences.map((reference) => reference.id)).size !==
+      attachmentReferences.length
+    ) {
+      throw new Error('encrypted attachment ids must be unique');
     }
     const normalized = {
       ...raw,
@@ -1539,6 +1644,7 @@ export function createPostgresEnterpriseCoreRepository(input: {
         wrappedKey: requireCanonicalBase64(envelope.wrappedKey, 'wrapped key', 128).toString('base64'),
         nonce: requireNonce(envelope.nonce, 'envelope nonce'),
       })),
+      attachmentReferences,
     };
     if (normalized.senderAccountId === normalized.recipientAccountId) {
       throw new Error('sender and recipient must be different');
@@ -1558,6 +1664,56 @@ export function createPostgresEnterpriseCoreRepository(input: {
       );
       if (new Set(accounts.rows.map((row) => row.id)).size !== 2) {
         throw new Error('message participant is not active in organization');
+      }
+      if (normalized.attachmentReferences.length > 0) {
+        const available = await client.query<
+          {
+            id: string;
+            ciphertext_bytes: number | string;
+            ciphertext_sha256: string;
+          } & Record<string, unknown>
+        >(
+          `SELECT object.id, object.ciphertext_bytes, object.ciphertext_sha256
+           FROM attachment_objects AS object
+           WHERE object.organization_id = $1
+             AND object.owner_account_id = $2
+             AND object.state = 'available'
+             AND object.migration_state <> 'orphan_cleaning'
+             AND object.id = ANY($4::text[])
+             AND EXISTS (
+               SELECT 1 FROM attachment_object_access AS sender_access
+               WHERE sender_access.attachment_id = object.id
+                 AND sender_access.organization_id = object.organization_id
+                 AND sender_access.account_id = $2
+             )
+             AND EXISTS (
+               SELECT 1 FROM attachment_object_access AS recipient_access
+               WHERE recipient_access.attachment_id = object.id
+                 AND recipient_access.organization_id = object.organization_id
+                 AND recipient_access.account_id = $3
+             )`,
+          [
+            normalized.organizationId,
+            normalized.senderAccountId,
+            normalized.recipientAccountId,
+            normalized.attachmentReferences.map((reference) => reference.id),
+          ],
+        );
+        const availableById = new Map(
+          available.rows.map((row) => [row.id, row] as const),
+        );
+        for (const reference of normalized.attachmentReferences) {
+          const object = availableById.get(reference.id);
+          if (
+            !object ||
+            Number(object.ciphertext_bytes) !== reference.ciphertextBytes ||
+            object.ciphertext_sha256 !== reference.ciphertextSha256
+          ) {
+            throw new Error(
+              'attachment is unavailable or does not match its ciphertext metadata',
+            );
+          }
+        }
       }
       const devices = await client.query<DeviceRow>(
         `SELECT * FROM e2ee_devices
@@ -1587,7 +1743,11 @@ export function createPostgresEnterpriseCoreRepository(input: {
       ) {
         throw new Error('message key envelopes must cover every active participant device exactly once');
       }
-      const { signature: _signature, ...unsigned } = normalized;
+      const {
+        signature: _signature,
+        attachmentReferences: _attachmentReferences,
+        ...unsigned
+      } = normalized;
       const signaturePayload = e2eeMessageSignaturePayload({
         ...unsigned,
         attachments: [],
@@ -1636,6 +1796,23 @@ export function createPostgresEnterpriseCoreRepository(input: {
           normalized.inReplyToMessageId,
         ],
       );
+      for (const [ordinal, attachment] of normalized.attachmentReferences.entries()) {
+        await client.query(
+          `INSERT INTO direct_message_attachment_objects
+             (attachment_id, message_id, organization_id, ordinal, e2ee_nonce,
+              ciphertext_bytes, ciphertext_sha256)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            attachment.id,
+            normalized.messageId,
+            normalized.organizationId,
+            ordinal,
+            attachment.nonce,
+            attachment.ciphertextBytes,
+            attachment.ciphertextSha256,
+          ],
+        );
+      }
       if (normalized.inReplyToMessageId) {
         await client.query(
           `UPDATE direct_messages SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP)
@@ -1678,6 +1855,162 @@ export function createPostgresEnterpriseCoreRepository(input: {
         [organizationId, accountId, peerAccountId, limit],
       );
       return result.rows.reverse().map(messageView);
+    });
+  }
+
+  async function getE2eeAttachmentAuthority(raw: {
+    organizationId: string;
+    accountId: string;
+    attachmentId: string;
+  }): Promise<PostgresE2eeAttachmentAuthority | null> {
+    const organizationId = requiredIdentifier(
+      raw.organizationId,
+      'organization id',
+    );
+    const accountId = requiredIdentifier(raw.accountId, 'account id');
+    const attachmentId = requiredIdentifier(raw.attachmentId, 'attachment id');
+    const result = await input.pool.query<MessageRow>(
+      `${MESSAGE_SELECT}
+       JOIN direct_message_attachment_objects AS requested_attachment
+         ON requested_attachment.message_id = m.id
+        AND requested_attachment.organization_id = m.organization_id
+       JOIN attachment_objects AS requested_object
+         ON requested_object.id = requested_attachment.attachment_id
+        AND requested_object.organization_id = requested_attachment.organization_id
+       WHERE requested_attachment.attachment_id = $1
+         AND m.organization_id = $2
+         AND $3 IN (m.sender_account_id, m.recipient_account_id)
+         AND requested_object.state = 'available'
+         AND EXISTS (
+           SELECT 1 FROM attachment_object_access AS requested_access
+           WHERE requested_access.attachment_id = requested_object.id
+             AND requested_access.organization_id = requested_object.organization_id
+             AND requested_access.account_id = $3
+         )`,
+      [attachmentId, organizationId, accountId],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    const message = messageView(row);
+    const reference = message.attachments.find(
+      (attachment) => attachment.id === attachmentId,
+    );
+    if (!reference) {
+      throw new Error('stored E2EE attachment reference is unavailable');
+    }
+    const object = await input.pool.query<
+      { ciphertext_sha256: string } & Record<string, unknown>
+    >(
+      `SELECT ciphertext_sha256 FROM attachment_objects
+       WHERE id = $1 AND organization_id = $2 AND state = 'available'`,
+      [attachmentId, organizationId],
+    );
+    const checksum = object.rows[0]?.ciphertext_sha256;
+    if (!checksum) {
+      throw new Error('stored E2EE attachment object is unavailable');
+    }
+    return {
+      message,
+      attachment: {
+        id: reference.id,
+        nonce: reference.nonce,
+        ciphertextBytes: reference.ciphertextSize,
+        ciphertextSha256: checksum,
+      },
+    };
+  }
+
+  async function claimExpiredUnboundAttachments(raw: {
+    before: string;
+    limit?: number;
+  }): Promise<PostgresUnboundAttachmentObject[]> {
+    const before = new Date(raw.before);
+    if (!Number.isFinite(before.getTime())) {
+      throw new Error('attachment cleanup cutoff is invalid');
+    }
+    const limit = Math.max(1, Math.min(500, Math.floor(raw.limit ?? 100)));
+    const result = await input.pool.query<
+      {
+        id: string;
+        organization_id: string;
+        storage_key: string;
+        ciphertext_bytes: number | string;
+      } & Record<string, unknown>
+    >(
+      `WITH candidates AS (
+         SELECT object.id
+         FROM attachment_objects AS object
+         WHERE object.state = 'available'
+           AND object.storage_backend = 's3'
+           AND object.storage_key IS NOT NULL
+           AND object.legal_hold = FALSE
+           AND object.expires_at <= $1
+           AND object.migration_state IN ('none', 'orphan_cleaning')
+           AND NOT EXISTS (
+             SELECT 1 FROM direct_message_attachment_objects AS reference
+             WHERE reference.attachment_id = object.id
+           )
+         ORDER BY object.expires_at, object.id
+         FOR UPDATE SKIP LOCKED
+         LIMIT $2
+       )
+       UPDATE attachment_objects AS object
+       SET migration_state = 'orphan_cleaning',
+           updated_at = CURRENT_TIMESTAMP,
+           version = version + 1
+       FROM candidates
+       WHERE object.id = candidates.id
+       RETURNING object.id, object.organization_id, object.storage_key,
+                 object.ciphertext_bytes`,
+      [before.toISOString(), limit],
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      organizationId: row.organization_id,
+      key: row.storage_key,
+      ciphertextBytes: Number(row.ciphertext_bytes),
+    }));
+  }
+
+  async function completeExpiredUnboundAttachment(
+    attachment: PostgresUnboundAttachmentObject,
+  ): Promise<void> {
+    await transaction(input.pool, async (client) => {
+      const failed = await client.query<
+        { organization_id: string; ciphertext_bytes: number | string } &
+          Record<string, unknown>
+      >(
+        `UPDATE attachment_objects
+         SET state = 'failed',
+             storage_backend = NULL,
+             storage_key = NULL,
+             migration_state = 'none',
+             failure_code = 'unbound_upload_expired',
+             updated_at = CURRENT_TIMESTAMP,
+             version = version + 1
+         WHERE id = $1 AND organization_id = $2 AND state = 'available'
+           AND migration_state = 'orphan_cleaning'
+           AND storage_backend = 's3' AND storage_key = $3
+           AND NOT EXISTS (
+             SELECT 1 FROM direct_message_attachment_objects AS reference
+             WHERE reference.attachment_id = attachment_objects.id
+           )
+         RETURNING organization_id, ciphertext_bytes`,
+        [attachment.id, attachment.organizationId, attachment.key],
+      );
+      const row = failed.rows[0];
+      if (!row) throw new Error('unbound attachment cleanup claim was lost');
+      const quota = await client.query(
+        `UPDATE attachment_storage_quotas
+         SET stored_bytes = stored_bytes - $2,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE organization_id = $1 AND stored_bytes >= $2
+         RETURNING organization_id`,
+        [row.organization_id, Number(row.ciphertext_bytes)],
+      );
+      if (!quota.rows[0]) {
+        throw new Error('unbound attachment quota cleanup is inconsistent');
+      }
     });
   }
 
@@ -1768,6 +2101,9 @@ export function createPostgresEnterpriseCoreRepository(input: {
     listE2eeKeyTransparency,
     sendE2eeDirectMessage,
     listE2eeDirectMessages,
+    getE2eeAttachmentAuthority,
+    claimExpiredUnboundAttachments,
+    completeExpiredUnboundAttachment,
     listUnreadE2eeNotifications,
   };
 }

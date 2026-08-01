@@ -95,17 +95,19 @@ credential chain; credentials must not be embedded in endpoint URLs or logged.
 The runtime rejects local attachment storage when more than one Otto Server
 replica is configured.
 
-| Variable                           | Meaning                                               |
-| ---------------------------------- | ----------------------------------------------------- |
-| `OTTO_ATTACHMENT_OBJECT_STORE`     | `local` or `s3`                                       |
-| `OTTO_S3_BUCKET`                   | Private attachment bucket                             |
-| `OTTO_S3_REGION`                   | S3 signing region                                     |
-| `OTTO_S3_ENDPOINT`                 | Optional S3-compatible endpoint                       |
-| `OTTO_S3_FORCE_PATH_STYLE`         | Enable for providers such as many MinIO deployments   |
-| `OTTO_S3_BUCKET_PRIVATE_CONFIRMED` | Must be `true` in S3 mode                             |
-| `OTTO_S3_ALLOW_INSECURE`           | Explicit development-only opt-in for an HTTP endpoint |
-| `OTTO_S3_PRESIGN_TTL_SECONDS`      | URL lifetime, from 30 through 900 seconds             |
-| `OTTO_S3_KMS_KEY_ID`               | Optional SSE-KMS key identifier                       |
+| Variable                             | Meaning                                               |
+| ------------------------------------ | ----------------------------------------------------- |
+| `OTTO_ATTACHMENT_OBJECT_STORE`       | `local` or `s3`                                       |
+| `OTTO_S3_BUCKET`                     | Private attachment bucket                             |
+| `OTTO_S3_REGION`                     | S3 signing region                                     |
+| `OTTO_S3_ENDPOINT`                   | Optional S3-compatible endpoint                       |
+| `OTTO_S3_FORCE_PATH_STYLE`           | Enable for providers such as many MinIO deployments   |
+| `OTTO_S3_BUCKET_PRIVATE_CONFIRMED`   | Must be `true` in S3 mode                             |
+| `OTTO_S3_ALLOW_INSECURE`             | Explicit development-only opt-in for an HTTP endpoint |
+| `OTTO_S3_PRESIGN_TTL_SECONDS`        | URL lifetime, from 30 through 900 seconds             |
+| `OTTO_S3_KMS_KEY_ID`                 | Optional SSE-KMS key identifier                       |
+| `OTTO_ATTACHMENT_MAX_BYTES`          | Maximum ciphertext bytes for one attachment           |
+| `OTTO_ATTACHMENT_TENANT_QUOTA_BYTES` | Default per-tenant stored plus reserved byte quota     |
 
 Example for a TLS-enabled MinIO deployment:
 
@@ -122,8 +124,16 @@ OTTO_S3_PRESIGN_TTL_SECONDS=120
 ## Delivery boundary
 
 The object-store interface, local and S3 adapters, PostgreSQL metadata
-repository, migrations, resumable state, migration service, and cleanup
-operations are implemented. Existing enterprise chat routes still use their
-legacy synchronous SQLite repository until the broader PostgreSQL route
-cutover is complete. Selecting PostgreSQL continues to fail closed rather than
-silently splitting authoritative data between PostgreSQL and local SQLite.
+repository, tenant/account foreign keys, resumable state, migration service,
+HTTP upload/download routes and Redis-leased cleanup scheduler are implemented.
+PostgreSQL chat messages bind only already-available attachment objects whose
+owner and ACL match both conversation participants. The desktop uploads client
+ciphertext first and sends an object reference in the message; downloads are
+authorized again from PostgreSQL immediately before a short-lived URL is
+issued. Selecting PostgreSQL continues to fail closed rather than silently
+splitting authoritative data between PostgreSQL and local SQLite.
+
+Legacy SQLite attachment migration remains a separate maintenance operation:
+cutover must copy and verify every ciphertext object before changing the
+authoritative location, retain the local copy during the rollback grace period,
+and only then purge it.

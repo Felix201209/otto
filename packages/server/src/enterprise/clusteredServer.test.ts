@@ -35,6 +35,13 @@ const account: PostgresEnterpriseAccountView = {
   createdAt: '2026-08-01T00:00:00.000Z',
   updatedAt: '2026-08-01T00:00:00.000Z',
 };
+const peerAccount: PostgresEnterpriseAccountView = {
+  ...account,
+  id: 'acc_peer',
+  username: 'peer',
+  name: 'Peer',
+  isAdmin: false,
+};
 
 function repository(): PostgresEnterpriseCoreRepository {
   return {
@@ -60,6 +67,9 @@ function repository(): PostgresEnterpriseCoreRepository {
       token === 'clustered-session-token' ? account : null,
     ),
     revokeAuthSession: vi.fn(async () => true),
+    getAccount: vi.fn(async (id: string) =>
+      id === peerAccount.id ? peerAccount : id === account.id ? account : null,
+    ),
   } as unknown as PostgresEnterpriseCoreRepository;
 }
 
@@ -76,13 +86,19 @@ afterEach(async () => {
   );
 });
 
-async function listen(repo = repository()) {
+async function listen(
+  repo = repository(),
+  options: NonNullable<
+    Parameters<typeof createClusteredEnterpriseServer>[1]
+  > = {},
+) {
   const created = createClusteredEnterpriseServer(repo, {
     host: '127.0.0.1',
     port: 0,
     adminToken: 'system-admin-token',
     appVersion: '1.9.10',
     buildCommit: 'a'.repeat(40),
+    ...options,
   });
   servers.push(created.server);
   await new Promise<void>((resolve) => created.server.listen(0, '127.0.0.1', resolve));
@@ -178,5 +194,62 @@ describe('clustered PostgreSQL enterprise server', () => {
       { headers: { 'x-otto-admin-token': '' } },
     );
     expect(response.status).toBe(401);
+  });
+
+  it('stores only E2EE ciphertext through the shared attachment service', async () => {
+    const putInlineCiphertext = vi.fn(async () => ({
+      id: 'att_01',
+      state: 'available',
+      ciphertextBytes: 32,
+      ciphertextSha256: 'b'.repeat(64),
+      encryption: 'e2ee-client-v1',
+      expiresAt: '2026-08-01T01:00:00.000Z',
+      location: { backend: 's3', key: 'attachments/v1/opaque.bin' },
+    }));
+    const attachmentStorage = {
+      putInlineCiphertext,
+    } as unknown as NonNullable<
+      Parameters<typeof createClusteredEnterpriseServer>[1]
+    >['attachmentStorage'];
+    const { baseUrl } = await listen(repository(), { attachmentStorage });
+    const ciphertext = Buffer.alloc(32, 7);
+
+    const response = await fetch(`${baseUrl}/enterprise/attachments/inline`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer clustered-session-token',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        peerAccountId: 'acc_peer',
+        attachmentId: 'att_01',
+        ciphertext: ciphertext.toString('base64'),
+        ciphertextSha256: 'b'.repeat(64),
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    const responseBody = await response.json();
+    expect(responseBody).toEqual({
+      attachment: {
+        id: 'att_01',
+        state: 'available',
+        ciphertextBytes: 32,
+        ciphertextSha256: 'b'.repeat(64),
+        encryption: 'e2ee-client-v1',
+        expiresAt: '2026-08-01T01:00:00.000Z',
+      },
+    });
+    expect(JSON.stringify(responseBody)).not.toContain('opaque.bin');
+    expect(putInlineCiphertext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organizationId: 'org_default',
+        accountId: 'acc_admin',
+        attachmentId: 'att_01',
+        encryption: 'e2ee-client-v1',
+        authorizedAccountIds: ['acc_peer'],
+        ciphertext,
+      }),
+    );
   });
 });
