@@ -865,6 +865,7 @@
   window.addEventListener('resize', function () {
     syncWorklogPosition();
     syncOrganizationPosition();
+    syncProjectBar();
     if (tourState.active) positionTourStep();
   });
 
@@ -1761,6 +1762,188 @@
     try { localStorage.setItem(TOUR_KEY, '1'); } catch (err) { /* 私密模式忽略 */ }
   }
 
+  /* ──────────────────────── 选择项目条（空态首页，输入卡下方；mock） ──────────────────────── */
+
+  var PROJECT_KEY = 'otto.uiux.project.v1';
+  var projectBarEl = null;
+  var projectMenuEl = null;
+  var currentProject = null;
+  var PROJECTS = [
+    { name: '园区服务本地演示', meta: '当前' },
+    { name: '数据导出工具', meta: '最近协作' },
+    { name: '官网前端改版', meta: '上周' },
+  ];
+  try {
+    currentProject = JSON.parse(localStorage.getItem(PROJECT_KEY) || 'null');
+  } catch (err) { /* ignore */ }
+
+  var FOLDER_SVG = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">' +
+    '<path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6a1.5 1.5 0 0 1 1.06.44l.98.98c.28.28.66.44 1.06.44h3.3A1.5 1.5 0 0 1 14 6.36v5.14a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7Z" ' +
+    'stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
+
+  function projectBarLabel() {
+    return currentProject || '选择项目';
+  }
+
+  function closeProjectMenu() {
+    if (projectMenuEl) { projectMenuEl.remove(); projectMenuEl = null; }
+  }
+
+  function toggleProjectMenu() {
+    if (projectMenuEl) { closeProjectMenu(); return; }
+    projectMenuEl = document.createElement('div');
+    projectMenuEl.className = 'otto-uiux-projectbar__menu';
+    projectMenuEl.innerHTML = PROJECTS.map(function (proj) {
+      return '<button type="button" data-project="' + escapeHtml(proj.name) + '"' +
+        (proj.name === currentProject ? ' class="is-active"' : '') + '>' +
+        FOLDER_SVG + '<span>' + escapeHtml(proj.name) + '</span><small>' +
+        escapeHtml(proj.meta) + '</small></button>';
+    }).join('');
+    projectMenuEl.addEventListener('click', function (event) {
+      var btn = event.target.closest ? event.target.closest('[data-project]') : null;
+      if (!btn) return;
+      currentProject = btn.getAttribute('data-project');
+      try { localStorage.setItem(PROJECT_KEY, JSON.stringify(currentProject)); } catch (err) { /* ignore */ }
+      var label = $('.otto-uiux-projectbar__label', projectBarEl);
+      if (label) label.textContent = projectBarLabel();
+      closeProjectMenu();
+    });
+    projectBarEl.appendChild(projectMenuEl);
+  }
+
+  function buildProjectBar() {
+    projectBarEl = document.createElement('div');
+    projectBarEl.className = 'otto-uiux-projectbar';
+    projectBarEl.innerHTML =
+      '<button type="button" class="otto-uiux-projectbar__btn" aria-label="选择项目">' +
+      FOLDER_SVG + '<span class="otto-uiux-projectbar__label">' + escapeHtml(projectBarLabel()) +
+      '</span><span class="otto-uiux-projectbar__chev">▾</span></button>';
+    $('.otto-uiux-projectbar__btn', projectBarEl).addEventListener('click', function (event) {
+      event.stopPropagation();
+      toggleProjectMenu();
+    });
+    document.body.appendChild(projectBarEl);
+    // 点别处收起菜单
+    document.addEventListener('click', function (event) {
+      if (projectMenuEl && projectBarEl && !projectBarEl.contains(event.target)) closeProjectMenu();
+    });
+  }
+
+  function syncProjectBar() {
+    var empty = $('.otto-empty');
+    var composer = $('.otto-composer');
+    var show = !!(empty && composer);
+    if (show && !projectBarEl) buildProjectBar();
+    if (!projectBarEl) return;
+    if (!show) {
+      projectBarEl.style.display = 'none';
+      closeProjectMenu();
+      document.body.classList.remove('otto-uiux-has-projectbar');
+      return;
+    }
+    var r = composer.getBoundingClientRect();
+    projectBarEl.style.display = '';
+    projectBarEl.style.top = (r.bottom + 10) + 'px';
+    projectBarEl.style.left = (r.left + 18) + 'px';
+    projectBarEl.style.width = (r.width - 36) + 'px';
+    document.body.classList.add('otto-uiux-has-projectbar');
+  }
+
+  /* ──────────────────────── 悬浮宠物：可拖动、全页面常驻 ────────────────────────
+   * 原位舞台 visibility:hidden 保活（React 继续逐帧驱动雪碧图行内样式），
+   * body 上的克隆体用 MutationObserver 镜像行内样式 → 动画不打烊；
+   * 位移类不镜像——宠物停在用户拖到的位置原地动。 */
+  var PET_KEY = 'otto.uiux.pet.pos.v1';
+  var petFloatEl = null;
+  var petSpriteSource = null;
+  var petObserver = null;
+
+  function syncPetClone() {
+    if (!petFloatEl || !petSpriteSource || !petSpriteSource.isConnected) return;
+    var cloneSprite = petFloatEl.firstChild.firstChild;
+    if (!cloneSprite) return;
+    var style = petSpriteSource.getAttribute('style');
+    if (style) cloneSprite.setAttribute('style', style);
+    if (cloneSprite.className !== petSpriteSource.className) {
+      cloneSprite.className = petSpriteSource.className;
+    }
+  }
+
+  function petDefaultPosition() {
+    petFloatEl.style.left = Math.max(12, window.innerWidth - 128) + 'px';
+    petFloatEl.style.top = Math.max(64, window.innerHeight - 132) + 'px';
+  }
+
+  function attachPetDrag() {
+    var dragging = false;
+    var startX = 0, startY = 0, originX = 0, originY = 0;
+    petFloatEl.addEventListener('pointerdown', function (event) {
+      dragging = true;
+      petFloatEl.classList.add('is-dragging');
+      try { petFloatEl.setPointerCapture(event.pointerId); } catch (err) { /* ignore */ }
+      startX = event.clientX;
+      startY = event.clientY;
+      var rect = petFloatEl.getBoundingClientRect();
+      originX = rect.left;
+      originY = rect.top;
+      event.preventDefault();
+    });
+    petFloatEl.addEventListener('pointermove', function (event) {
+      if (!dragging) return;
+      var nextX = Math.max(4, Math.min(window.innerWidth - 100, originX + event.clientX - startX));
+      var nextY = Math.max(4, Math.min(window.innerHeight - 100, originY + event.clientY - startY));
+      petFloatEl.style.left = nextX + 'px';
+      petFloatEl.style.top = nextY + 'px';
+    });
+    var finish = function () {
+      if (!dragging) return;
+      dragging = false;
+      petFloatEl.classList.remove('is-dragging');
+      try {
+        localStorage.setItem(PET_KEY, JSON.stringify({
+          left: petFloatEl.style.left,
+          top: petFloatEl.style.top,
+        }));
+      } catch (err) { /* ignore */ }
+    };
+    petFloatEl.addEventListener('pointerup', finish);
+    petFloatEl.addEventListener('pointercancel', finish);
+  }
+
+  function setupPetFloat() {
+    var sprite = $('.otto-pet-stage__motion .otto-pet-stage__sprite');
+    if (!sprite) return false;
+    if (!petFloatEl) {
+      petFloatEl = document.createElement('div');
+      petFloatEl.className = 'otto-uiux-pet';
+      petFloatEl.setAttribute('role', 'img');
+      petFloatEl.setAttribute('aria-label', '小刺猬 Otto（可拖动）');
+      petFloatEl.setAttribute('title', '拖我到任意位置');
+      petFloatEl.innerHTML =
+        '<div class="otto-pet-stage__motion"><div class="otto-pet-stage__sprite"></div></div>';
+      document.body.appendChild(petFloatEl);
+      var saved = null;
+      try { saved = JSON.parse(localStorage.getItem(PET_KEY) || 'null'); } catch (err) { /* ignore */ }
+      if (saved && saved.left && saved.top) {
+        petFloatEl.style.left = saved.left;
+        petFloatEl.style.top = saved.top;
+      } else {
+        petDefaultPosition();
+      }
+      attachPetDrag();
+    }
+    petSpriteSource = sprite;
+    syncPetClone();
+    if (petObserver) petObserver.disconnect();
+    petObserver = new MutationObserver(syncPetClone);
+    var motion = $('.otto-pet-stage__motion');
+    if (motion) {
+      petObserver.observe(motion, { attributes: true, subtree: true, attributeFilter: ['style', 'class'] });
+    }
+    document.body.classList.add('otto-uiux-pet-float');
+    return true;
+  }
+
   /* ──────────────────────── 启动与重渲染守护 ──────────────────────── */
 
   // React 重渲染会抹掉我们加在 #root 内的 class（折叠态、过滤态），
@@ -1781,6 +1964,8 @@
         applyTerminology();
         syncWorklogPosition();
         syncOrganizationPosition();
+        syncProjectBar();
+        setupPetFloat();
       } catch (err) {
         console.warn(LOG, '重放增强异常', err);
       }
@@ -1798,6 +1983,8 @@
       applyExpertsCollapse();
       applyBreadcrumbTitle();
       applyTerminology();
+      syncProjectBar();
+      setupPetFloat();
       var observer = new MutationObserver(scheduleReapply);
       observer.observe(root, { childList: true, subtree: true });
       // 首次访问引导（localStorage 记住，不再打扰）
