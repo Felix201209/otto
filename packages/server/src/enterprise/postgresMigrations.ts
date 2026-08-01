@@ -536,6 +536,39 @@ CREATE TABLE legal_consents (
 CREATE INDEX legal_consents_account
   ON legal_consents (account_id, accepted_at DESC);`,
   },
+  {
+    version: 8,
+    name: 'e2ee-device-certificates-v2',
+    sql: `
+CREATE TABLE otto_deployment_identity (
+  singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+  deployment_id TEXT NOT NULL UNIQUE
+    CHECK (deployment_id ~ '^dep_[A-Za-z0-9._:-]{16,64}$'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+ALTER TABLE e2ee_devices
+  ADD COLUMN certificate_format INTEGER NOT NULL DEFAULT 1
+    CHECK (certificate_format IN (1, 2)),
+  ADD COLUMN certificate_serial TEXT,
+  ADD COLUMN certificate_request_json JSONB,
+  ADD COLUMN certificate_request_hash TEXT
+    CHECK (certificate_request_hash IS NULL OR certificate_request_hash ~ '^[0-9a-f]{64}$'),
+  ADD COLUMN certificate_approval_json JSONB,
+  ADD COLUMN certificate_hash TEXT
+    CHECK (certificate_hash IS NULL OR certificate_hash ~ '^[0-9a-f]{64}$'),
+  ADD COLUMN certificate_expires_at TIMESTAMPTZ;
+
+ALTER TABLE e2ee_key_transparency_log
+  ADD COLUMN certificate_hash TEXT;
+UPDATE e2ee_key_transparency_log
+SET certificate_hash = key_fingerprint
+WHERE certificate_hash IS NULL;
+ALTER TABLE e2ee_key_transparency_log
+  ALTER COLUMN certificate_hash SET NOT NULL,
+  ADD CONSTRAINT e2ee_key_transparency_certificate_hash_check
+    CHECK (certificate_hash ~ '^[0-9a-f]{64}$');`,
+  },
 ];
 
 export const ENTERPRISE_POSTGRES_SCHEMA_VERSION =

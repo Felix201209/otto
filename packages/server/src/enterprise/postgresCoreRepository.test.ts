@@ -85,6 +85,20 @@ describe('PostgreSQL enterprise core authority', () => {
     expect(migration!.sql).not.toContain('code TEXT NOT NULL');
   });
 
+  it('migrates clustered E2EE authority to signed v2 certificates', () => {
+    const migration = ENTERPRISE_POSTGRES_MIGRATIONS.find(
+      (candidate) => candidate.version === 8,
+    );
+    expect(migration).toMatchObject({
+      version: 8,
+      name: 'e2ee-device-certificates-v2',
+    });
+    expect(migration!.sql).toContain('CREATE TABLE otto_deployment_identity');
+    expect(migration!.sql).toContain('certificate_request_json JSONB');
+    expect(migration!.sql).toContain('certificate_approval_json JSONB');
+    expect(migration!.sql).toContain('ADD COLUMN certificate_hash TEXT');
+  });
+
   it('normalizes mainland phone numbers without importing the SQLite repository', () => {
     expect(normalizePostgresEnterprisePhone('138 0013 8000')).toBe(
       '+8613800138000',
@@ -95,6 +109,59 @@ describe('PostgreSQL enterprise core authority', () => {
     expect(() => normalizePostgresEnterprisePhone('10086')).toThrow(
       'phone is invalid',
     );
+  });
+
+  it('persists one stable clustered deployment identity', async () => {
+    const queries: Array<{ sql: string; values: readonly unknown[] }> = [];
+    const pool: PostgresPoolLike = {
+      connect: vi.fn(),
+      query: vi.fn(async (sql: string, values: readonly unknown[] = []) => {
+        queries.push({ sql, values });
+        return sql.includes('SELECT deployment_id')
+          ? result([{ deployment_id: 'dep_0123456789abcdef' }])
+          : result([], 1);
+      }),
+      end: vi.fn(),
+    };
+    const repository = createPostgresEnterpriseCoreRepository({ pool });
+
+    await expect(repository.getDeploymentId()).resolves.toBe(
+      'dep_0123456789abcdef',
+    );
+    await expect(repository.getDeploymentId()).resolves.toBe(
+      'dep_0123456789abcdef',
+    );
+
+    expect(queries.filter(({ sql }) => sql.includes('ON CONFLICT')).length).toBe(
+      2,
+    );
+    expect(
+      queries.filter(({ sql }) => sql.includes('SELECT deployment_id')).length,
+    ).toBe(2);
+  });
+
+  it('rejects transparency reads before querying logs for inactive accounts', async () => {
+    const queries: string[] = [];
+    const pool: PostgresPoolLike = {
+      connect: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        queries.push(sql);
+        return result([]);
+      }),
+      end: vi.fn(),
+    };
+    const repository = createPostgresEnterpriseCoreRepository({ pool });
+
+    await expect(
+      repository.listE2eeKeyTransparency({
+        organizationId: 'org_default',
+        requesterAccountId: 'acc_requester',
+        accountId: 'acc_target',
+      }),
+    ).rejects.toThrow('not active in organization');
+    expect(
+      queries.some((sql) => sql.includes('e2ee_key_transparency_log')),
+    ).toBe(false);
   });
 
   it('stores only a SHA-256 session token digest in PostgreSQL', async () => {

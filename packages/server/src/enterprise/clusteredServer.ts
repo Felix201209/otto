@@ -17,6 +17,8 @@ import { createAliyunLoginSmsFromEnv } from 'otto-core';
 
 import type {
   E2eeAttachmentCiphertextInput,
+  E2eeDeviceApprovalInput,
+  E2eeDeviceRegistrationInput,
   E2eeMessageEnvelope,
 } from '../modules/collaboration/index.js';
 import { E2EE_ATTACHMENT_MAX_CIPHERTEXT_BYTES } from '../modules/collaboration/index.js';
@@ -349,16 +351,18 @@ export function createClusteredEnterpriseServer(
     const method = req.method || 'GET';
     try {
       if (path === '/enterprise/health' && method === 'GET') {
-        const [infrastructure, databaseProbe, authority] = await Promise.all([
+        const [infrastructure, databaseProbe, authority, deploymentId] = await Promise.all([
           options.infrastructureReadiness?.(),
           options.databaseReadiness?.(),
           repository.readiness(),
+          repository.getDeploymentId(),
         ]);
         const database = infrastructure?.database ?? databaseProbe ?? authority;
         sendJson(res, 200, {
           status: 'ok',
           apiVersion: 4,
           deployment: {
+            deploymentId,
             version: options.appVersion || 'unknown',
             buildCommit: options.buildCommit || 'unknown',
             startedAt,
@@ -382,6 +386,9 @@ export function createClusteredEnterpriseServer(
             'unread_message_notifications_v1',
             'e2ee_private_messages_v1',
             'e2ee_device_trust_v1',
+            'e2ee_device_certificates_v2',
+            'e2ee_merkle_transparency_v2',
+            'e2ee_atoa_one_time_grants_v1',
             'postgresql_authority_v1',
             'postgresql_registration_v1',
             'organization_invites_v1',
@@ -1180,6 +1187,8 @@ export function createClusteredEnterpriseServer(
             typeof body.deviceExchangePublicKey === 'string'
               ? body.deviceExchangePublicKey
               : '',
+          certificateRequest:
+            body.certificateRequest as E2eeDeviceRegistrationInput['certificateRequest'],
         });
         sendJson(res, 200, { device });
         return;
@@ -1211,17 +1220,16 @@ export function createClusteredEnterpriseServer(
       const approveDevice = /^\/enterprise\/e2ee\/devices\/([^/]+)\/approve$/.exec(path);
       if (approveDevice && method === 'POST') {
         const body = await readJsonBody(req, 16 * 1024);
+        const approval =
+          body.approval as E2eeDeviceApprovalInput['approval'];
+        const targetDeviceId = decodeURIComponent(approveDevice[1]!);
+        if (approval?.request?.deviceId !== targetDeviceId) {
+          throw new Error('approved E2EE device does not match request path');
+        }
         const device = await repository.approveE2eeDevice({
           organizationId: member.organizationId,
           accountId: member.id,
-          approverDeviceId:
-            typeof body.approverDeviceId === 'string' ? body.approverDeviceId : '',
-          targetDeviceId: decodeURIComponent(approveDevice[1]!),
-          targetKeyFingerprint:
-            typeof body.targetKeyFingerprint === 'string'
-              ? body.targetKeyFingerprint
-              : '',
-          signature: typeof body.signature === 'string' ? body.signature : '',
+          approval,
         });
         sendJson(res, 200, { device });
         return;

@@ -1349,7 +1349,7 @@ export class EnterpriseE2eeCrypto {
       authorizedMessageIds: [...input.authorizedMessageIds],
       issuedAt: issuedAt.toISOString(),
       expiresAt: expiresAt.toISOString(),
-      nonce: randomBytes(18).toString('base64url'),
+      nonce: `nonce_${randomBytes(18).toString('base64url')}`,
       signature: '',
     };
     const grant: E2eeAtoaOneTimeGrant = {

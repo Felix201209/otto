@@ -2,7 +2,7 @@
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
-import { generateKeyPairSync, sign } from 'node:crypto';
+import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   E2EE_TRUST_FORMAT,
@@ -289,6 +289,66 @@ describe('server-side E2EE repository', () => {
           accountId: 'alice',
         }),
       ).toThrow('integrity');
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('accepts an intact legacy transparency entry during a v2 upgrade', () => {
+    const harness = createHarness();
+    try {
+      harness.register('alice', 'alice-device-1');
+      const row = harness.database
+        .prepare(
+          `SELECT sequence, account_id, device_id, event, key_fingerprint,
+                  actor_device_id, previous_hash, created_at
+           FROM e2ee_key_transparency_log
+           WHERE organization_id = 'org-a' AND account_id = 'alice'`,
+        )
+        .get() as {
+        sequence: number;
+        account_id: string;
+        device_id: string;
+        event: string;
+        key_fingerprint: string;
+        actor_device_id: string | null;
+        previous_hash: string;
+        created_at: string;
+      };
+      const legacyEntryHash = createHash('sha256')
+        .update('otto:e2ee-key-transparency:v1\n')
+        .update(
+          JSON.stringify({
+            sequence: Number(row.sequence),
+            organizationId: 'org-a',
+            accountId: row.account_id,
+            deviceId: row.device_id,
+            event: row.event,
+            keyFingerprint: row.key_fingerprint,
+            actorDeviceId: row.actor_device_id,
+            previousHash: row.previous_hash,
+            createdAt: row.created_at,
+          }),
+        )
+        .digest('hex');
+      harness.database
+        .prepare(
+          `UPDATE e2ee_key_transparency_log
+           SET certificate_hash = key_fingerprint, entry_hash = ?
+           WHERE organization_id = 'org-a' AND account_id = 'alice'`,
+        )
+        .run(legacyEntryHash);
+
+      const transparency = harness.facade.listE2eeKeyTransparency({
+        organizationId: 'org-a',
+        requesterAccountId: 'alice',
+        accountId: 'alice',
+      });
+      expect(transparency.treeSize).toBe(1);
+      expect(transparency.headHash).toBe(legacyEntryHash);
+      expect(transparency.entries[0]?.certificateHash).toBe(
+        row.key_fingerprint,
+      );
     } finally {
       harness.database.close();
     }

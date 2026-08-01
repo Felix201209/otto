@@ -357,6 +357,18 @@ function transparencyEntryHash(input: {
     .digest('hex');
 }
 
+function legacyTransparencyEntryHash(
+  input: Omit<
+    Parameters<typeof transparencyEntryHash>[0],
+    'certificateHash'
+  >,
+): string {
+  return createHash('sha256')
+    .update('otto:e2ee-key-transparency:v1\n')
+    .update(JSON.stringify(input))
+    .digest('hex');
+}
+
 function atomicDeviceMutation<T>(database: Database, operation: () => T): T {
   const nested = database.inTransaction;
   database.exec(
@@ -976,10 +988,25 @@ export function listE2eeKeyTransparencyInRepository(
       previousHash: entry.previousHash,
       createdAt: entry.createdAt,
     });
+    const legacyHash = legacyTransparencyEntryHash({
+      sequence: entry.sequence,
+      organizationId,
+      accountId: entry.accountId,
+      deviceId: entry.deviceId,
+      event: entry.event,
+      keyFingerprint: entry.keyFingerprint,
+      actorDeviceId: entry.actorDeviceId,
+      previousHash: entry.previousHash,
+      createdAt: entry.createdAt,
+    });
+    const validEntryHash =
+      entry.entryHash === expectedHash ||
+      (entry.certificateHash === entry.keyFingerprint &&
+        entry.entryHash === legacyHash);
     if (
       entry.sequence !== index + 1 ||
       entry.previousHash !== previousHash ||
-      entry.entryHash !== expectedHash
+      !validEntryHash
     ) {
       throw new Error('E2EE key transparency log integrity check failed');
     }

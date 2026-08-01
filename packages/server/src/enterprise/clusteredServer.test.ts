@@ -46,6 +46,7 @@ const peerAccount: PostgresEnterpriseAccountView = {
 function repository(): PostgresEnterpriseCoreRepository {
   return {
     defaultOrganizationId: 'org_default',
+    getDeploymentId: vi.fn(async () => 'dep_0123456789abcdef'),
     readiness: vi.fn(async () => ({
       ready: true,
       backend: 'postgresql',
@@ -114,11 +115,20 @@ describe('clustered PostgreSQL enterprise server', () => {
     const { baseUrl } = await listen();
     const response = await fetch(`${baseUrl}/enterprise/health`);
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
+    const health = await response.json();
+    expect(health).toMatchObject({
       status: 'ok',
+      deployment: { deploymentId: 'dep_0123456789abcdef' },
       topology: { mode: 'clustered-enterprise', database: 'postgresql' },
       authority: { ready: true, backend: 'postgresql', schemaVersion: 4 },
     });
+    expect(health.capabilities).toEqual(
+      expect.arrayContaining([
+        'e2ee_device_certificates_v2',
+        'e2ee_merkle_transparency_v2',
+        'e2ee_atoa_one_time_grants_v1',
+      ]),
+    );
   });
 
   it('serves password login and session lookup from the async repository', async () => {

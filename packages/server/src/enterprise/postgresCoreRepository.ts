@@ -15,11 +15,21 @@ import {
 } from 'node:crypto';
 
 import {
+  canonicalE2eeBytes,
+  e2eeDeviceCertificateHash,
+  e2eeDeviceCertificateRequestHash,
+  e2eeMerkleInclusionProof,
+  e2eeMerkleRoot,
+  verifyE2eeDeviceCertificateApproval,
+  verifyE2eeDeviceCertificateRequest,
+  type E2eeDeviceCertificateRequestV2,
+} from 'otto-core';
+
+import {
   E2EE_ATTACHMENT_MAX_CIPHERTEXT_BYTES,
   E2EE_ATTACHMENT_MAX_COUNT,
   E2EE_MESSAGE_MAX_CIPHERTEXT_BYTES,
   E2EE_PROTOCOL_VERSION,
-  e2eeDeviceApprovalSignaturePayload,
   e2eeDeviceKeyFingerprint,
   e2eeMessageSignaturePayload,
   type E2eeDeviceApprovalInput,
@@ -44,7 +54,6 @@ import type {
 import { createPostgresRegistrationRepository } from './postgresRegistrationRepository.js';
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
-const KEY_FINGERPRINT = /^[0-9a-f]{64}$/;
 const EMPTY_TRANSPARENCY_HASH = '0'.repeat(64);
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 const LOGIN_FAILURE_LIMIT = 5;
@@ -219,6 +228,13 @@ interface DeviceRow extends Record<string, unknown> {
   identity_signing_public_key: string;
   device_exchange_public_key: string;
   key_fingerprint: string;
+  certificate_format: number;
+  certificate_serial: string | null;
+  certificate_request_json: E2eeDeviceCertificateRequestV2 | string | null;
+  certificate_request_hash: string | null;
+  certificate_approval_json: Record<string, unknown> | string | null;
+  certificate_hash: string | null;
+  certificate_expires_at: Date | string | null;
   approval_state: 'pending' | 'approved';
   approved_by_device_id: string | null;
   approved_at: Date | string | null;
@@ -233,6 +249,7 @@ interface TransparencyRow extends Record<string, unknown> {
   device_id: string;
   event: E2eeKeyTransparencyEvent;
   key_fingerprint: string;
+  certificate_hash: string;
   actor_device_id: string | null;
   previous_hash: string;
   entry_hash: string;
@@ -414,6 +431,30 @@ function organizationView(row: OrganizationRow): PostgresEnterpriseOrganizationV
 }
 
 function deviceView(row: DeviceRow): E2eeDeviceView {
+  if (
+    Number(row.certificate_format) !== 2 ||
+    !row.certificate_serial ||
+    !row.certificate_request_json ||
+    !row.certificate_request_hash
+  ) {
+    throw new Error('E2EE device must re-enroll with a v2 certificate');
+  }
+  let certificateRequest: E2eeDeviceCertificateRequestV2;
+  try {
+    certificateRequest =
+      typeof row.certificate_request_json === 'string'
+        ? (JSON.parse(row.certificate_request_json) as E2eeDeviceCertificateRequestV2)
+        : row.certificate_request_json;
+    verifyE2eeDeviceCertificateRequest(certificateRequest);
+  } catch {
+    throw new Error('stored E2EE device certificate request is invalid');
+  }
+  if (
+    e2eeDeviceCertificateRequestHash(certificateRequest) !==
+    row.certificate_request_hash
+  ) {
+    throw new Error('stored E2EE device certificate request was tampered with');
+  }
   return {
     accountId: row.account_id,
     deviceId: row.device_id,
@@ -421,6 +462,11 @@ function deviceView(row: DeviceRow): E2eeDeviceView {
     identitySigningPublicKey: row.identity_signing_public_key,
     deviceExchangePublicKey: row.device_exchange_public_key,
     keyFingerprint: row.key_fingerprint,
+    certificateFormat: 2,
+    certificateSerial: row.certificate_serial,
+    certificateRequest,
+    certificateHash: row.certificate_hash,
+    certificateExpiresAt: iso(row.certificate_expires_at),
     approvalState: row.approval_state,
     approvedByDeviceId: row.approved_by_device_id,
     approvedAt: iso(row.approved_at),
@@ -437,6 +483,7 @@ function transparencyEntry(row: TransparencyRow): E2eeKeyTransparencyEntry {
     deviceId: row.device_id,
     event: row.event,
     keyFingerprint: row.key_fingerprint,
+    certificateHash: row.certificate_hash,
     actorDeviceId: row.actor_device_id,
     previousHash: row.previous_hash,
     entryHash: row.entry_hash,
@@ -571,10 +618,20 @@ function transparencyHash(input: {
   deviceId: string;
   event: E2eeKeyTransparencyEvent;
   keyFingerprint: string;
+  certificateHash: string;
   actorDeviceId: string | null;
   previousHash: string;
   createdAt: string;
 }): string {
+  return createHash('sha256')
+    .update('otto:e2ee-key-transparency:v1\n')
+    .update(JSON.stringify(input))
+    .digest('hex');
+}
+
+function legacyTransparencyHash(
+  input: Omit<Parameters<typeof transparencyHash>[0], 'certificateHash'>,
+): string {
   return createHash('sha256')
     .update('otto:e2ee-key-transparency:v1\n')
     .update(JSON.stringify(input))
@@ -589,7 +646,9 @@ async function appendTransparencyEntry(
     deviceId: string;
     event: E2eeKeyTransparencyEvent;
     keyFingerprint: string;
+    certificateHash: string;
     actorDeviceId: string | null;
+    createdAt?: string;
   },
 ): Promise<E2eeKeyTransparencyEntry> {
   await database.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
@@ -604,7 +663,7 @@ async function appendTransparencyEntry(
   const previous = previousResult.rows[0];
   const sequence = Number(previous?.sequence ?? 0) + 1;
   const previousHash = previous?.entry_hash ?? EMPTY_TRANSPARENCY_HASH;
-  const createdAt = new Date().toISOString();
+  const createdAt = input.createdAt ?? new Date().toISOString();
   const entryHash = transparencyHash({
     sequence,
     organizationId: input.organizationId,
@@ -612,15 +671,17 @@ async function appendTransparencyEntry(
     deviceId: input.deviceId,
     event: input.event,
     keyFingerprint: input.keyFingerprint,
+    certificateHash: input.certificateHash,
     actorDeviceId: input.actorDeviceId,
     previousHash,
     createdAt,
   });
   const result = await database.query<TransparencyRow>(
-    `INSERT INTO e2ee_key_transparency_log
-       (organization_id, sequence, account_id, device_id, event,
-        key_fingerprint, actor_device_id, previous_hash, entry_hash, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::timestamptz)
+      `INSERT INTO e2ee_key_transparency_log
+        (organization_id, sequence, account_id, device_id, event,
+         key_fingerprint, certificate_hash, actor_device_id, previous_hash,
+         entry_hash, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::timestamptz)
      RETURNING *`,
     [
       input.organizationId,
@@ -629,6 +690,7 @@ async function appendTransparencyEntry(
       input.deviceId,
       input.event,
       input.keyFingerprint,
+      input.certificateHash,
       input.actorDeviceId,
       previousHash,
       entryHash,
@@ -647,6 +709,20 @@ export function createPostgresEnterpriseCoreRepository(input: {
   const sessionTtlMs = input.sessionTtlMs ?? SESSION_TTL_MS;
   if (!Number.isSafeInteger(sessionTtlMs) || sessionTtlMs < 60_000) {
     throw new Error('PostgreSQL enterprise session TTL is invalid');
+  }
+
+  async function getDeploymentId(): Promise<string> {
+    const candidate = `dep_${randomUUID().replace(/-/g, '')}`;
+    await input.pool.query(
+      `INSERT INTO otto_deployment_identity (singleton, deployment_id)
+       VALUES (TRUE, $1) ON CONFLICT (singleton) DO NOTHING`,
+      [candidate],
+    );
+    const result = await input.pool.query<
+      { deployment_id: string } & Record<string, unknown>
+    >('SELECT deployment_id FROM otto_deployment_identity WHERE singleton = TRUE');
+    const deploymentId = result.rows[0]?.deployment_id ?? '';
+    return requiredIdentifier(deploymentId, 'deployment id');
   }
 
   async function getOrganization(id: string): Promise<PostgresEnterpriseOrganizationView | null> {
@@ -1372,6 +1448,28 @@ export function createPostgresEnterpriseCoreRepository(input: {
     if (!deviceName) throw new Error('device name is required');
     const signingKey = requirePublicKey(raw.identitySigningPublicKey, 'ed25519', 'identity signing public key');
     const exchangeKey = requirePublicKey(raw.deviceExchangePublicKey, 'x25519', 'device exchange public key');
+    const deploymentId = await getDeploymentId();
+    const certificateRequest = verifyE2eeDeviceCertificateRequest(
+      raw.certificateRequest,
+    );
+    if (
+      certificateRequest.deploymentId !== deploymentId ||
+      certificateRequest.organizationId !== organizationId ||
+      certificateRequest.accountId !== accountId ||
+      certificateRequest.deviceId !== deviceId ||
+      certificateRequest.deviceName !== deviceName ||
+      certificateRequest.credentialSigningPublicKey !== signingKey ||
+      certificateRequest.deviceExchangePublicKey !== exchangeKey
+    ) {
+      throw new Error('E2EE device certificate request does not match registration');
+    }
+    const certificateRequestJson = JSON.stringify({
+      ...certificateRequest,
+      proofOfPossession: raw.certificateRequest.proofOfPossession,
+    } satisfies E2eeDeviceCertificateRequestV2);
+    const certificateRequestHash = e2eeDeviceCertificateRequestHash(
+      raw.certificateRequest,
+    );
     const fingerprint = e2eeDeviceKeyFingerprint({
       identitySigningPublicKey: signingKey,
       deviceExchangePublicKey: exchangeKey,
@@ -1394,33 +1492,74 @@ export function createPostgresEnterpriseCoreRepository(input: {
         const row = existing.rows[0];
         if (
           row.identity_signing_public_key !== signingKey ||
-          row.device_exchange_public_key !== exchangeKey ||
-          row.revoked_at !== null
+          row.device_exchange_public_key !== exchangeKey
         ) {
-          throw new Error('E2EE device id is already bound or revoked');
+          throw new Error('a registered device id cannot be rebound to different keys');
+        }
+        const upgradingLegacyCertificate = Number(row.certificate_format) !== 2;
+        if (
+          row.certificate_request_hash &&
+          row.certificate_request_hash !== certificateRequestHash
+        ) {
+          throw new Error(
+            'a registered device id cannot be rebound to another certificate',
+          );
         }
         const refreshed = await client.query<DeviceRow>(
-          `UPDATE e2ee_devices SET device_name = $4, last_seen_at = CURRENT_TIMESTAMP
+          `UPDATE e2ee_devices
+           SET device_name = $4, last_seen_at = CURRENT_TIMESTAMP,
+               certificate_format = 2, certificate_serial = $5,
+               certificate_request_json = $6::jsonb,
+               certificate_request_hash = $7,
+               certificate_hash = COALESCE(certificate_hash, $8)
            WHERE organization_id = $1 AND account_id = $2 AND device_id = $3
            RETURNING *`,
-          [organizationId, accountId, deviceId, deviceName],
+          [
+            organizationId,
+            accountId,
+            deviceId,
+            deviceName,
+            certificateRequest.certificateSerial,
+            certificateRequestJson,
+            certificateRequestHash,
+            row.approval_state === 'approved' ? certificateRequestHash : null,
+          ],
         );
+        if (upgradingLegacyCertificate) {
+          await appendTransparencyEntry(client, {
+            organizationId,
+            accountId,
+            deviceId,
+            event:
+              row.approval_state === 'approved'
+                ? 'approved'
+                : 'registered_pending',
+            keyFingerprint: fingerprint,
+            certificateHash: certificateRequestHash,
+            actorDeviceId:
+              row.approval_state === 'approved' ? deviceId : null,
+          });
+        }
         return deviceView(refreshed.rows[0]!);
       }
-      const approvedCount = await client.query<{ count: number | string } & Record<string, unknown>>(
+      const history = await client.query<
+        { count: number | string } & Record<string, unknown>
+      >(
         `SELECT count(*)::integer AS count FROM e2ee_devices
-         WHERE organization_id = $1 AND account_id = $2
-           AND approval_state = 'approved' AND revoked_at IS NULL`,
+         WHERE organization_id = $1 AND account_id = $2`,
         [organizationId, accountId],
       );
-      const firstDevice = Number(approvedCount.rows[0]?.count ?? 0) === 0;
+      const firstDevice = Number(history.rows[0]?.count ?? 0) === 0;
       const inserted = await client.query<DeviceRow>(
         `INSERT INTO e2ee_devices
           (organization_id, account_id, device_id, device_name,
            identity_signing_public_key, device_exchange_public_key,
-           key_fingerprint, approval_state, approved_by_device_id, approved_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
-                 CASE WHEN $8 = 'approved' THEN CURRENT_TIMESTAMP ELSE NULL END)
+            key_fingerprint, certificate_format, certificate_serial,
+            certificate_request_json, certificate_request_hash,
+            certificate_hash, approval_state, approved_by_device_id, approved_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 2, $8, $9::jsonb, $10,
+                 $11, $12, $13,
+                 CASE WHEN $12 = 'approved' THEN CURRENT_TIMESTAMP ELSE NULL END)
          RETURNING *`,
         [
           organizationId,
@@ -1430,6 +1569,10 @@ export function createPostgresEnterpriseCoreRepository(input: {
           signingKey,
           exchangeKey,
           fingerprint,
+          certificateRequest.certificateSerial,
+          certificateRequestJson,
+          certificateRequestHash,
+          firstDevice ? certificateRequestHash : null,
           firstDevice ? 'approved' : 'pending',
           firstDevice ? deviceId : null,
         ],
@@ -1440,6 +1583,7 @@ export function createPostgresEnterpriseCoreRepository(input: {
         deviceId,
         event: firstDevice ? 'bootstrap_approved' : 'registered_pending',
         keyFingerprint: fingerprint,
+        certificateHash: certificateRequestHash,
         actorDeviceId: firstDevice ? deviceId : null,
       });
       await logAudit('e2ee_device_registered', organizationId, account.employee_id, {
@@ -1460,20 +1604,35 @@ export function createPostgresEnterpriseCoreRepository(input: {
   }): Promise<E2eeDeviceView[]> {
     const organizationId = requiredIdentifier(raw.organizationId, 'organization id');
     const requesterAccountId = requiredIdentifier(raw.requesterAccountId, 'requester account id');
-    const accountIds = (raw.accountIds?.length ? raw.accountIds : [requesterAccountId]).map((id) =>
-      requiredIdentifier(id, 'account id'),
-    );
-    if (accountIds.some((id) => id !== requesterAccountId)) {
-      const requester = await getAccount(requesterAccountId, organizationId);
-      if (!requester) throw new Error('requester account is unavailable');
+    const accountIds = [
+      ...new Set(
+        (raw.accountIds?.length ? raw.accountIds : [requesterAccountId]).map(
+          (id) => requiredIdentifier(id, 'account id'),
+        ),
+      ),
+    ];
+    if (accountIds.length === 0 || accountIds.length > 2) {
+      throw new Error('one or two device accounts are required');
     }
+    for (const accountId of [requesterAccountId, ...accountIds]) {
+      const account = await getAccount(accountId, organizationId);
+      if (!account || account.status !== 'active') {
+        throw new Error('device account is not active in organization');
+      }
+    }
+    const ownDirectory = accountIds.every((id) => id === requesterAccountId);
     const result = await input.pool.query<DeviceRow>(
       `SELECT * FROM e2ee_devices
        WHERE organization_id = $1 AND account_id = ANY($2::text[])
          AND ($3::boolean OR revoked_at IS NULL)
          AND ($4::boolean OR approval_state = 'approved')
        ORDER BY account_id, created_at, device_id`,
-      [organizationId, accountIds, raw.includeRevoked === true, raw.includePending === true],
+      [
+        organizationId,
+        accountIds,
+        ownDirectory && raw.includeRevoked === true,
+        ownDirectory && raw.includePending === true,
+      ],
     );
     return result.rows.map(deviceView);
   }
@@ -1481,11 +1640,22 @@ export function createPostgresEnterpriseCoreRepository(input: {
   async function approveE2eeDevice(raw: E2eeDeviceApprovalInput): Promise<E2eeDeviceView> {
     const organizationId = requiredIdentifier(raw.organizationId, 'organization id');
     const accountId = requiredIdentifier(raw.accountId, 'account id');
-    const approverDeviceId = requiredIdentifier(raw.approverDeviceId, 'approver device id');
-    const targetDeviceId = requiredIdentifier(raw.targetDeviceId, 'target device id');
-    const targetKeyFingerprint = raw.targetKeyFingerprint.trim().toLowerCase();
-    if (!KEY_FINGERPRINT.test(targetKeyFingerprint)) throw new Error('E2EE device key fingerprint is invalid');
-    const signature = requireCanonicalBase64(raw.signature, 'device approval signature', 128);
+    const approval = raw.approval;
+    if (!approval || approval.format !== 2) {
+      throw new Error('a signed v2 device certificate approval is required');
+    }
+    const approverDeviceId = requiredIdentifier(
+      approval.approverDeviceId,
+      'approver device id',
+    );
+    const targetDeviceId = requiredIdentifier(
+      approval.request.deviceId,
+      'target device id',
+    );
+    if (approverDeviceId === targetDeviceId) {
+      throw new Error('a pending device cannot approve itself');
+    }
+    const deploymentId = await getDeploymentId();
     return transaction(input.pool, async (client) => {
       const devices = await client.query<DeviceRow>(
         `SELECT * FROM e2ee_devices
@@ -1496,41 +1666,86 @@ export function createPostgresEnterpriseCoreRepository(input: {
       const approver = devices.rows.find((device) => device.device_id === approverDeviceId);
       const target = devices.rows.find((device) => device.device_id === targetDeviceId);
       if (!approver || approver.approval_state !== 'approved' || approver.revoked_at) {
-        throw new Error('approver device is not active and approved');
+        throw new Error('approver E2EE device is not active and approved');
       }
-      if (!target || target.revoked_at) throw new Error('target device is unavailable');
-      if (target.key_fingerprint !== targetKeyFingerprint) throw new Error('target device fingerprint changed');
-      if (!verify(null, e2eeDeviceApprovalSignaturePayload({
+      if (!target || target.revoked_at) {
+        throw new Error('pending E2EE device is unavailable');
+      }
+      const approverView = deviceView(approver);
+      if (
+        !approverView.certificateHash ||
+        approval.approverCertificateHash !== approverView.certificateHash
+      ) {
+        throw new Error('approver E2EE certificate hash changed');
+      }
+      const targetView = deviceView(target);
+      const verified = verifyE2eeDeviceCertificateApproval({
+        approval,
+        approverSigningPublicKey: approver.identity_signing_public_key,
+      });
+      const { proofOfPossession: _proof, ...targetRequest } =
+        targetView.certificateRequest;
+      if (
+        verified.request.deploymentId !== deploymentId ||
+        verified.request.organizationId !== organizationId ||
+        verified.request.accountId !== accountId ||
+        JSON.stringify(verified.request) !== JSON.stringify(targetRequest)
+      ) {
+        throw new Error('approved E2EE certificate request does not match target');
+      }
+      const approvedAtMs = Date.parse(verified.approvedAt);
+      const expiresAtMs = Date.parse(verified.expiresAt);
+      const now = Date.now();
+      if (
+        approvedAtMs > now + 5 * 60 * 1000 ||
+        expiresAtMs <= now ||
+        expiresAtMs - approvedAtMs > 370 * 24 * 60 * 60 * 1000
+      ) {
+        throw new Error('E2EE device certificate lifetime is unacceptable');
+      }
+      const certificateHash = e2eeDeviceCertificateHash(approval);
+      if (target.approval_state === 'approved') {
+        if (target.certificate_hash !== certificateHash) {
+          throw new Error('E2EE device is already bound to another certificate');
+        }
+        return targetView;
+      }
+      await client.query(
+        `UPDATE e2ee_devices
+         SET approval_state = 'approved', approved_by_device_id = $4,
+             approved_at = $5::timestamptz,
+             certificate_approval_json = $6::jsonb, certificate_hash = $7,
+             certificate_expires_at = $8::timestamptz,
+             last_seen_at = CURRENT_TIMESTAMP
+         WHERE organization_id = $1 AND account_id = $2 AND device_id = $3
+           AND approval_state = 'pending' AND revoked_at IS NULL`,
+        [
+          organizationId,
+          accountId,
+          targetDeviceId,
+          approverDeviceId,
+          verified.approvedAt,
+          JSON.stringify(approval),
+          certificateHash,
+          verified.expiresAt,
+        ],
+      );
+      await appendTransparencyEntry(client, {
         organizationId,
+        accountId,
+        deviceId: targetDeviceId,
+        event: 'approved',
+        keyFingerprint: target.key_fingerprint,
+        certificateHash,
+        actorDeviceId: approverDeviceId,
+        createdAt: verified.approvedAt,
+      });
+      await logAudit('e2ee_device_approved', organizationId, null, {
         accountId,
         approverDeviceId,
         targetDeviceId,
-        targetKeyFingerprint,
-      }), approver.identity_signing_public_key, signature)) {
-        throw new Error('device approval signature is invalid');
-      }
-      if (target.approval_state !== 'approved') {
-        await client.query(
-          `UPDATE e2ee_devices SET approval_state = 'approved',
-             approved_by_device_id = $4, approved_at = CURRENT_TIMESTAMP,
-             last_seen_at = CURRENT_TIMESTAMP
-           WHERE organization_id = $1 AND account_id = $2 AND device_id = $3`,
-          [organizationId, accountId, targetDeviceId, approverDeviceId],
-        );
-        await appendTransparencyEntry(client, {
-          organizationId,
-          accountId,
-          deviceId: targetDeviceId,
-          event: 'approved',
-          keyFingerprint: targetKeyFingerprint,
-          actorDeviceId: approverDeviceId,
-        });
-        await logAudit('e2ee_device_approved', organizationId, null, {
-          accountId,
-          approverDeviceId,
-          targetDeviceId,
-        }, client);
-      }
+        certificateHash,
+      }, client);
       const updated = await client.query<DeviceRow>(
         `SELECT * FROM e2ee_devices
          WHERE organization_id = $1 AND account_id = $2 AND device_id = $3`,
@@ -1564,7 +1779,11 @@ export function createPostgresEnterpriseCoreRepository(input: {
         deviceId,
         event: 'revoked',
         keyFingerprint: row.key_fingerprint,
-        actorDeviceId: deviceId,
+        certificateHash:
+          row.certificate_hash ??
+          row.certificate_request_hash ??
+          row.key_fingerprint,
+        actorDeviceId: null,
       });
       await logAudit('e2ee_device_revoked', organizationId, null, { accountId, deviceId }, client);
       return true;
@@ -1577,18 +1796,83 @@ export function createPostgresEnterpriseCoreRepository(input: {
     accountId: string;
   }): Promise<E2eeKeyTransparencyView> {
     const organizationId = requiredIdentifier(raw.organizationId, 'organization id');
-    requiredIdentifier(raw.requesterAccountId, 'requester account id');
+    const requesterAccountId = requiredIdentifier(
+      raw.requesterAccountId,
+      'requester account id',
+    );
     const accountId = requiredIdentifier(raw.accountId, 'account id');
+    const [requester, account] = await Promise.all([
+      getAccount(requesterAccountId, organizationId),
+      getAccount(accountId, organizationId),
+    ]);
+    if (
+      !requester ||
+      requester.status !== 'active' ||
+      !account ||
+      account.status !== 'active'
+    ) {
+      throw new Error('key transparency account is not active in organization');
+    }
     const result = await input.pool.query<TransparencyRow>(
       `SELECT * FROM e2ee_key_transparency_log
        WHERE organization_id = $1 AND account_id = $2 ORDER BY sequence`,
       [organizationId, accountId],
     );
-    const entries = result.rows.map(transparencyEntry);
+    let previousHash = EMPTY_TRANSPARENCY_HASH;
+    const entries = result.rows.map((row, index) => {
+      const entry = transparencyEntry(row);
+      const expectedHash = transparencyHash({
+        sequence: entry.sequence,
+        organizationId,
+        accountId: entry.accountId,
+        deviceId: entry.deviceId,
+        event: entry.event,
+        keyFingerprint: entry.keyFingerprint,
+        certificateHash: entry.certificateHash,
+        actorDeviceId: entry.actorDeviceId,
+        previousHash: entry.previousHash,
+        createdAt: entry.createdAt,
+      });
+      const legacyHash = legacyTransparencyHash({
+        sequence: entry.sequence,
+        organizationId,
+        accountId: entry.accountId,
+        deviceId: entry.deviceId,
+        event: entry.event,
+        keyFingerprint: entry.keyFingerprint,
+        actorDeviceId: entry.actorDeviceId,
+        previousHash: entry.previousHash,
+        createdAt: entry.createdAt,
+      });
+      const validEntryHash =
+        entry.entryHash === expectedHash ||
+        (entry.certificateHash === entry.keyFingerprint &&
+          entry.entryHash === legacyHash);
+      if (
+        entry.sequence !== index + 1 ||
+        entry.previousHash !== previousHash ||
+        !validEntryHash
+      ) {
+        throw new Error('E2EE key transparency log integrity check failed');
+      }
+      previousHash = entry.entryHash;
+      return entry;
+    });
+    const leaves = entries.map((entry) =>
+      canonicalE2eeBytes('otto:e2ee-transparency-event:v2', {
+        organizationId,
+        ...entry,
+      }),
+    );
     return {
       accountId,
-      headSequence: entries.at(-1)?.sequence ?? 0,
-      headHash: entries.at(-1)?.entryHash ?? EMPTY_TRANSPARENCY_HASH,
+      headSequence: entries.length,
+      headHash: previousHash,
+      treeSize: leaves.length,
+      merkleRoot: e2eeMerkleRoot(leaves),
+      inclusionProofs: leaves.map((_, index) =>
+        e2eeMerkleInclusionProof(leaves, index),
+      ),
       entries,
     };
   }
@@ -2078,6 +2362,7 @@ export function createPostgresEnterpriseCoreRepository(input: {
 
   return {
     defaultOrganizationId,
+    getDeploymentId,
     readiness,
     getOrganization,
     getOrganizationFeatures,
