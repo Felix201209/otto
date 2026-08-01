@@ -105,7 +105,18 @@ class NativeProcess extends EventEmitter {
     });
 
     this.process.stderr?.on('data', (data: Buffer) => {
-      this.emit('error', new Error(data.toString()));
+      // Rust diagnostics must never become an unhandled EventEmitter "error"
+      // that terminates the desktop main process. Consumers may subscribe to
+      // the non-fatal diagnostic channel when they need native stderr.
+      this.emit('diagnostic', data.toString());
+    });
+
+    this.process.on('error', (error) => {
+      this.process = null;
+      for (const { reject } of this.pending.values()) {
+        reject(error);
+      }
+      this.pending.clear();
     });
 
     this.process.on('exit', (code) => {
@@ -292,6 +303,40 @@ export interface MlsKeyPackage {
   key_package: string;
 }
 
+export interface MlsGroupState {
+  protocol: 'mls10-openmls-0.8';
+  conversation_id: string;
+  group_id: string;
+  epoch: number;
+  member_count: number;
+}
+
+export interface MlsMemberInvitation {
+  protocol: 'mls10-openmls-0.8';
+  conversation_id: string;
+  group_id: string;
+  epoch: number;
+  commit: string;
+  welcome: string;
+}
+
+export interface MlsApplicationCiphertext {
+  protocol: 'mls10-openmls-0.8';
+  conversation_id: string;
+  group_id: string;
+  epoch: number;
+  ciphertext: string;
+}
+
+export interface MlsDecryptedApplication {
+  protocol: 'mls10-openmls-0.8';
+  conversationId: string;
+  groupId: string;
+  epoch: number;
+  senderDeviceScope: string;
+  plaintext: Uint8Array;
+}
+
 function mlsDeviceScope(scope: MlsDeviceScope): string {
   let server: URL;
   try {
@@ -324,6 +369,42 @@ function mlsDeviceScope(scope: MlsDeviceScope): string {
     .update(`${server.origin}${server.pathname.replace(/\/+$/, '')}`)
     .digest('hex');
   return [serverScope, ...identifiers].join('/');
+}
+
+function mlsConversationId(value: string): string {
+  const conversationId = value.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(conversationId)) {
+    throw new Error('MLS conversation id is invalid');
+  }
+  return conversationId;
+}
+
+function isBase64(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length % 4 === 0 &&
+    /^[A-Za-z0-9+/]*={0,2}$/.test(value)
+  );
+}
+
+function validateGroupState(
+  result: unknown,
+  conversationId: string,
+): MlsGroupState {
+  const state = result as Partial<MlsGroupState>;
+  if (
+    state.protocol !== 'mls10-openmls-0.8' ||
+    state.conversation_id !== conversationId ||
+    !isBase64(state.group_id) ||
+    !Number.isSafeInteger(state.epoch) ||
+    (state.epoch ?? -1) < 0 ||
+    !Number.isSafeInteger(state.member_count) ||
+    (state.member_count ?? 0) < 1
+  ) {
+    throw new Error('native MLS group response is invalid');
+  }
+  return state as MlsGroupState;
 }
 
 /**
@@ -360,8 +441,7 @@ export class OpenMlsNativeKernel {
         'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519' ||
       typeof keyPackage.reference !== 'string' ||
       !/^[0-9a-f]{64}$/.test(keyPackage.reference) ||
-      typeof keyPackage.key_package !== 'string' ||
-      !keyPackage.key_package
+      !isBase64(keyPackage.key_package)
     ) {
       throw new Error('native MLS KeyPackage response is invalid');
     }
@@ -374,6 +454,157 @@ export class OpenMlsNativeKernel {
       throw new Error('MLS KeyPackage reference is invalid');
     }
     await this.native.call('mls.key_package.consume', { reference });
+  }
+
+  async createGroup(conversationId: string): Promise<MlsGroupState> {
+    await this.init();
+    const conversation = mlsConversationId(conversationId);
+    const result = await this.native.call('mls.group.create', {
+      device_scope: this.scope,
+      conversation_id: conversation,
+    });
+    return validateGroupState(result, conversation);
+  }
+
+  async addMember(
+    conversationId: string,
+    keyPackage: MlsKeyPackage,
+  ): Promise<MlsMemberInvitation> {
+    await this.init();
+    const conversation = mlsConversationId(conversationId);
+    if (
+      keyPackage.protocol !== 'mls10-openmls-0.8' ||
+      keyPackage.ciphersuite !==
+        'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519' ||
+      !/^[0-9a-f]{64}$/.test(keyPackage.reference) ||
+      !isBase64(keyPackage.key_package)
+    ) {
+      throw new Error('MLS member KeyPackage is invalid');
+    }
+    const result = (await this.native.call('mls.group.add_member', {
+      device_scope: this.scope,
+      conversation_id: conversation,
+      key_package: keyPackage.key_package,
+    })) as Partial<MlsMemberInvitation>;
+    if (
+      result.protocol !== 'mls10-openmls-0.8' ||
+      result.conversation_id !== conversation ||
+      !isBase64(result.group_id) ||
+      !Number.isSafeInteger(result.epoch) ||
+      (result.epoch ?? -1) < 0 ||
+      !isBase64(result.commit) ||
+      !isBase64(result.welcome)
+    ) {
+      throw new Error('native MLS member invitation is invalid');
+    }
+    return result as MlsMemberInvitation;
+  }
+
+  async mergePendingCommit(conversationId: string): Promise<MlsGroupState> {
+    await this.init();
+    const conversation = mlsConversationId(conversationId);
+    const result = await this.native.call('mls.group.merge_pending_commit', {
+      device_scope: this.scope,
+      conversation_id: conversation,
+    });
+    return validateGroupState(result, conversation);
+  }
+
+  async joinGroup(
+    conversationId: string,
+    keyPackageReference: string,
+    expectedGroupId: string,
+    welcome: string,
+  ): Promise<MlsGroupState> {
+    await this.init();
+    const conversation = mlsConversationId(conversationId);
+    if (
+      !/^[0-9a-f]{64}$/.test(keyPackageReference) ||
+      !isBase64(expectedGroupId) ||
+      !isBase64(welcome)
+    ) {
+      throw new Error('MLS Welcome parameters are invalid');
+    }
+    const result = await this.native.call('mls.group.join', {
+      device_scope: this.scope,
+      conversation_id: conversation,
+      key_package_reference: keyPackageReference,
+      expected_group_id: expectedGroupId,
+      welcome,
+    });
+    return validateGroupState(result, conversation);
+  }
+
+  async encryptApplication(
+    conversationId: string,
+    plaintext: Uint8Array,
+  ): Promise<MlsApplicationCiphertext> {
+    await this.init();
+    const conversation = mlsConversationId(conversationId);
+    if (plaintext.byteLength < 1 || plaintext.byteLength > 1024 * 1024) {
+      throw new Error('MLS application plaintext size is invalid');
+    }
+    const result = (await this.native.call('mls.application.encrypt', {
+      device_scope: this.scope,
+      conversation_id: conversation,
+      plaintext: Buffer.from(plaintext).toString('base64'),
+    })) as Partial<MlsApplicationCiphertext>;
+    if (
+      result.protocol !== 'mls10-openmls-0.8' ||
+      result.conversation_id !== conversation ||
+      !isBase64(result.group_id) ||
+      !Number.isSafeInteger(result.epoch) ||
+      (result.epoch ?? -1) < 0 ||
+      !isBase64(result.ciphertext)
+    ) {
+      throw new Error('native MLS ciphertext response is invalid');
+    }
+    return result as MlsApplicationCiphertext;
+  }
+
+  async decryptApplication(
+    conversationId: string,
+    ciphertext: string,
+  ): Promise<MlsDecryptedApplication> {
+    await this.init();
+    const conversation = mlsConversationId(conversationId);
+    if (!isBase64(ciphertext) || ciphertext.length > 2 * 1024 * 1024) {
+      throw new Error('MLS application ciphertext is invalid');
+    }
+    const result = (await this.native.call('mls.application.decrypt', {
+      device_scope: this.scope,
+      conversation_id: conversation,
+      ciphertext,
+    })) as {
+      protocol?: unknown;
+      conversation_id?: unknown;
+      group_id?: unknown;
+      epoch?: unknown;
+      sender_device_scope?: unknown;
+      plaintext?: unknown;
+    };
+    if (
+      result.protocol !== 'mls10-openmls-0.8' ||
+      result.conversation_id !== conversation ||
+      !isBase64(result.group_id) ||
+      !Number.isSafeInteger(result.epoch) ||
+      (result.epoch as number) < 0 ||
+      typeof result.sender_device_scope !== 'string' ||
+      !/^[^/\s]+\/[^/\s]+\/[^/\s]+\/[^/\s]+$/.test(
+        result.sender_device_scope,
+      ) ||
+      !isBase64(result.plaintext)
+    ) {
+      throw new Error('native MLS plaintext response is invalid');
+    }
+    return {
+      protocol: 'mls10-openmls-0.8',
+      conversationId: conversation,
+      groupId: result.group_id,
+      epoch: result.epoch as number,
+      senderDeviceScope: result.sender_device_scope,
+      plaintext: new Uint8Array(Buffer.from(result.plaintext, 'base64')),
+    };
   }
 
   async reset(): Promise<void> {
