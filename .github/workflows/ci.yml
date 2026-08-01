@@ -85,6 +85,16 @@ jobs:
       - name: 🎯 Deterministic agent safety evaluations
         run: npm run eval:deterministic
 
+      - name: 📎 Preserve deterministic evaluation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deterministic-agent-safety-evidence
+          path: |
+            packages/evals/artifacts/latest.json
+            packages/evals/artifacts/junit.xml
+          if-no-files-found: error
+
       - name: 🧪 Focused release regressions
         run: |
           npx vitest run \
