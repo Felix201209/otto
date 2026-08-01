@@ -7,9 +7,11 @@ compatibility requires an explicit `OTTO_DATABASE_ENCRYPTION=disabled` opt-out.
 
 ## Key custody
 
-The database layer accepts the `SqlCipherKeyProvider` contract, allowing a host
-to supply an OS keystore or KMS/HSM adapter without changing repositories. The
-built-in headless provider uses a customer-controlled offline file:
+The database layer accepts the `SqlCipherKeyProvider` contract. Remote custody
+uses the unified `KeyProvider` and an enveloped SQLCipher provider; AWS KMS,
+Azure Key Vault, Google Cloud KMS, HashiCorp Vault, and PKCS#11 HSM transports
+share the same fail-closed boundary. The built-in headless provider continues
+to support a customer-controlled offline file:
 
 ```text
 OTTO_DATABASE_ENCRYPTION=required
@@ -64,6 +66,10 @@ the restore rollback directory.
 The backup encryption key must be held separately from both the database and
 database custody key; losing all database key candidates and all recovery
 archives is intentionally unrecoverable.
+
+Remote-provider envelope rules, KEK versus DEK rotation, distributed locking,
+backup version synchronization, audit fields, and dual-control recovery are
+specified in [server key management and rotation](key-management.md).
 
 ## Native release assets
 

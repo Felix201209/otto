@@ -7,7 +7,12 @@ import path from 'node:path';
 
 import { createBetterSqlCipherDriver } from './betterSqlCipherDriver.js';
 import type { OpenProtectedDatabase } from './dataProtectionRestore.js';
+import {
+  createFileEnvelopeManifestStore,
+  initializeEnvelopedSqlCipherKeyProvider,
+} from './envelopedSqlCipherKeyProvider.js';
 import { createFileSqlCipherKeyProvider } from './fileSqlCipherKeyProvider.js';
+import type { KeyProvider } from './keyProvider.js';
 import { createSqlCipherDatabaseLifecycle } from './sqlCipherDatabaseLifecycle.js';
 
 export type SqlCipherRuntimeMode = 'required' | 'disabled';
@@ -47,6 +52,49 @@ export interface SqlCipherFileRuntime {
   keyProvider: ReturnType<typeof createFileSqlCipherKeyProvider>;
   driver: ReturnType<typeof createBetterSqlCipherDriver>;
   openProtectedDatabase: OpenProtectedDatabase;
+}
+
+export interface SqlCipherEnvelopedRuntime {
+  manifestPath: string;
+  keyProvider: Awaited<
+    ReturnType<typeof initializeEnvelopedSqlCipherKeyProvider>
+  >;
+  driver: ReturnType<typeof createBetterSqlCipherDriver>;
+}
+
+/**
+ * Bootstraps remote KMS/HSM custody. Health checking and DEK unwrapping finish
+ * before a database handle can be created, so callers cannot fall back to a
+ * plaintext or default key when the provider is unavailable.
+ */
+export async function createSqlCipherEnvelopedRuntime(input: {
+  dataDirectory: string;
+  databaseId: string;
+  keyProvider: KeyProvider;
+  manifestPath?: string;
+  createIfMissing?: boolean;
+  environment?: NodeJS.ProcessEnv;
+}): Promise<SqlCipherEnvelopedRuntime> {
+  const environment = input.environment ?? process.env;
+  const manifestPath = path.resolve(
+    input.manifestPath ??
+      path.join(input.dataDirectory, 'database-key.envelope.json'),
+  );
+  const keyProvider = await initializeEnvelopedSqlCipherKeyProvider({
+    databaseId: input.databaseId,
+    keyProvider: input.keyProvider,
+    manifestStore: createFileEnvelopeManifestStore(manifestPath),
+    createIfMissing: input.createIfMissing === true,
+  });
+  try {
+    const driver = createBetterSqlCipherDriver({
+      nativeBindingPath: defaultSqlCipherNativeBindingPath(environment),
+    });
+    return { manifestPath, keyProvider, driver };
+  } catch (error) {
+    keyProvider.clear();
+    throw error;
+  }
 }
 
 /**
