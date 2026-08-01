@@ -353,6 +353,49 @@ export interface EnterprisePrivacyDeletionReceipt {
   backupExpiry: string;
 }
 
+export interface EnterpriseE2eeCapabilityStatus {
+  protocolId: 'otto-mls-v1';
+  releaseState: 'foundation-only' | 'audited-disabled' | 'enabled';
+  enabled: boolean;
+  externalAuditCompleted: boolean;
+  mlsEngineReady: boolean;
+  reason: string;
+}
+
+export interface EnterpriseE2eeDeviceSummary {
+  deviceId: string;
+  deviceName: string;
+  state: 'pending' | 'approved' | 'revoked' | 'expired';
+  isCurrentDevice: boolean;
+  issuedAt: string;
+  expiresAt: string;
+  credentialFingerprint: string;
+  transparencySequence: number;
+}
+
+export interface EnterpriseE2eeTrustOverview {
+  capability: EnterpriseE2eeCapabilityStatus;
+  secureStorage: { available: boolean; backend: string };
+  localDevice: {
+    deviceId: string;
+    deviceName: string;
+    publicKeyFingerprint: string;
+    registrationState: EnterpriseE2eeDeviceSummary['state'] | 'not_registered';
+  } | null;
+  directoryState: 'not_initialized' | 'ready';
+  canManageDevices: boolean;
+  devices: EnterpriseE2eeDeviceSummary[];
+  transparency: { size: number; rootHash: string; pinnedAt: string } | null;
+}
+
+export interface EnterpriseE2eeDeviceVerification {
+  deviceId: string;
+  deviceName: string;
+  safetyNumber: string;
+  qrPayload: string;
+  fingerprints: [string, string];
+}
+
 export interface EnterpriseTokenUsageInput {
   sessionId: string;
   messageId: string;
@@ -912,6 +955,10 @@ const IPC = {
   enterpriseLegalAccept: 'otto:enterprise-legal-accept',
   enterprisePrivacyExport: 'otto:enterprise-privacy-export',
   enterprisePrivacyDelete: 'otto:enterprise-privacy-delete',
+  enterpriseE2eeTrustOverview: 'otto:enterprise-e2ee-trust-overview',
+  enterpriseE2eeDeviceVerification: 'otto:enterprise-e2ee-device-verification',
+  enterpriseE2eeDeviceApprove: 'otto:enterprise-e2ee-device-approve',
+  enterpriseE2eeDeviceRevoke: 'otto:enterprise-e2ee-device-revoke',
   enterprisePair: 'otto:enterprise-pair',
   enterpriseUsageRecord: 'otto:enterprise-usage-record',
   enterpriseKnowledgeRecord: 'otto:enterprise-knowledge-record',
@@ -1284,6 +1331,10 @@ export interface OttoBridge {
     password: string;
     confirmation: string;
   }): Promise<EnterprisePrivacyDeletionReceipt>;
+  enterpriseE2eeTrustOverview(): Promise<EnterpriseE2eeTrustOverview>;
+  enterpriseE2eeDeviceVerification(deviceId: string): Promise<EnterpriseE2eeDeviceVerification>;
+  enterpriseE2eeDeviceApprove(deviceId: string): Promise<EnterpriseE2eeTrustOverview>;
+  enterpriseE2eeDeviceRevoke(deviceId: string): Promise<EnterpriseE2eeTrustOverview>;
   enterpriseUsageRecord(input: EnterpriseTokenUsageInput): Promise<{
     recorded: boolean;
     source: 'client_reported';
@@ -2134,6 +2185,27 @@ const bridge: OttoBridge = {
     confirmation: string;
   }): Promise<EnterprisePrivacyDeletionReceipt> {
     return ipcRenderer.invoke(IPC.enterprisePrivacyDelete, input) as Promise<EnterprisePrivacyDeletionReceipt>;
+  },
+  enterpriseE2eeTrustOverview(): Promise<EnterpriseE2eeTrustOverview> {
+    return ipcRenderer.invoke(IPC.enterpriseE2eeTrustOverview) as Promise<EnterpriseE2eeTrustOverview>;
+  },
+  enterpriseE2eeDeviceVerification(deviceId: string): Promise<EnterpriseE2eeDeviceVerification> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseE2eeDeviceVerification,
+      deviceId,
+    ) as Promise<EnterpriseE2eeDeviceVerification>;
+  },
+  enterpriseE2eeDeviceApprove(deviceId: string): Promise<EnterpriseE2eeTrustOverview> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseE2eeDeviceApprove,
+      deviceId,
+    ) as Promise<EnterpriseE2eeTrustOverview>;
+  },
+  enterpriseE2eeDeviceRevoke(deviceId: string): Promise<EnterpriseE2eeTrustOverview> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseE2eeDeviceRevoke,
+      deviceId,
+    ) as Promise<EnterpriseE2eeTrustOverview>;
   },
   enterpriseUsageRecord(input: EnterpriseTokenUsageInput): Promise<{
     recorded: boolean;

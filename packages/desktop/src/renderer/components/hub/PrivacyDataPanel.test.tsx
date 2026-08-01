@@ -71,6 +71,18 @@ beforeEach(() => {
       enterpriseLegalAccept: vi.fn(),
       enterprisePrivacyExport: vi.fn(),
       enterprisePrivacyDelete: vi.fn(),
+      enterpriseE2eeTrustOverview: vi.fn(async () => ({
+        capability: {
+          protocolId: 'otto-mls-v1', releaseState: 'foundation-only', enabled: false,
+          externalAuditCompleted: false, mlsEngineReady: false, reason: 'not enabled',
+        },
+        secureStorage: { available: true, backend: 'test-keystore' },
+        localDevice: null,
+        directoryState: 'not_initialized',
+        canManageDevices: false,
+        devices: [],
+        transparency: null,
+      })),
       enterpriseSession: vi.fn(async () => ({ serverUrl: 'https://enterprise.example.test' })),
       openExternal: vi.fn(),
     } as unknown as Window['otto'],

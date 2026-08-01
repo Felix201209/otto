@@ -57,6 +57,28 @@ for cross-tenant identifiers.
 and the desktop client must not interpret successful device registration as
 permission to label a conversation E2EE or silently fall back to plaintext.
 
+## Desktop device trust controller
+
+Electron main owns the v2 device identity. Root, recovery and device Ed25519
+private keys are stored in a vault isolated by normalized server URL,
+organization and account. The complete vault payload is protected with the OS
+credential service before it reaches disk: Windows DPAPI, macOS Keychain, or a
+real Linux Secret Service/KWallet backend. Linux `basic_text` is rejected and
+device trust fails closed. The renderer receives only public fingerprints and
+sanitized device status through narrow IPC methods.
+
+The desktop independently verifies every directory signature and reconstructs
+the Merkle log before displaying or signing a trust action. It pins the latest
+checkpoint in the protected vault and rejects rollback or forked history.
+Approvals first show a deterministic safety number and locally generated QR
+code; only the current approved device can sign approval or revocation proofs.
+
+The controller exposes an internal integration seam that accepts an MLS
+KeyPackage produced by the future native OpenMLS bridge. The settings UI cannot
+supply arbitrary packages, and this phase deliberately does not generate a
+placeholder KeyPackage. Therefore device management may be inspected safely
+while message encryption remains disabled.
+
 ## Transparency and recovery
 
 Every root, credential, approval and revocation is appended to an account Merkle

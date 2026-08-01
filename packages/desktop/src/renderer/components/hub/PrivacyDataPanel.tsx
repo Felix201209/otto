@@ -4,6 +4,7 @@
 
 import React, { useEffect, useState } from 'react';
 import type { EnterpriseDataGovernanceProfile } from '../../../preload/index.js';
+import { E2eeDeviceSecurityCard } from './E2eeDeviceSecurityCard.js';
 import { Badge, Card, Empty, Panel } from './HubUI.js';
 
 function licenseLabel(status: string): { text: string; danger: boolean } {
@@ -105,6 +106,8 @@ export function PrivacyDataPanel(): React.JSX.Element {
             <div><span>健康遥测</span><strong>{profile.authorization.telemetry.enabled ? '已开启' : '已关闭'}</strong><small>不上传聊天、文件、会议或个人记忆原文</small></div>
             <div><span>传输</span><strong>公网 HTTPS / TLS</strong><small>会话令牌不进入 URL</small></div>
           </Card>
+
+          <E2eeDeviceSecurityCard />
 
           {!profile.readiness.configured ? (
             <div className="otto-hub__privacy-warning">

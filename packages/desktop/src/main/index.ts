@@ -137,6 +137,10 @@ import {
   type EnterprisePositionRoleMapping,
 } from './enterprise-client.js';
 import {
+  EnterpriseE2eeDeviceTrustController,
+  EnterpriseE2eeDeviceTrustVault,
+} from './enterprise-e2ee-device-trust.js';
+import {
   ENTERPRISE_TRAY_POPOVER_WIDTH,
   enterpriseTrayPopoverHeight,
   positionEnterpriseTrayPopover,
@@ -448,6 +452,10 @@ const IPC = {
   enterpriseLegalAccept: 'otto:enterprise-legal-accept',
   enterprisePrivacyExport: 'otto:enterprise-privacy-export',
   enterprisePrivacyDelete: 'otto:enterprise-privacy-delete',
+  enterpriseE2eeTrustOverview: 'otto:enterprise-e2ee-trust-overview',
+  enterpriseE2eeDeviceVerification: 'otto:enterprise-e2ee-device-verification',
+  enterpriseE2eeDeviceApprove: 'otto:enterprise-e2ee-device-approve',
+  enterpriseE2eeDeviceRevoke: 'otto:enterprise-e2ee-device-revoke',
   enterprisePair: 'otto:enterprise-pair',
   enterpriseUsageRecord: 'otto:enterprise-usage-record',
   enterpriseKnowledgeRecord: 'otto:enterprise-knowledge-record',
@@ -601,6 +609,55 @@ const enterpriseClient = new EnterpriseClient(enterpriseFetch, () => {
     mainWindow.webContents.send(IPC.enterpriseSessionInvalidated);
   }
 });
+let enterpriseE2eeTrustController: EnterpriseE2eeDeviceTrustController | undefined;
+
+function enterpriseE2eeSecureStorageBackend(): string {
+  if (process.platform === 'win32') return 'Windows DPAPI';
+  if (process.platform === 'darwin') return 'macOS Keychain';
+  return `Linux ${safeStorage.getSelectedStorageBackend()}`;
+}
+
+function enterpriseE2eeSecureStorageAvailable(): boolean {
+  if (!safeStorage.isEncryptionAvailable()) return false;
+  return process.platform !== 'linux'
+    || safeStorage.getSelectedStorageBackend() !== 'basic_text';
+}
+
+function getEnterpriseE2eeTrustController(): EnterpriseE2eeDeviceTrustController {
+  enterpriseE2eeTrustController ??= new EnterpriseE2eeDeviceTrustController({
+    client: enterpriseClient,
+    vault: new EnterpriseE2eeDeviceTrustVault({
+      directory: path.join(app.getPath('userData'), 'e2ee-device-trust-v2'),
+      protect(plaintext) {
+        if (!enterpriseE2eeSecureStorageAvailable()) {
+          throw new Error('系统安全存储不可用，无法保护 E2EE 设备私钥');
+        }
+        return safeStorage.encryptString(plaintext).toString('base64');
+      },
+      unprotect(protectedValue) {
+        if (!enterpriseE2eeSecureStorageAvailable()) {
+          throw new Error('系统安全存储不可用，无法读取 E2EE 设备私钥');
+        }
+        return safeStorage.decryptString(Buffer.from(protectedValue, 'base64'));
+      },
+      deviceName: () => `${os.hostname()} · Otto ${process.platform}`,
+    }),
+    identity: () => {
+      const account = enterpriseClient.authenticatedAccountSnapshot();
+      const currentSession = enterpriseClient.snapshot();
+      return account && currentSession.token
+        ? {
+            serverUrl: currentSession.serverUrl,
+            organizationId: account.organizationId,
+            accountId: account.id,
+          }
+        : null;
+    },
+    secureStorageAvailable: enterpriseE2eeSecureStorageAvailable,
+    secureStorageBackend: enterpriseE2eeSecureStorageBackend,
+  });
+  return enterpriseE2eeTrustController;
+}
 const enterpriseSkillUsageReporter = new EnterpriseSkillUsageReporter({
   skillsRoot: userSkillsRootDir,
   usageFile: () => path.join(worklogRootDir(), 'skill_usage.jsonl'),
@@ -2091,6 +2148,7 @@ function registerIpc(): void {
         password: body.password as string,
         confirmation: body.confirmation as string,
       });
+      getEnterpriseE2eeTrustController().eraseCurrentScope();
       if (identity) await accountDataSyncService.erase(identity);
       await synchronizeAuthenticatedEnterpriseAccount(null);
       saveEnterpriseSession();
@@ -2099,6 +2157,31 @@ function registerIpc(): void {
       resetEnterpriseModuleUpdateState();
       return receipt;
     });
+  });
+  ipcMain.handle(IPC.enterpriseE2eeTrustOverview, async () => {
+    loadEnterpriseSession();
+    return getEnterpriseE2eeTrustController().overview();
+  });
+  ipcMain.handle(IPC.enterpriseE2eeDeviceVerification, async (_event, deviceId: unknown) => {
+    loadEnterpriseSession();
+    if (typeof deviceId !== 'string' || !deviceId.trim() || deviceId.length > 200) {
+      throw new Error('E2EE 设备 ID 不正确');
+    }
+    return getEnterpriseE2eeTrustController().verification(deviceId.trim());
+  });
+  ipcMain.handle(IPC.enterpriseE2eeDeviceApprove, async (_event, deviceId: unknown) => {
+    loadEnterpriseSession();
+    if (typeof deviceId !== 'string' || !deviceId.trim() || deviceId.length > 200) {
+      throw new Error('E2EE 设备 ID 不正确');
+    }
+    return getEnterpriseE2eeTrustController().approve(deviceId.trim());
+  });
+  ipcMain.handle(IPC.enterpriseE2eeDeviceRevoke, async (_event, deviceId: unknown) => {
+    loadEnterpriseSession();
+    if (typeof deviceId !== 'string' || !deviceId.trim() || deviceId.length > 200) {
+      throw new Error('E2EE 设备 ID 不正确');
+    }
+    return getEnterpriseE2eeTrustController().revoke(deviceId.trim());
   });
   ipcMain.handle(IPC.enterpriseUsageRecord, async (_e, input: unknown) => {
     loadEnterpriseSession();
