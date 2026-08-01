@@ -8,7 +8,7 @@
  * - Agent Pool (memory-managed concurrent agent pool)
  */
 
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { spawn, ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import * as path from 'node:path';
@@ -337,6 +337,29 @@ export interface MlsDecryptedApplication {
   plaintext: Uint8Array;
 }
 
+export interface MlsStatePersistence {
+  load(): Promise<{
+    stateKey: Uint8Array;
+    encryptedState: string;
+  } | null>;
+  create(stateKey: Uint8Array, encryptedState: string): Promise<void>;
+  save(encryptedState: string): Promise<void>;
+  clear(): Promise<void>;
+}
+
+export interface FileMlsStatePersistenceOptions {
+  filePath: string;
+  protectStateKey(stateKeyBase64: string): string | Promise<string>;
+  unprotectStateKey(protectedStateKey: string): string | Promise<string>;
+}
+
+interface FileMlsStateManifest {
+  format: 1;
+  keyProtection: 'os-secure-storage';
+  protectedStateKey: string;
+  encryptedState: string;
+}
+
 function mlsDeviceScope(scope: MlsDeviceScope): string {
   let server: URL;
   try {
@@ -388,6 +411,139 @@ function isBase64(value: unknown): value is string {
   );
 }
 
+function parseMlsStateManifest(value: unknown): FileMlsStateManifest {
+  const manifest = value as Partial<FileMlsStateManifest>;
+  if (
+    manifest.format !== 1 ||
+    manifest.keyProtection !== 'os-secure-storage' ||
+    typeof manifest.protectedStateKey !== 'string' ||
+    !manifest.protectedStateKey ||
+    typeof manifest.encryptedState !== 'string' ||
+    !manifest.encryptedState ||
+    manifest.encryptedState.length > 96 * 1024 * 1024
+  ) {
+    throw new Error('MLS persistent state manifest is invalid');
+  }
+  return manifest as FileMlsStateManifest;
+}
+
+async function writePrivateFileAtomic(
+  filePath: string,
+  content: string,
+): Promise<void> {
+  await fs.promises.mkdir(path.dirname(filePath), {
+    recursive: true,
+    mode: 0o700,
+  });
+  const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+  let temporaryFile: fs.promises.FileHandle | null = null;
+  try {
+    temporaryFile = await fs.promises.open(temporaryPath, 'wx', 0o600);
+    await temporaryFile.writeFile(content, { encoding: 'utf8' });
+    await temporaryFile.sync();
+    await temporaryFile.close();
+    temporaryFile = null;
+    await fs.promises.rename(temporaryPath, filePath);
+    if (process.platform !== 'win32') {
+      await fs.promises.chmod(filePath, 0o600);
+      const directory = await fs.promises.open(path.dirname(filePath), 'r');
+      try {
+        await directory.sync();
+      } finally {
+        await directory.close();
+      }
+    }
+  } finally {
+    await temporaryFile?.close().catch(() => undefined);
+    await fs.promises.rm(temporaryPath, { force: true }).catch(() => undefined);
+  }
+}
+
+/**
+ * Atomic encrypted-state file. The wrapping key is protected by a caller such
+ * as Electron safeStorage; only the already encrypted native snapshot is stored
+ * beside it. The implementation deliberately has no plaintext-key fallback.
+ */
+export class FileMlsStatePersistence implements MlsStatePersistence {
+  constructor(private readonly options: FileMlsStatePersistenceOptions) {}
+
+  async load(): Promise<{
+    stateKey: Uint8Array;
+    encryptedState: string;
+  } | null> {
+    let serialized: string;
+    try {
+      serialized = await fs.promises.readFile(this.options.filePath, 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
+    const manifest = parseMlsStateManifest(JSON.parse(serialized));
+    const encodedKey = await this.options.unprotectStateKey(
+      manifest.protectedStateKey,
+    );
+    if (!isBase64(encodedKey)) {
+      throw new Error('MLS state key from secure storage is invalid');
+    }
+    const key = Buffer.from(encodedKey, 'base64');
+    if (key.byteLength !== 32) {
+      key.fill(0);
+      throw new Error('MLS state key from secure storage has an invalid size');
+    }
+    const stateKey = new Uint8Array(key);
+    key.fill(0);
+    return {
+      stateKey,
+      encryptedState: manifest.encryptedState,
+    };
+  }
+
+  async create(stateKey: Uint8Array, encryptedState: string): Promise<void> {
+    if (stateKey.byteLength !== 32) {
+      throw new Error('MLS state key must contain exactly 32 bytes');
+    }
+    if (await this.exists()) {
+      throw new Error('MLS persistent state already exists');
+    }
+    const protectedStateKey = await this.options.protectStateKey(
+      Buffer.from(stateKey).toString('base64'),
+    );
+    const manifest = parseMlsStateManifest({
+      format: 1,
+      keyProtection: 'os-secure-storage',
+      protectedStateKey,
+      encryptedState,
+    });
+    await writePrivateFileAtomic(
+      this.options.filePath,
+      `${JSON.stringify(manifest)}\n`,
+    );
+  }
+
+  async save(encryptedState: string): Promise<void> {
+    const serialized = await fs.promises.readFile(this.options.filePath, 'utf8');
+    const current = parseMlsStateManifest(JSON.parse(serialized));
+    const next = parseMlsStateManifest({ ...current, encryptedState });
+    await writePrivateFileAtomic(
+      this.options.filePath,
+      `${JSON.stringify(next)}\n`,
+    );
+  }
+
+  async clear(): Promise<void> {
+    await fs.promises.rm(this.options.filePath, { force: true });
+  }
+
+  private async exists(): Promise<boolean> {
+    try {
+      await fs.promises.access(this.options.filePath, fs.constants.F_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
 function validateGroupState(
   result: unknown,
   conversationId: string,
@@ -408,25 +564,38 @@ function validateGroupState(
 }
 
 /**
- * Thin typed client for the native OpenMLS process. Only public KeyPackages
- * cross this boundary. Signature keys, HPKE init private keys and provider
- * state remain inside Rust and disappear on reset or process exit.
+ * Thin typed client for the native OpenMLS process. Signature keys, HPKE init
+ * private keys and epoch secrets remain inside Rust. When persistence is
+ * configured, only an authenticated encrypted snapshot leaves the process and
+ * its state-encryption key must be protected by OS secure storage.
  */
 export class OpenMlsNativeKernel {
   private native: NativeProcess;
   private scope: string;
   private initialized = false;
+  private initializing: Promise<void> | null = null;
+  private persistenceFailed = false;
 
-  constructor(deviceScope: MlsDeviceScope, binaryPath?: string) {
+  constructor(
+    deviceScope: MlsDeviceScope,
+    binaryPath?: string,
+    private readonly persistence?: MlsStatePersistence,
+  ) {
     this.scope = mlsDeviceScope(deviceScope);
     this.native = new NativeProcess(binaryPath);
   }
 
   async init(): Promise<void> {
+    if (this.persistenceFailed) {
+      throw new Error('MLS persistence is locked after a storage failure');
+    }
     if (this.initialized) return;
-    await this.native.start();
-    await this.native.call('mls.initialize', { device_scope: this.scope });
-    this.initialized = true;
+    this.initializing ??= this.initializeOnce();
+    try {
+      await this.initializing;
+    } finally {
+      this.initializing = null;
+    }
   }
 
   async createKeyPackage(): Promise<MlsKeyPackage> {
@@ -434,6 +603,7 @@ export class OpenMlsNativeKernel {
     const result = await this.native.call('mls.key_package.create', {
       device_scope: this.scope,
     });
+    await this.persistState();
     const keyPackage = result as Partial<MlsKeyPackage>;
     if (
       keyPackage.protocol !== 'mls10-openmls-0.8' ||
@@ -454,6 +624,7 @@ export class OpenMlsNativeKernel {
       throw new Error('MLS KeyPackage reference is invalid');
     }
     await this.native.call('mls.key_package.consume', { reference });
+    await this.persistState();
   }
 
   async createGroup(conversationId: string): Promise<MlsGroupState> {
@@ -463,6 +634,7 @@ export class OpenMlsNativeKernel {
       device_scope: this.scope,
       conversation_id: conversation,
     });
+    await this.persistState();
     return validateGroupState(result, conversation);
   }
 
@@ -486,6 +658,7 @@ export class OpenMlsNativeKernel {
       conversation_id: conversation,
       key_package: keyPackage.key_package,
     })) as Partial<MlsMemberInvitation>;
+    await this.persistState();
     if (
       result.protocol !== 'mls10-openmls-0.8' ||
       result.conversation_id !== conversation ||
@@ -507,6 +680,7 @@ export class OpenMlsNativeKernel {
       device_scope: this.scope,
       conversation_id: conversation,
     });
+    await this.persistState();
     return validateGroupState(result, conversation);
   }
 
@@ -532,6 +706,7 @@ export class OpenMlsNativeKernel {
       expected_group_id: expectedGroupId,
       welcome,
     });
+    await this.persistState();
     return validateGroupState(result, conversation);
   }
 
@@ -549,6 +724,7 @@ export class OpenMlsNativeKernel {
       conversation_id: conversation,
       plaintext: Buffer.from(plaintext).toString('base64'),
     })) as Partial<MlsApplicationCiphertext>;
+    await this.persistState();
     if (
       result.protocol !== 'mls10-openmls-0.8' ||
       result.conversation_id !== conversation ||
@@ -583,6 +759,7 @@ export class OpenMlsNativeKernel {
       sender_device_scope?: unknown;
       plaintext?: unknown;
     };
+    await this.persistState();
     if (
       result.protocol !== 'mls10-openmls-0.8' ||
       result.conversation_id !== conversation ||
@@ -610,12 +787,103 @@ export class OpenMlsNativeKernel {
   async reset(): Promise<void> {
     await this.init();
     await this.native.call('mls.reset', { device_scope: this.scope });
+    if (this.persistence) {
+      try {
+        await this.persistence.clear();
+      } catch (error) {
+        this.persistenceFailed = true;
+        throw new Error('MLS persistent state reset failed', { cause: error });
+      }
+    }
     this.initialized = false;
   }
 
   async close(): Promise<void> {
     await this.native.stop();
     this.initialized = false;
+    this.initializing = null;
+    this.persistenceFailed = false;
+  }
+
+  private async initializeOnce(): Promise<void> {
+    await this.native.start();
+    if (!this.persistence) {
+      await this.native.call('mls.initialize', { device_scope: this.scope });
+      this.initialized = true;
+      return;
+    }
+
+    let stateKey: Uint8Array | null = null;
+    try {
+      const persisted = await this.persistence.load();
+      if (persisted) {
+        stateKey = new Uint8Array(persisted.stateKey);
+        persisted.stateKey.fill(0);
+        this.assertStateKey(stateKey);
+        await this.native.call('mls.persistence.configure', {
+          device_scope: this.scope,
+          state_key: Buffer.from(stateKey).toString('base64'),
+        });
+        await this.native.call('mls.persistence.restore', {
+          device_scope: this.scope,
+          encrypted_state: persisted.encryptedState,
+        });
+      } else {
+        stateKey = new Uint8Array(randomBytes(32));
+        await this.native.call('mls.persistence.configure', {
+          device_scope: this.scope,
+          state_key: Buffer.from(stateKey).toString('base64'),
+        });
+        await this.native.call('mls.initialize', {
+          device_scope: this.scope,
+        });
+        const encryptedState = await this.readNativeEncryptedState();
+        await this.persistence.create(stateKey, encryptedState);
+      }
+      this.initialized = true;
+    } catch (error) {
+      this.persistenceFailed = true;
+      await this.native.stop().catch(() => undefined);
+      throw new Error('MLS persistent state initialization failed', {
+        cause: error,
+      });
+    } finally {
+      stateKey?.fill(0);
+    }
+  }
+
+  private async persistState(): Promise<void> {
+    if (!this.persistence) return;
+    try {
+      const encryptedState = await this.readNativeEncryptedState();
+      await this.persistence.save(encryptedState);
+    } catch (error) {
+      this.persistenceFailed = true;
+      throw new Error('MLS state persistence failed; kernel is locked', {
+        cause: error,
+      });
+    }
+  }
+
+  private async readNativeEncryptedState(): Promise<string> {
+    const result = (await this.native.call('mls.persistence.export', {
+      device_scope: this.scope,
+    })) as { format?: unknown; encrypted_state?: unknown };
+    if (
+      result.format !== 1 ||
+      typeof result.encrypted_state !== 'string' ||
+      !result.encrypted_state ||
+      result.encrypted_state.length > 96 * 1024 * 1024
+    ) {
+      throw new Error('native MLS encrypted state response is invalid');
+    }
+    return result.encrypted_state;
+  }
+
+  private assertStateKey(stateKey: Uint8Array): void {
+    if (stateKey.byteLength !== 32) {
+      throw new Error('MLS state key from secure storage has an invalid size');
+    }
   }
 }
 

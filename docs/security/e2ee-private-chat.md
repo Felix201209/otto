@@ -154,10 +154,20 @@ Tests reject replayed and tampered ciphertext, mismatched group bindings, and
 sends attempted while a member commit is pending. Private signature, HPKE, and
 epoch material never enters the TypeScript response.
 
-This is not the active chat protocol. Encrypted OS-protected persistence,
-restart recovery, processing commits on existing remote members, device
-approval enforcement, server ciphertext transport, desktop main-process
-integration, multi-platform packaging, and external review are still required.
-Until those controls and an external audit pass the release gate, the production
-status remains `device-envelope-v1`; the native kernel fails closed on process
-exit instead of persisting secrets in plaintext.
+The native foundation now exports versioned AES-256-GCM snapshots of its
+OpenMLS memory store and restores them transactionally after a process restart.
+The state-encryption key is separate from the snapshot, zeroed from transient
+buffers, and accepted by a fail-closed file adapter designed for an OS secure
+storage wrapper such as Electron `safeStorage`. The adapter writes only the
+OS-protected key and authenticated ciphertext, atomically replaces ratchet
+state after each mutation, and locks the kernel after a persistence failure.
+Tests cover two-device message continuity, pending member commits, wrong keys,
+invalid manifests, and protected-key preservation across snapshot updates.
+
+This is not the active chat protocol. The desktop main process does not yet
+instantiate this adapter or route chat traffic through the native kernel.
+Processing commits on existing remote members, device approval enforcement,
+server ciphertext transport, state migration/recovery policy, multi-platform
+packaging, and external review are still required. Until those controls and an
+external audit pass the release gate, the production status remains
+`device-envelope-v1`.

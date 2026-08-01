@@ -1,17 +1,21 @@
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
+use aes_gcm::aead::rand_core::RngCore;
+use aes_gcm::aead::{Aead, KeyInit, OsRng};
+use aes_gcm::{Aes256Gcm, Key, Nonce};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use openmls::prelude::{
     tls_codec::{Deserialize, Serialize},
-    BasicCredential, Ciphersuite, Credential, CredentialType, CredentialWithKey, KeyPackage,
-    KeyPackageIn, MlsGroup, MlsGroupCreateConfig, MlsGroupJoinConfig, MlsMessageBodyIn,
+    BasicCredential, Ciphersuite, Credential, CredentialType, CredentialWithKey, GroupId,
+    KeyPackage, KeyPackageIn, MlsGroup, MlsGroupCreateConfig, MlsGroupJoinConfig, MlsMessageBodyIn,
     MlsMessageIn, ProcessedMessageContent, ProtocolVersion, StagedWelcome,
 };
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
 use openmls_traits::OpenMlsProvider;
-use serde::Serialize as SerdeSerialize;
+use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
+use zeroize::Zeroizing;
 
 const CIPHERSUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
 const PROTOCOL: &str = "mls10-openmls-0.8";
@@ -19,6 +23,9 @@ const MAX_KEY_PACKAGE_BASE64: usize = 128 * 1024;
 const MAX_WELCOME_BASE64: usize = 2 * 1024 * 1024;
 const MAX_APPLICATION_BYTES: usize = 1024 * 1024;
 const MAX_CIPHERTEXT_BASE64: usize = 2 * 1024 * 1024;
+const MAX_STATE_PLAINTEXT_BYTES: usize = 64 * 1024 * 1024;
+const MAX_STATE_ENVELOPE_BYTES: usize = 96 * 1024 * 1024;
+const STATE_CIPHER: &str = "aes-256-gcm";
 
 #[derive(Debug, SerdeSerialize)]
 pub struct ExportedKeyPackage {
@@ -66,6 +73,47 @@ pub struct DecryptedApplicationMessage {
     pub plaintext: Vec<u8>,
 }
 
+#[derive(SerdeSerialize, SerdeDeserialize)]
+#[serde(deny_unknown_fields)]
+struct EncryptedStateEnvelope {
+    format: u8,
+    cipher: String,
+    nonce: String,
+    ciphertext: String,
+}
+
+#[derive(SerdeSerialize, SerdeDeserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedMlsState {
+    format: u8,
+    device_scope: String,
+    signature_public_key: String,
+    storage: Vec<PersistedStorageEntry>,
+    available_key_packages: Vec<PersistedKeyPackage>,
+    groups: Vec<PersistedGroup>,
+}
+
+#[derive(SerdeSerialize, SerdeDeserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedStorageEntry {
+    key: String,
+    value: String,
+}
+
+#[derive(SerdeSerialize, SerdeDeserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedKeyPackage {
+    reference: String,
+    key_package: String,
+}
+
+#[derive(SerdeSerialize, SerdeDeserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedGroup {
+    conversation_id: String,
+    group_id: String,
+}
+
 struct DeviceIdentity {
     scope: String,
     credential_with_key: CredentialWithKey,
@@ -84,9 +132,278 @@ pub struct MlsKernel {
     identity: Option<DeviceIdentity>,
     available_key_packages: HashMap<String, KeyPackage>,
     groups: HashMap<String, MlsGroup>,
+    persistence_scope: Option<String>,
+    persistence_key: Option<Zeroizing<Vec<u8>>>,
 }
 
 impl MlsKernel {
+    pub fn configure_persistence(
+        &mut self,
+        raw_scope: &str,
+        encoded_key: &str,
+    ) -> Result<(), String> {
+        let scope = validate_scope(raw_scope)?;
+        if let Some(identity) = &self.identity {
+            if identity.scope != scope {
+                return Err("MLS persistence scope does not match initialized identity".into());
+            }
+        }
+        if let Some(configured_scope) = &self.persistence_scope {
+            if configured_scope != &scope {
+                return Err("MLS persistence is configured for another device scope".into());
+            }
+        }
+        let key = decode_base64("MLS persistence key", encoded_key, 128)?;
+        if key.len() != 32 {
+            return Err("MLS persistence key must contain exactly 32 bytes".into());
+        }
+        if let Some(configured_key) = &self.persistence_key {
+            return if configured_key.as_slice() == key.as_slice() {
+                Ok(())
+            } else {
+                Err("MLS persistence key is already configured".into())
+            };
+        }
+        self.persistence_scope = Some(scope);
+        self.persistence_key = Some(Zeroizing::new(key));
+        Ok(())
+    }
+
+    pub fn export_encrypted_state(&self, raw_scope: &str) -> Result<String, String> {
+        let scope = validate_scope(raw_scope)?;
+        self.require_identity(&scope)?;
+        let key = self.persistence_key(&scope)?;
+        let identity = self.identity.as_ref().expect("identity checked above");
+        let storage = self
+            .provider
+            .storage()
+            .values
+            .read()
+            .map_err(|_| "MLS persistence storage lock is poisoned")?
+            .iter()
+            .map(|(key, value)| PersistedStorageEntry {
+                key: BASE64.encode(key),
+                value: BASE64.encode(value),
+            })
+            .collect();
+        let available_key_packages = self
+            .available_key_packages
+            .iter()
+            .map(|(reference, key_package)| {
+                let serialized = key_package.tls_serialize_detached().map_err(|error| {
+                    format!("MLS persisted KeyPackage serialization failed: {error}")
+                })?;
+                Ok(PersistedKeyPackage {
+                    reference: reference.clone(),
+                    key_package: BASE64.encode(serialized),
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let groups = self
+            .groups
+            .iter()
+            .map(|(conversation_id, group)| PersistedGroup {
+                conversation_id: conversation_id.clone(),
+                group_id: BASE64.encode(group.group_id().as_slice()),
+            })
+            .collect();
+        let snapshot = PersistedMlsState {
+            format: 1,
+            device_scope: scope.clone(),
+            signature_public_key: BASE64.encode(identity.signer.public()),
+            storage,
+            available_key_packages,
+            groups,
+        };
+        let plaintext = Zeroizing::new(
+            serde_json::to_vec(&snapshot)
+                .map_err(|error| format!("MLS state serialization failed: {error}"))?,
+        );
+        if plaintext.len() > MAX_STATE_PLAINTEXT_BYTES {
+            return Err("MLS state snapshot exceeds the configured size limit".into());
+        }
+        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
+        let mut nonce_bytes = [0u8; 12];
+        OsRng.fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let ciphertext = cipher
+            .encrypt(
+                nonce,
+                aes_gcm::aead::Payload {
+                    msg: plaintext.as_slice(),
+                    aad: persistence_aad(&scope).as_bytes(),
+                },
+            )
+            .map_err(|_| "MLS state encryption failed")?;
+        serde_json::to_string(&EncryptedStateEnvelope {
+            format: 1,
+            cipher: STATE_CIPHER.to_string(),
+            nonce: BASE64.encode(nonce_bytes),
+            ciphertext: BASE64.encode(ciphertext),
+        })
+        .map_err(|error| format!("MLS state envelope serialization failed: {error}"))
+    }
+
+    pub fn restore_encrypted_state(
+        &mut self,
+        raw_scope: &str,
+        encrypted_state: &str,
+    ) -> Result<(), String> {
+        let scope = validate_scope(raw_scope)?;
+        if self.identity.is_some()
+            || !self.groups.is_empty()
+            || !self.available_key_packages.is_empty()
+        {
+            return Err("MLS state restore requires a pristine kernel".into());
+        }
+        if encrypted_state.is_empty() || encrypted_state.len() > MAX_STATE_ENVELOPE_BYTES {
+            return Err("MLS encrypted state size is invalid".into());
+        }
+        let key = self.persistence_key(&scope)?;
+        let envelope: EncryptedStateEnvelope = serde_json::from_str(encrypted_state)
+            .map_err(|_| "MLS encrypted state envelope is invalid")?;
+        if envelope.format != 1 || envelope.cipher != STATE_CIPHER {
+            return Err("MLS encrypted state format or cipher is unsupported".into());
+        }
+        let nonce = decode_base64("MLS state nonce", &envelope.nonce, 64)?;
+        if nonce.len() != 12 {
+            return Err("MLS state nonce must contain exactly 12 bytes".into());
+        }
+        let ciphertext = decode_base64(
+            "MLS state ciphertext",
+            &envelope.ciphertext,
+            MAX_STATE_ENVELOPE_BYTES,
+        )?;
+        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
+        let plaintext = Zeroizing::new(
+            cipher
+                .decrypt(
+                    Nonce::from_slice(&nonce),
+                    aes_gcm::aead::Payload {
+                        msg: &ciphertext,
+                        aad: persistence_aad(&scope).as_bytes(),
+                    },
+                )
+                .map_err(|_| "MLS encrypted state decrypt or authentication failed")?,
+        );
+        if plaintext.len() > MAX_STATE_PLAINTEXT_BYTES {
+            return Err("MLS decrypted state exceeds the configured size limit".into());
+        }
+        let snapshot: PersistedMlsState = serde_json::from_slice(&plaintext)
+            .map_err(|_| "MLS decrypted state payload is invalid")?;
+        if snapshot.format != 1 || snapshot.device_scope != scope {
+            return Err("MLS decrypted state device scope is invalid".into());
+        }
+
+        let provider = OpenMlsRustCrypto::default();
+        {
+            let mut values = provider
+                .storage()
+                .values
+                .write()
+                .map_err(|_| "MLS restored storage lock is poisoned")?;
+            for entry in snapshot.storage {
+                let stored_key =
+                    decode_base64("MLS stored key", &entry.key, MAX_STATE_PLAINTEXT_BYTES)?;
+                let stored_value =
+                    decode_base64("MLS stored value", &entry.value, MAX_STATE_PLAINTEXT_BYTES)?;
+                if values.insert(stored_key, stored_value).is_some() {
+                    return Err("MLS restored storage contains duplicate keys".into());
+                }
+            }
+        }
+        let signature_public_key = decode_base64(
+            "MLS signature public key",
+            &snapshot.signature_public_key,
+            256,
+        )?;
+        let signer = SignatureKeyPair::read(
+            provider.storage(),
+            &signature_public_key,
+            CIPHERSUITE.signature_algorithm(),
+        )
+        .ok_or_else(|| "MLS restored signature key is missing".to_string())?;
+        let credential_with_key = CredentialWithKey {
+            credential: BasicCredential::new(scope.as_bytes().to_vec()).into(),
+            signature_key: signer.public().into(),
+        };
+
+        let mut available_key_packages = HashMap::new();
+        for persisted in snapshot.available_key_packages {
+            if !is_sha256(&persisted.reference) {
+                return Err("MLS restored KeyPackage reference is invalid".into());
+            }
+            let serialized = decode_base64(
+                "MLS restored KeyPackage",
+                &persisted.key_package,
+                MAX_KEY_PACKAGE_BASE64,
+            )?;
+            let key_package = KeyPackageIn::tls_deserialize_exact(serialized)
+                .map_err(|_| "MLS restored KeyPackage decoding failed")?
+                .validate(provider.crypto(), ProtocolVersion::Mls10)
+                .map_err(|_| "MLS restored KeyPackage verification failed")?;
+            if key_package.ciphersuite() != CIPHERSUITE {
+                return Err("MLS restored KeyPackage ciphersuite is incompatible".into());
+            }
+            validate_member_credential(key_package.leaf_node().credential(), &scope)?;
+            let reference = hex::encode(
+                key_package
+                    .hash_ref(provider.crypto())
+                    .map_err(|_| "MLS restored KeyPackage reference failed")?
+                    .as_slice(),
+            );
+            if reference != persisted.reference
+                || available_key_packages
+                    .insert(reference, key_package)
+                    .is_some()
+            {
+                return Err("MLS restored KeyPackage reference is inconsistent".into());
+            }
+        }
+
+        let mut groups = HashMap::new();
+        for persisted in snapshot.groups {
+            let conversation_id = validate_conversation_id(&persisted.conversation_id)?;
+            let group_id = decode_base64("MLS restored group id", &persisted.group_id, 128)?;
+            let group = MlsGroup::load(provider.storage(), &GroupId::from_slice(&group_id))
+                .map_err(|_| "MLS restored group storage is invalid")?
+                .ok_or_else(|| "MLS restored group is missing".to_string())?;
+            if group.ciphersuite() != CIPHERSUITE
+                || group.group_id().as_slice() != group_id.as_slice()
+            {
+                return Err("MLS restored group identity is inconsistent".into());
+            }
+            for member in group.members() {
+                validate_member_credential(&member.credential, &scope)?;
+            }
+            if groups.insert(conversation_id, group).is_some() {
+                return Err("MLS restored state contains duplicate conversations".into());
+            }
+        }
+
+        let persistence_key = self
+            .persistence_key
+            .take()
+            .ok_or_else(|| "MLS persistence key is not configured".to_string())?;
+        let persistence_scope = self
+            .persistence_scope
+            .take()
+            .ok_or_else(|| "MLS persistence scope is not configured".to_string())?;
+        *self = Self {
+            provider,
+            identity: Some(DeviceIdentity {
+                scope,
+                credential_with_key,
+                signer,
+            }),
+            available_key_packages,
+            groups,
+            persistence_scope: Some(persistence_scope),
+            persistence_key: Some(persistence_key),
+        };
+        Ok(())
+    }
+
     pub fn initialize(&mut self, raw_scope: &str) -> Result<(), String> {
         let scope = validate_scope(raw_scope)?;
         if let Some(identity) = &self.identity {
@@ -461,6 +778,16 @@ impl MlsKernel {
         }
         Ok(())
     }
+
+    fn persistence_key(&self, scope: &str) -> Result<&[u8], String> {
+        if self.persistence_scope.as_deref() != Some(scope) {
+            return Err("MLS persistence scope is not configured".into());
+        }
+        self.persistence_key
+            .as_deref()
+            .map(|key| key.as_slice())
+            .ok_or_else(|| "MLS persistence key is not configured".to_string())
+    }
 }
 
 fn export_group_state(conversation_id: &str, group: &MlsGroup) -> ExportedGroupState {
@@ -497,6 +824,10 @@ fn decode_base64(label: &str, encoded: &str, max_encoded_len: usize) -> Result<V
 
 fn conversation_aad(conversation_id: &str) -> Vec<u8> {
     format!("otto-mls-v1/{conversation_id}").into_bytes()
+}
+
+fn persistence_aad(scope: &str) -> String {
+    format!("otto-mls-state-v1/{scope}")
 }
 
 fn validate_member_credential(
@@ -719,5 +1050,122 @@ mod tests {
             )
             .unwrap_err()
             .contains("outside the local trust domain"));
+    }
+
+    #[test]
+    fn encrypted_snapshots_restore_two_device_ratchets_after_restart() {
+        let alice_scope = "server-a/org-a/alice/alice-device";
+        let bob_scope = "server-a/org-a/bob/bob-device";
+        let conversation = "conversation-a";
+        let alice_state_key = BASE64.encode([7u8; 32]);
+        let bob_state_key = BASE64.encode([9u8; 32]);
+        let mut alice = MlsKernel::default();
+        let mut bob = MlsKernel::default();
+        alice
+            .configure_persistence(alice_scope, &alice_state_key)
+            .unwrap();
+        bob.configure_persistence(bob_scope, &bob_state_key)
+            .unwrap();
+        alice.initialize(alice_scope).unwrap();
+        bob.initialize(bob_scope).unwrap();
+        let bob_key_package = bob.create_key_package(bob_scope).unwrap();
+        alice.create_group(alice_scope, conversation).unwrap();
+        let invitation = alice
+            .add_member(alice_scope, conversation, &bob_key_package.key_package)
+            .unwrap();
+        let committed = alice
+            .merge_pending_commit(alice_scope, conversation)
+            .unwrap();
+        bob.join_group(
+            bob_scope,
+            conversation,
+            &bob_key_package.reference,
+            &committed.group_id,
+            &invitation.welcome,
+        )
+        .unwrap();
+        let before_restart = alice
+            .encrypt_application(alice_scope, conversation, b"before restart")
+            .unwrap();
+        bob.decrypt_application(bob_scope, conversation, &before_restart.ciphertext)
+            .unwrap();
+
+        let alice_snapshot = alice.export_encrypted_state(alice_scope).unwrap();
+        let bob_snapshot = bob.export_encrypted_state(bob_scope).unwrap();
+        assert!(!alice_snapshot.contains(alice_scope));
+        assert!(!alice_snapshot.contains("before restart"));
+
+        let mut restored_alice = MlsKernel::default();
+        let mut restored_bob = MlsKernel::default();
+        restored_alice
+            .configure_persistence(alice_scope, &alice_state_key)
+            .unwrap();
+        restored_bob
+            .configure_persistence(bob_scope, &bob_state_key)
+            .unwrap();
+        restored_alice
+            .restore_encrypted_state(alice_scope, &alice_snapshot)
+            .unwrap();
+        restored_bob
+            .restore_encrypted_state(bob_scope, &bob_snapshot)
+            .unwrap();
+
+        let after_restart = restored_alice
+            .encrypt_application(alice_scope, conversation, b"after restart")
+            .unwrap();
+        let decrypted = restored_bob
+            .decrypt_application(bob_scope, conversation, &after_restart.ciphertext)
+            .unwrap();
+        assert_eq!(decrypted.plaintext, b"after restart");
+
+        let mut wrong_key = MlsKernel::default();
+        wrong_key
+            .configure_persistence(alice_scope, &BASE64.encode([8u8; 32]))
+            .unwrap();
+        assert!(wrong_key
+            .restore_encrypted_state(alice_scope, &alice_snapshot)
+            .unwrap_err()
+            .contains("decrypt"));
+        assert!(wrong_key.create_key_package(alice_scope).is_err());
+    }
+
+    #[test]
+    fn encrypted_snapshot_restores_a_pending_member_commit() {
+        let alice_scope = "server-a/org-a/alice/alice-device";
+        let bob_scope = "server-a/org-a/bob/bob-device";
+        let conversation = "conversation-pending";
+        let alice_state_key = BASE64.encode([11u8; 32]);
+        let mut alice = MlsKernel::default();
+        let mut bob = MlsKernel::default();
+        alice
+            .configure_persistence(alice_scope, &alice_state_key)
+            .unwrap();
+        alice.initialize(alice_scope).unwrap();
+        bob.initialize(bob_scope).unwrap();
+        let bob_key_package = bob.create_key_package(bob_scope).unwrap();
+        alice.create_group(alice_scope, conversation).unwrap();
+        let invitation = alice
+            .add_member(alice_scope, conversation, &bob_key_package.key_package)
+            .unwrap();
+
+        let snapshot = alice.export_encrypted_state(alice_scope).unwrap();
+        let mut restored_alice = MlsKernel::default();
+        restored_alice
+            .configure_persistence(alice_scope, &alice_state_key)
+            .unwrap();
+        restored_alice
+            .restore_encrypted_state(alice_scope, &snapshot)
+            .unwrap();
+        let committed = restored_alice
+            .merge_pending_commit(alice_scope, conversation)
+            .unwrap();
+        bob.join_group(
+            bob_scope,
+            conversation,
+            &bob_key_package.reference,
+            &committed.group_id,
+            &invitation.welcome,
+        )
+        .unwrap();
     }
 }

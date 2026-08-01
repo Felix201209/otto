@@ -468,6 +468,33 @@ fn handle_request(
                 "protocol": "mls10-openmls-0.8"
             }))
         }
+        "mls.persistence.configure" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            let state_key = p["state_key"].as_str().ok_or("Missing state_key")?;
+            mls_kernel.configure_persistence(scope, state_key)?;
+            Ok(serde_json::json!({"status": "configured"}))
+        }
+        "mls.persistence.export" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            Ok(serde_json::json!({
+                "format": 1,
+                "encrypted_state": mls_kernel.export_encrypted_state(scope)?
+            }))
+        }
+        "mls.persistence.restore" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            let encrypted_state = p["encrypted_state"]
+                .as_str()
+                .ok_or("Missing encrypted_state")?;
+            mls_kernel.restore_encrypted_state(scope, encrypted_state)?;
+            Ok(serde_json::json!({
+                "status": "restored",
+                "protocol": "mls10-openmls-0.8"
+            }))
+        }
         "mls.key_package.create" => {
             let p = params.ok_or("Missing params")?;
             let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
