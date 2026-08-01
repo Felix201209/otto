@@ -62,10 +62,18 @@ messages, and messages signed by a revoked device are rejected.
 
 Each bootstrap, pending registration, approval, and revocation is appended to a
 per-account SHA-256 hash chain with a monotonic sequence and previous-entry
-hash. Clients can retrieve and validate this auditable history. The chain is
-still hosted by the enterprise server: without an independent witness it can
-detect corruption and inconsistent history obtained by a client, but it cannot
-by itself prevent a malicious server from presenting a forked history.
+hash. Electron main independently validates every entry and stores the latest
+seen head in a `safeStorage`-protected local checkpoint. A shorter history is
+rejected as a rollback; a history that no longer contains the pinned head is
+rejected as a fork. Message and attachment decryption also requires the sender
+public key to match the pinned directory, while encryption requires the complete
+active-device set to match the same history.
+
+The chain is still hosted by the enterprise server. Local pinning detects a
+fork only after that device has seen an earlier head; it cannot authenticate the
+first view or detect a server presenting permanently different histories to two
+devices that never compare checkpoints. An independent witness or authenticated
+client gossip remains required for that stronger guarantee.
 
 The preload API exposes:
 
@@ -122,11 +130,12 @@ can expose recorded messages that contain an envelope for that device. Forward
 secrecy and post-compromise security require a future ratcheting protocol.
 
 Protocol v1 now has immutable device IDs, signed new-device approval, safety
-numbers/QR comparison, and an auditable server-hosted key-history chain. These
-controls reduce the risk from a stolen account session, but they do not make
-the enterprise directory independently trustworthy: a malicious server can
-still fork the history unless clients gossip tree heads or verify them through
-an external witness.
+numbers/QR comparison, a server-hosted key-history chain, and protected local
+head pinning. These controls reduce the risk from a stolen account session and
+detect rollback or mutation of history already observed by a client, but they
+do not make the enterprise directory independently trustworthy: a malicious
+server can still create first-use or persistent split views unless clients
+gossip tree heads or verify them through an external witness.
 
 Formal releases run `scripts/verify-e2ee-release-readiness.mjs` and fail closed.
 The checked-in status intentionally reports that prekey handshakes, Double

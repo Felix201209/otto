@@ -55,6 +55,31 @@ export interface EnterpriseE2eeDeviceApproval {
   signature: string;
 }
 
+export type EnterpriseE2eeKeyTransparencyEvent =
+  | 'bootstrap_approved'
+  | 'registered_pending'
+  | 'approved'
+  | 'revoked';
+
+export interface EnterpriseE2eeKeyTransparencyEntry {
+  sequence: number;
+  accountId: string;
+  deviceId: string;
+  event: EnterpriseE2eeKeyTransparencyEvent;
+  keyFingerprint: string;
+  actorDeviceId: string | null;
+  previousHash: string;
+  entryHash: string;
+  createdAt: string;
+}
+
+export interface EnterpriseE2eeKeyTransparencyView {
+  accountId: string;
+  headSequence: number;
+  headHash: string;
+  entries: EnterpriseE2eeKeyTransparencyEntry[];
+}
+
 export interface EnterpriseE2eeEnvelope {
   accountId: string;
   deviceId: string;
@@ -163,6 +188,16 @@ interface RecoveryPackage {
   nonce: string;
   ciphertext: string;
   createdAt: string;
+}
+
+interface TransparencyCheckpoint {
+  v: 1;
+  serverScope: string;
+  organizationId: string;
+  accountId: string;
+  headSequence: number;
+  headHash: string;
+  updatedAt: string;
 }
 
 export interface EnterpriseE2eeVaultOptions {
@@ -341,6 +376,79 @@ function atomicWrite(filePath: string, content: string): void {
   }
 }
 
+const EMPTY_TRANSPARENCY_HASH = '0'.repeat(64);
+const TRANSPARENCY_HASH = /^[0-9a-f]{64}$/;
+const TRANSPARENCY_EVENTS = new Set<EnterpriseE2eeKeyTransparencyEvent>([
+  'bootstrap_approved',
+  'registered_pending',
+  'approved',
+  'revoked',
+]);
+
+function validateTransparencyView(
+  organizationId: string,
+  view: EnterpriseE2eeKeyTransparencyView,
+): EnterpriseE2eeKeyTransparencyView {
+  if (
+    !view ||
+    typeof view !== 'object' ||
+    typeof view.accountId !== 'string' ||
+    !view.accountId ||
+    !Number.isSafeInteger(view.headSequence) ||
+    view.headSequence < 0 ||
+    !TRANSPARENCY_HASH.test(view.headHash) ||
+    !Array.isArray(view.entries) ||
+    view.entries.length !== view.headSequence
+  ) {
+    throw new Error('E2EE key transparency log integrity check failed');
+  }
+  let previousHash = EMPTY_TRANSPARENCY_HASH;
+  for (const [index, entry] of view.entries.entries()) {
+    if (
+      !entry ||
+      typeof entry !== 'object' ||
+      entry.sequence !== index + 1 ||
+      entry.accountId !== view.accountId ||
+      typeof entry.deviceId !== 'string' ||
+      !entry.deviceId ||
+      !TRANSPARENCY_EVENTS.has(entry.event) ||
+      !TRANSPARENCY_HASH.test(entry.keyFingerprint) ||
+      (entry.actorDeviceId !== null &&
+        (typeof entry.actorDeviceId !== 'string' || !entry.actorDeviceId)) ||
+      entry.previousHash !== previousHash ||
+      !TRANSPARENCY_HASH.test(entry.entryHash) ||
+      typeof entry.createdAt !== 'string' ||
+      !entry.createdAt
+    ) {
+      throw new Error('E2EE key transparency log integrity check failed');
+    }
+    const expectedHash = createHash('sha256')
+      .update('otto:e2ee-key-transparency:v1\n')
+      .update(
+        JSON.stringify({
+          sequence: entry.sequence,
+          organizationId,
+          accountId: entry.accountId,
+          deviceId: entry.deviceId,
+          event: entry.event,
+          keyFingerprint: entry.keyFingerprint,
+          actorDeviceId: entry.actorDeviceId,
+          previousHash: entry.previousHash,
+          createdAt: entry.createdAt,
+        }),
+      )
+      .digest('hex');
+    if (entry.entryHash !== expectedHash) {
+      throw new Error('E2EE key transparency log integrity check failed');
+    }
+    previousHash = entry.entryHash;
+  }
+  if (view.headHash !== previousHash) {
+    throw new Error('E2EE key transparency log integrity check failed');
+  }
+  return view;
+}
+
 export class EnterpriseE2eeKeyVault {
   private readonly now: () => Date;
   private readonly deviceName: () => string;
@@ -355,6 +463,98 @@ export class EnterpriseE2eeKeyVault {
       .update(`${serverScope}\0${accountId}`)
       .digest('hex');
     return path.join(this.options.directory, `${digest}.keyring`);
+  }
+
+  private transparencyCheckpointPath(
+    serverScope: string,
+    organizationId: string,
+    accountId: string,
+  ): string {
+    const digest = createHash('sha256')
+      .update(`${serverScope}\0${organizationId}\0${accountId}`)
+      .digest('hex');
+    return path.join(this.options.directory, `${digest}.transparency`);
+  }
+
+  verifyAndPinTransparencyCheckpoint(input: {
+    serverScope: string;
+    organizationId: string;
+    view: EnterpriseE2eeKeyTransparencyView;
+  }): EnterpriseE2eeKeyTransparencyView {
+    const view = validateTransparencyView(input.organizationId, input.view);
+    const checkpointPath = this.transparencyCheckpointPath(
+      input.serverScope,
+      input.organizationId,
+      view.accountId,
+    );
+    let checkpoint: TransparencyCheckpoint | null = null;
+    try {
+      const stat = fs.lstatSync(checkpointPath);
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        throw new Error(
+          'E2EE key transparency checkpoint path must be a regular file',
+        );
+      }
+      const parsed = JSON.parse(
+        this.options.unprotect(fs.readFileSync(checkpointPath, 'utf8')),
+      ) as Partial<TransparencyCheckpoint>;
+      if (
+        parsed.v !== 1 ||
+        parsed.serverScope !== input.serverScope ||
+        parsed.organizationId !== input.organizationId ||
+        parsed.accountId !== view.accountId ||
+        !Number.isSafeInteger(parsed.headSequence) ||
+        (parsed.headSequence ?? -1) < 0 ||
+        typeof parsed.headHash !== 'string' ||
+        !TRANSPARENCY_HASH.test(parsed.headHash) ||
+        typeof parsed.updatedAt !== 'string' ||
+        !parsed.updatedAt
+      ) {
+        throw new Error('E2EE key transparency checkpoint is invalid');
+      }
+      checkpoint = parsed as TransparencyCheckpoint;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+
+    if (checkpoint) {
+      if (view.headSequence < checkpoint.headSequence) {
+        throw new Error('E2EE key transparency rollback detected');
+      }
+      const pinnedEntry =
+        checkpoint.headSequence === 0
+          ? null
+          : view.entries[checkpoint.headSequence - 1];
+      if (
+        (checkpoint.headSequence === 0 &&
+          checkpoint.headHash !== EMPTY_TRANSPARENCY_HASH) ||
+        (checkpoint.headSequence > 0 &&
+          pinnedEntry?.entryHash !== checkpoint.headHash)
+      ) {
+        throw new Error('E2EE key transparency fork detected');
+      }
+    }
+
+    if (
+      !checkpoint ||
+      checkpoint.headSequence !== view.headSequence ||
+      checkpoint.headHash !== view.headHash
+    ) {
+      const next: TransparencyCheckpoint = {
+        v: 1,
+        serverScope: input.serverScope,
+        organizationId: input.organizationId,
+        accountId: view.accountId,
+        headSequence: view.headSequence,
+        headHash: view.headHash,
+        updatedAt: this.now().toISOString(),
+      };
+      atomicWrite(
+        checkpointPath,
+        this.options.protect(JSON.stringify(next)),
+      );
+    }
+    return view;
   }
 
   loadOrCreate(serverScope: string, accountId: string): DeviceKeyring {
@@ -654,6 +854,92 @@ function parsePlaintextPayload(value: Buffer): PlaintextPayload {
 
 export class EnterpriseE2eeCrypto {
   constructor(private readonly vault: EnterpriseE2eeKeyVault) {}
+
+  verifyAndPinKeyTransparency(input: {
+    serverScope: string;
+    organizationId: string;
+    view: EnterpriseE2eeKeyTransparencyView;
+  }): EnterpriseE2eeKeyTransparencyView {
+    return this.vault.verifyAndPinTransparencyCheckpoint(input);
+  }
+
+  verifyLocalDeviceRegistration(
+    local: EnterpriseE2eeDeviceBundle,
+    registered: EnterpriseE2eeDeviceBundle,
+  ): EnterpriseE2eeDeviceBundle {
+    if (
+      registered.accountId !== local.accountId ||
+      registered.deviceId !== local.deviceId ||
+      registered.identitySigningPublicKey !== local.identitySigningPublicKey ||
+      registered.deviceExchangePublicKey !== local.deviceExchangePublicKey ||
+      registered.keyFingerprint !== enterpriseE2eeDeviceKeyFingerprint(local)
+    ) {
+      throw new Error('E2EE server returned a substituted local device key');
+    }
+    return registered;
+  }
+
+  verifyDeviceDirectory(input: {
+    organizationId: string;
+    devices: EnterpriseE2eeDeviceBundle[];
+    transparency: EnterpriseE2eeKeyTransparencyView[];
+    includePending: boolean;
+    includeRevoked: boolean;
+  }): EnterpriseE2eeDeviceBundle[] {
+    const expected = new Map<
+      string,
+      { entry: EnterpriseE2eeKeyTransparencyEntry; accountId: string }
+    >();
+    for (const rawView of input.transparency) {
+      const view = validateTransparencyView(input.organizationId, rawView);
+      const latest = new Map<string, EnterpriseE2eeKeyTransparencyEntry>();
+      for (const entry of view.entries) latest.set(entry.deviceId, entry);
+      for (const entry of latest.values()) {
+        const visible =
+          entry.event === 'revoked'
+            ? input.includeRevoked
+            : entry.event === 'registered_pending'
+              ? input.includePending
+              : true;
+        if (visible) {
+          expected.set(`${view.accountId}:${entry.deviceId}`, {
+            entry,
+            accountId: view.accountId,
+          });
+        }
+      }
+    }
+
+    const actual = new Set<string>();
+    for (const device of input.devices) {
+      const key = `${device.accountId}:${device.deviceId}`;
+      if (actual.has(key)) throw new Error('E2EE device directory is duplicated');
+      actual.add(key);
+      if (enterpriseE2eeDeviceKeyFingerprint(device) !== device.keyFingerprint) {
+        throw new Error('E2EE device fingerprint does not match its public keys');
+      }
+      const pinned = expected.get(key);
+      if (!pinned || pinned.entry.keyFingerprint !== device.keyFingerprint) {
+        throw new Error('E2EE device directory does not match transparency log');
+      }
+      const stateMatches =
+        pinned.entry.event === 'revoked'
+          ? device.revokedAt !== null
+          : pinned.entry.event === 'registered_pending'
+            ? device.revokedAt === null && device.approvalState === 'pending'
+            : device.revokedAt === null && device.approvalState === 'approved';
+      if (!stateMatches) {
+        throw new Error('E2EE device state does not match transparency log');
+      }
+    }
+    if (
+      actual.size !== expected.size ||
+      [...expected.keys()].some((key) => !actual.has(key))
+    ) {
+      throw new Error('E2EE device directory does not match transparency log');
+    }
+    return input.devices;
+  }
 
   localDevice(
     serverScope: string,

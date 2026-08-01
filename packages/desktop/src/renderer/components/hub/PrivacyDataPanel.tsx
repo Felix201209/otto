@@ -522,13 +522,14 @@ export function PrivacyDataPanel(): React.JSX.Element {
               <div className="otto-hub__setting-text">
                 <strong>密钥透明日志</strong>
                 <span className="otto-hub__field-hint">
-                  追加式记录设备登记、批准与撤销。在不同已核验设备间对比链头，可辅助发现目录回滚。
+                  追加式记录设备登记、批准与撤销。本机会加密钉扎已见链头并拒绝回滚或分叉；不同设备仍应对比链头以发现持续分流。
                 </span>
               </div>
               {transparency ? (
                 <>
                   <div className="otto-hub__e2ee-chain-head">
                     <Badge tone="accent">链头序号 {transparency.headSequence}</Badge>
+                    <Badge tone="accent">本机检查点已钉扎</Badge>
                     <code title={transparency.headHash}>
                       {transparency.headHash.slice(0, 24)}
                     </code>

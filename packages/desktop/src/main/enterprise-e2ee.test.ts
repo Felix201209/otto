@@ -14,6 +14,8 @@ import {
   enterpriseE2eeDeviceApprovalSignaturePayload,
   enterpriseE2eeDeviceVerification,
   type EnterpriseE2eeDeviceBundle,
+  type EnterpriseE2eeKeyTransparencyEvent,
+  type EnterpriseE2eeKeyTransparencyView,
   type EnterpriseE2eeSendPayload,
   type EnterpriseE2eeWireMessage,
 } from './enterprise-e2ee.js';
@@ -71,12 +73,177 @@ function wire(
   };
 }
 
+function transparencyView(
+  organizationId: string,
+  accountId: string,
+  events: Array<{
+    device: EnterpriseE2eeDeviceBundle;
+    event: EnterpriseE2eeKeyTransparencyEvent;
+  }>,
+): EnterpriseE2eeKeyTransparencyView {
+  let previousHash = '0'.repeat(64);
+  const entries = events.map(({ device, event }, index) => {
+    const sequence = index + 1;
+    const createdAt = `2026-07-31T00:0${sequence}:00.000Z`;
+    const unsigned = {
+      sequence,
+      organizationId,
+      accountId,
+      deviceId: device.deviceId,
+      event,
+      keyFingerprint: device.keyFingerprint,
+      actorDeviceId: event === 'bootstrap_approved' ? null : events[0]!.device.deviceId,
+      previousHash,
+      createdAt,
+    };
+    const entryHash = createHash('sha256')
+      .update('otto:e2ee-key-transparency:v1\n')
+      .update(JSON.stringify(unsigned))
+      .digest('hex');
+    previousHash = entryHash;
+    return { ...unsigned, entryHash };
+  });
+  return {
+    accountId,
+    headSequence: entries.length,
+    headHash: previousHash,
+    entries,
+  };
+}
+
 describe('enterprise private-chat E2EE', () => {
+  it('pins transparency heads and rejects a server rollback or fork', () => {
+    const alice = createEndpoint('Alice laptop');
+    const aliceDevice = alice.crypto.localDevice('https://otto.test', 'alice');
+    const second = createEndpoint('Alice phone').crypto.localDevice(
+      'https://otto.test',
+      'alice',
+    );
+    const first = transparencyView('org-a', 'alice', [
+      { device: aliceDevice, event: 'bootstrap_approved' },
+    ]);
+    const extended = transparencyView('org-a', 'alice', [
+      { device: aliceDevice, event: 'bootstrap_approved' },
+      { device: second, event: 'registered_pending' },
+    ]);
+
+    expect(
+      alice.crypto.verifyAndPinKeyTransparency({
+        serverScope: 'https://otto.test',
+        organizationId: 'org-a',
+        view: first,
+      }),
+    ).toEqual(first);
+    expect(
+      alice.crypto.verifyAndPinKeyTransparency({
+        serverScope: 'https://otto.test',
+        organizationId: 'org-a',
+        view: extended,
+      }),
+    ).toEqual(extended);
+    expect(() =>
+      alice.crypto.verifyAndPinKeyTransparency({
+        serverScope: 'https://otto.test',
+        organizationId: 'org-a',
+        view: first,
+      }),
+    ).toThrow('rollback');
+
+    const fork = transparencyView('org-a', 'alice', [
+      { device: aliceDevice, event: 'bootstrap_approved' },
+      { device: aliceDevice, event: 'revoked' },
+    ]);
+    expect(() =>
+      alice.crypto.verifyAndPinKeyTransparency({
+        serverScope: 'https://otto.test',
+        organizationId: 'org-a',
+        view: fork,
+      }),
+    ).toThrow('fork');
+
+    const checkpointFiles = readFileSync(
+      join(
+        alice.root,
+        `${createHash('sha256')
+          .update('https://otto.test\0org-a\0alice')
+          .digest('hex')}.transparency`,
+      ),
+      'utf8',
+    );
+    expect(checkpointFiles).toMatch(/^protected:/);
+    expect(checkpointFiles).not.toContain(extended.headHash);
+  });
+
+  it('rejects malformed transparency entries and inconsistent device directories', () => {
+    const alice = createEndpoint('Alice laptop');
+    const bob = createEndpoint('Bob laptop');
+    const aliceDevice = alice.crypto.localDevice('https://otto.test', 'alice');
+    const bobDevice = bob.crypto.localDevice('https://otto.test', 'bob');
+    const aliceView = transparencyView('org-a', 'alice', [
+      { device: aliceDevice, event: 'bootstrap_approved' },
+    ]);
+    const bobView = transparencyView('org-a', 'bob', [
+      { device: bobDevice, event: 'bootstrap_approved' },
+    ]);
+
+    expect(() =>
+      alice.crypto.verifyAndPinKeyTransparency({
+        serverScope: 'https://otto.test',
+        organizationId: 'org-a',
+        view: {
+          ...aliceView,
+          entries: [
+            { ...aliceView.entries[0]!, entryHash: 'f'.repeat(64) },
+          ],
+        },
+      }),
+    ).toThrow('integrity');
+
+    expect(() =>
+      alice.crypto.verifyDeviceDirectory({
+        organizationId: 'org-a',
+        devices: [aliceDevice],
+        transparency: [aliceView, bobView],
+        includePending: false,
+        includeRevoked: false,
+      }),
+    ).toThrow('does not match');
+    expect(() =>
+      alice.crypto.verifyDeviceDirectory({
+        organizationId: 'org-a',
+        devices: [aliceDevice, { ...bobDevice, keyFingerprint: 'a'.repeat(64) }],
+        transparency: [aliceView, bobView],
+        includePending: false,
+        includeRevoked: false,
+      }),
+    ).toThrow('fingerprint');
+    expect(
+      alice.crypto.verifyDeviceDirectory({
+        organizationId: 'org-a',
+        devices: [aliceDevice, bobDevice],
+        transparency: [aliceView, bobView],
+        includePending: false,
+        includeRevoked: false,
+      }),
+    ).toEqual([aliceDevice, bobDevice]);
+  });
+
   it('derives symmetric safety numbers and signs out-of-band device approvals locally', () => {
     const aliceOne = createEndpoint('Alice one');
     const aliceTwo = createEndpoint('Alice two');
     const first = aliceOne.crypto.localDevice('https://otto.test', 'alice');
     const second = aliceTwo.crypto.localDevice('https://otto.test', 'alice');
+
+    expect(
+      aliceOne.crypto.verifyLocalDeviceRegistration(first, first),
+    ).toEqual(first);
+    expect(() =>
+      aliceOne.crypto.verifyLocalDeviceRegistration(first, {
+        ...first,
+        identitySigningPublicKey: second.identitySigningPublicKey,
+        keyFingerprint: second.keyFingerprint,
+      }),
+    ).toThrow('substituted');
 
     const forward = enterpriseE2eeDeviceVerification(first, second);
     const reverse = enterpriseE2eeDeviceVerification(second, first);

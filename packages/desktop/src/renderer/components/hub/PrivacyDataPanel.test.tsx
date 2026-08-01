@@ -259,6 +259,7 @@ describe('PrivacyDataPanel', () => {
 
     expect(await screen.findByText('密钥透明日志')).toBeTruthy();
     expect(screen.getByText('链头序号 3')).toBeTruthy();
+    expect(screen.getByText('本机检查点已钉扎')).toBeTruthy();
     expect(screen.getByText('首台设备建立')).toBeTruthy();
     expect(screen.getByText('新设备待批准')).toBeTruthy();
     expect(screen.getByText('设备已批准')).toBeTruthy();

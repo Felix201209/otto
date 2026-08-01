@@ -10,6 +10,8 @@ import {
 } from './enterprise-client.js';
 import type {
   EnterpriseE2eeCrypto,
+  EnterpriseE2eeDeviceBundle,
+  EnterpriseE2eeKeyTransparencyView,
   EnterpriseE2eeWireMessage,
 } from './enterprise-e2ee.js';
 
@@ -19,6 +21,10 @@ const E2EE_DEVICE = {
   deviceName: 'test device',
   identitySigningPublicKey: 'test signing key',
   deviceExchangePublicKey: 'test exchange key',
+  keyFingerprint: '1'.repeat(64),
+  approvalState: 'approved' as const,
+  approvedByDeviceId: null,
+  approvedAt: '2026-07-31T00:00:00.000Z',
   createdAt: '2026-07-31T00:00:00.000Z',
   lastSeenAt: '2026-07-31T00:00:00.000Z',
   revokedAt: null,
@@ -30,6 +36,18 @@ function mockE2eeCrypto(input: {
 } = {}): EnterpriseE2eeCrypto {
   return {
     localDevice: vi.fn(() => E2EE_DEVICE),
+    verifyLocalDeviceRegistration: vi.fn(
+      (
+        _local: EnterpriseE2eeDeviceBundle,
+        registered: EnterpriseE2eeDeviceBundle,
+      ) => registered,
+    ),
+    verifyAndPinKeyTransparency: vi.fn(
+      ({ view }: { view: EnterpriseE2eeKeyTransparencyView }) => view,
+    ),
+    verifyDeviceDirectory: vi.fn(
+      ({ devices }: { devices: EnterpriseE2eeDeviceBundle[] }) => devices,
+    ),
     encryptMessage: vi.fn(() => ({
       messageId: 'message-1',
       senderDeviceId: 'device-1',
@@ -61,6 +79,17 @@ function mockE2eeCrypto(input: {
       data: 'JVBERg==',
     })),
   } as unknown as EnterpriseE2eeCrypto;
+}
+
+function emptyTransparency(accountId: string) {
+  return {
+    transparency: {
+      accountId,
+      headSequence: 0,
+      headHash: '0'.repeat(64),
+      entries: [],
+    },
+  };
 }
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -761,8 +790,21 @@ describe('EnterpriseClient', () => {
       .mockResolvedValueOnce(jsonResponse(200, {
         account: ACCOUNT, token: 'session-token', expiresAt: '2099-01-01',
       }))
+      .mockResolvedValueOnce(jsonResponse(200, { requests }))
       .mockResolvedValueOnce(jsonResponse(200, { device: E2EE_DEVICE }))
-      .mockResolvedValueOnce(jsonResponse(200, { requests }));
+      .mockResolvedValueOnce(jsonResponse(200, emptyTransparency('acc_1')))
+      .mockResolvedValueOnce(jsonResponse(200, emptyTransparency('acc_2')))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        devices: [
+          E2EE_DEVICE,
+          {
+            ...E2EE_DEVICE,
+            accountId: 'acc_2',
+            deviceId: 'peer-device',
+            identitySigningPublicKey: 'peer signing key',
+          },
+        ],
+      }));
     const client = new EnterpriseClient(
       fetchMock as typeof fetch,
       () => undefined,
@@ -776,11 +818,70 @@ describe('EnterpriseClient', () => {
       peerAccountId: 'acc_2',
       e2ee: true,
     }]);
-    expect(fetchMock.mock.calls[3]?.[0])
+    expect(fetchMock.mock.calls[2]?.[0])
       .toBe('https://enterprise.otto.test/enterprise/atoa/inbox');
-    expect((fetchMock.mock.calls[3]?.[1] as RequestInit).headers).toMatchObject({
+    expect((fetchMock.mock.calls[2]?.[1] as RequestInit).headers).toMatchObject({
       authorization: 'Bearer session-token',
     });
+  });
+
+  it('refuses to decrypt a message whose sender key differs from the pinned directory', async () => {
+    const peerDevice = {
+      ...E2EE_DEVICE,
+      accountId: 'acc_peer',
+      deviceId: 'peer-device',
+      identitySigningPublicKey: 'trusted peer signing key',
+    };
+    const message: EnterpriseE2eeWireMessage = {
+      id: 'message-substituted-key',
+      senderAccountId: 'acc_peer',
+      recipientAccountId: 'acc_1',
+      senderDeviceId: 'peer-device',
+      senderIdentitySigningPublicKey: 'substituted peer signing key',
+      protocolVersion: 1,
+      contentType: 'message',
+      inReplyToMessageId: null,
+      ciphertext: 'ciphertext',
+      nonce: 'nonce',
+      signature: 'signature',
+      envelopes: [],
+      createdAt: '2026-07-31T00:00:00.000Z',
+      readAt: null,
+      attachments: [],
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          account: ACCOUNT,
+          token: 'session-token',
+          expiresAt: '2099-01-01',
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(200, { device: E2EE_DEVICE }))
+      .mockResolvedValueOnce(jsonResponse(200, emptyTransparency('acc_1')))
+      .mockResolvedValueOnce(jsonResponse(200, emptyTransparency('acc_peer')))
+      .mockResolvedValueOnce(
+        jsonResponse(200, { devices: [E2EE_DEVICE, peerDevice] }),
+      )
+      .mockResolvedValueOnce(jsonResponse(200, { messages: [message] }));
+    const e2ee = mockE2eeCrypto();
+    const client = new EnterpriseClient(
+      fetchMock as typeof fetch,
+      () => undefined,
+      e2ee,
+    );
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(client.listDirectMessages('acc_peer')).rejects.toThrow(
+      'sender key is not trusted',
+    );
+    expect(e2ee.decryptMessage).not.toHaveBeenCalled();
   });
 
   it('管理员删除账号后返回删除结果', async () => {
@@ -1143,6 +1244,8 @@ describe('EnterpriseClient', () => {
         expiresAt: '2099-01-01',
       }))
       .mockResolvedValueOnce(jsonResponse(200, { device: E2EE_DEVICE }))
+      .mockResolvedValueOnce(jsonResponse(200, emptyTransparency('acc_1')))
+      .mockResolvedValueOnce(jsonResponse(200, emptyTransparency('acc_peer')))
       .mockResolvedValueOnce(jsonResponse(200, {
         devices: [E2EE_DEVICE, { ...E2EE_DEVICE, accountId: 'acc_peer', deviceId: 'peer-device' }],
       }))
@@ -1156,6 +1259,12 @@ describe('EnterpriseClient', () => {
             nonce: 'attachment nonce',
           },
         },
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, { device: E2EE_DEVICE }))
+      .mockResolvedValueOnce(jsonResponse(200, emptyTransparency('acc_1')))
+      .mockResolvedValueOnce(jsonResponse(200, emptyTransparency('acc_peer')))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        devices: [E2EE_DEVICE, { ...E2EE_DEVICE, accountId: 'acc_peer', deviceId: 'peer-device' }],
       }));
     const e2ee = mockE2eeCrypto({
       decryptContent: '请查收',
@@ -1183,10 +1292,10 @@ describe('EnterpriseClient', () => {
     await expect(client.getDirectMessageAttachment('attachment-1'))
       .resolves.toMatchObject({ id: 'attachment-1', data: attachment.data });
 
-    const sendInit = fetchMock.mock.calls[4]?.[1] as RequestInit;
+    const sendInit = fetchMock.mock.calls[6]?.[1] as RequestInit;
     expect(String(sendInit.body)).not.toContain('请查收');
     expect(String(sendInit.body)).not.toContain('方案.pdf');
-    expect(fetchMock.mock.calls[5]?.[0]).toBe(
+    expect(fetchMock.mock.calls[7]?.[0]).toBe(
       'https://enterprise.otto.test/enterprise/message-attachments/attachment-1',
     );
   });

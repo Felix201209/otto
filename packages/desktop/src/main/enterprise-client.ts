@@ -10,7 +10,14 @@ import {
   type EnterpriseE2eeDeviceVerification,
   type EnterpriseE2eeCrypto,
   type EnterpriseE2eeDeviceBundle,
+  type EnterpriseE2eeKeyTransparencyView,
   type EnterpriseE2eeWireMessage,
+} from './enterprise-e2ee.js';
+
+export type {
+  EnterpriseE2eeKeyTransparencyEntry,
+  EnterpriseE2eeKeyTransparencyEvent,
+  EnterpriseE2eeKeyTransparencyView,
 } from './enterprise-e2ee.js';
 
 export interface EnterpriseAccount {
@@ -645,31 +652,6 @@ export interface EnterpriseUnreadMessageNotification {
   senderName: string;
   preview: string;
   createdAt: string;
-}
-
-export type EnterpriseE2eeKeyTransparencyEvent =
-  | 'bootstrap_approved'
-  | 'registered_pending'
-  | 'approved'
-  | 'revoked';
-
-export interface EnterpriseE2eeKeyTransparencyEntry {
-  sequence: number;
-  accountId: string;
-  deviceId: string;
-  event: EnterpriseE2eeKeyTransparencyEvent;
-  keyFingerprint: string;
-  actorDeviceId: string | null;
-  previousHash: string;
-  entryHash: string;
-  createdAt: string;
-}
-
-export interface EnterpriseE2eeKeyTransparencyView {
-  accountId: string;
-  headSequence: number;
-  headHash: string;
-  entries: EnterpriseE2eeKeyTransparencyEntry[];
 }
 
 export interface EnterpriseAtoaInboxMessage extends EnterpriseDirectMessage {
@@ -2106,12 +2088,62 @@ export class EnterpriseClient {
         }),
       },
     );
-    if (response.device.revokedAt) {
+    const registered = crypto.verifyLocalDeviceRegistration(
+      local,
+      response.device,
+    );
+    if (registered.revokedAt) {
       throw new Error(
         'this E2EE device was revoked; recover or create a new trusted device',
       );
     }
-    return response.device;
+    return registered;
+  }
+
+  private async getAndPinE2eeKeyTransparency(
+    accountId: string,
+  ): Promise<EnterpriseE2eeKeyTransparencyView> {
+    const { crypto, account, serverScope } = this.requireE2eeContext();
+    const query = new URLSearchParams({ accountId });
+    const view = (
+      await this.request<{
+        transparency: EnterpriseE2eeKeyTransparencyView;
+      }>(`/enterprise/e2ee/key-transparency?${query.toString()}`)
+    ).transparency;
+    return crypto.verifyAndPinKeyTransparency({
+      serverScope,
+      organizationId: account.organizationId,
+      view,
+    });
+  }
+
+  private async verifiedE2eeDeviceDirectory(
+    accountIds: string[],
+    options: { includePending: boolean; includeRevoked: boolean },
+  ): Promise<EnterpriseE2eeDeviceBundle[]> {
+    const { crypto, account } = this.requireE2eeContext();
+    await this.registerLocalE2eeDevice();
+    const uniqueAccountIds = [...new Set(accountIds)];
+    const transparency = await Promise.all(
+      uniqueAccountIds.map((accountId) =>
+        this.getAndPinE2eeKeyTransparency(accountId),
+      ),
+    );
+    const query = new URLSearchParams();
+    for (const accountId of uniqueAccountIds) query.append('accountId', accountId);
+    query.set('includeRevoked', String(options.includeRevoked));
+    query.set('includePending', String(options.includePending));
+    const devices = (
+      await this.request<{ devices: EnterpriseE2eeDeviceBundle[] }>(
+        `/enterprise/e2ee/devices?${query.toString()}`,
+      )
+    ).devices;
+    return crypto.verifyDeviceDirectory({
+      organizationId: account.organizationId,
+      devices,
+      transparency,
+      ...options,
+    });
   }
 
   async ensureE2eeDeviceReady(): Promise<EnterpriseE2eeDeviceBundle> {
@@ -2120,28 +2152,39 @@ export class EnterpriseClient {
     await this.assertCompatibleServer(this.serverUrl, [
       'e2ee_private_messages_v1',
     ]);
-    return this.registerLocalE2eeDevice();
+    const device = await this.registerLocalE2eeDevice();
+    await this.getAndPinE2eeKeyTransparency(device.accountId);
+    return device;
   }
 
   private async e2eeDevicesForConversation(
     peerAccountId: string,
   ): Promise<EnterpriseE2eeDeviceBundle[]> {
     const { account } = this.requireE2eeContext();
-    await this.registerLocalE2eeDevice();
-    const query = new URLSearchParams();
-    query.append('accountId', account.id);
-    query.append('accountId', peerAccountId);
-    return (
-      await this.request<{ devices: EnterpriseE2eeDeviceBundle[] }>(
-        `/enterprise/e2ee/devices?${query.toString()}`,
-      )
-    ).devices;
+    return this.verifiedE2eeDeviceDirectory([account.id, peerAccountId], {
+      includePending: false,
+      includeRevoked: false,
+    });
   }
 
   private decryptE2eeMessage(
     message: EnterpriseE2eeWireMessage,
+    trustedDevices: EnterpriseE2eeDeviceBundle[],
   ): EnterpriseDirectMessage {
     const { crypto, account, serverScope } = this.requireE2eeContext();
+    const senderDevice = trustedDevices.find(
+      (device) =>
+        device.accountId === message.senderAccountId &&
+        device.deviceId === message.senderDeviceId,
+    );
+    if (
+      !senderDevice ||
+      senderDevice.approvalState !== 'approved' ||
+      senderDevice.identitySigningPublicKey !==
+        message.senderIdentitySigningPublicKey
+    ) {
+      throw new Error('E2EE message sender key is not trusted by the pinned directory');
+    }
     const decrypted = crypto.decryptMessage({
       serverScope,
       organizationId: account.organizationId,
@@ -2172,17 +2215,10 @@ export class EnterpriseClient {
       'e2ee_device_trust_v1',
     ]);
     const { account } = this.requireE2eeContext();
-    await this.registerLocalE2eeDevice();
-    const query = new URLSearchParams({
-      accountId: account.id,
-      includeRevoked: String(includeRevoked),
-      includePending: 'true',
+    const devices = await this.verifiedE2eeDeviceDirectory([account.id], {
+      includeRevoked,
+      includePending: true,
     });
-    const devices = (
-      await this.request<{ devices: EnterpriseE2eeDeviceBundle[] }>(
-        `/enterprise/e2ee/devices?${query.toString()}`,
-      )
-    ).devices;
     const localDeviceId = this.requireE2eeContext().crypto.localDevice(
       this.serverUrl,
       account.id,
@@ -2201,12 +2237,8 @@ export class EnterpriseClient {
       'e2ee_device_trust_v1',
     ]);
     const { account } = this.requireE2eeContext();
-    const query = new URLSearchParams({ accountId: account.id });
-    return (
-      await this.request<{
-        transparency: EnterpriseE2eeKeyTransparencyView;
-      }>(`/enterprise/e2ee/key-transparency?${query.toString()}`)
-    ).transparency;
+    await this.registerLocalE2eeDevice();
+    return this.getAndPinE2eeKeyTransparency(account.id);
   }
 
   async approveOwnE2eeDevice(
@@ -2228,7 +2260,7 @@ export class EnterpriseClient {
       accountId: account.id,
       targetDevice,
     });
-    return (
+    const approved = (
       await this.request<{ device: EnterpriseE2eeDeviceBundle }>(
         `/enterprise/e2ee/devices/${encodeURIComponent(deviceId)}/approve`,
         {
@@ -2237,6 +2269,8 @@ export class EnterpriseClient {
         },
       )
     ).device;
+    await this.getAndPinE2eeKeyTransparency(account.id);
+    return approved;
   }
 
   async getOwnE2eeDeviceVerification(
@@ -2270,6 +2304,7 @@ export class EnterpriseClient {
       crypto.rotateLocalDevice(serverScope, account.id);
       await this.registerLocalE2eeDevice();
     }
+    await this.getAndPinE2eeKeyTransparency(account.id);
   }
 
   async listDirectMessages(
@@ -2280,13 +2315,19 @@ export class EnterpriseClient {
       'direct_messages',
       'e2ee_private_messages_v1',
     ]);
-    await this.registerLocalE2eeDevice();
+    const { account } = this.requireE2eeContext();
+    const trustedDevices = await this.verifiedE2eeDeviceDirectory(
+      [account.id, peerAccountId],
+      { includePending: false, includeRevoked: true },
+    );
     const messages = (
       await this.request<{ messages: EnterpriseE2eeWireMessage[] }>(
         '/enterprise/messages/' + encodeURIComponent(peerAccountId),
       )
     ).messages;
-    return messages.map((message) => this.decryptE2eeMessage(message));
+    return messages.map((message) =>
+      this.decryptE2eeMessage(message, trustedDevices),
+    );
   }
   async listUnreadDirectMessageNotifications(): Promise<
     EnterpriseUnreadMessageNotification[]
@@ -2344,7 +2385,7 @@ export class EnterpriseClient {
         { timeoutMs: attachments.length > 0 ? 60_000 : 10_000 },
       )
     ).message;
-    return this.decryptE2eeMessage(message);
+    return this.decryptE2eeMessage(message, devices);
   }
 
   async getDirectMessageAttachment(
@@ -2366,6 +2407,27 @@ export class EnterpriseClient {
       { timeoutMs: 60_000 },
     );
     const { crypto, account, serverScope } = this.requireE2eeContext();
+    const peerAccountId =
+      download.attachment.message.senderAccountId === account.id
+        ? download.attachment.message.recipientAccountId
+        : download.attachment.message.senderAccountId;
+    const trustedDevices = await this.verifiedE2eeDeviceDirectory(
+      [account.id, peerAccountId],
+      { includePending: false, includeRevoked: true },
+    );
+    const senderDevice = trustedDevices.find(
+      (device) =>
+        device.accountId === download.attachment.message.senderAccountId &&
+        device.deviceId === download.attachment.message.senderDeviceId,
+    );
+    if (
+      !senderDevice ||
+      senderDevice.approvalState !== 'approved' ||
+      senderDevice.identitySigningPublicKey !==
+        download.attachment.message.senderIdentitySigningPublicKey
+    ) {
+      throw new Error('E2EE attachment sender key is not trusted by the pinned directory');
+    }
     return crypto.decryptAttachment({
       serverScope,
       organizationId: account.organizationId,
@@ -2380,7 +2442,6 @@ export class EnterpriseClient {
       'atoa',
       'e2ee_private_messages_v1',
     ]);
-    await this.registerLocalE2eeDevice();
     const requests = (
       await this.request<{
         requests: Array<
@@ -2391,8 +2452,13 @@ export class EnterpriseClient {
         >;
       }>('/enterprise/atoa/inbox')
     ).requests;
+    const { account } = this.requireE2eeContext();
+    const trustedDevices = await this.verifiedE2eeDeviceDirectory(
+      [account.id, ...requests.map((request) => request.peerAccountId)],
+      { includePending: false, includeRevoked: true },
+    );
     return requests.map((request) => ({
-      ...this.decryptE2eeMessage(request),
+      ...this.decryptE2eeMessage(request, trustedDevices),
       peerAccountId: request.peerAccountId,
       peer: request.peer,
     }));

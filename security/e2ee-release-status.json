@@ -16,7 +16,9 @@
     "qrVerification": true,
     "outOfBandDeviceApproval": true,
     "keyTransparency": true,
-    "keyTransparencyMode": "server-hash-chain-not-externally-witnessed"
+    "keyTransparencyMode": "client-pinned-server-hash-chain-not-externally-witnessed",
+    "localCheckpointPinning": true,
+    "externalWitness": false
   },
   "auditReports": [],
   "releaseApproved": false,
