@@ -10,6 +10,10 @@ import type {
   PostgresClientLike,
   PostgresPoolLike,
 } from '../modules/data_platform/postgresDatabaseLifecycle.js';
+import {
+  loadVerifiedSqliteImportTable,
+  type DecodedSqliteImportRow,
+} from './postgresImportStaging.js';
 
 const PROMOTION_LOCK_KEY = 0x4f545450;
 
@@ -18,22 +22,43 @@ interface ImportRunRow extends Record<string, unknown> {
   state: string;
 }
 
-interface ImportTableRow extends Record<string, unknown> {
-  table_name: string;
-  column_names: unknown[] | string;
-  source_row_count: number | string;
-  copied_row_count: number | string | null;
-  state: string;
-}
-
-interface ImportDataRow extends Record<string, unknown> {
-  row_data: unknown[] | string;
-}
-
 interface PromotionReceiptRow extends Record<string, unknown> {
   run_id: string;
   promoted_counts: Record<string, number> | string;
   promoted_at: Date | string;
+}
+
+interface PreparedAttachmentRow extends Record<string, unknown> {
+  attachment_id: string;
+  message_id: string;
+  organization_id: string;
+  sender_account_id: string;
+  recipient_account_id: string;
+  ordinal: number | string;
+  ciphertext_bytes: number | string;
+  ciphertext_sha256: string;
+  e2ee_nonce: string;
+  source_backend: string;
+  source_storage_key: string | null;
+  s3_storage_key: string | null;
+  state: string;
+  source_created_at: Date | string;
+}
+
+interface PreparedPromotionAttachment {
+  id: string;
+  messageId: string;
+  organizationId: string;
+  senderAccountId: string;
+  recipientAccountId: string;
+  ordinal: number;
+  ciphertextBytes: number;
+  ciphertextSha256: string;
+  nonce: string;
+  sourceBackend: 'sqlite' | 'encrypted-filesystem';
+  sourceStorageKey: string | null;
+  s3StorageKey: string;
+  sourceCreatedAt: string;
 }
 
 export interface PostgresEnterprisePromotionResult {
@@ -43,7 +68,7 @@ export interface PostgresEnterprisePromotionResult {
   promotedAt: string | null;
 }
 
-type DecodedRow = Record<string, unknown>;
+type DecodedRow = DecodedSqliteImportRow;
 
 const PROMOTION_ORDER = [
   'organizations',
@@ -59,33 +84,6 @@ const PROMOTION_ORDER = [
   'direct_messages',
 ] as const;
 
-function parseArray(value: unknown[] | string, label: string): unknown[] {
-  const parsed = typeof value === 'string' ? (JSON.parse(value) as unknown) : value;
-  if (!Array.isArray(parsed)) throw new Error(`${label} is not a JSON array`);
-  return parsed;
-}
-
-function decodeValue(value: unknown): unknown {
-  if (
-    value &&
-    typeof value === 'object' &&
-    !Array.isArray(value) &&
-    'type' in value &&
-    'value' in value
-  ) {
-    const encoded = value as { type: unknown; value: unknown };
-    if (encoded.type === 'bytes' && typeof encoded.value === 'string') {
-      return Buffer.from(encoded.value, 'base64');
-    }
-    if (encoded.type === 'bigint' && typeof encoded.value === 'string') {
-      return encoded.value;
-    }
-    if (encoded.type === 'number' && encoded.value === '-0') return 0;
-    throw new Error('SQLite staging row contains an unsupported encoded value');
-  }
-  return value;
-}
-
 function stringValue(value: unknown, label: string): string {
   if (typeof value !== 'string' || !value.trim()) {
     throw new Error(`SQLite promotion ${label} is invalid`);
@@ -98,6 +96,12 @@ function optionalString(value: unknown): string | null {
 }
 
 function timestamp(value: unknown, label: string): string {
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      throw new Error(`SQLite promotion ${label} is invalid`);
+    }
+    return value.toISOString();
+  }
   const raw = stringValue(value, label);
   const date = new Date(raw.endsWith('Z') || /[+-]\d\d:\d\d$/.test(raw) ? raw : `${raw.replace(' ', 'T')}Z`);
   if (Number.isNaN(date.getTime())) throw new Error(`SQLite promotion ${label} is invalid`);
@@ -147,47 +151,6 @@ function receipt(row: PromotionReceiptRow): PostgresEnterprisePromotionResult {
         ? row.promoted_at.toISOString()
         : new Date(row.promoted_at).toISOString(),
   };
-}
-
-async function loadTable(
-  client: PostgresClientLike,
-  runId: string,
-  tableName: string,
-): Promise<DecodedRow[]> {
-  const tableResult = await client.query<ImportTableRow>(
-    `SELECT table_name, column_names, source_row_count, copied_row_count, state
-     FROM otto_sqlite_import_tables
-     WHERE run_id = $1 AND table_name = $2`,
-    [runId, tableName],
-  );
-  const table = tableResult.rows[0];
-  if (!table) return [];
-  if (
-    table.state !== 'verified' ||
-    Number(table.source_row_count) !== Number(table.copied_row_count)
-  ) {
-    throw new Error(`SQLite import table ${tableName} is not verified`);
-  }
-  const columns = parseArray(table.column_names, `${tableName} columns`).map(
-    (column) => stringValue(column, `${tableName} column`),
-  );
-  const rows = await client.query<ImportDataRow>(
-    `SELECT row_data FROM otto_sqlite_import_rows
-     WHERE run_id = $1 AND table_name = $2 ORDER BY row_index`,
-    [runId, tableName],
-  );
-  if (rows.rows.length !== Number(table.source_row_count)) {
-    throw new Error(`SQLite import table ${tableName} row count changed after verification`);
-  }
-  return rows.rows.map((row, rowIndex) => {
-    const values = parseArray(row.row_data, `${tableName} row ${rowIndex}`);
-    if (values.length !== columns.length) {
-      throw new Error(`SQLite import table ${tableName} row shape is invalid`);
-    }
-    return Object.fromEntries(
-      columns.map((column, index) => [column, decodeValue(values[index])]),
-    );
-  });
 }
 
 async function assertUnusedTarget(client: PostgresClientLike): Promise<void> {
@@ -510,6 +473,208 @@ async function insertMessages(client: PostgresClientLike, rows: DecodedRow[]) {
   }
 }
 
+async function verifiedPreparedAttachments(input: {
+  client: PostgresClientLike;
+  runId: string;
+  attachmentRows: DecodedRow[];
+  messageRows: DecodedRow[];
+}): Promise<PreparedPromotionAttachment[]> {
+  const result = await input.client.query<PreparedAttachmentRow>(
+    `SELECT attachment_id, message_id, organization_id, sender_account_id,
+            recipient_account_id, ordinal, ciphertext_bytes,
+            ciphertext_sha256, e2ee_nonce, source_backend,
+            source_storage_key, s3_storage_key, state, source_created_at
+     FROM otto_sqlite_import_attachment_objects
+     WHERE run_id = $1 ORDER BY attachment_id`,
+    [input.runId],
+  );
+  if (result.rows.length !== input.attachmentRows.length) {
+    throw new Error(
+      'every SQLite message attachment requires a verified S3 preparation',
+    );
+  }
+  const messages = new Map(input.messageRows.map((row) => [String(row.id), row]));
+  const preparedById = new Map(
+    result.rows.map((row) => [row.attachment_id, row] as const),
+  );
+  return input.attachmentRows.map((source) => {
+    const id = stringValue(source.id, 'attachment id');
+    const messageId = stringValue(source.message_id, 'attachment message id');
+    const organizationId = stringValue(
+      source.organization_id,
+      'attachment organization id',
+    );
+    const message = messages.get(messageId);
+    if (
+      !message ||
+      Number(message.e2ee_protocol_version) !== 1 ||
+      stringValue(message.organization_id, 'message organization id') !==
+        organizationId
+    ) {
+      throw new Error(
+        'SQLite attachment promotion only supports tenant-matched E2EE messages',
+      );
+    }
+    const senderAccountId = stringValue(
+      message.sender_account_id,
+      'message sender account id',
+    );
+    const recipientAccountId = stringValue(
+      message.recipient_account_id,
+      'message recipient account id',
+    );
+    const ordinal = integerValue(source.ordinal, 'attachment ordinal');
+    const expectedBytes = integerValue(
+      source.byte_size,
+      'attachment byte size',
+    ) + 16;
+    const sourceCreatedAt = timestamp(
+      source.created_at,
+      'attachment created_at',
+    );
+    const nonce = stringValue(source.e2ee_nonce, 'attachment nonce');
+    const sourceBackend = source.storage_backend;
+    const sourceStorageKey = optionalString(source.storage_key);
+    const prepared = preparedById.get(id);
+    if (
+      !prepared ||
+      prepared.state !== 'verified' ||
+      prepared.message_id !== messageId ||
+      prepared.organization_id !== organizationId ||
+      prepared.sender_account_id !== senderAccountId ||
+      prepared.recipient_account_id !== recipientAccountId ||
+      Number(prepared.ordinal) !== ordinal ||
+      Number(prepared.ciphertext_bytes) !== expectedBytes ||
+      prepared.e2ee_nonce !== nonce ||
+      prepared.source_backend !== sourceBackend ||
+      prepared.source_storage_key !== sourceStorageKey ||
+      timestamp(
+        prepared.source_created_at,
+        'prepared attachment created_at',
+      ) !== sourceCreatedAt ||
+      !/^[0-9a-f]{64}$/u.test(prepared.ciphertext_sha256) ||
+      !prepared.s3_storage_key ||
+      !/^attachments\/v1\/[0-9a-f]{2}\/[0-9a-f]{32}\.bin$/u.test(
+        prepared.s3_storage_key,
+      )
+    ) {
+      throw new Error(
+        `SQLite attachment ${id} has no matching verified S3 preparation`,
+      );
+    }
+    if (
+      (sourceBackend !== 'sqlite' &&
+        sourceBackend !== 'encrypted-filesystem') ||
+      (sourceBackend === 'sqlite' && sourceStorageKey !== null) ||
+      (sourceBackend === 'encrypted-filesystem' && !sourceStorageKey)
+    ) {
+      throw new Error(`SQLite attachment ${id} source metadata is invalid`);
+    }
+    return {
+      id,
+      messageId,
+      organizationId,
+      senderAccountId,
+      recipientAccountId,
+      ordinal,
+      ciphertextBytes: expectedBytes,
+      ciphertextSha256: prepared.ciphertext_sha256,
+      nonce,
+      sourceBackend,
+      sourceStorageKey,
+      s3StorageKey: prepared.s3_storage_key,
+      sourceCreatedAt,
+    };
+  });
+}
+
+async function insertPreparedAttachments(input: {
+  client: PostgresClientLike;
+  attachments: PreparedPromotionAttachment[];
+  defaultQuotaBytes: number;
+  legacyGraceMs: number;
+}): Promise<void> {
+  const bytesByOrganization = new Map<string, number>();
+  for (const attachment of input.attachments) {
+    const next =
+      (bytesByOrganization.get(attachment.organizationId) ?? 0) +
+      attachment.ciphertextBytes;
+    if (!Number.isSafeInteger(next) || next > input.defaultQuotaBytes) {
+      throw new Error(
+        `SQLite attachment import exceeds the configured quota for ${attachment.organizationId}`,
+      );
+    }
+    bytesByOrganization.set(attachment.organizationId, next);
+  }
+  for (const [organizationId, storedBytes] of bytesByOrganization) {
+    await input.client.query(
+      `INSERT INTO attachment_storage_quotas
+        (organization_id, max_bytes, reserved_bytes, stored_bytes)
+       VALUES ($1, $2, 0, $3)
+       ON CONFLICT (organization_id) DO UPDATE SET
+         max_bytes = GREATEST(attachment_storage_quotas.max_bytes, EXCLUDED.max_bytes),
+         stored_bytes = attachment_storage_quotas.stored_bytes + EXCLUDED.stored_bytes,
+         updated_at = CURRENT_TIMESTAMP`,
+      [organizationId, input.defaultQuotaBytes, storedBytes],
+    );
+  }
+  for (const attachment of input.attachments) {
+    const retainsLegacy = attachment.sourceBackend === 'encrypted-filesystem';
+    await input.client.query(
+      `INSERT INTO attachment_objects
+        (id, organization_id, owner_account_id, state, encryption,
+         ciphertext_bytes, ciphertext_sha256, storage_backend, storage_key,
+         legacy_storage_backend, legacy_storage_key, legacy_delete_after,
+         migration_state, expires_at, available_at, created_at, updated_at)
+       VALUES ($1, $2, $3, 'available', 'e2ee-client-v1', $4, $5, 's3', $6,
+               $7, $8,
+               CASE WHEN $7::text IS NULL THEN NULL
+                    ELSE CURRENT_TIMESTAMP + ($9::bigint * INTERVAL '1 millisecond') END,
+               CASE WHEN $7::text IS NULL THEN 'none' ELSE 'verified' END,
+               CURRENT_TIMESTAMP + INTERVAL '1 day', $10::timestamptz,
+               $10::timestamptz, CURRENT_TIMESTAMP)`,
+      [
+        attachment.id,
+        attachment.organizationId,
+        attachment.senderAccountId,
+        attachment.ciphertextBytes,
+        attachment.ciphertextSha256,
+        attachment.s3StorageKey,
+        retainsLegacy ? 'encrypted-filesystem' : null,
+        retainsLegacy ? attachment.sourceStorageKey : null,
+        input.legacyGraceMs,
+        attachment.sourceCreatedAt,
+      ],
+    );
+    for (const accountId of new Set([
+      attachment.senderAccountId,
+      attachment.recipientAccountId,
+    ])) {
+      await input.client.query(
+        `INSERT INTO attachment_object_access
+          (attachment_id, organization_id, account_id)
+         VALUES ($1, $2, $3)`,
+        [attachment.id, attachment.organizationId, accountId],
+      );
+    }
+    await input.client.query(
+      `INSERT INTO direct_message_attachment_objects
+        (attachment_id, message_id, organization_id, ordinal, e2ee_nonce,
+         ciphertext_bytes, ciphertext_sha256)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        attachment.id,
+        attachment.messageId,
+        attachment.organizationId,
+        attachment.ordinal,
+        attachment.nonce,
+        attachment.ciphertextBytes,
+        attachment.ciphertextSha256,
+      ],
+    );
+  }
+}
+
 const INSERTS: Record<
   (typeof PROMOTION_ORDER)[number],
   (client: PostgresClientLike, rows: DecodedRow[]) => Promise<void>
@@ -531,6 +696,8 @@ export async function promoteVerifiedSqliteImport(input: {
   pool: PostgresPoolLike;
   runId: string;
   dryRun?: boolean;
+  defaultAttachmentQuotaBytes?: number;
+  legacyAttachmentGraceMs?: number;
 }): Promise<PostgresEnterprisePromotionResult> {
   const runId = input.runId.trim();
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(runId)) {
@@ -565,20 +732,45 @@ export async function promoteVerifiedSqliteImport(input: {
     const loaded = new Map<string, DecodedRow[]>();
     const counts: Record<string, number> = {};
     for (const table of PROMOTION_ORDER) {
-      const rows = await loadTable(client, runId, table);
+      const rows = await loadVerifiedSqliteImportTable(client, runId, table);
       loaded.set(table, rows);
       counts[table] = rows.length;
     }
-    const attachmentRows = await loadTable(
+    const attachmentRows = await loadVerifiedSqliteImportTable(
       client,
       runId,
       'direct_message_attachments',
     );
     counts.direct_message_attachments = attachmentRows.length;
-    if (attachmentRows.length > 0) {
-      throw new Error(
-        'SQLite import contains message attachments; promote them through the shared S3 migration before PostgreSQL cutover',
-      );
+    const preparedAttachments = await verifiedPreparedAttachments({
+      client,
+      runId,
+      attachmentRows,
+      messageRows: loaded.get('direct_messages') ?? [],
+    });
+    const defaultAttachmentQuotaBytes =
+      input.defaultAttachmentQuotaBytes ?? 100 * 1024 * 1024 * 1024;
+    const legacyAttachmentGraceMs =
+      input.legacyAttachmentGraceMs ?? 30 * 24 * 60 * 60 * 1_000;
+    if (
+      !Number.isSafeInteger(defaultAttachmentQuotaBytes) ||
+      defaultAttachmentQuotaBytes <= 0 ||
+      !Number.isSafeInteger(legacyAttachmentGraceMs) ||
+      legacyAttachmentGraceMs < 24 * 60 * 60 * 1_000
+    ) {
+      throw new Error('SQLite attachment promotion configuration is invalid');
+    }
+    const plannedBytesByOrganization = new Map<string, number>();
+    for (const attachment of preparedAttachments) {
+      const next =
+        (plannedBytesByOrganization.get(attachment.organizationId) ?? 0) +
+        attachment.ciphertextBytes;
+      if (!Number.isSafeInteger(next) || next > defaultAttachmentQuotaBytes) {
+        throw new Error(
+          `SQLite attachment import exceeds the configured quota for ${attachment.organizationId}`,
+        );
+      }
+      plannedBytesByOrganization.set(attachment.organizationId, next);
     }
     if ((loaded.get('organizations')?.length ?? 0) === 0) {
       throw new Error('SQLite import contains no organizations');
@@ -596,6 +788,12 @@ export async function promoteVerifiedSqliteImport(input: {
     for (const table of PROMOTION_ORDER) {
       await INSERTS[table](client, loaded.get(table)!);
     }
+    await insertPreparedAttachments({
+      client,
+      attachments: preparedAttachments,
+      defaultQuotaBytes: defaultAttachmentQuotaBytes,
+      legacyGraceMs: legacyAttachmentGraceMs,
+    });
     const inserted = await client.query<PromotionReceiptRow>(
       `INSERT INTO otto_sqlite_import_promotions (run_id, promoted_counts)
        VALUES ($1, $2::jsonb)

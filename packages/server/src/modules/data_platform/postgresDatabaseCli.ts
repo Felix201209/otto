@@ -20,6 +20,7 @@ import {
 import {
   createPostgresDatabaseLifecycle,
   type PostgresDatabaseReadiness,
+  type PostgresMigration,
   type PostgresPoolLike,
 } from './postgresDatabaseLifecycle.js';
 
@@ -57,6 +58,7 @@ export function safePostgresErrorMessage(
 
 export async function prepareEnterprisePostgres(input: {
   environment: PostgresCliEnvironment;
+  migrations?: readonly PostgresMigration[];
   poolFactory?: (connectionString: string) => PostgresPoolLike;
   log?: (message: string) => void;
 }): Promise<PostgresDatabaseReadiness> {
@@ -79,7 +81,7 @@ export async function prepareEnterprisePostgres(input: {
       );
   const lifecycle = createPostgresDatabaseLifecycle({
     pool,
-    migrations: ENTERPRISE_POSTGRES_MIGRATIONS,
+    migrations: input.migrations ?? ENTERPRISE_POSTGRES_MIGRATIONS,
   });
   try {
     const readiness = await lifecycle.initialize();

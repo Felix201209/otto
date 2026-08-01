@@ -28,11 +28,26 @@ type PromotionEnvironment = NodeJS.ProcessEnv &
   EnterpriseDatabaseTopologyEnvironment &
   NodePostgresEnvironment & {
     OTTO_SQLITE_IMPORT_MAINTENANCE_CONFIRMED?: string;
+    OTTO_ATTACHMENT_TENANT_QUOTA_BYTES?: string;
+    OTTO_ATTACHMENT_MIGRATION_GRACE_DAYS?: string;
   };
 
 export interface PostgresEnterprisePromotionArguments {
   runId: string;
   dryRun: boolean;
+}
+
+function positiveIntegerSetting(input: {
+  name: string;
+  value: string | undefined;
+  fallback: number;
+}): number {
+  if (!input.value?.trim()) return input.fallback;
+  const parsed = Number(input.value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${input.name} must be a positive safe integer`);
+  }
+  return parsed;
 }
 
 export function parsePostgresEnterprisePromotionArguments(
@@ -105,6 +120,21 @@ export async function promoteEnterprisePostgres(input: {
       pool,
       runId: options.runId,
       dryRun: options.dryRun,
+      defaultAttachmentQuotaBytes: positiveIntegerSetting({
+        name: 'OTTO_ATTACHMENT_TENANT_QUOTA_BYTES',
+        value: input.environment.OTTO_ATTACHMENT_TENANT_QUOTA_BYTES,
+        fallback: 100 * 1024 * 1024 * 1024,
+      }),
+      legacyAttachmentGraceMs:
+        positiveIntegerSetting({
+          name: 'OTTO_ATTACHMENT_MIGRATION_GRACE_DAYS',
+          value: input.environment.OTTO_ATTACHMENT_MIGRATION_GRACE_DAYS,
+          fallback: 30,
+        }) *
+        24 *
+        60 *
+        60 *
+        1_000,
     });
     input.log?.(
       JSON.stringify({

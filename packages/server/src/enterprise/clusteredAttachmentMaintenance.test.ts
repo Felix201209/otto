@@ -140,4 +140,27 @@ describe('clustered attachment maintenance', () => {
       86_400_000,
     );
   });
+
+  it('does not claim legacy deletion when this replica has no legacy store', async () => {
+    const storage = {
+      sweepExpiredUploads: vi.fn(async () => 0),
+      sweepOrphans: vi.fn(async () => ({ deleted: 0, nextCursor: null })),
+      purgeMigratedLegacy: vi.fn(async () => 0),
+    } as unknown as AttachmentStorageService;
+    const cache = {
+      acquireLease: vi.fn(async () => true),
+      releaseLease: vi.fn(async () => true),
+      get: vi.fn(async () => null),
+      set: vi.fn(async () => undefined),
+      delete: vi.fn(async () => undefined),
+    } as unknown as EnterpriseSharedCache;
+
+    await createClusteredAttachmentMaintenance({
+      storage,
+      cache,
+      purgeMigratedLegacy: false,
+    }).runOnce();
+
+    expect(storage.purgeMigratedLegacy).not.toHaveBeenCalled();
+  });
 });

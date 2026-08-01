@@ -26,6 +26,7 @@ export function createClusteredAttachmentMaintenance(input: {
     'claimExpiredUnboundAttachments' | 'completeExpiredUnboundAttachment'
   >;
   objectStore?: Pick<AttachmentObjectStore, 'deleteObject'>;
+  purgeMigratedLegacy?: boolean;
   intervalMs?: number;
   owner?: string;
   onError?: (error: unknown) => void;
@@ -87,7 +88,9 @@ export function createClusteredAttachmentMaintenance(input: {
       } else {
         await input.cache.delete(ATTACHMENT_ORPHAN_CURSOR_KEY);
       }
-      await input.storage.purgeMigratedLegacy({ limit: 200 });
+      if (input.purgeMigratedLegacy !== false) {
+        await input.storage.purgeMigratedLegacy({ limit: 200 });
+      }
       return true;
     } finally {
       if (leased) await input.cache.releaseLease(

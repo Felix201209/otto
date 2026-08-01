@@ -5,6 +5,7 @@
  * shared dependencies are mandatory and startup is fail-closed.
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
 
 import {
@@ -12,6 +13,9 @@ import {
   createAttachmentObjectStoreRuntime,
   createAttachmentStorageService,
   createClusteredEnterpriseInfrastructureRuntime,
+  createEncryptedObjectStore,
+  createFileEncryptionKeyProvider,
+  createLocalAttachmentObjectStore,
   createNodePostgresPool,
   createNodeRedisEnterpriseSharedCache,
   createPostgresAttachmentMetadataRepository,
@@ -34,6 +38,8 @@ export type ClusteredEnterpriseEnvironment = EnterpriseServiceEnvironment &
     OTTO_ENTERPRISE_DIR?: string;
     OTTO_ATTACHMENT_MAX_BYTES?: string;
     OTTO_ATTACHMENT_TENANT_QUOTA_BYTES?: string;
+    OTTO_ATTACHMENT_LEGACY_READ_DIR?: string;
+    OTTO_ATTACHMENT_LEGACY_READ_KEY_FILE?: string;
   };
 
 function positiveIntegerSetting(input: {
@@ -92,6 +98,46 @@ export async function createClusteredEnterpriseInfrastructure(input: {
     );
   }
 
+  const legacyReadDirectory =
+    environment.OTTO_ATTACHMENT_LEGACY_READ_DIR?.trim();
+  const legacyReadKeyFile =
+    environment.OTTO_ATTACHMENT_LEGACY_READ_KEY_FILE?.trim();
+  if (Boolean(legacyReadDirectory) !== Boolean(legacyReadKeyFile)) {
+    throw new Error(
+      'legacy attachment dual-read requires both OTTO_ATTACHMENT_LEGACY_READ_DIR and OTTO_ATTACHMENT_LEGACY_READ_KEY_FILE',
+    );
+  }
+  if (legacyReadDirectory && topology.replicas !== 1) {
+    throw new Error(
+      'legacy local attachment dual-read is restricted to one migration-window replica',
+    );
+  }
+  let legacyKeyProvider: ReturnType<
+    typeof createFileEncryptionKeyProvider
+  > | null = null;
+  let legacyStore: ReturnType<typeof createLocalAttachmentObjectStore> | null =
+    null;
+  if (legacyReadDirectory && legacyReadKeyFile) {
+    const root = path.resolve(legacyReadDirectory);
+    const metadata = fs.lstatSync(root);
+    if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+      throw new Error('legacy attachment read directory must be a real directory');
+    }
+    legacyKeyProvider = createFileEncryptionKeyProvider({
+      keyPath: path.resolve(legacyReadKeyFile),
+      keyBytes: 32,
+      invalidKeyMessage: 'legacy attachment encryption key is invalid',
+      createIfMissing: false,
+      managePermissions: false,
+    });
+    legacyStore = createLocalAttachmentObjectStore({
+      encryptedStore: createEncryptedObjectStore({
+        root,
+        keyProvider: legacyKeyProvider,
+      }),
+    });
+  }
+
   const pool = createNodePostgresPool(
     buildNodePostgresPoolConfig({
       connectionString: topology.database.connectionString,
@@ -110,6 +156,7 @@ export async function createClusteredEnterpriseInfrastructure(input: {
     typeof createClusteredEnterpriseInfrastructureRuntime
   > | null = null;
   try {
+    legacyKeyProvider?.getKey();
     cache = await createNodeRedisEnterpriseSharedCache({
       connectionString: topology.cache.connectionString,
       environment,
@@ -127,7 +174,12 @@ export async function createClusteredEnterpriseInfrastructure(input: {
         pool,
         defaultQuotaBytes,
       }),
-      stores: { s3: attachmentRuntime.store },
+      stores: {
+        s3: attachmentRuntime.store,
+        ...(legacyStore
+          ? { 'encrypted-filesystem': legacyStore }
+          : {}),
+      },
       primaryBackend: 's3',
       maxAttachmentBytes,
     });
@@ -139,10 +191,17 @@ export async function createClusteredEnterpriseInfrastructure(input: {
       sharedState: createClusteredEnterpriseSharedState({ repository, cache }),
       attachmentStorage,
       attachmentStore: attachmentRuntime.store,
+      legacyAttachmentReadEnabled: Boolean(legacyStore),
       initialReadiness,
       getReadiness: (): Promise<ClusteredEnterpriseInfrastructureReadiness> =>
         infrastructure!.getReadiness(),
-      close: () => infrastructure!.close(),
+      close: async () => {
+        try {
+          await infrastructure!.close();
+        } finally {
+          legacyKeyProvider?.clear();
+        }
+      },
     };
   } catch (error) {
     if (infrastructure) {
@@ -154,6 +213,7 @@ export async function createClusteredEnterpriseInfrastructure(input: {
         Promise.resolve(attachmentRuntime.close()),
       ]);
     }
+    legacyKeyProvider?.clear();
     throw error;
   }
 }

@@ -41,6 +41,7 @@ $env:OTTO_S3_REGION = 'us-east-1'
 $env:OTTO_S3_BUCKET_PRIVATE_CONFIRMED = 'true'
 $env:OTTO_ATTACHMENT_MAX_BYTES = '10485776'
 $env:OTTO_ATTACHMENT_TENANT_QUOTA_BYTES = '107374182400'
+$env:OTTO_ATTACHMENT_MIGRATION_GRACE_DAYS = '30'
 $env:OTTO_ENTERPRISE_CACHE_BACKEND = 'redis'
 $env:OTTO_REDIS_URL = 'rediss://default:<password>@redis.internal:6379/0'
 ```
@@ -102,7 +103,7 @@ downgrades to SQLite, process memory, or local attachment storage.
 The PostgreSQL lifecycle, migration control plane, resumable verified SQLite
 staging importer, S3 attachment adapter, Redis shared-cache/lease adapter,
 combined topology validation and production infrastructure preflight are
-implemented. PostgreSQL schema v5 now owns organizations, accounts, password
+implemented. PostgreSQL schema v6 now owns organizations, accounts, password
 sessions, organization structure and feature flags, audit events, E2EE device
 trust/transparency state, encrypted direct messages, attachment ACLs and
 message-to-object references. The enterprise
@@ -122,8 +123,27 @@ Every route outside that migrated core returns
 `POSTGRES_ROUTE_NOT_MIGRATED` with HTTP 503 instead of reading or writing
 SQLite.
 
-After a verified staging import, rehearse and execute the atomic core-domain
-promotion with the import run ID:
+After a verified staging import, prepare every legacy E2EE attachment in S3.
+The first command only validates the plan. The execute command requires stopped
+SQLite writers and is resumable; it decrypts the old local storage layer when
+needed, uploads only the client ciphertext, then downloads and verifies the
+complete S3 object before recording a preparation receipt:
+
+```powershell
+npm run enterprise:postgres:attachments --workspace=packages/server -- --run <run-id> --dry-run
+$env:OTTO_SQLITE_IMPORT_MAINTENANCE_CONFIRMED = 'true'
+$env:OTTO_SQLITE_ATTACHMENT_STORAGE_DIR = 'D:\otto-data\attachments'
+$env:OTTO_SQLITE_ATTACHMENT_ENCRYPTION_KEY_FILE = 'D:\otto-keys\attachment-storage.key'
+npm run enterprise:postgres:attachments --workspace=packages/server -- --run <run-id> --execute
+```
+
+The two source-path variables are needed only when staging rows reference the
+legacy encrypted filesystem. Inline SQLite ciphertext needs no source key
+file. Neither source object keys nor target S3 keys are written to command
+output.
+
+Once all attachment receipts are verified, rehearse and execute the atomic
+core-domain promotion with the same import run ID:
 
 ```powershell
 npm run enterprise:postgres:promote --workspace=packages/server -- --run <run-id> --dry-run
@@ -133,9 +153,15 @@ npm run enterprise:postgres:promote --workspace=packages/server -- --run <run-id
 
 Promotion acquires a PostgreSQL advisory lock, refuses a non-empty authority,
 validates every source table again, rejects unencrypted legacy messages, and
-commits all supported tables plus an idempotent promotion receipt in one
-transaction. If message attachments exist it refuses cutover until the S3
-migration is run, so ciphertext cannot become inaccessible.
+commits messages, S3 metadata, participant ACLs, quotas, attachment references,
+and an idempotent promotion receipt in one transaction. It refuses cutover if
+even one staged attachment lacks an exact verified S3 preparation.
+
+For a controlled single-replica migration window, optional
+`OTTO_ATTACHMENT_LEGACY_READ_DIR` and
+`OTTO_ATTACHMENT_LEGACY_READ_KEY_FILE` enable fallback reads from retained
+local encrypted copies. Otto rejects this compatibility mount when more than
+one replica is configured. Normal multi-replica operation remains S3-only.
 
 The desktop client automatically selects shared attachment objects when the
 server advertises `e2ee_attachment_objects_v1`: it uploads client ciphertext,
@@ -149,8 +175,8 @@ The remaining cutover work is:
 
 1. port SMS registration, organization invites, account sync, knowledge,
    skills, park, ticketing, commercial-control and data-governance repositories;
-2. promote legacy SQLite attachment ciphertext to S3 with copy, checksum,
-   authority switch, dual-read grace and rollback rehearsal;
+2. execute and sign off a real attachment preparation, cutover, dual-read
+   grace and rollback rehearsal against the production-sized snapshot;
 3. promote the remaining verified staging
    tables to their PostgreSQL domain schemas;
 4. qualify multiple replicas, backup/PITR, Redis failover, object lifecycle

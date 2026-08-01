@@ -421,6 +421,45 @@ CREATE TABLE direct_message_attachment_objects (
 CREATE INDEX direct_message_attachment_objects_message
   ON direct_message_attachment_objects (message_id, ordinal);`,
   },
+  {
+    version: 6,
+    name: 'sqlite-attachment-import-preparation',
+    sql: `
+CREATE TABLE otto_sqlite_import_attachment_objects (
+  run_id TEXT NOT NULL REFERENCES otto_sqlite_import_runs(id) ON DELETE CASCADE,
+  attachment_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL,
+  sender_account_id TEXT NOT NULL,
+  recipient_account_id TEXT NOT NULL,
+  ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 0 AND 5),
+  ciphertext_bytes BIGINT NOT NULL CHECK (ciphertext_bytes > 16),
+  ciphertext_sha256 TEXT NOT NULL CHECK (ciphertext_sha256 ~ '^[0-9a-f]{64}$'),
+  e2ee_nonce TEXT NOT NULL,
+  source_backend TEXT NOT NULL
+    CHECK (source_backend IN ('sqlite', 'encrypted-filesystem')),
+  source_storage_key TEXT,
+  s3_storage_key TEXT,
+  state TEXT NOT NULL CHECK (state IN ('verified', 'failed')),
+  failure_code TEXT,
+  source_created_at TIMESTAMPTZ NOT NULL,
+  prepared_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (run_id, attachment_id),
+  UNIQUE (run_id, message_id, ordinal),
+  CHECK (
+    (source_backend = 'sqlite' AND source_storage_key IS NULL) OR
+    (source_backend = 'encrypted-filesystem' AND source_storage_key IS NOT NULL)
+  ),
+  CHECK (
+    (state = 'verified' AND s3_storage_key IS NOT NULL AND failure_code IS NULL) OR
+    (state = 'failed' AND s3_storage_key IS NULL AND failure_code IS NOT NULL)
+  )
+);
+
+CREATE UNIQUE INDEX otto_sqlite_import_attachment_objects_s3_key
+  ON otto_sqlite_import_attachment_objects (s3_storage_key)
+  WHERE s3_storage_key IS NOT NULL;`,
+  },
 ];
 
 export const ENTERPRISE_POSTGRES_SCHEMA_VERSION =

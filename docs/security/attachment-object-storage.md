@@ -88,6 +88,19 @@ This gives the migration order `copy -> verify -> switch -> grace -> delete`.
 It never uses a shared SQLite file or a mounted local attachment directory as
 multi-instance storage.
 
+`enterprise:postgres:attachments` implements the copy-and-verify preparation
+against a verified SQLite import run. It is dry-run by default, holds a
+PostgreSQL advisory lock during execution, resumes from per-object verified
+receipts, and revalidates already prepared S3 objects. PostgreSQL promotion
+then switches messages, ACLs, quota and object authority in one transaction.
+Failed uploads are deleted immediately when possible and remain eligible for
+the ordinary grace-period S3 orphan sweep.
+
+Legacy encrypted-filesystem fallback can be enabled only on one explicitly
+configured migration-window replica. Multi-replica clustered operation rejects
+that mount and remains S3-only; retained local copies are recovery material,
+not a shared authority directory.
+
 ## Configuration
 
 Local encrypted storage remains the default. S3 mode uses the AWS SDK default
@@ -108,6 +121,11 @@ replica is configured.
 | `OTTO_S3_KMS_KEY_ID`                 | Optional SSE-KMS key identifier                       |
 | `OTTO_ATTACHMENT_MAX_BYTES`          | Maximum ciphertext bytes for one attachment           |
 | `OTTO_ATTACHMENT_TENANT_QUOTA_BYTES` | Default per-tenant stored plus reserved byte quota     |
+| `OTTO_ATTACHMENT_MIGRATION_GRACE_DAYS` | Days to retain verified legacy copies after cutover  |
+| `OTTO_SQLITE_ATTACHMENT_STORAGE_DIR` | Explicit source directory used by the migration tool   |
+| `OTTO_SQLITE_ATTACHMENT_ENCRYPTION_KEY_FILE` | Read-only source key file used by the migration tool |
+| `OTTO_ATTACHMENT_LEGACY_READ_DIR`    | Single-replica grace-window fallback directory         |
+| `OTTO_ATTACHMENT_LEGACY_READ_KEY_FILE` | Single-replica grace-window fallback key file         |
 
 Example for a TLS-enabled MinIO deployment:
 
@@ -133,7 +151,6 @@ authorized again from PostgreSQL immediately before a short-lived URL is
 issued. Selecting PostgreSQL continues to fail closed rather than silently
 splitting authoritative data between PostgreSQL and local SQLite.
 
-Legacy SQLite attachment migration remains a separate maintenance operation:
-cutover must copy and verify every ciphertext object before changing the
-authoritative location, retain the local copy during the rollback grace period,
-and only then purge it.
+The migration code is delivered, but production cutover still requires an
+operator rehearsal, capacity validation, rollback exercise and approval before
+the maintenance-window execute commands are run.

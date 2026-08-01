@@ -1144,6 +1144,7 @@ export async function startClusteredEnterpriseServer(
       cache: infrastructure.cache,
       attachmentAuthority: infrastructure.repository,
       objectStore: infrastructure.attachmentStore,
+      purgeMigratedLegacy: infrastructure.legacyAttachmentReadEnabled,
       onError(error) {
         console.error(
           `[Otto Enterprise] attachment maintenance failed: ${safeRouteError(error)}`,
