@@ -167,7 +167,11 @@ export function logWorkTaskInRepository<
 
   const database = store.db();
   const ownsTransaction = !database.inTransaction;
-  if (ownsTransaction) database.exec('BEGIN IMMEDIATE');
+  let transactionStarted = false;
+  if (ownsTransaction) {
+    database.exec('BEGIN IMMEDIATE');
+    transactionStarted = true;
+  }
   try {
     database
       .prepare(
@@ -192,9 +196,21 @@ export function logWorkTaskInRepository<
       `Task: ${taskType} (${duration}min)`,
       organizationId,
     );
-    if (ownsTransaction) database.exec('COMMIT');
+    if (ownsTransaction) {
+      database.exec('COMMIT');
+      transactionStarted = false;
+    }
   } catch (error) {
-    if (ownsTransaction && database.inTransaction) database.exec('ROLLBACK');
+    if (transactionStarted) {
+      // node:sqlite on Node 22 can report `inTransaction === false` after an
+      // ABORT trigger while still retaining prior statements. Always attempt
+      // the rollback we own; engines that already closed it simply reject it.
+      try {
+        database.exec('ROLLBACK');
+      } catch {
+        // Preserve the original write/audit failure as the observable error.
+      }
+    }
     throw error;
   }
 }
