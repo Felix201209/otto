@@ -14,25 +14,30 @@ interface PlaywrightBrowser {
 
 interface PlaywrightModule {
   chromium?: {
-    launch(options: { headless: boolean }): Promise<PlaywrightBrowser>;
+    launch(options: { headless: boolean; executablePath?: string }): Promise<PlaywrightBrowser>;
   };
 }
 
-function dynamicImport(specifier: string): Promise<unknown> {
-  const loader = new Function('moduleSpecifier', 'return import(moduleSpecifier);') as (
-    moduleSpecifier: string,
-  ) => Promise<unknown>;
-  return loader(specifier);
+export interface PlaywrightSessionOptions {
+  /** Explicit browser path for an isolated deployment or controlled E2E run. */
+  executablePath?: string;
 }
 
 /** Runtime Playwright adapter. It is intentionally optional so Core does not bundle a browser. */
 export class PlaywrightWebSessionFactory implements RpaWebSessionFactory {
+  constructor(private readonly options: PlaywrightSessionOptions = {}) {}
+
   async create(): Promise<RpaWebSession> {
-    const module = await dynamicImport('playwright') as PlaywrightModule;
+    let module: PlaywrightModule;
+    try {
+      module = (await import('playwright')) as unknown as PlaywrightModule;
+    } catch {
+      throw new Error('RPA Web Driver requires the optional "playwright" package.');
+    }
     if (!module.chromium) {
       throw new Error('RPA Web Driver requires the optional "playwright" package.');
     }
-    const browser = await module.chromium.launch({ headless: true });
+    const browser = await module.chromium.launch({ headless: true, executablePath: this.options.executablePath });
     const context = await browser.newContext();
     const page = await context.newPage();
     return {

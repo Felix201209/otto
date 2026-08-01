@@ -8,7 +8,11 @@
   "scripts": {
     "build": "tsc --build tsconfig.build.json",
     "test": "vitest run",
+    "test:e2e": "RUN_RPA_BROWSER_E2E=1 vitest run src/playwright-session-factory.e2e.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts"
+  },
+  "optionalDependencies": {
+    "playwright": "1.62.1"
   }
 }

@@ -1,0 +1,25 @@
+name: RPA browser E2E
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 3 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-browser-rpa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - name: Install dependencies
+        run: npm install
+      - name: Install isolated Chromium runtime
+        run: npx playwright install --with-deps chromium
+      - name: Verify RPA against a local isolated page
+        run: npm run test:e2e --workspace=packages/rpa
