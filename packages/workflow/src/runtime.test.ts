@@ -24,7 +24,8 @@ describe('WorkflowRuntime', () => {
   it('persists the claimed step before passing it to the executor', async () => {
     const store = await createStore();
     const execute = vi.fn().mockResolvedValue({ value: 'done' });
-    const runtime = new WorkflowRuntime(store, { execute });
+    const trace = { append: vi.fn().mockResolvedValue(undefined) };
+    const runtime = new WorkflowRuntime(store, { execute }, trace);
     const definition: WorkflowDefinition = {
       id: 'safe-read',
       version: 1,
@@ -38,6 +39,9 @@ describe('WorkflowRuntime', () => {
       step: expect.objectContaining({ status: 'running', idempotencyKey: `${run.id}:read:1` }),
     }));
     expect(finished).toMatchObject({ status: 'succeeded' });
+    expect(trace.append).toHaveBeenCalledWith(expect.objectContaining({ kind: 'run_started' }));
+    expect(trace.append).toHaveBeenCalledWith(expect.objectContaining({ kind: 'step_claimed' }));
+    expect(trace.append).toHaveBeenCalledWith(expect.objectContaining({ kind: 'step_succeeded' }));
   });
 
   it('does not rerun an interrupted external step during recovery', async () => {

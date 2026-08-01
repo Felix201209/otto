@@ -64,6 +64,18 @@ export interface ClaimedWorkflowStep {
   step: WorkflowStepRun;
 }
 
+export interface WorkflowTraceEvent {
+  eventId: string;
+  timestamp: string;
+  runId: string;
+  stepId?: string;
+  attempt?: number;
+  idempotencyKey?: string;
+  kind: 'run_started' | 'step_claimed' | 'step_succeeded' | 'step_failed' | 'recovery_unknown_outcome';
+  status: WorkflowRunStatus | WorkflowStepStatus;
+  summary: string;
+}
+
 export class WorkflowConflictError extends Error {
   constructor(message: string) {
     super(message);

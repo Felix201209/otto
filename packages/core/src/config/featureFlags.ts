@@ -18,6 +18,7 @@ export const FEATURE_FLAGS = {
   memory_injection: '经验检索注入',
   checkpoints: '崩溃恢复',
   audit_log: '审计日志',
+  rpa: 'RPA 自动化',
 } as const;
 
 /** 特性开关的标识符类型 */
@@ -39,6 +40,7 @@ const DEFAULTS: Record<FeatureFlag, boolean> = {
   memory_injection: true,
   checkpoints: true,
   audit_log: true,
+  rpa: false,
 };
 
 /**
