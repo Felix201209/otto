@@ -144,3 +144,13 @@ security, an external audit, and explicit security release approval are still
 missing. Otto must not claim Signal-grade security until a reviewed,
 license-compatible protocol implementation and audit artifacts satisfy that
 gate.
+
+An inactive upgrade foundation now pins OpenMLS 0.8.1 and its official Rust
+crypto provider in `otto-native`. It can create signed, one-time public MLS 1.0
+KeyPackages behind a device-scoped JSON-RPC boundary; private signature and HPKE
+material never enters the TypeScript response. This is not the active chat
+protocol: group creation/join, application messages, epoch handling, encrypted
+OS-protected persistence, restart recovery, and desktop/server integration are
+still required. Until those controls and an external audit pass the release
+gate, the production status remains `device-envelope-v1` and the native kernel
+fails closed on process exit instead of persisting secrets in plaintext.

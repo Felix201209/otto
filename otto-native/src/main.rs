@@ -5,17 +5,99 @@ mod session_store;
 mod encryption;
 mod tokenizer;
 mod agent_pool;
+mod mls;
 
 use session_store::SessionStore;
 use encryption::EncryptionStore;
 use tokenizer::Tokenizer;
 use agent_pool::AgentPool;
+use mls::MlsKernel;
 
 #[derive(Deserialize)]
 struct Request {
     id: Option<u64>,
     method: String,
     params: Option<serde_json::Value>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mls::MlsKernel;
+    use super::{handle_request, AgentPool, EncryptionStore, Request, SessionStore, Tokenizer};
+
+    fn call_mls(request: Request, kernel: &mut MlsKernel) -> serde_json::Value {
+        let mut store: Option<SessionStore> = None;
+        let mut encryption: Option<EncryptionStore> = None;
+        let mut tokenizer: Option<Tokenizer> = None;
+        let mut pool: Option<AgentPool> = None;
+        handle_request(
+            &request,
+            &mut store,
+            &mut encryption,
+            &mut tokenizer,
+            &mut pool,
+            kernel,
+        )
+        .expect("MLS RPC request must succeed")
+    }
+
+    #[test]
+    fn mls_refuses_key_packages_before_device_initialization() {
+        let mut kernel = MlsKernel::default();
+        let error = kernel
+            .create_key_package("server-a/org-a/alice/device-a")
+            .expect_err("uninitialized MLS kernel must fail closed");
+        assert!(error.contains("not initialized"));
+    }
+
+    #[test]
+    fn mls_key_packages_are_real_and_one_time() {
+        let mut kernel = MlsKernel::default();
+        kernel
+            .initialize("server-a/org-a/alice/device-a")
+            .expect("MLS device initialization must succeed");
+        let package = kernel
+            .create_key_package("server-a/org-a/alice/device-a")
+            .expect("MLS key package generation must succeed");
+        assert_eq!(package.protocol, "mls10-openmls-0.8");
+        assert!(!package.key_package.is_empty());
+        kernel
+            .consume_key_package(&package.reference)
+            .expect("first key package consumption must succeed");
+        assert!(kernel.consume_key_package(&package.reference).is_err());
+    }
+
+    #[test]
+    fn mls_rpc_exports_only_public_key_package_fields() {
+        let scope = "server-a/org-a/alice/device-a";
+        let mut kernel = MlsKernel::default();
+        call_mls(
+            Request {
+                id: Some(1),
+                method: "mls.initialize".into(),
+                params: Some(serde_json::json!({"device_scope": scope})),
+            },
+            &mut kernel,
+        );
+        let result = call_mls(
+            Request {
+                id: Some(2),
+                method: "mls.key_package.create".into(),
+                params: Some(serde_json::json!({"device_scope": scope})),
+            },
+            &mut kernel,
+        );
+        let fields = result
+            .as_object()
+            .expect("MLS KeyPackage response must be an object");
+        assert_eq!(fields.len(), 4);
+        for field in ["protocol", "ciphersuite", "reference", "key_package"] {
+            assert!(fields.contains_key(field), "missing public field: {field}");
+        }
+        for forbidden in ["private", "secret", "signature_key", "init_private_key"] {
+            assert!(!fields.contains_key(forbidden));
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -34,6 +116,7 @@ fn main() {
     let mut enc_store: Option<EncryptionStore> = None;
     let mut tok: Option<Tokenizer> = None;
     let mut pool: Option<AgentPool> = None;
+    let mut mls_kernel = MlsKernel::default();
 
     for line in stdin.lock().lines() {
         let line = match line {
@@ -54,7 +137,14 @@ fn main() {
             }
         };
 
-        let resp = match handle_request(&req, &mut store, &mut enc_store, &mut tok, &mut pool) {
+        let resp = match handle_request(
+            &req,
+            &mut store,
+            &mut enc_store,
+            &mut tok,
+            &mut pool,
+            &mut mls_kernel,
+        ) {
             Ok(v) => Response { id: req.id, result: Some(v), error: None },
             Err(e) => Response { id: req.id, result: None, error: Some(e) },
         };
@@ -70,6 +160,7 @@ fn handle_request(
     enc_store: &mut Option<EncryptionStore>,
     tok: &mut Option<Tokenizer>,
     pool: &mut Option<AgentPool>,
+    mls_kernel: &mut MlsKernel,
 ) -> Result<serde_json::Value, String> {
     let params = req.params.as_ref();
     
@@ -258,6 +349,35 @@ fn handle_request(
             let secs = p["idle_seconds"].as_u64().unwrap_or(300) as u32;
             let count = pool_ref.cleanup_idle(secs);
             Ok(serde_json::json!({"cleaned": count}))
+        }
+
+        // === OpenMLS ===
+        "mls.initialize" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            mls_kernel.initialize(scope)?;
+            Ok(serde_json::json!({
+                "status": "initialized",
+                "protocol": "mls10-openmls-0.8"
+            }))
+        }
+        "mls.key_package.create" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            serde_json::to_value(mls_kernel.create_key_package(scope)?)
+                .map_err(|error| format!("MLS response serialization failed: {error}"))
+        }
+        "mls.key_package.consume" => {
+            let p = params.ok_or("Missing params")?;
+            let reference = p["reference"].as_str().ok_or("Missing reference")?;
+            mls_kernel.consume_key_package(reference)?;
+            Ok(serde_json::json!({"status": "consumed"}))
+        }
+        "mls.reset" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            mls_kernel.reset(scope)?;
+            Ok(serde_json::json!({"status": "reset"}))
         }
 
         _ => Err(format!("Unknown method: {}", req.method)),

@@ -8,7 +8,7 @@
  * - Agent Pool (memory-managed concurrent agent pool)
  */
 
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { spawn, ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import * as path from 'node:path';
@@ -268,6 +268,118 @@ export class EncryptionStore {
     await this.init();
     const result = await this.native.call('encryption.list_ids');
     return (result as { ids: string[] }).ids;
+  }
+
+  async close(): Promise<void> {
+    await this.native.stop();
+    this.initialized = false;
+  }
+}
+
+// ============ OpenMLS Kernel ============
+
+export interface MlsDeviceScope {
+  serverUrl: string;
+  organizationId: string;
+  accountId: string;
+  deviceId: string;
+}
+
+export interface MlsKeyPackage {
+  protocol: 'mls10-openmls-0.8';
+  ciphersuite: 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519';
+  reference: string;
+  key_package: string;
+}
+
+function mlsDeviceScope(scope: MlsDeviceScope): string {
+  let server: URL;
+  try {
+    server = new URL(scope.serverUrl.trim());
+  } catch {
+    throw new Error('MLS server URL is invalid');
+  }
+  if (
+    (server.protocol !== 'https:' && server.protocol !== 'http:') ||
+    server.username ||
+    server.password ||
+    server.search ||
+    server.hash
+  ) {
+    throw new Error('MLS server URL is invalid');
+  }
+  const identifiers = [
+    scope.organizationId,
+    scope.accountId,
+    scope.deviceId,
+  ].map((value) => value.trim());
+  if (
+    identifiers.some(
+      (value) => !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value),
+    )
+  ) {
+    throw new Error('MLS device identity is invalid');
+  }
+  const serverScope = createHash('sha256')
+    .update(`${server.origin}${server.pathname.replace(/\/+$/, '')}`)
+    .digest('hex');
+  return [serverScope, ...identifiers].join('/');
+}
+
+/**
+ * Thin typed client for the native OpenMLS process. Only public KeyPackages
+ * cross this boundary. Signature keys, HPKE init private keys and provider
+ * state remain inside Rust and disappear on reset or process exit.
+ */
+export class OpenMlsNativeKernel {
+  private native: NativeProcess;
+  private scope: string;
+  private initialized = false;
+
+  constructor(deviceScope: MlsDeviceScope, binaryPath?: string) {
+    this.scope = mlsDeviceScope(deviceScope);
+    this.native = new NativeProcess(binaryPath);
+  }
+
+  async init(): Promise<void> {
+    if (this.initialized) return;
+    await this.native.start();
+    await this.native.call('mls.initialize', { device_scope: this.scope });
+    this.initialized = true;
+  }
+
+  async createKeyPackage(): Promise<MlsKeyPackage> {
+    await this.init();
+    const result = await this.native.call('mls.key_package.create', {
+      device_scope: this.scope,
+    });
+    const keyPackage = result as Partial<MlsKeyPackage>;
+    if (
+      keyPackage.protocol !== 'mls10-openmls-0.8' ||
+      keyPackage.ciphersuite !==
+        'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519' ||
+      typeof keyPackage.reference !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(keyPackage.reference) ||
+      typeof keyPackage.key_package !== 'string' ||
+      !keyPackage.key_package
+    ) {
+      throw new Error('native MLS KeyPackage response is invalid');
+    }
+    return keyPackage as MlsKeyPackage;
+  }
+
+  async consumeKeyPackage(reference: string): Promise<void> {
+    await this.init();
+    if (!/^[0-9a-f]{64}$/.test(reference)) {
+      throw new Error('MLS KeyPackage reference is invalid');
+    }
+    await this.native.call('mls.key_package.consume', { reference });
+  }
+
+  async reset(): Promise<void> {
+    await this.init();
+    await this.native.call('mls.reset', { device_scope: this.scope });
+    this.initialized = false;
   }
 
   async close(): Promise<void> {
