@@ -4,7 +4,7 @@
 
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
@@ -14,7 +14,9 @@ const OTTO_ENFORCEMENT_V1_SHA256 =
 describe('Otto commercial enforcement protocol', () => {
   it('matches the immutable Control v1 protocol fingerprint', () => {
     const contract = readFileSync(
-      resolve(process.cwd(), 'docs/otto-commercial-enforcement-v1.json'),
+      fileURLToPath(
+        new URL('../../../../../docs/otto-commercial-enforcement-v1.json', import.meta.url),
+      ),
     );
 
     expect(createHash('sha256').update(contract).digest('hex')).toBe(
