@@ -1731,6 +1731,17 @@ h6.otto-prose__h {
   border-top: 1px solid var(--otto-border);
   background: #1d1d1f;
 }
+
+.otto-tool__safety-notice {
+  margin: 0 0 10px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--otto-amber) 52%, transparent);
+  border-radius: 8px;
+  color: var(--otto-text);
+  background: color-mix(in srgb, var(--otto-amber) 12%, transparent);
+  font-size: 12px;
+  line-height: 1.5;
+}
 .otto-tool__output-actions {
   display: flex;
   justify-content: flex-end;
