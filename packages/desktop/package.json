@@ -7,6 +7,8 @@
   "private": true,
   "main": "dist/main/index.js",
   "scripts": {
+    "build:native": "npm run build --workspace=@otto/native",
+    "prebuild:main": "npm run build:native",
     "build:main": "tsc -p tsconfig.main.json",
     "build:preload": "tsc -p tsconfig.preload.json --noEmit && webpack-cli --config webpack.preload.cjs --mode production && node scripts/verify-preload-bundle.mjs",
     "build:renderer": "webpack-cli --config webpack.config.cjs --mode production",
@@ -21,13 +23,16 @@
     "dist:win": "node scripts/fetch-win-ripgrep.mjs && npm run build && electron-builder --win --x64 && node scripts/verify-packaged-runtime.mjs release/win-unpacked/resources/app.asar --platform win32",
     "package": "node scripts/make-delivery-zip.mjs",
     "lint": "eslint . --ext .ts,.tsx",
+    "pretest": "npm run build:native",
     "test": "vitest run",
+    "pretypecheck": "npm run build:native",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "dist:all": "npm run build && electron-builder --mac dmg --arm64 --x64 && electron-builder --win --x64",
     "release": "node scripts/make-delivery-zip.mjs --build",
     "release:gate": "node scripts/release-recovery-gate.mjs"
   },
   "dependencies": {
+    "@otto/native": "0.1.0",
     "otto-server": "file:../server",
     "qrcode-terminal": "^0.12.0",
     "react": "^18.3.1",
@@ -99,6 +104,9 @@
       "main": "dist/main/index.js"
     },
     "asar": true,
+    "asarUnpack": [
+      "node_modules/@otto/native/bin/**/*"
+    ],
     "npmRebuild": false,
     "mac": {
       "artifactName": "Otto-${version}-${arch}.${ext}",

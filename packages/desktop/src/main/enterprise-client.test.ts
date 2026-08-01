@@ -151,6 +151,35 @@ const API_V2_HEALTH = {
 };
 
 describe('EnterpriseClient', () => {
+  it('fails closed instead of downgrading when the server advertises MLS private chat', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          ...API_V2_HEALTH,
+          capabilities: [...API_V2_HEALTH.capabilities, 'e2ee_mls_v1'],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          account: ACCOUNT,
+          token: 'session-token',
+          expiresAt: '2099-01-01',
+        }),
+      );
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    expect(client.supportsMlsPrivateMessages()).toBe(true);
+    await expect(
+      client.sendDirectMessage('acc_peer', 'must not downgrade'),
+    ).rejects.toThrow('MLS private-message transport is not active');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
   it('密码登录规范化服务器地址并保存会话，后续请求自动携带 Bearer token', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))

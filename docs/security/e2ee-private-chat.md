@@ -164,10 +164,21 @@ state after each mutation, and locks the kernel after a persistence failure.
 Tests cover two-device message continuity, pending member commits, wrong keys,
 invalid manifests, and protected-key preservation across snapshot updates.
 
-This is not the active chat protocol. The desktop main process does not yet
-instantiate this adapter or route chat traffic through the native kernel.
-Processing commits on existing remote members, device approval enforcement,
-server ciphertext transport, state migration/recovery policy, multi-platform
+The desktop main process now owns an `EnterpriseMlsSessionManager` that binds
+the native scope to server, organization, account, and approved device IDs. Its
+state filename contains only a SHA-256 identity digest, its DEK is wrapped by
+Electron `safeStorage`, and account changes, logout, failed device registration,
+or application shutdown close the native process. Linux `basic_text` and all
+other unavailable secure-storage states fail closed. The desktop build treats
+`@otto/native` as a workspace package and reserves its native executable for
+ASAR unpacking.
+
+This is still not the active chat protocol. No production server advertises
+`e2ee_mls_v1`, and the server ciphertext transport is not implemented. If a
+server does advertise that capability, the desktop initializes MLS only for an
+approved device and refuses to read or send through the legacy envelope instead
+of silently downgrading. Processing commits on existing remote members, MLS
+server transport, state migration/recovery policy, multi-platform native
 packaging, and external review are still required. Until those controls and an
 external audit pass the release gate, the production status remains
 `device-envelope-v1`.

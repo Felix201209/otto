@@ -8,7 +8,8 @@
   "workspaces": [
     "packages/core",
     "packages/server",
-    "packages/desktop"
+    "packages/desktop",
+    "otto-native"
   ],
   "repository": {
     "type": "git",

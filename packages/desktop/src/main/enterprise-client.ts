@@ -1018,6 +1018,22 @@ export class EnterpriseClient {
     return { serverUrl: this.serverUrl, token: this.token };
   }
 
+  supportsMlsPrivateMessages(): boolean {
+    return (
+      this.token !== null &&
+      this.compatibleServerUrl === this.serverUrl &&
+      this.compatibleCapabilities.has('e2ee_mls_v1')
+    );
+  }
+
+  private refuseMlsProtocolDowngrade(): void {
+    if (this.supportsMlsPrivateMessages()) {
+      throw new Error(
+        'MLS private-message transport is not active; refusing protocol downgrade',
+      );
+    }
+  }
+
   /**
    * 仅供 Electron main 将中心服务已验证的当前账号同步给本机控制面。
    * 返回深拷贝，调用方无法通过引用修改客户端内部认证状态。
@@ -2317,6 +2333,7 @@ export class EnterpriseClient {
       'direct_messages',
       'e2ee_private_messages_v1',
     ]);
+    this.refuseMlsProtocolDowngrade();
     const { account } = this.requireE2eeContext();
     const trustedDevices = await this.verifiedE2eeDeviceDirectory(
       [account.id, peerAccountId],
@@ -2362,6 +2379,7 @@ export class EnterpriseClient {
       'direct_messages',
       'e2ee_private_messages_v1',
     ]);
+    this.refuseMlsProtocolDowngrade();
     const usesSharedAttachmentObjects =
       attachments.length > 0 &&
       this.compatibleCapabilities.has('e2ee_attachment_objects_v1');

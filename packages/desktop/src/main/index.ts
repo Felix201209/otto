@@ -153,6 +153,7 @@ import {
   EnterpriseE2eeCrypto,
   EnterpriseE2eeKeyVault,
 } from './enterprise-e2ee.js';
+import { EnterpriseMlsSessionManager } from './enterprise-mls.js';
 import {
   ENTERPRISE_TRAY_POPOVER_WIDTH,
   enterpriseTrayPopoverHeight,
@@ -637,11 +638,35 @@ async function synchronizeAuthenticatedEnterpriseAccount(
   await enterpriseNotificationIdentityBoundary.synchronize(account, (next) =>
     serverManager.setAuthenticatedEnterpriseAccount(next),
   );
-  if (!account) return;
+  if (!account) {
+    await enterpriseMls.close();
+    return;
+  }
+  let e2eeDevice: Awaited<
+    ReturnType<EnterpriseClient['ensureE2eeDeviceReady']>
+  > | null = null;
   try {
-    await enterpriseClient.ensureE2eeDeviceReady();
+    e2eeDevice = await enterpriseClient.ensureE2eeDeviceReady();
   } catch (error) {
+    await enterpriseMls.close();
     console.warn('[otto-desktop] E2EE device registration failed:', error);
+  }
+  if (e2eeDevice) {
+    if (enterpriseClient.supportsMlsPrivateMessages()) {
+      try {
+        await enterpriseMls.activate({
+          serverUrl: enterpriseClient.snapshot().serverUrl,
+          organizationId: account.organizationId,
+          accountId: account.id,
+          deviceId: e2eeDevice.deviceId,
+          approvalState: e2eeDevice.approvalState,
+        });
+      } catch (error) {
+        console.warn('[otto-desktop] MLS desktop session is blocked:', error);
+      }
+    } else {
+      await enterpriseMls.close();
+    }
   }
   const identity = accountDataSyncIdentity(account);
   if (!identity) return;
@@ -694,6 +719,35 @@ const enterpriseE2eeVault = new EnterpriseE2eeKeyVault({
   },
 });
 const enterpriseE2ee = new EnterpriseE2eeCrypto(enterpriseE2eeVault);
+
+function packagedOpenMlsBinaryPath(): string | undefined {
+  if (!app.isPackaged) return undefined;
+  return path.join(
+    process.resourcesPath,
+    'app.asar.unpacked',
+    'node_modules',
+    '@otto',
+    'native',
+    'bin',
+    process.platform === 'win32' ? 'otto-native.exe' : 'otto-native',
+  );
+}
+
+const enterpriseMls = new EnterpriseMlsSessionManager({
+  stateDirectory: path.join(app.getPath('userData'), 'enterprise-mls'),
+  binaryPath: packagedOpenMlsBinaryPath(),
+  secureStorage: {
+    assertAvailable: assertEnterpriseE2eeSecureStorage,
+    protect(plaintext) {
+      assertEnterpriseE2eeSecureStorage();
+      return safeStorage.encryptString(plaintext).toString('base64');
+    },
+    unprotect(protectedValue) {
+      assertEnterpriseE2eeSecureStorage();
+      return safeStorage.decryptString(Buffer.from(protectedValue, 'base64'));
+    },
+  },
+});
 
 const enterpriseClient = new EnterpriseClient(
   enterpriseFetch,
@@ -4287,6 +4341,7 @@ if (!gotLock) {
     // 关窗不杀：server + 飞书守护继续运行。
     void flushEnterpriseAccountDataSync(3_000)
       .catch(logAccountDataSyncFailure)
+      .then(() => enterpriseMls.close())
       .then(() => serverManager.shutdown(isQuitting))
       .catch((error) => {
         console.warn('[otto-desktop] 退出清理 server 失败:', error);
