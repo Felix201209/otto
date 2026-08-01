@@ -20,7 +20,9 @@ import type {
   EnterpriseOrganizationView,
   EnterpriseParkTenantOrganization,
 } from '../../preload/index.js';
+import type { ScheduleItemInfo } from 'otto-server';
 import { isAuthenticatedEnterpriseAccount } from '../internal-test-access.js';
+import { DirectMessagePanel } from './OrganizationTree.js';
 import { IconBuilding, IconChevronDown, IconFolder, IconSearch } from './icons.js';
 import type { EnterpriseUnreadCounts } from '../enterpriseUnreadNotifications.js';
 
@@ -58,6 +60,7 @@ type MutableOrganizationDepartmentNode = OrganizationDepartmentNode & {
 
 export interface OrganizationPageProps {
   enterpriseAccount?: EnterpriseAccount;
+  schedules?: readonly ScheduleItemInfo[];
   organizationRefreshRevision?: number;
   enterpriseUnreadCounts?: EnterpriseUnreadCounts;
   enterpriseDirectChatOpenRequest?: { peerAccountId: string; requestId: number };
@@ -233,6 +236,7 @@ function departmentMatchesQuery(department: OrganizationDepartmentNode, query: s
 
 export function OrganizationPage({
   enterpriseAccount,
+  schedules = [],
   organizationRefreshRevision = 0,
   enterpriseUnreadCounts = {},
   enterpriseDirectChatOpenRequest,
@@ -253,7 +257,6 @@ export function OrganizationPage({
   const handledChatRequest = useRef(0);
   const hasAuth = isAuthenticatedEnterpriseAccount(enterpriseAccount);
 
-  // —— 数据加载：真实 enterpriseOrganizationView IPC，15 秒后台刷新 ——
   useEffect(() => {
     if (!hasAuth) return;
     let cancelled = false;
@@ -299,7 +302,6 @@ export function OrganizationPage({
     return () => { cancelled = true; };
   }, [enterpriseAccount?.isAdmin, orgView?.park?.isAdminOrganization, selectedOrganizationId]);
 
-  // —— 外部直聊请求（通知 / 我的消息进入）——
   useEffect(() => {
     if (!enterpriseDirectChatOpenRequest || !orgView) return;
     if (handledChatRequest.current === enterpriseDirectChatOpenRequest.requestId) return;
@@ -367,7 +369,6 @@ export function OrganizationPage({
   const normalizedQuery = query.trim().toLocaleLowerCase('zh-CN');
   const flatDepartments = useMemo(() => flattenDepartments(departments), [departments]);
   const defaultExpandedKeys = useMemo(() => {
-    // 首屏先展开一级部门；再叠加当前用户所在部门及其直属上级，兼顾全貌与定位。
     const keys = new Set<string>(departments.map((department) => department.key));
     const currentDepartment = flatDepartments.find((department) => (
       department.id === enterpriseAccount?.departmentId
@@ -482,13 +483,19 @@ export function OrganizationPage({
               </div>
             )}
 
-      {/* 直聊面板：真实 enterpriseMessagesList / enterpriseMessageSend IPC */}
       {chatMembers.map((member, index) => (
-        <OrganizationDirectChat
+        <DirectMessagePanel
           key={member.id}
           member={member}
           currentAccount={enterpriseAccount}
-          cascadeIndex={index}
+          schedules={schedules}
+          initialPosition={{
+            left: (typeof window !== 'undefined' && window.innerWidth <= 760 ? 12 : 232) + ((index % 7) * 28),
+            top: (typeof window !== 'undefined' && window.innerWidth <= 760 ? 12 : 48) + ((index % 7) * 28),
+          }}
+          stackOrder={50 + index}
+          onActivate={() => undefined}
+          onMessageRead={onMessageRead}
           onClose={() => closeChat(member.id)}
         />
       ))}
@@ -555,116 +562,6 @@ function ParkOrganizationOverview({
               ))}
             </div>
           ) : <div className="otto-org-page__empty">暂无匹配的入驻企业</div>}
-    </div>
-  );
-}
-
-/** 轻量直聊面板（全页模式下的浮窗） */
-function OrganizationDirectChat({
-  member,
-  currentAccount,
-  cascadeIndex,
-  onClose,
-}: {
-  member: EnterpriseOrganizationView['members'][number];
-  currentAccount?: EnterpriseAccount;
-  cascadeIndex: number;
-  onClose: () => void;
-}): React.JSX.Element {
-  const [messages, setMessages] = useState<Array<{
-    id: string; content: string; mine: boolean; time: string;
-  }>>([]);
-  const [input, setInput] = useState('');
-  const [sending, setSending] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const cascade = (cascadeIndex % 6) * 24;
-
-  // 加载历史消息
-  useEffect(() => {
-    let cancelled = false;
-    void window.otto.enterpriseMessagesList(member.id).then((msgs) => {
-      if (cancelled) return;
-      setMessages(msgs.map((message) => ({
-        id: message.id,
-        content: message.content,
-        mine: message.senderAccountId === currentAccount?.id,
-        time: new Date(message.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }),
-      })));
-    }).catch(() => { /* 消息加载失败不阻断 */ });
-    return () => { cancelled = true; };
-  }, [member.id, currentAccount?.id]);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length]);
-
-  const send = async (): Promise<void> => {
-    const text = input.trim();
-    if (!text || sending) return;
-    setSending(true);
-    try {
-      const message = await window.otto.enterpriseMessageSend(member.id, text);
-      setMessages((current) => [...current, {
-        id: message.id,
-        content: message.content,
-        mine: true,
-        time: new Date(message.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }),
-      }]);
-      setInput('');
-    } catch { /* 发送失败保留输入 */ } finally {
-      setSending(false);
-    }
-  };
-
-  return (
-    <div
-      className="otto-org-page__chat-panel"
-      role="dialog"
-      aria-label={`与 ${member.name} 聊天`}
-      style={{
-        left: Math.min(260 + cascade, Math.max(12, window.innerWidth - 520)) + 'px',
-        top: (60 + cascade) + 'px',
-        zIndex: 60 + cascadeIndex,
-      }}
-    >
-      <header className="otto-org-page__chat-header">
-        <strong>{member.name}</strong>
-        <span>{member.department || ''} · {member.positionTitle || member.role || ''}</span>
-        <button type="button" onClick={onClose} aria-label="关闭聊天">×</button>
-      </header>
-      <div className="otto-org-page__chat-messages">
-        {messages.length === 0 ? (
-          <div className="otto-org-page__chat-empty">开始与 {member.name} 对话</div>
-        ) : messages.map((message) => (
-          <div key={message.id} className={`otto-org-page__chat-msg${message.mine ? ' is-mine' : ''}`}>
-            <span className="otto-org-page__chat-bubble">{message.content}</span>
-            <time>{message.time}</time>
-          </div>
-        ))}
-        <div ref={messagesEndRef} />
-      </div>
-      <form
-        className="otto-org-page__chat-composer"
-        onSubmit={(event) => { event.preventDefault(); void send(); }}
-      >
-        <textarea
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-              event.preventDefault();
-              void send();
-            }
-          }}
-          placeholder="输入消息…"
-          rows={2}
-          maxLength={4000}
-          aria-label="消息内容"
-        />
-        <button type="submit" disabled={!input.trim() || sending}>
-          {sending ? '发送中' : '发送'}
-        </button>
-      </form>
     </div>
   );
 }
