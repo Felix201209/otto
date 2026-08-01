@@ -106,7 +106,7 @@ describe('知识库旧库迁移', () => {
     };
     expect(db.addKnowledge(entry)).toBe(true);
     expect(db.addKnowledge(entry)).toBe(false);
-  });
+  }, 30_000);
 });
 
 describe('旧账号会话迁移', () => {

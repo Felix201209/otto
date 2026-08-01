@@ -432,7 +432,10 @@ function makeHandler(
           feature: commercialFeature,
         });
         sendJSON(res, 403, {
-          error: 'organization feature is disabled',
+          error:
+            commercialFeature === 'knowledge'
+              ? '企业知识功能已由管理员关闭'
+              : 'organization feature is disabled',
           code: 'organization_feature_disabled',
           feature: commercialFeature,
         });

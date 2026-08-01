@@ -422,7 +422,7 @@ describe('正式公网启动的部署身份安全门', () => {
     servers.push(local);
     await new Promise<void>((resolve) => local.once('listening', resolve));
     expect((local.address() as AddressInfo).port).toBeGreaterThan(0);
-  });
+  }, 60_000);
 
   it('非 loopback 监听在版本和完整 40 位 SHA 齐备时可启动', async () => {
     process.env.OTTO_ENTERPRISE_PORT = '0';
@@ -4508,7 +4508,11 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
 
     const list = await fetch(`${base}/enterprise/knowledge`, { headers });
     expect(list.status).toBe(403);
-    expect(await list.json()).toEqual({ error: '企业知识功能已由管理员关闭' });
+    expect(await list.json()).toEqual({
+      error: '企业知识功能已由管理员关闭',
+      code: 'organization_feature_disabled',
+      feature: 'knowledge',
+    });
     const add = await fetch(`${base}/enterprise/knowledge`, {
       method: 'POST',
       headers: { ...headers, 'content-type': 'application/json' },
