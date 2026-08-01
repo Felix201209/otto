@@ -27,6 +27,8 @@ export interface DeploymentBillingCredentials {
   organizationId: string;
   machineFingerprint: string;
   endpoint: string;
+  holdEndpoint: string;
+  enforcement: 'disabled' | 'enforce';
   leaseToken: string;
 }
 

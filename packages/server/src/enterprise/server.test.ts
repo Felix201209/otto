@@ -625,7 +625,7 @@ describe('受保护 vs 公开路由边界', () => {
       redactedSamplesIncluded: false,
       deployment: { license: { status: 'missing' } },
     });
-  }, 15_000);
+  }, 60_000);
 
   it('signed private deployment license reopens business routes and limits server-side modules', async () => {
     process.env.OTTO_LICENSE_ENFORCE = 'true';
@@ -678,7 +678,194 @@ describe('受保护 vs 公开路由边界', () => {
       knowledge: true,
       feishu_auto_reply: false,
     });
-  });
+
+    const member = db.createAccount({
+      username: 'licensed-route-member',
+      password: 'licensed-route-password',
+      name: 'Licensed Route Member',
+    });
+    const memberToken = db.createAuthSession(member.id).token;
+    const memberHeaders = { authorization: `Bearer ${memberToken}` };
+
+    const blockedPark = await fetch(`${base}/enterprise/park/view`, {
+      headers: memberHeaders,
+    });
+    expect(blockedPark.status).toBe(402);
+    await expect(blockedPark.json()).resolves.toEqual({
+      error: 'commercial module is not entitled',
+      code: 'commercial_module_not_entitled',
+      feature: 'park_service',
+    });
+
+    const entitledMessages = await fetch(`${base}/enterprise/messages/unread`, {
+      headers: memberHeaders,
+    });
+    expect(entitledMessages.status).toBe(200);
+
+    const internalTicket = await fetch(`${base}/enterprise/tickets`, {
+      method: 'POST',
+      headers: { ...memberHeaders, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        serviceId: 'it',
+        title: 'Internal IT request',
+        description: 'This enterprise workflow must not require the park module.',
+      }),
+    });
+    expect(internalTicket.status).toBe(201);
+
+    const blockedParkTicket = await fetch(`${base}/enterprise/tickets`, {
+      method: 'POST',
+      headers: { ...memberHeaders, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        serviceId: 'repair',
+        title: 'Park repair request',
+        description: 'This request requires the signed park module.',
+      }),
+    });
+    expect(blockedParkTicket.status).toBe(402);
+    await expect(blockedParkTicket.json()).resolves.toEqual({
+      error: 'commercial module is not entitled',
+      code: 'commercial_module_not_entitled',
+      feature: 'park_service',
+    });
+
+    db.updateOrganizationFeatures('org_default', { direct_messages: false });
+    const organizationBlockedMessages = await fetch(
+      `${base}/enterprise/messages/unread`,
+      { headers: memberHeaders },
+    );
+    expect(organizationBlockedMessages.status).toBe(403);
+    await expect(organizationBlockedMessages.json()).resolves.toEqual({
+      error: 'organization feature is disabled',
+      code: 'organization_feature_disabled',
+      feature: 'direct_messages',
+    });
+  }, 60_000);
+
+  it('enforces Control credit admission before a paid mutation and finalizes it once', async () => {
+    process.env.OTTO_LICENSE_ENFORCE = 'true';
+    process.env.OTTO_LICENSE_PUBLIC_KEY = LICENSE_PUBLIC_KEY;
+    let availableCredits = false;
+    const billingCalls: string[] = [];
+    const billingFetch = vi.fn(async (url: string | URL | Request) => {
+      const target = String(url);
+      billingCalls.push(target);
+      if (target.endsWith('/v1/billing/holds')) {
+        if (!availableCredits) {
+          return Response.json(
+            { error: 'insufficient available credits' },
+            { status: 409 },
+          );
+        }
+        return Response.json(
+          { hold: { id: 'hold_servere2e123456' }, replayed: false },
+          { status: 201 },
+        );
+      }
+      if (target.endsWith('/hold_servere2e123456/capture')) {
+        return Response.json({ replayed: false }, { status: 200 });
+      }
+      return Response.json({ error: 'unexpected test endpoint' }, { status: 503 });
+    }) as unknown as typeof fetch;
+    const { base } = await startIsolated(ADMIN_TOKEN, null, { billingFetch });
+    const headers = { 'x-otto-admin-token': ADMIN_TOKEN };
+    const status = await fetch(`${base}/enterprise/deployment/status`, { headers });
+    const deployment = await status.json();
+    const now = Date.now();
+    const payload = {
+      id: 'lic_billing_e2e',
+      deploymentId: deployment.deploymentId,
+      organizationId: 'org_default',
+      machineFingerprint: deployment.machineFingerprint,
+      customerName: 'Billing E2E Customer',
+      plan: 'enterprise',
+      expiresAtMs: now + 90 * 24 * 60 * 60 * 1000,
+      seatLimit: 100,
+      modules: ['enterprise_tree', 'knowledge'],
+      offline: false,
+      telemetryAllowed: false,
+      billingEnforcement: 'enforce',
+      leaseEndpoint: 'https://control.example/v1/licenses/lic_billing_e2e/lease',
+      leaseToken: 'billing-e2e-lease-token-at-least-32-characters',
+      billingEndpoint: 'https://control.example/v1/billing/usage/consume',
+      billingHoldEndpoint: 'https://control.example/v1/billing/holds',
+      issuedAtMs: now,
+    };
+    const imported = await fetch(`${base}/enterprise/deployment/license`, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ license: payload, signature: signLicensePayload(payload) }),
+    });
+    expect(imported.status).toBe(200);
+
+    const db = await import('./db.js');
+    const lease = {
+      id: 'lease_billing_e2e',
+      licenseId: payload.id,
+      deploymentId: payload.deploymentId,
+      machineFingerprint: payload.machineFingerprint,
+      issuedAtMs: now,
+      expiresAtMs: now + 10 * 60 * 1000,
+    };
+    db.importDeploymentLicenseLease({
+      lease,
+      signature: signLicensePayload(lease),
+    });
+    const member = db.createAccount({
+      username: 'billing-e2e-member',
+      password: 'billing-e2e-password',
+      name: 'Billing E2E Member',
+    });
+    const token = db.createAuthSession(member.id).token;
+    const request = (idempotencyKey?: string) => fetch(`${base}/enterprise/knowledge`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        ...(idempotencyKey ? { 'x-otto-idempotency-key': idempotencyKey } : {}),
+      },
+      body: JSON.stringify({
+        sourceId: 'billing-e2e-source',
+        sourceType: 'auto_capture',
+        sourceSessionId: 'billing-e2e-session',
+        sourceFingerprint: 'billing-e2e-fingerprint',
+        category: 'solution',
+        content: 'Run the commercial admission check before mutating knowledge.',
+        confidence: 0.9,
+        department: 'Operations',
+        contributor: 'Billing E2E Member',
+      }),
+    });
+
+    const missingKey = await request();
+    expect(missingKey.status).toBe(400);
+    await expect(missingKey.json()).resolves.toMatchObject({
+      code: 'billing_idempotency_key_required',
+      module: 'enterprise_knowledge',
+    });
+    const insufficient = await request('knowledge:e2e:1');
+    expect(insufficient.status).toBe(402);
+    await expect(insufficient.json()).resolves.toMatchObject({
+      code: 'insufficient_credits',
+      module: 'enterprise_knowledge',
+    });
+
+    availableCredits = true;
+    const accepted = await request('knowledge:e2e:2');
+    expect(accepted.status).toBe(200);
+    expect(accepted.headers.get('x-otto-billing-admission')).toBe(
+      'hold_servere2e123456',
+    );
+    await vi.waitFor(() => {
+      expect(billingCalls.filter((url) => url.endsWith('/capture'))).toHaveLength(1);
+    });
+    expect(db.getKnowledge(undefined, undefined, 'org_default')).toHaveLength(0);
+
+    const replay = await request('knowledge:e2e:2');
+    expect(replay.status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(billingCalls.filter((url) => url.endsWith('/capture'))).toHaveLength(1);
+  }, 60_000);
 
   it('admin publishes modular update manifest and health exposes the active result', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);

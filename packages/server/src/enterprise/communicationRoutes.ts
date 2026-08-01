@@ -263,6 +263,31 @@ export async function handleCommunicationRoute({
       sendJSON(res, 400, { error: '消息内容不能为空' });
       return true;
     }
+    const isAtoaProtocolMessage =
+      body.content.startsWith('OTTO_ATOA_REQUEST ') ||
+      body.content.startsWith('OTTO_ATOA_RESPONSE ');
+    if (
+      isAtoaProtocolMessage &&
+      !db.isLicenseUsableForOrganizationFeature('atoa')
+    ) {
+      sendJSON(res, 402, {
+        error: 'commercial module is not entitled',
+        code: 'commercial_module_not_entitled',
+        feature: 'atoa',
+      });
+      return true;
+    }
+    if (
+      isAtoaProtocolMessage &&
+      !db.isOrganizationFeatureEnabled(memberAccount.organizationId, 'atoa')
+    ) {
+      sendJSON(res, 403, {
+        error: 'organization feature is disabled',
+        code: 'organization_feature_disabled',
+        feature: 'atoa',
+      });
+      return true;
+    }
     try {
       const message = db.sendDirectMessage({
         organizationId: memberAccount.organizationId,

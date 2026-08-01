@@ -49,6 +49,7 @@ export interface DeploymentLicenseView {
   seatLimit: number;
   gracePeriodMs: number;
   seatEnforcement: 'monitor' | 'enforce';
+  billingEnforcement: 'disabled' | 'enforce';
   activeSeatCount: number;
   seatLimitExceeded: boolean;
   modules: string[];
@@ -85,6 +86,15 @@ export interface PrivateDeploymentStatus {
     discarded: number;
     lastQueuedAt: string | null;
     lastError: string | null;
+    admission: {
+      authorized: number;
+      pending: number;
+      failed: number;
+      finalized: number;
+      discarded: number;
+      lastError: string | null;
+    };
+    evidenceTrust: 'customer_server_reported';
   };
   dataBoundary: {
     uploadsContentByDefault: false;

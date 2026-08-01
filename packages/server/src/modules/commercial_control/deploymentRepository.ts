@@ -34,6 +34,7 @@ import {
   type BillingUsageRepositoryStore,
   type DeploymentBillingCredentials,
 } from './billingUsageRepository.js';
+import { getBillingAdmissionQueueSummary } from './billingAdmissionRepository.js';
 
 export interface DeploymentRepositoryStore {
   db(): Database;
@@ -288,6 +289,7 @@ function toDeploymentLicenseView(
       seatLimit: enforce ? 0 : Number.MAX_SAFE_INTEGER,
       gracePeriodMs: 0,
       seatEnforcement: 'monitor',
+      billingEnforcement: 'disabled',
       activeSeatCount: activeSeats,
       seatLimitExceeded: false,
       modules,
@@ -313,6 +315,7 @@ function toDeploymentLicenseView(
     };
   }
   const modules = parseModules(row.modules_json);
+  let billingEnforcement: DeploymentLicenseView['billingEnforcement'] = 'disabled';
   let status: DeploymentLicenseStatus = 'active';
   let signingKeyId = row.signing_key_id;
   if (row.revoked_at_ms != null) status = 'revoked';
@@ -326,6 +329,9 @@ function toDeploymentLicenseView(
       safeJsonObject(JSON.parse(row.raw_json)),
       row.id,
     );
+    billingEnforcement = payload.billingEnforcement === 'enforce'
+      ? 'enforce'
+      : 'disabled';
     const verification = verifyDeploymentLicensePayload(
       store,
       payload,
@@ -420,6 +426,7 @@ function toDeploymentLicenseView(
     seatLimit: row.seat_limit,
     gracePeriodMs: row.grace_period_ms,
     seatEnforcement: row.seat_enforcement,
+    billingEnforcement,
     activeSeatCount: seats,
     seatLimitExceeded: row.seat_limit > 0 && seats > row.seat_limit,
     modules,
@@ -518,6 +525,9 @@ export function importDeploymentLicense(
   const gracePeriodMs = Math.max(0, Math.floor(Number(payload.gracePeriodMs ?? 0)));
   const seatEnforcement = payload.seatEnforcement === 'enforce' ? 'enforce' : 'monitor';
   const offline = payload.offline !== false;
+  const billingEnforcement = payload.billingEnforcement === 'enforce'
+    ? 'enforce'
+    : 'disabled';
   if (!Number.isFinite(expiresAtMs) || expiresAtMs <= 0)
     throw new Error('license expiresAt invalid');
   if (!Number.isFinite(issuedAtMs) || issuedAtMs <= 0)
@@ -532,6 +542,8 @@ export function importDeploymentLicense(
     throw new Error('license gracePeriodMs invalid');
   if (offline && seatEnforcement === 'enforce')
     throw new Error('offline license cannot enforce real-time seat usage');
+  if (offline && billingEnforcement === 'enforce')
+    throw new Error('offline license cannot enforce real-time billing');
   if (modules.length === 0) throw new Error('license modules required');
   const id = String(payload.id || `lic_${randomUUID().replace(/-/g, '')}`);
   const telemetryAllowed = payload.telemetryAllowed !== false;
@@ -560,6 +572,19 @@ export function importDeploymentLicense(
       payload.leaseToken.length < 32
     ) {
       throw new Error('online license leaseToken required');
+    }
+    if (billingEnforcement === 'enforce') {
+      let billingHoldEndpoint: URL;
+      try {
+        billingHoldEndpoint = typeof payload.billingHoldEndpoint === 'string'
+          ? new URL(payload.billingHoldEndpoint)
+          : new URL('/v1/billing/holds', parsedLeaseEndpoint);
+      } catch {
+        throw new Error('online license billingHoldEndpoint invalid');
+      }
+      if (billingHoldEndpoint.protocol !== 'https:') {
+        throw new Error('online license billingHoldEndpoint must use HTTPS');
+      }
     }
   }
   store.db()
@@ -951,20 +976,26 @@ export function getDeploymentBillingCredentials(
   const leaseToken = payload.leaseToken;
   if (typeof leaseToken !== 'string' || leaseToken.length < 32) return null;
   let endpoint: URL;
+  let holdEndpoint: URL;
   try {
     endpoint = typeof payload.billingEndpoint === 'string'
       ? new URL(payload.billingEndpoint)
       : new URL('/v1/billing/usage/consume', license.lease.endpoint);
+    holdEndpoint = typeof payload.billingHoldEndpoint === 'string'
+      ? new URL(payload.billingHoldEndpoint)
+      : new URL('/v1/billing/holds', license.lease.endpoint);
   } catch {
     return null;
   }
-  if (endpoint.protocol !== 'https:') return null;
+  if (endpoint.protocol !== 'https:' || holdEndpoint.protocol !== 'https:') return null;
   return {
     licenseId: license.id,
     deploymentId: license.deploymentId,
     organizationId: license.organizationId,
     machineFingerprint: getMachineFingerprint(),
     endpoint: endpoint.toString(),
+    holdEndpoint: holdEndpoint.toString(),
+    enforcement: license.billingEnforcement,
     leaseToken,
   };
 }
@@ -1375,7 +1406,13 @@ export function getPrivateDeploymentStatus(
     machineFingerprint: getMachineFingerprint(),
     license: getDeploymentLicense(store),
     telemetry: { ...telemetry, ...getTelemetryQueueSummary(store) },
-    billing: getBillingUsageQueueSummary(createDeploymentBillingUsageStore(store)),
+    billing: {
+      ...getBillingUsageQueueSummary(createDeploymentBillingUsageStore(store)),
+      admission: getBillingAdmissionQueueSummary(
+        createDeploymentBillingUsageStore(store),
+      ),
+      evidenceTrust: 'customer_server_reported',
+    },
     dataBoundary: {
       uploadsContentByDefault: false,
       includesUserMessages: false,
