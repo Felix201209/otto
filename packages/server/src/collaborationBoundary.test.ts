@@ -59,6 +59,7 @@ describe('collaboration module boundary', () => {
       expect.arrayContaining([
         'identity_organization',
         'authorization',
+        'secure_messaging',
         'data_platform',
       ]),
     );

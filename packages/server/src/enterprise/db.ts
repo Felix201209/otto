@@ -26,6 +26,10 @@ import {
   type AccountPresenceView as CollaborationAccountPresenceView,
 } from '../modules/collaboration/index.js';
 import {
+  createSecureMessagingComposition,
+  SECURE_MESSAGING_SCHEMA_CONTRIBUTOR,
+} from '../modules/secure_messaging/index.js';
+import {
   createEnterpriseKnowledgeComposition,
   createEnterpriseKnowledgeSchemaContributor,
 } from '../modules/enterprise_knowledge/index.js';
@@ -140,6 +144,15 @@ export type {
   UnreadDirectMessageNotification,
 } from '../modules/collaboration/index.js';
 export type {
+  E2eeAccountRootRegistration,
+  E2eeCapabilityStatus,
+  E2eeDeviceApprovalProof,
+  E2eeDeviceDirectorySnapshot,
+  E2eeDeviceRegistration,
+  E2eeDeviceRevocationProof,
+  E2eeTransparencyInclusionProof,
+} from '../modules/secure_messaging/index.js';
+export type {
   AddEnterpriseKnowledgeInput,
   EnterpriseKnowledgeEntryView,
 } from '../modules/enterprise_knowledge/index.js';
@@ -213,7 +226,7 @@ const PRIVACY_DELETION_LEDGER_KEY_PATH = path.join(
 );
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
-export const ENTERPRISE_SCHEMA_VERSION = 18;
+export const ENTERPRISE_SCHEMA_VERSION = 19;
 export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
@@ -242,6 +255,7 @@ function initSchema(d: Database): void {
     }),
     MODEL_GATEWAY_SCHEMA_CONTRIBUTOR,
     COLLABORATION_SCHEMA_CONTRIBUTOR,
+    SECURE_MESSAGING_SCHEMA_CONTRIBUTOR,
     createEnterpriseKnowledgeSchemaContributor({
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
     }),
@@ -791,6 +805,20 @@ export const {
   createId: randomUUID,
   fieldCipher,
   attachmentObjectStore,
+  getAccount,
+});
+
+export const {
+  registerE2eeAccountRoot,
+  registerE2eeDevice,
+  approveE2eeDevice,
+  revokeE2eeDevice,
+  getE2eeDeviceDirectory,
+  getE2eeTransparencyInclusionProof,
+  getE2eeCapabilityStatus,
+} = createSecureMessagingComposition<AccountView>({
+  db: getDB,
+  now: Date.now,
   getAccount,
 });
 
