@@ -25,7 +25,7 @@ function createStepRun(runId: string, step: WorkflowDefinition['steps'][number])
     idempotencyKey: `${runId}:${step.id}:0`,
     input: structuredClone(step.input),
     sideEffect: step.sideEffect,
-    requiresApproval: step.requiresApproval === true,
+    requiresApproval: step.requiresApproval === true || step.sideEffect === 'external',
   };
 }
 
@@ -74,9 +74,10 @@ export class FileWorkflowStore implements WorkflowStore {
       const step = nextQueuedStep(run);
       if (!step) return null;
 
-      step.status = step.requiresApproval ? 'waiting_approval' : 'running';
+      step.status = step.requiresApproval && !step.approvedAt ? 'waiting_approval' : 'running';
       step.attempt += 1;
       step.idempotencyKey = `${run.id}:${step.stepId}:${step.attempt}`;
+      step.approvalId = step.status === 'waiting_approval' ? `approval-${run.id}-${step.stepId}-${step.attempt}` : undefined;
       step.startedAt = now();
       run.status = step.status === 'waiting_approval' ? 'waiting_approval' : 'running';
       const saved = await this.saveRevision(run);
@@ -107,6 +108,22 @@ export class FileWorkflowStore implements WorkflowStore {
     });
   }
 
+  async approveStep(input: { runId: string; stepId: string; approvalId: string; expectedRevision: number }): Promise<WorkflowRun> {
+    return this.withLease(input.runId, async () => {
+      const run = await this.readRun(input.runId);
+      this.assertRevision(run, input.expectedRevision);
+      const step = run.steps.find((candidate) => candidate.stepId === input.stepId);
+      if (!step || step.status !== 'waiting_approval' || step.approvalId !== input.approvalId) {
+        throw new WorkflowConflictError(`Workflow step is not waiting for this approval: ${input.stepId}`);
+      }
+      step.status = 'queued';
+      step.approvedAt = now();
+      step.approvalId = undefined;
+      run.status = 'queued';
+      return cloneRun(await this.saveRevision(run));
+    });
+  }
+
   async recoverInterruptedRun(runId: string, expectedRevision: number): Promise<WorkflowRun> {
     return this.withLease(runId, async () => {
       const run = await this.readRun(runId);
@@ -124,6 +141,21 @@ export class FileWorkflowStore implements WorkflowStore {
         running.startedAt = undefined;
         run.status = 'queued';
       }
+      return cloneRun(await this.saveRevision(run));
+    });
+  }
+
+  async takeOverUnknownRun(input: { runId: string; note: string; expectedRevision: number }): Promise<WorkflowRun> {
+    return this.withLease(input.runId, async () => {
+      const run = await this.readRun(input.runId);
+      this.assertRevision(run, input.expectedRevision);
+      if (run.status !== 'unknown_outcome') throw new WorkflowConflictError('Workflow run is not in unknown_outcome.');
+      const active = run.steps.find((step) => step.status === 'unknown_outcome');
+      if (!active) throw new WorkflowConflictError('Workflow run has no unknown step to take over.');
+      active.status = 'cancelled';
+      active.error = `Human takeover: ${input.note.trim().slice(0, 500) || 'reconciliation required'}`;
+      active.completedAt = now();
+      run.status = 'cancelled';
       return cloneRun(await this.saveRevision(run));
     });
   }

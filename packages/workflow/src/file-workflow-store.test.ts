@@ -69,10 +69,43 @@ describe('FileWorkflowStore', () => {
       stepId: 'read',
       expectedRevision: first!.run.revision,
     });
-    const second = await store.claimNextStep(run.id, afterFirst.revision);
+    const waiting = await store.claimNextStep(run.id, afterFirst.revision);
+    const approved = await store.approveStep({
+      runId: run.id,
+      stepId: 'send',
+      approvalId: waiting!.step.approvalId!,
+      expectedRevision: waiting!.run.revision,
+    });
+    const second = await store.claimNextStep(run.id, approved.revision);
 
     const recovered = await store.recoverInterruptedRun(run.id, second!.run.revision);
     expect(recovered.status).toBe('unknown_outcome');
     expect(recovered.steps[1]).toMatchObject({ stepId: 'send', status: 'unknown_outcome' });
+  });
+
+  it('records approval before an external step can be claimed', async () => {
+    const store = await createStore();
+    const run = await store.createRun(definition);
+    const first = await store.claimNextStep(run.id, run.revision);
+    const afterFirst = await store.completeStep({ runId: run.id, stepId: 'read', expectedRevision: first!.run.revision });
+    const waiting = await store.claimNextStep(run.id, afterFirst.revision);
+
+    expect(waiting?.step).toMatchObject({ status: 'waiting_approval', approvalId: expect.any(String) });
+    const approved = await store.approveStep({ runId: run.id, stepId: 'send', approvalId: waiting!.step.approvalId!, expectedRevision: waiting!.run.revision });
+    const running = await store.claimNextStep(run.id, approved.revision);
+    expect(running?.step).toMatchObject({ status: 'running', approvedAt: expect.any(String) });
+  });
+
+  it('requires human takeover to end an unknown external outcome', async () => {
+    const store = await createStore();
+    const run = await store.createRun({ id: 'external-only', version: 1, steps: [{ id: 'send', kind: 'tool', input: {}, sideEffect: 'external' }] });
+    const waiting = await store.claimNextStep(run.id, run.revision);
+    const approved = await store.approveStep({ runId: run.id, stepId: 'send', approvalId: waiting!.step.approvalId!, expectedRevision: waiting!.run.revision });
+    const running = await store.claimNextStep(run.id, approved.revision);
+    await store.recoverInterruptedRun(run.id, running!.run.revision);
+
+    const unknown = await store.getRun(run.id);
+    const takenOver = await store.takeOverUnknownRun({ runId: run.id, note: 'confirmed by operator', expectedRevision: unknown!.revision });
+    expect(takenOver).toMatchObject({ status: 'cancelled', steps: [expect.objectContaining({ status: 'cancelled' })] });
   });
 });

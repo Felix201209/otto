@@ -44,6 +44,8 @@ test double does not satisfy an item on its own.
 
 ## Migration rule
 
-The existing VM-based `workflow` tool remains exploratory and non-durable until
-it is explicitly adapted to the durable runtime. It must not be represented as
-recoverable RPA or used for irreversible workflows.
+The existing VM-based `workflow` tool remains exploratory and non-durable. The
+`durable_workflow` tool is the restart-safe path for supported declarative
+steps; arbitrary scripts, sub-agents, and external actions must not be
+represented as recoverable or used for irreversible workflows until they have a
+scheduler-integrated capability contract.

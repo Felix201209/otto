@@ -42,6 +42,8 @@ export interface WorkflowStepRun {
   input: Record<string, unknown>;
   sideEffect: WorkflowSideEffect;
   requiresApproval: boolean;
+  approvalId?: string;
+  approvedAt?: string;
   output?: unknown;
   error?: string;
   startedAt?: string;
@@ -71,7 +73,7 @@ export interface WorkflowTraceEvent {
   stepId?: string;
   attempt?: number;
   idempotencyKey?: string;
-  kind: 'run_started' | 'step_claimed' | 'step_succeeded' | 'step_failed' | 'recovery_unknown_outcome';
+  kind: 'run_started' | 'step_claimed' | 'step_succeeded' | 'step_failed' | 'approval_recorded' | 'recovery_unknown_outcome' | 'human_takeover';
   status: WorkflowRunStatus | WorkflowStepStatus;
   summary: string;
 }

@@ -53,14 +53,35 @@ describe('WorkflowRuntime', () => {
       version: 1,
       steps: [{ id: 'send', kind: 'tool', input: {}, sideEffect: 'external' }],
     });
-    const claimed = await store.claimNextStep(run.id, run.revision);
+    const waiting = await store.claimNextStep(run.id, run.revision);
+    const approved = await runtime.approve(run.id, 'send', waiting!.step.approvalId!);
+    const claimed = await store.claimNextStep(run.id, approved!.revision);
 
     const recovered = await runtime.recover(run.id);
     const afterResume = await runtime.runNext(run.id);
 
+    expect(waiting?.step.status).toBe('waiting_approval');
     expect(claimed?.step.status).toBe('running');
     expect(recovered).toMatchObject({ status: 'unknown_outcome' });
     expect(afterResume).toMatchObject({ status: 'unknown_outcome' });
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('records approval before executing an external step', async () => {
+    const store = await createStore();
+    const trace = { append: vi.fn().mockResolvedValue(undefined) };
+    const runtime = new WorkflowRuntime(store, { execute: vi.fn().mockResolvedValue({ ok: true }) }, trace);
+    const run = await runtime.start({
+      id: 'approved-send',
+      version: 1,
+      steps: [{ id: 'send', kind: 'tool', input: {}, sideEffect: 'external' }],
+    });
+    const waiting = await runtime.runNext(run.id);
+    const approved = await runtime.approve(run.id, 'send', waiting!.steps[0].approvalId!);
+
+    expect(waiting).toMatchObject({ status: 'waiting_approval' });
+    expect(approved).toMatchObject({ status: 'queued', steps: [expect.objectContaining({ approvedAt: expect.any(String) })] });
+    expect(trace.append).toHaveBeenCalledWith(expect.objectContaining({ kind: 'step_claimed', status: 'waiting_approval' }));
+    expect(trace.append).toHaveBeenCalledWith(expect.objectContaining({ kind: 'approval_recorded' }));
   });
 });

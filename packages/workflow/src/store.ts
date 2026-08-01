@@ -13,7 +13,9 @@ export interface WorkflowStore {
     output?: unknown;
     error?: string;
   }): Promise<WorkflowRun>;
+  approveStep(input: { runId: string; stepId: string; approvalId: string; expectedRevision: number }): Promise<WorkflowRun>;
   recoverInterruptedRun(runId: string, expectedRevision: number): Promise<WorkflowRun>;
+  takeOverUnknownRun(input: { runId: string; note: string; expectedRevision: number }): Promise<WorkflowRun>;
 }
 
 export function cloneRun(run: WorkflowRun): WorkflowRun {
