@@ -84,4 +84,24 @@ describe('RpaRunner', () => {
     expect(afterResume).toMatchObject({ state: 'unknown_outcome' });
     expect(execute).not.toHaveBeenCalled();
   });
+
+  it('requires a matching human approval before resuming a paused step', async () => {
+    const store = memoryStore();
+    const authorize = vi.fn()
+      .mockResolvedValueOnce({ decision: 'awaiting_approval', approvalId: 'approval-1' })
+      .mockResolvedValueOnce({ decision: 'allow' });
+    const execute = vi.fn().mockResolvedValue({ output: { downloaded: true } });
+    const runner = new RpaRunner([workflow], store, { authorize }, { execute }, { put: vi.fn() });
+    const run = await runner.start(workflow.id);
+
+    const waiting = await runner.runNext(run.id);
+    await expect(runner.approve(run.id, 'wrong')).rejects.toThrow('not waiting');
+    const approved = await runner.approve(run.id, 'approval-1');
+    const completed = await runner.runNext(run.id);
+
+    expect(waiting).toMatchObject({ state: 'awaiting_approval' });
+    expect(approved?.receipts[0]).toMatchObject({ approvalId: 'approval-1' });
+    expect(completed).toMatchObject({ state: 'pending', receipts: [{ state: 'succeeded' }] });
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
 });

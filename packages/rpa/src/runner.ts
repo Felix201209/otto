@@ -107,6 +107,35 @@ export class RpaRunner {
     return this.store.save(run, run.revision);
   }
 
+  /** Records an explicit human approval; policy is still checked again before execution. */
+  async approve(runId: string, approvalId: string): Promise<RpaRun | null> {
+    const run = await this.store.get(runId);
+    if (!run) return null;
+    if (run.state !== 'awaiting_approval' || run.approvalId !== approvalId || !run.currentStepId) {
+      throw new Error('RPA run is not waiting for this approval.');
+    }
+    const receipt = receiptFor(run, run.currentStepId);
+    if (!receipt) throw new Error(`RPA receipt is missing for ${run.currentStepId}.`);
+    receipt.approvalId = approvalId;
+    receipt.approvedAt = new Date().toISOString();
+    run.approvalId = undefined;
+    run.currentStepId = null;
+    run.state = 'pending';
+    return this.store.save(run, run.revision);
+  }
+
+  /** Human takeover is explicit and auditable; it never silently retries an unknown external action. */
+  async takeOver(runId: string, note: string): Promise<RpaRun | null> {
+    const run = await this.store.get(runId);
+    if (!run) return null;
+    if (run.state !== 'unknown_outcome') {
+      throw new Error('Only a run with unknown external outcome can be taken over.');
+    }
+    run.state = 'paused';
+    run.takeoverNote = note.trim().slice(0, 500) || 'Human takeover requested.';
+    return this.store.save(run, run.revision);
+  }
+
   private async finish(run: RpaRun): Promise<RpaRun> {
     run.state = 'succeeded';
     run.currentStepId = null;

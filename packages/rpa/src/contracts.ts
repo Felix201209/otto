@@ -46,6 +46,8 @@ export interface RpaStepReceipt {
   state: 'pending' | 'started' | 'succeeded' | 'failed' | 'unknown_outcome';
   idempotencyKey: string;
   artifactIds: string[];
+  approvalId?: string;
+  approvedAt?: string;
   output?: unknown;
   error?: string;
 }
@@ -58,6 +60,7 @@ export interface RpaRun {
   revision: number;
   currentStepId: string | null;
   approvalId?: string;
+  takeoverNote?: string;
   createdAt: string;
   updatedAt: string;
   receipts: RpaStepReceipt[];
