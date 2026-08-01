@@ -38,6 +38,19 @@ function mockE2eeCrypto(input: {
 } = {}): EnterpriseE2eeCrypto {
   return {
     localDevice: vi.fn(() => E2EE_DEVICE),
+    createDeviceCertificateRequest: vi.fn(() => ({
+      format: 2,
+      deploymentId: 'dep_test',
+      organizationId: 'org_1',
+      accountId: 'acc_1',
+      deviceId: 'device-1',
+      certificateSerial: 'certificate-device-1',
+      deviceName: 'test device',
+      credentialSigningPublicKey: 'test signing key',
+      deviceExchangePublicKey: 'test exchange key',
+      predecessorCertificateHash: null,
+      proofOfPossession: 'proof',
+    })),
     verifyLocalDeviceRegistration: vi.fn(
       (
         _local: EnterpriseE2eeDeviceBundle,
@@ -89,6 +102,10 @@ function emptyTransparency(accountId: string) {
       accountId,
       headSequence: 0,
       headHash: '0'.repeat(64),
+      treeSize: 0,
+      merkleRoot:
+        'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+      inclusionProofs: [],
       entries: [],
     },
   };
@@ -139,6 +156,9 @@ const API_V2_HEALTH = {
     'direct_messages',
     'e2ee_private_messages_v1',
     'e2ee_device_trust_v1',
+    'e2ee_device_certificates_v2',
+    'e2ee_merkle_transparency_v2',
+    'e2ee_atoa_one_time_grants_v1',
     'direct_message_attachments_v1',
     'atoa',
     'position_invites',
@@ -148,6 +168,7 @@ const API_V2_HEALTH = {
     'modular_update_push_v1',
     'signed_update_policy_v1',
   ],
+  deployment: { deploymentId: 'dep_test' },
 };
 
 describe('EnterpriseClient', () => {

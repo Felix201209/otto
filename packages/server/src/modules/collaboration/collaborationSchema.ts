@@ -70,6 +70,13 @@ export const COLLABORATION_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor = {
         identity_signing_public_key TEXT NOT NULL,
         device_exchange_public_key TEXT NOT NULL,
         key_fingerprint TEXT NOT NULL CHECK(length(key_fingerprint) = 64),
+        certificate_format INTEGER NOT NULL DEFAULT 1,
+        certificate_serial TEXT,
+        certificate_request_json TEXT,
+        certificate_request_hash TEXT,
+        certificate_approval_json TEXT,
+        certificate_hash TEXT,
+        certificate_expires_at TEXT,
         approval_state TEXT NOT NULL
           CHECK(approval_state IN ('pending', 'approved')),
         approved_by_device_id TEXT,
@@ -90,6 +97,7 @@ export const COLLABORATION_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor = {
         event TEXT NOT NULL
           CHECK(event IN ('bootstrap_approved', 'registered_pending', 'approved', 'revoked')),
         key_fingerprint TEXT NOT NULL CHECK(length(key_fingerprint) = 64),
+        certificate_hash TEXT NOT NULL CHECK(length(certificate_hash) = 64),
         actor_device_id TEXT,
         previous_hash TEXT NOT NULL CHECK(length(previous_hash) = 64),
         entry_hash TEXT NOT NULL CHECK(length(entry_hash) = 64),
@@ -187,6 +195,28 @@ export const COLLABORATION_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor = {
     );
     addDeviceColumn('approved_by_device_id', 'TEXT');
     addDeviceColumn('approved_at', 'TEXT');
+    addDeviceColumn('certificate_format', 'INTEGER NOT NULL DEFAULT 1');
+    addDeviceColumn('certificate_serial', 'TEXT');
+    addDeviceColumn('certificate_request_json', 'TEXT');
+    addDeviceColumn('certificate_request_hash', 'TEXT');
+    addDeviceColumn('certificate_approval_json', 'TEXT');
+    addDeviceColumn('certificate_hash', 'TEXT');
+    addDeviceColumn('certificate_expires_at', 'TEXT');
+    const transparencyColumns = new Set(
+      (
+        database
+          .prepare('PRAGMA table_info(e2ee_key_transparency_log)')
+          .all() as Array<{ name: string }>
+      ).map((column) => column.name),
+    );
+    if (!transparencyColumns.has('certificate_hash')) {
+      database.exec(
+        'ALTER TABLE e2ee_key_transparency_log ADD COLUMN certificate_hash TEXT',
+      );
+      database.exec(
+        'UPDATE e2ee_key_transparency_log SET certificate_hash = key_fingerprint WHERE certificate_hash IS NULL',
+      );
+    }
     database.exec(`
       DROP INDEX IF EXISTS idx_e2ee_devices_active;
       CREATE INDEX idx_e2ee_devices_active

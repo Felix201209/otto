@@ -7735,6 +7735,37 @@ h6.otto-prose__h {
 .otto-direct-chat__otto:hover:not(:disabled) { border-color: var(--otto-accent); color: var(--otto-accent); }
 .otto-direct-chat__otto:disabled { cursor: default; opacity: .5; }
 .otto-direct-chat__a2a-menu { position: relative; margin-left: auto; }
+.otto-direct-chat__search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: min(190px, 36%);
+  min-width: 120px;
+  margin-left: auto;
+}
+.otto-direct-chat__a2a-menu + .otto-direct-chat__search { margin-left: 0; }
+.otto-direct-chat__search input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  border: 1px solid var(--otto-border);
+  border-radius: 8px;
+  padding: 0 9px;
+  color: var(--otto-text);
+  background: var(--otto-surface);
+  font-size: 11px;
+}
+.otto-direct-chat__search input:focus {
+  border-color: var(--otto-accent);
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+.otto-direct-chat__search small {
+  flex: 0 0 auto;
+  color: var(--otto-text-tertiary);
+  font-size: 9.5px;
+  white-space: nowrap;
+}
 .otto-direct-chat__a2a-popover {
   position: absolute;
   z-index: 4;

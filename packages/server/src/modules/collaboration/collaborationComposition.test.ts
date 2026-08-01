@@ -44,6 +44,7 @@ describe('collaboration composition', () => {
       db: () => database,
       now: () => now,
       createId: () => `message-${++sequence}`,
+      getDeploymentId: () => 'deployment-test',
       getAccount(accountId, organizationId) {
         return (
           (database

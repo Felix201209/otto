@@ -22,9 +22,12 @@ import { dirname } from 'node:path';
  * 因此从 Testing Library 自身的解析上下文定位 React / ReactDOM，确保组件和渲染器共用
  * 同一个 hooks dispatcher。该配置只影响测试，生产 webpack 构建不受影响。
  */
-const rootRequire = createRequire(new URL('../../package.json', import.meta.url));
+// Resolve Testing Library from the desktop package first. This keeps React,
+// ReactDOM and the renderer under test on one instance even when a worktree
+// has package-local dependencies in addition to the hoisted workspace set.
+const desktopRequire = createRequire(new URL('./package.json', import.meta.url));
 const testingLibraryRequire = createRequire(
-  rootRequire.resolve('@testing-library/react/package.json'),
+  desktopRequire.resolve('@testing-library/react/package.json'),
 );
 const reactDir = dirname(testingLibraryRequire.resolve('react/package.json'));
 const reactDomDir = dirname(testingLibraryRequire.resolve('react-dom/package.json'));

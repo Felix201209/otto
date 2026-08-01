@@ -7,52 +7,65 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const REQUIRED_PROTOCOL_CONTROLS = [
-  ['externalAuditCompleted', 'external audit is not complete'],
-  ['prekeyHandshake', 'prekey handshake is not implemented'],
-  ['doubleRatchet', 'Double Ratchet is not implemented'],
-  ['multiDeviceSessions', 'multi-device sessions are not implemented'],
-  ['safetyStateReset', 'safety state reset is not implemented'],
-  ['forwardSecrecy', 'forward secrecy is not established'],
-  ['postCompromiseSecurity', 'post-compromise security is not established'],
-];
-
-const REQUIRED_DEVICE_CONTROLS = [
-  ['safetyNumbers', 'safety-number verification is not implemented'],
-  ['qrVerification', 'QR verification is not implemented'],
-  ['outOfBandDeviceApproval', 'out-of-band device approval is not implemented'],
-  ['keyTransparency', 'auditable key transparency is not implemented'],
-];
+const REQUIRED = {
+  protocol: [
+    ['externalAuditCompleted', 'external audit is not complete'],
+    ['openMlsProductionIntegrated', 'OpenMLS is not integrated into production messaging'],
+    ['threatModelReviewed', 'E2EE threat model has not been independently reviewed'],
+    ['protocolReviewed', 'E2EE protocol document has not been independently reviewed'],
+    ['multiDeviceSessions', 'MLS multi-device sessions are not implemented'],
+    ['forwardSecrecy', 'forward secrecy is not established'],
+    ['postCompromiseSecurity', 'post-compromise security is not established'],
+  ],
+  deviceTrust: [
+    ['deviceCertificatesV2', 'v2 device certificates are not integrated'],
+    ['signedApproval', 'device approval is not cryptographically signed'],
+    ['recoveryV2', 'account-bound v2 recovery is not implemented'],
+    ['safetyNumbers', 'safety-number verification is not implemented'],
+    ['qrVerification', 'QR verification is not implemented'],
+    ['merkleTransparency', 'Merkle key transparency is not implemented'],
+    ['externalWitness', 'an independent transparency witness is not configured'],
+  ],
+  integrations: [
+    ['directMessages', 'one-to-one messages are not using the reviewed protocol'],
+    ['attachments', 'attachments are not using the reviewed protocol'],
+    ['localSearch', 'local decrypted-message search is not integrated'],
+    ['atoaOneTimeGrant', 'A2A one-time authorization is not integrated'],
+  ],
+  adversarialTests: [
+    ['maliciousServer', 'malicious-server tests are incomplete'],
+    ['databaseTampering', 'database-tampering tests are incomplete'],
+    ['deviceLoss', 'lost-device and recovery tests are incomplete'],
+    ['crossServer', 'cross-server adversarial tests are incomplete'],
+  ],
+  releaseGate: [
+    ['requiresSignedEnablement', 'signed E2EE module enablement is not enforced'],
+    ['defaultDisabled', 'unaudited E2EE must remain disabled by default'],
+  ],
+};
 
 export function verifyE2eeReleaseReadiness(status, options = {}) {
   const blockers = [];
   const fileExists = options.fileExists ?? fs.existsSync;
-  if (!status || typeof status !== 'object' || status.format !== 1) {
-    return {
-      ready: false,
-      blockers: ['E2EE release status format is invalid'],
-    };
+  if (!status || typeof status !== 'object' || status.format !== 2) {
+    return { ready: false, blockers: ['E2EE release status format is invalid'] };
   }
-  if (!status.protocol || typeof status.protocol !== 'object') {
-    blockers.push('E2EE protocol status is missing');
-  } else {
-    if (
-      typeof status.protocol.id !== 'string' ||
-      !status.protocol.id.trim() ||
-      typeof status.protocol.implementation !== 'string' ||
-      !status.protocol.implementation.trim()
-    ) {
-      blockers.push('E2EE protocol provider identity is missing');
-    }
-    for (const [field, message] of REQUIRED_PROTOCOL_CONTROLS) {
-      if (status.protocol[field] !== true) blockers.push(message);
-    }
+  if (
+    !status.protocol ||
+    typeof status.protocol.id !== 'string' ||
+    !status.protocol.id.trim() ||
+    typeof status.protocol.implementation !== 'string' ||
+    !status.protocol.implementation.trim()
+  ) {
+    blockers.push('E2EE protocol provider identity is missing');
   }
-  if (!status.deviceTrust || typeof status.deviceTrust !== 'object') {
-    blockers.push('E2EE device trust status is missing');
-  } else {
-    for (const [field, message] of REQUIRED_DEVICE_CONTROLS) {
-      if (status.deviceTrust[field] !== true) blockers.push(message);
+  for (const [section, controls] of Object.entries(REQUIRED)) {
+    if (!status[section] || typeof status[section] !== 'object') {
+      blockers.push(`E2EE ${section} status is missing`);
+      continue;
+    }
+    for (const [field, message] of controls) {
+      if (status[section][field] !== true) blockers.push(message);
     }
   }
   if (!Array.isArray(status.auditReports) || status.auditReports.length === 0) {

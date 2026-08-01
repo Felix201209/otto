@@ -34,6 +34,11 @@ describe('企业 A2A 请求协调器', () => {
     const status = await processEnterpriseAtoaRequest({
       request: inboxRequest(buildAtoaRequest('能帮我吗？', 'req-1')),
       requestPermission: vi.fn(async () => ({ kind: 'deny' as const })),
+      authorizeOnce: vi.fn(async () => ({
+        grantDigest: 'a'.repeat(64),
+        allowedSources: [],
+        authorizedMessageIds: [],
+      })),
       collectContext,
       askOtto,
       sendMessage,
@@ -79,6 +84,11 @@ describe('企业 A2A 请求协调器', () => {
         expect(payload.mode).toBe('consult');
         return { kind: 'allow' as const, sources: ['schedules' as const] };
       }),
+      authorizeOnce: vi.fn(async () => ({
+        grantDigest: 'b'.repeat(64),
+        allowedSources: ['schedules' as const],
+        authorizedMessageIds: [],
+      })),
       collectContext,
       askOtto,
       sendMessage,
@@ -107,6 +117,11 @@ describe('企业 A2A 请求协调器', () => {
     const sendMessage = vi.fn(
       async (_peerAccountId: string, _content: string) => undefined,
     );
+    const collectContext = vi.fn(async () => ({
+      context: '',
+      loadedSources: [],
+      failedSources: [],
+    }));
     const status = await processEnterpriseAtoaRequest({
       request: inboxRequest(buildAtoaRequest('给我结论', 'req-fail')),
       requestPermission: vi.fn(async () => ({
@@ -114,17 +129,19 @@ describe('企业 A2A 请求协调器', () => {
         sources: ['current_chat' as const],
         messageIds: ['message-authorized'],
       })),
-      collectContext: vi.fn(async () => ({
-        context: '聊天上下文',
-        loadedSources: ['current_chat' as const],
-        failedSources: [],
+      authorizeOnce: vi.fn(async () => ({
+        grantDigest: 'd'.repeat(64),
+        allowedSources: [],
+        authorizedMessageIds: [],
       })),
+      collectContext,
       askOtto: vi.fn(async () => {
         throw new Error('没有模型');
       }),
       sendMessage,
     });
     expect(status).toBe('failed');
+    expect(collectContext).toHaveBeenCalledWith([], []);
     const response = parseAtoaMessage(sendMessage.mock.calls[0][1]);
     expect(response?.kind === 'response' && response.payload.answer).toContain(
       '未能完成',
@@ -138,6 +155,11 @@ describe('企业 A2A 请求协调器', () => {
       processEnterpriseAtoaRequest({
         request: inboxRequest('普通消息'),
         requestPermission,
+        authorizeOnce: vi.fn(async () => ({
+          grantDigest: 'c'.repeat(64),
+          allowedSources: [],
+          authorizedMessageIds: [],
+        })),
         collectContext: vi.fn(),
         askOtto: vi.fn(),
         sendMessage,

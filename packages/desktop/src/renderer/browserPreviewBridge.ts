@@ -309,6 +309,14 @@ if (!previewWindow.otto) {
     enterprisePresenceHeartbeat: () => Promise.resolve(),
     enterpriseMessagesUnread: () => Promise.resolve([]),
     enterpriseAtoaInbox: () => Promise.resolve([]),
+    enterpriseAtoaAuthorizeOnce: () =>
+      Promise.resolve({
+        grantId: id('preview-atoa-grant'),
+        grantDigest: '0'.repeat(64),
+        expiresAt: new Date(Date.now() + 180_000).toISOString(),
+        allowedSources: [],
+        authorizedMessageIds: [],
+      }),
     enterpriseOrganizationFeaturesGet: () =>
       Promise.resolve({
         direct_messaging: true,
@@ -403,6 +411,9 @@ if (!previewWindow.otto) {
         accountId: previewAccount.id,
         headSequence: 1,
         headHash: '0'.repeat(64),
+        treeSize: 1,
+        merkleRoot: '0'.repeat(64),
+        inclusionProofs: [{ leafIndex: 0, treeSize: 1, hashes: [] }],
         entries: [
           {
             sequence: 1,
@@ -410,6 +421,7 @@ if (!previewWindow.otto) {
             deviceId: 'browser-preview-device',
             event: 'bootstrap_approved',
             keyFingerprint: '0'.repeat(64),
+            certificateHash: '0'.repeat(64),
             actorDeviceId: null,
             previousHash: '0'.repeat(64),
             entryHash: '0'.repeat(64),

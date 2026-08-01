@@ -535,6 +535,7 @@ const IPC = {
   enterpriseE2eeRecoveryExport: 'otto:enterprise-e2ee-recovery-export',
   enterpriseE2eeRecoveryImport: 'otto:enterprise-e2ee-recovery-import',
   enterpriseAtoaInbox: 'otto:enterprise-atoa-inbox',
+  enterpriseAtoaAuthorizeOnce: 'otto:enterprise-atoa-authorize-once',
   enterpriseParkServicePush: 'otto:enterprise-park-service-push',
   enterpriseParkView: 'otto:enterprise-park-view',
   enterpriseParkRegister: 'otto:enterprise-park-register',
@@ -2794,6 +2795,52 @@ function registerIpc(): void {
     loadEnterpriseSession();
     return enterpriseClient.listAtoaInbox();
   });
+  ipcMain.handle(
+    IPC.enterpriseAtoaAuthorizeOnce,
+    async (_event, input: unknown) => {
+      loadEnterpriseSession();
+      const body =
+        input && typeof input === 'object'
+          ? (input as Record<string, unknown>)
+          : {};
+      const allowed = new Set([
+        'current_chat',
+        'enterprise_knowledge',
+        'work_logs',
+        'schedules',
+      ]);
+      if (
+        typeof body.requestMessageId !== 'string' ||
+        !body.requestMessageId ||
+        body.requestMessageId.length > 200 ||
+        typeof body.requesterAccountId !== 'string' ||
+        !body.requesterAccountId ||
+        body.requesterAccountId.length > 200 ||
+        typeof body.requestContent !== 'string' ||
+        body.requestContent.length > 4000 ||
+        !Array.isArray(body.allowedSources) ||
+        body.allowedSources.some(
+          (source) => typeof source !== 'string' || !allowed.has(source),
+        ) ||
+        !Array.isArray(body.authorizedMessageIds) ||
+        body.authorizedMessageIds.length > 40 ||
+        body.authorizedMessageIds.some(
+          (id) => typeof id !== 'string' || !id || id.length > 200,
+        )
+      ) {
+        throw new Error('A2A authorization input is invalid');
+      }
+      return enterpriseClient.authorizeAtoaOnce({
+        requestMessageId: body.requestMessageId,
+        requesterAccountId: body.requesterAccountId,
+        requestContent: body.requestContent,
+        allowedSources: body.allowedSources as Array<
+          'current_chat' | 'enterprise_knowledge' | 'work_logs' | 'schedules'
+        >,
+        authorizedMessageIds: body.authorizedMessageIds as string[],
+      });
+    },
+  );
   ipcMain.handle(
     IPC.enterpriseParkServicePush,
     async (_event, input: unknown) => {

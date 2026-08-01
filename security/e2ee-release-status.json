@@ -1,29 +1,46 @@
 {
-  "format": 1,
+  "format": 2,
   "protocol": {
-    "id": "device-envelope-v1",
-    "implementation": "otto-legacy-envelope",
+    "id": "otto-mls-v2-prototype",
+    "implementation": "openmls-0.8.1-prototype",
     "externalAuditCompleted": false,
-    "prekeyHandshake": false,
-    "doubleRatchet": false,
+    "openMlsProductionIntegrated": false,
+    "threatModelReviewed": false,
+    "protocolReviewed": false,
     "multiDeviceSessions": false,
-    "safetyStateReset": false,
     "forwardSecrecy": false,
     "postCompromiseSecurity": false
   },
   "deviceTrust": {
+    "deviceCertificatesV2": true,
+    "signedApproval": true,
+    "recoveryV2": true,
     "safetyNumbers": true,
     "qrVerification": true,
-    "outOfBandDeviceApproval": true,
-    "keyTransparency": true,
-    "keyTransparencyMode": "client-pinned-server-hash-chain-not-externally-witnessed",
-    "localCheckpointPinning": true,
+    "merkleTransparency": true,
     "externalWitness": false
+  },
+  "integrations": {
+    "directMessages": false,
+    "attachments": false,
+    "localSearch": true,
+    "atoaOneTimeGrant": true
+  },
+  "adversarialTests": {
+    "maliciousServer": false,
+    "databaseTampering": true,
+    "deviceLoss": true,
+    "crossServer": false
+  },
+  "releaseGate": {
+    "requiresSignedEnablement": false,
+    "defaultDisabled": true
   },
   "auditReports": [],
   "releaseApproved": false,
   "prohibitedClaims": [
     "Signal-grade security",
+    "audited MLS protection",
     "complete forward secrecy",
     "post-compromise security",
     "protection from a malicious device-directory server"

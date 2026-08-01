@@ -15,7 +15,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { canonicalJson } from '../modules/commercial_control/signedEnvelope.js';
 import {
-  e2eeDeviceApprovalSignaturePayload,
+  E2EE_TRUST_FORMAT,
+  e2eeDeviceCertificateApprovalPayload,
+  e2eeDeviceCertificateRequestPayload,
+  type E2eeDeviceCertificateApprovalV2,
+  type E2eeDeviceCertificateRequestV2,
+} from 'otto-core';
+import {
   e2eeMessageSignaturePayload,
   type E2eeAttachmentCiphertextInput,
   type E2eeContentType,
@@ -31,6 +37,8 @@ interface RouteE2eeDevice {
   exchangePublicKey: string;
   keyFingerprint: string;
   approvalState: 'pending' | 'approved';
+  certificateRequest: E2eeDeviceCertificateRequestV2;
+  certificateHash: string | null;
 }
 
 function routePublicKey(
@@ -55,6 +63,39 @@ async function registerRouteE2eeDevice(input: {
     exchangePublicKey: routePublicKey(exchange.publicKey),
     keyFingerprint: '',
     approvalState: 'pending',
+    certificateRequest: null as unknown as E2eeDeviceCertificateRequestV2,
+    certificateHash: null,
+  };
+  const health = (await (
+    await fetch(`${input.base}/enterprise/health`)
+  ).json()) as { deployment: { deploymentId: string } };
+  const unsignedCertificateRequest: E2eeDeviceCertificateRequestV2 = {
+    format: E2EE_TRUST_FORMAT,
+    deploymentId: health.deployment.deploymentId,
+    organizationId: '',
+    accountId: input.accountId,
+    deviceId: device.deviceId,
+    certificateSerial: `certificate-${device.deviceId}`,
+    deviceName: 'route test device',
+    credentialSigningPublicKey: device.signingPublicKey,
+    deviceExchangePublicKey: device.exchangePublicKey,
+    predecessorCertificateHash: null,
+    proofOfPossession: '',
+  };
+  const sessionAccount = (await (
+    await fetch(`${input.base}/enterprise/auth/me`, {
+      headers: { authorization: `Bearer ${input.token}` },
+    })
+  ).json()) as { account: { organizationId: string } };
+  unsignedCertificateRequest.organizationId =
+    sessionAccount.account.organizationId;
+  device.certificateRequest = {
+    ...unsignedCertificateRequest,
+    proofOfPossession: sign(
+      null,
+      e2eeDeviceCertificateRequestPayload(unsignedCertificateRequest),
+      signing.privateKey,
+    ).toString('base64'),
   };
   const response = await fetch(`${input.base}/enterprise/e2ee/devices`, {
     method: 'POST',
@@ -67,11 +108,17 @@ async function registerRouteE2eeDevice(input: {
       deviceName: 'route test device',
       identitySigningPublicKey: device.signingPublicKey,
       deviceExchangePublicKey: device.exchangePublicKey,
+      certificateRequest: device.certificateRequest,
     }),
   });
   expect(response.status).toBe(200);
   const registered = (await response.json()) as {
-    device: { keyFingerprint: string; approvalState: 'pending' | 'approved' };
+    device: {
+      keyFingerprint: string;
+      approvalState: 'pending' | 'approved';
+      certificateRequest: E2eeDeviceCertificateRequestV2;
+      certificateHash: string | null;
+    };
   };
   return { ...device, ...registered.device };
 }
@@ -2157,12 +2204,24 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     expect(first.approvalState).toBe('approved');
     expect(second.approvalState).toBe('pending');
 
-    const approval = {
-      organizationId: alice.organizationId,
-      accountId: alice.id,
+    if (!first.certificateHash) throw new Error('bootstrap certificate missing');
+    const { proofOfPossession: _proof, ...request } = second.certificateRequest;
+    const unsignedApproval: E2eeDeviceCertificateApprovalV2 = {
+      format: E2EE_TRUST_FORMAT,
+      request,
       approverDeviceId: first.deviceId,
-      targetDeviceId: second.deviceId,
-      targetKeyFingerprint: second.keyFingerprint,
+      approverCertificateHash: first.certificateHash,
+      approvedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+      approvalSignature: '',
+    };
+    const approval: E2eeDeviceCertificateApprovalV2 = {
+      ...unsignedApproval,
+      approvalSignature: sign(
+        null,
+        e2eeDeviceCertificateApprovalPayload(unsignedApproval),
+        first.signingPrivateKey,
+      ).toString('base64'),
     };
     const approved = await fetch(
       `${base}/enterprise/e2ee/devices/${second.deviceId}/approve`,
@@ -2172,14 +2231,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
           authorization: `Bearer ${token}`,
           'content-type': 'application/json',
         },
-        body: JSON.stringify({
-          ...approval,
-          signature: sign(
-            null,
-            e2eeDeviceApprovalSignaturePayload(approval),
-            first.signingPrivateKey,
-          ).toString('base64'),
-        }),
+        body: JSON.stringify({ approval }),
       },
     );
     expect(approved.status).toBe(200);

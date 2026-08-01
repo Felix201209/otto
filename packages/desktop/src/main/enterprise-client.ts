@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 
 import {
   enterpriseE2eeDeviceVerification,
+  type EnterpriseAtoaAuthorizationReceipt,
   type EnterpriseE2eeDeviceVerification,
   type EnterpriseE2eeCrypto,
   type EnterpriseE2eeDeviceBundle,
@@ -898,6 +899,7 @@ interface EnterpriseServerHealth {
   status?: unknown;
   apiVersion?: unknown;
   capabilities?: unknown;
+  deployment?: { deploymentId?: unknown };
 }
 
 interface EnterpriseRequestBehavior {
@@ -996,6 +998,7 @@ export class EnterpriseClient {
   private currentAccount: EnterpriseAccount | null = null;
   private compatibleServerUrl = '';
   private compatibleCapabilities = new Set<string>();
+  private compatibleDeploymentId = '';
   private authOperationGeneration = 0;
   private pendingRegistrationMode: 'personal' | 'enterprise' | null = null;
 
@@ -2077,7 +2080,21 @@ export class EnterpriseClient {
 
   private async registerLocalE2eeDevice(): Promise<EnterpriseE2eeDeviceBundle> {
     const { crypto, account, serverScope } = this.requireE2eeContext();
+    await this.assertCompatibleServer(serverScope, [
+      'e2ee_private_messages_v1',
+      'e2ee_device_certificates_v2',
+      'e2ee_merkle_transparency_v2',
+    ]);
+    if (!this.compatibleDeploymentId) {
+      throw new Error('enterprise server did not provide a deployment identity');
+    }
     const local = crypto.localDevice(serverScope, account.id);
+    const certificateRequest = crypto.createDeviceCertificateRequest({
+      serverScope,
+      deploymentId: this.compatibleDeploymentId,
+      organizationId: account.organizationId,
+      accountId: account.id,
+    });
     const response = await this.request<{ device: EnterpriseE2eeDeviceBundle }>(
       '/enterprise/e2ee/devices',
       {
@@ -2087,6 +2104,7 @@ export class EnterpriseClient {
           deviceName: local.deviceName,
           identitySigningPublicKey: local.identitySigningPublicKey,
           deviceExchangePublicKey: local.deviceExchangePublicKey,
+          certificateRequest,
         }),
       },
     );
@@ -2153,6 +2171,8 @@ export class EnterpriseClient {
       throw new Error('enterprise session has expired; please sign in again');
     await this.assertCompatibleServer(this.serverUrl, [
       'e2ee_private_messages_v1',
+      'e2ee_device_certificates_v2',
+      'e2ee_merkle_transparency_v2',
     ]);
     const device = await this.registerLocalE2eeDevice();
     await this.getAndPinE2eeKeyTransparency(device.accountId);
@@ -2215,6 +2235,8 @@ export class EnterpriseClient {
     await this.assertCompatibleServer(this.serverUrl, [
       'e2ee_private_messages_v1',
       'e2ee_device_trust_v1',
+      'e2ee_device_certificates_v2',
+      'e2ee_merkle_transparency_v2',
     ]);
     const { account } = this.requireE2eeContext();
     const devices = await this.verifiedE2eeDeviceDirectory([account.id], {
@@ -2237,6 +2259,7 @@ export class EnterpriseClient {
     await this.assertCompatibleServer(this.serverUrl, [
       'e2ee_private_messages_v1',
       'e2ee_device_trust_v1',
+      'e2ee_merkle_transparency_v2',
     ]);
     const { account } = this.requireE2eeContext();
     await this.registerLocalE2eeDevice();
@@ -2251,15 +2274,22 @@ export class EnterpriseClient {
     await this.assertCompatibleServer(this.serverUrl, [
       'e2ee_private_messages_v1',
       'e2ee_device_trust_v1',
+      'e2ee_merkle_transparency_v2',
     ]);
     const { crypto, account, serverScope } = this.requireE2eeContext();
     const devices = await this.listOwnE2eeDevices(true);
     const targetDevice = devices.find((device) => device.deviceId === deviceId);
     if (!targetDevice) throw new Error('E2EE device not found');
+    const localDeviceId = crypto.localDevice(serverScope, account.id).deviceId;
+    const approverDevice = devices.find(
+      (device) => device.deviceId === localDeviceId,
+    );
+    if (!approverDevice) throw new Error('current E2EE device is not registered');
     const approval = crypto.signDeviceApproval({
       serverScope,
       organizationId: account.organizationId,
       accountId: account.id,
+      approverDevice,
       targetDevice,
     });
     const approved = (
@@ -2267,7 +2297,7 @@ export class EnterpriseClient {
         `/enterprise/e2ee/devices/${encodeURIComponent(deviceId)}/approve`,
         {
           method: 'POST',
-          body: JSON.stringify(approval),
+          body: JSON.stringify({ approval }),
         },
       )
     ).device;
@@ -2295,6 +2325,7 @@ export class EnterpriseClient {
       throw new Error('enterprise session has expired; please sign in again');
     await this.assertCompatibleServer(this.serverUrl, [
       'e2ee_private_messages_v1',
+      'e2ee_merkle_transparency_v2',
     ]);
     const { crypto, account, serverScope } = this.requireE2eeContext();
     const local = crypto.localDevice(serverScope, account.id);
@@ -2316,6 +2347,7 @@ export class EnterpriseClient {
     await this.assertCompatibleServer(this.serverUrl, [
       'direct_messages',
       'e2ee_private_messages_v1',
+      'e2ee_merkle_transparency_v2',
     ]);
     const { account } = this.requireE2eeContext();
     const trustedDevices = await this.verifiedE2eeDeviceDirectory(
@@ -2361,6 +2393,7 @@ export class EnterpriseClient {
     await this.assertCompatibleServer(this.serverUrl, [
       'direct_messages',
       'e2ee_private_messages_v1',
+      'e2ee_merkle_transparency_v2',
     ]);
     const usesSharedAttachmentObjects =
       attachments.length > 0 &&
@@ -2454,6 +2487,7 @@ export class EnterpriseClient {
     await this.assertCompatibleServer(this.serverUrl, [
       'direct_message_attachments_v1',
       'e2ee_private_messages_v1',
+      'e2ee_merkle_transparency_v2',
     ]);
     const download = await this.request<{
       attachment: {
@@ -2539,6 +2573,7 @@ export class EnterpriseClient {
     await this.assertCompatibleServer(this.serverUrl, [
       'atoa',
       'e2ee_private_messages_v1',
+      'e2ee_merkle_transparency_v2',
     ]);
     const requests = (
       await this.request<{
@@ -2560,6 +2595,40 @@ export class EnterpriseClient {
       peerAccountId: request.peerAccountId,
       peer: request.peer,
     }));
+  }
+
+  async authorizeAtoaOnce(input: {
+    requestMessageId: string;
+    requesterAccountId: string;
+    requestContent: string;
+    allowedSources: Array<
+      'current_chat' | 'enterprise_knowledge' | 'work_logs' | 'schedules'
+    >;
+    authorizedMessageIds: string[];
+  }): Promise<EnterpriseAtoaAuthorizationReceipt> {
+    if (!this.token)
+      throw new Error('enterprise session has expired; please sign in again');
+    await this.assertCompatibleServer(this.serverUrl, [
+      'e2ee_private_messages_v1',
+      'e2ee_atoa_one_time_grants_v1',
+    ]);
+    if (!this.compatibleDeploymentId) {
+      throw new Error('enterprise server did not provide a deployment identity');
+    }
+    const { crypto, account, serverScope } = this.requireE2eeContext();
+    await this.ensureE2eeDeviceReady();
+    return crypto.authorizeAtoaOnce({
+      serverScope,
+      issuerDeploymentId: this.compatibleDeploymentId,
+      audienceDeploymentId: this.compatibleDeploymentId,
+      organizationId: account.organizationId,
+      issuerAccountId: account.id,
+      requesterAccountId: input.requesterAccountId,
+      requestMessageId: input.requestMessageId,
+      requestContent: input.requestContent,
+      allowedSources: input.allowedSources,
+      authorizedMessageIds: input.authorizedMessageIds,
+    });
   }
 
   async pushParkService(input: {
@@ -2746,6 +2815,7 @@ export class EnterpriseClient {
     if (serverUrl !== this.serverUrl) {
       this.compatibleServerUrl = '';
       this.compatibleCapabilities.clear();
+      this.compatibleDeploymentId = '';
     }
     this.serverUrl = serverUrl;
   }
@@ -2828,6 +2898,10 @@ export class EnterpriseClient {
     if (serverUrl === this.serverUrl) {
       this.compatibleServerUrl = serverUrl;
       this.compatibleCapabilities = capabilities;
+      this.compatibleDeploymentId =
+        typeof health.deployment?.deploymentId === 'string'
+          ? health.deployment.deploymentId
+          : '';
     }
   }
 

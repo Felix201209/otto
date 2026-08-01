@@ -4,6 +4,13 @@
 
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
+import {
+  E2EE_TRUST_FORMAT,
+  e2eeDeviceCertificateApprovalPayload,
+  e2eeDeviceCertificateRequestPayload,
+  type E2eeDeviceCertificateApprovalV2,
+  type E2eeDeviceCertificateRequestV2,
+} from 'otto-core';
 
 import {
   applyDatabaseSchemaContributors,
@@ -11,7 +18,6 @@ import {
 } from '../data_platform/index.js';
 import { COLLABORATION_SCHEMA_CONTRIBUTOR } from './collaborationSchema.js';
 import {
-  e2eeDeviceApprovalSignaturePayload,
   E2EE_PROTOCOL_VERSION,
   createE2eeFacade,
   e2eeMessageSignaturePayload,
@@ -23,6 +29,37 @@ function publicPem(
   key: ReturnType<typeof generateKeyPairSync>['publicKey'],
 ): string {
   return key.export({ type: 'spki', format: 'pem' }).toString();
+}
+
+function signedCertificateRequest(input: {
+  accountId: string;
+  deviceId: string;
+  deviceName: string;
+  deploymentId?: string;
+  signing: ReturnType<typeof generateKeyPairSync>;
+  exchange: ReturnType<typeof generateKeyPairSync>;
+}): E2eeDeviceCertificateRequestV2 {
+  const unsigned: E2eeDeviceCertificateRequestV2 = {
+    format: E2EE_TRUST_FORMAT,
+    deploymentId: input.deploymentId ?? 'deployment-test',
+    organizationId: 'org-a',
+    accountId: input.accountId,
+    deviceId: input.deviceId,
+    certificateSerial: `certificate-${input.deviceId}`,
+    deviceName: input.deviceName,
+    credentialSigningPublicKey: publicPem(input.signing.publicKey),
+    deviceExchangePublicKey: publicPem(input.exchange.publicKey),
+    predecessorCertificateHash: null,
+    proofOfPossession: '',
+  };
+  return {
+    ...unsigned,
+    proofOfPossession: sign(
+      null,
+      e2eeDeviceCertificateRequestPayload(unsigned),
+      input.signing.privateKey,
+    ).toString('base64'),
+  };
 }
 
 function createDatabase(): Database {
@@ -52,6 +89,7 @@ function createHarness() {
   const database = createDatabase();
   const facade = createE2eeFacade({
     db: () => database,
+    getDeploymentId: () => 'deployment-test',
     getActiveAccountInOrganization(accountId, organizationId) {
       return (
         (database
@@ -69,13 +107,22 @@ function createHarness() {
     const signing = generateKeyPairSync('ed25519');
     const exchange = generateKeyPairSync('x25519');
     devices.set(`${accountId}:${deviceId}:signing`, signing);
+    const deviceName = `${accountId} laptop`;
+    const certificateRequest = signedCertificateRequest({
+      accountId,
+      deviceId,
+      deviceName,
+      signing,
+      exchange,
+    });
     const view = facade.registerE2eeDevice({
       organizationId: 'org-a',
       accountId,
       deviceId,
-      deviceName: `${accountId} laptop`,
+      deviceName,
       identitySigningPublicKey: publicPem(signing.publicKey),
       deviceExchangePublicKey: publicPem(exchange.publicKey),
+      certificateRequest,
     });
     return { signing, exchange, view };
   };
@@ -93,6 +140,7 @@ function createHarness() {
     accountId: string,
     approverDeviceId: string,
     targetDeviceId: string,
+    signerDeviceId = approverDeviceId,
   ) => {
     const target = facade
       .listE2eeDevices({
@@ -102,22 +150,40 @@ function createHarness() {
         includePending: true,
       })
       .find((device) => device.deviceId === targetDeviceId);
-    const signing = devices.get(`${accountId}:${approverDeviceId}:signing`);
+    const signing = devices.get(`${accountId}:${signerDeviceId}:signing`);
     if (!target || !signing) throw new Error('test approval device is missing');
-    const input = {
-      organizationId: 'org-a',
-      accountId,
+    const approver = facade
+      .listE2eeDevices({
+        organizationId: 'org-a',
+        requesterAccountId: accountId,
+        accountIds: [accountId],
+        includePending: true,
+      })
+      .find((device) => device.deviceId === approverDeviceId);
+    if (!approver?.certificateHash || !target.certificateRequest) {
+      throw new Error('test certificate device is missing');
+    }
+    const { proofOfPossession: _proof, ...request } = target.certificateRequest;
+    const unsigned: E2eeDeviceCertificateApprovalV2 = {
+      format: E2EE_TRUST_FORMAT,
+      request,
       approverDeviceId,
-      targetDeviceId,
-      targetKeyFingerprint: target.keyFingerprint,
+      approverCertificateHash: approver.certificateHash,
+      approvedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+      approvalSignature: '',
     };
     return facade.approveE2eeDevice({
-      ...input,
-      signature: sign(
+      organizationId: 'org-a',
+      accountId,
+      approval: {
+        ...unsigned,
+        approvalSignature: sign(
         null,
-        e2eeDeviceApprovalSignaturePayload(input),
+        e2eeDeviceCertificateApprovalPayload(unsigned),
         signing.privateKey,
       ).toString('base64'),
+      },
     });
   };
   const signedMessage = (
@@ -163,6 +229,71 @@ function createHarness() {
 }
 
 describe('server-side E2EE repository', () => {
+  it('rejects a valid device certificate copied from another deployment', () => {
+    const harness = createHarness();
+    try {
+      const signing = generateKeyPairSync('ed25519');
+      const exchange = generateKeyPairSync('x25519');
+      const certificateRequest = signedCertificateRequest({
+        accountId: 'alice',
+        deviceId: 'foreign-device',
+        deviceName: 'foreign laptop',
+        deploymentId: 'deployment-foreign',
+        signing,
+        exchange,
+      });
+      expect(() =>
+        harness.facade.registerE2eeDevice({
+          organizationId: 'org-a',
+          accountId: 'alice',
+          deviceId: 'foreign-device',
+          deviceName: 'foreign laptop',
+          identitySigningPublicKey: publicPem(signing.publicKey),
+          deviceExchangePublicKey: publicPem(exchange.publicKey),
+          certificateRequest,
+        }),
+      ).toThrow('does not match registration');
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('fails closed when certificate rows or transparency records are modified in the database', () => {
+    const harness = createHarness();
+    try {
+      harness.register('alice', 'alice-device-1');
+      harness.database
+        .prepare(
+          `UPDATE e2ee_devices SET certificate_request_hash = ?
+           WHERE organization_id = 'org-a' AND account_id = 'alice'`,
+        )
+        .run('f'.repeat(64));
+      expect(() =>
+        harness.facade.listE2eeDevices({
+          organizationId: 'org-a',
+          requesterAccountId: 'alice',
+          accountIds: ['alice'],
+        }),
+      ).toThrow('tampered');
+
+      harness.database
+        .prepare(
+          `UPDATE e2ee_key_transparency_log SET certificate_hash = ?
+           WHERE organization_id = 'org-a' AND account_id = 'alice'`,
+        )
+        .run('e'.repeat(64));
+      expect(() =>
+        harness.facade.listE2eeKeyTransparency({
+          organizationId: 'org-a',
+          requesterAccountId: 'alice',
+          accountId: 'alice',
+        }),
+      ).toThrow('integrity');
+    } finally {
+      harness.database.close();
+    }
+  });
+
   it('requires an approved existing device for new-device activation and records a verifiable hash chain', () => {
     const harness = createHarness();
     try {
@@ -186,33 +317,21 @@ describe('server-side E2EE repository', () => {
         }),
       ).toHaveLength(2);
 
-      const approval = {
-        organizationId: 'org-a',
-        accountId: 'alice',
-        approverDeviceId: first.view.deviceId,
-        targetDeviceId: second.view.deviceId,
-        targetKeyFingerprint: second.view.keyFingerprint,
-      };
       expect(() =>
-        harness.facade.approveE2eeDevice({
-          ...approval,
-          signature: sign(
-            null,
-            e2eeDeviceApprovalSignaturePayload(approval),
-            second.signing.privateKey,
-          ).toString('base64'),
-        }),
+        harness.approve(
+          'alice',
+          first.view.deviceId,
+          second.view.deviceId,
+          second.view.deviceId,
+        ),
       ).toThrow(/signature is invalid/i);
 
       expect(
-        harness.facade.approveE2eeDevice({
-          ...approval,
-          signature: sign(
-            null,
-            e2eeDeviceApprovalSignaturePayload(approval),
-            first.signing.privateKey,
-          ).toString('base64'),
-        }),
+        harness.approve(
+          'alice',
+          first.view.deviceId,
+          second.view.deviceId,
+        ),
       ).toMatchObject({
         deviceId: 'alice-device-2',
         approvalState: 'approved',
@@ -234,6 +353,9 @@ describe('server-side E2EE repository', () => {
         transparency.entries[0]?.entryHash,
       );
       expect(transparency.headHash).toBe(transparency.entries[2]?.entryHash);
+      expect(transparency.treeSize).toBe(3);
+      expect(transparency.merkleRoot).toMatch(/^[0-9a-f]{64}$/u);
+      expect(transparency.inclusionProofs).toHaveLength(3);
     } finally {
       harness.database.close();
     }
@@ -254,6 +376,13 @@ describe('server-side E2EE repository', () => {
       ]);
 
       const replacement = generateKeyPairSync('ed25519');
+      const replacementRequest = signedCertificateRequest({
+        accountId: 'alice',
+        deviceId: 'alice-device-1',
+        deviceName: 'stolen id',
+        signing: replacement,
+        exchange: first.exchange,
+      });
       expect(() =>
         harness.facade.registerE2eeDevice({
           organizationId: 'org-a',
@@ -262,6 +391,7 @@ describe('server-side E2EE repository', () => {
           deviceName: 'stolen id',
           identitySigningPublicKey: publicPem(replacement.publicKey),
           deviceExchangePublicKey: publicPem(first.exchange.publicKey),
+          certificateRequest: replacementRequest,
         }),
       ).toThrow('cannot be rebound');
 

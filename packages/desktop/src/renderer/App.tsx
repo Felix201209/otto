@@ -375,6 +375,7 @@ function OttoWorkspaceApp({
         await processEnterpriseAtoaRequest({
           request,
           requestPermission: requestAtoaPermission,
+          authorizeOnce: window.otto.enterpriseAtoaAuthorizeOnce,
           collectContext: (sources, authorizedMessageIds) =>
             collectAuthorizedAtoaContext({
               sources,

@@ -3,6 +3,10 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import type {
+  E2eeDeviceCertificateApprovalV2,
+  E2eeDeviceCertificateRequestV2,
+} from 'otto-core';
 
 import * as db from './db.js';
 
@@ -182,6 +186,8 @@ export async function handleCommunicationRoute({
           typeof body.deviceExchangePublicKey === 'string'
             ? body.deviceExchangePublicKey
             : '',
+        certificateRequest:
+          body.certificateRequest as E2eeDeviceCertificateRequestV2,
       });
       if (!alreadyRegistered) {
         db.logAudit(
@@ -261,19 +267,14 @@ export async function handleCommunicationRoute({
     }
     const body = await readBody(req, 16 * 1024);
     try {
+      const approval = body.approval as E2eeDeviceCertificateApprovalV2;
+      if (approval?.request?.deviceId !== targetDeviceId) {
+        throw new Error('approved E2EE device does not match request path');
+      }
       const device = db.approveE2eeDevice({
         organizationId: memberAccount.organizationId,
         accountId: memberAccount.id,
-        approverDeviceId:
-          typeof body.approverDeviceId === 'string'
-            ? body.approverDeviceId
-            : '',
-        targetDeviceId,
-        targetKeyFingerprint:
-          typeof body.targetKeyFingerprint === 'string'
-            ? body.targetKeyFingerprint
-            : '',
-        signature: typeof body.signature === 'string' ? body.signature : '',
+        approval,
       });
       db.logAudit(
         'e2ee_device_approved',

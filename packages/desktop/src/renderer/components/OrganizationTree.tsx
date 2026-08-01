@@ -717,6 +717,7 @@ function DirectMessagePanel({
 }): React.JSX.Element {
   const [messages, setMessages] = useState<EnterpriseDirectMessage[]>([]);
   const [draft, setDraft] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [attachments, setAttachments] = useState<EnterpriseDirectMessageAttachmentUpload[]>([]);
   const [attachmentError, setAttachmentError] = useState('');
   const [attaching, setAttaching] = useState(false);
@@ -743,6 +744,7 @@ function DirectMessagePanel({
 
   useEffect(() => {
     setDraft('');
+    setSearchQuery('');
     setAttachments([]);
     setAttachmentError('');
     setError('');
@@ -993,6 +995,19 @@ function DirectMessagePanel({
     minimized ? 'is-minimized' : '',
     maximized ? 'is-maximized' : '',
   ].filter(Boolean).join(' ');
+  const visibleMessages = useMemo(() => {
+    const query = searchQuery.trim().toLocaleLowerCase('zh-CN');
+    if (!query) return messages;
+    return messages.filter((message) => {
+      const content = displayDirectMessageContent(message.content);
+      const attachmentNames = (message.attachments || [])
+        .map((attachment) => attachment.fileName)
+        .join('\n');
+      return `${content}\n${attachmentNames}`
+        .toLocaleLowerCase('zh-CN')
+        .includes(query);
+    });
+  }, [messages, searchQuery]);
 
   const beginDrag = (event: React.PointerEvent<HTMLElement>): void => {
     if (
@@ -1145,15 +1160,30 @@ function DirectMessagePanel({
             ) : null}
           </div>
         ) : null}
+        <label className="otto-direct-chat__search">
+          <span className="sr-only">搜索当前聊天</span>
+          <input
+            type="search"
+            value={searchQuery}
+            maxLength={120}
+            placeholder="搜索当前聊天"
+            onChange={(event) => setSearchQuery(event.target.value)}
+          />
+          {searchQuery ? <small>{visibleMessages.length} 条</small> : null}
+        </label>
       </div>
 
       <div className="otto-direct-chat__messages">
-        {messages.length === 0 ? (
+        {visibleMessages.length === 0 ? (
           <div className="otto-direct-chat__empty">
-            <strong>还没有消息，开始聊聊吧。</strong>
-            <span>可直接发送文字、图片、Word、PDF；需要整理上下文时可使用 Otto 协作。</span>
+            <strong>{searchQuery ? '没有找到匹配消息' : '还没有消息，开始聊聊吧。'}</strong>
+            <span>
+              {searchQuery
+                ? '搜索仅在本机已解密的当前聊天中进行，不会上传关键词。'
+                : '可直接发送文字、图片、Word、PDF；需要整理上下文时可使用 Otto 协作。'}
+            </span>
           </div>
-        ) : messages.map((message) => {
+        ) : visibleMessages.map((message) => {
           const mine = message.senderAccountId !== member.id;
           const messageAttachments = message.attachments || [];
           const content = displayDirectMessageContent(message.content);

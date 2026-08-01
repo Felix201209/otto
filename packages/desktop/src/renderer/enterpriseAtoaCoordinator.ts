@@ -41,6 +41,17 @@ export interface ProcessEnterpriseAtoaRequestInput {
     peer: AtoaPeerIdentity;
     payload: AtoaRequestPayload;
   }): Promise<AtoaPermissionDecision>;
+  authorizeOnce(input: {
+    requestMessageId: string;
+    requesterAccountId: string;
+    requestContent: string;
+    allowedSources: AtoaContextSource[];
+    authorizedMessageIds: string[];
+  }): Promise<{
+    grantDigest: string;
+    allowedSources: AtoaContextSource[];
+    authorizedMessageIds: string[];
+  }>;
   collectContext(
     sources: AtoaContextSource[],
     authorizedMessageIds: string[],
@@ -87,9 +98,18 @@ export async function processEnterpriseAtoaRequest(
     return 'denied';
   }
 
+  const authorization = await input.authorizeOnce({
+    requestMessageId: input.request.id,
+    requesterAccountId: input.request.peerAccountId,
+    requestContent: input.request.content,
+    allowedSources: decision.sources,
+    authorizedMessageIds: decision.messageIds ?? [],
+  });
+  if (input.signal?.aborted) return 'aborted';
+
   const context = await input.collectContext(
-    decision.sources,
-    decision.messageIds ?? [],
+    authorization.allowedSources,
+    authorization.authorizedMessageIds,
   );
   if (input.signal?.aborted) return 'aborted';
 
@@ -119,6 +139,7 @@ export async function processEnterpriseAtoaRequest(
       answer,
       mode: parsed.payload.mode,
       grantedSources: context.loadedSources,
+      authorizationGrantDigest: authorization.grantDigest,
     }),
   );
   return status;

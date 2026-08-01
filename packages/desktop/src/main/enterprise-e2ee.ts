@@ -23,6 +23,27 @@ import {
 } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import {
+  canonicalE2eeBytes,
+  E2EE_TRUST_FORMAT,
+  E2EE_ATOA_GRANT_FORMAT,
+  e2eeAtoaGrantDigest,
+  e2eeAtoaGrantPayload,
+  e2eeAtoaRequestDigest,
+  e2eeDeviceCertificateApprovalPayload,
+  e2eeDeviceCertificateRequestHash,
+  e2eeDeviceCertificateRequestPayload,
+  e2eeMerkleRoot,
+  verifyE2eeAtoaOneTimeGrant,
+  verifyE2eeDeviceCertificateRequest,
+  verifyE2eeMerkleAppendOnlySnapshot,
+  verifyE2eeMerkleInclusion,
+  type AtoaContextSource,
+  type E2eeAtoaOneTimeGrant,
+  type E2eeDeviceCertificateApprovalV2,
+  type E2eeDeviceCertificateRequestV2,
+  type E2eeMerkleInclusionProof,
+} from 'otto-server';
 
 export const ENTERPRISE_E2EE_PROTOCOL_VERSION = 1 as const;
 
@@ -33,6 +54,11 @@ export interface EnterpriseE2eeDeviceBundle {
   identitySigningPublicKey: string;
   deviceExchangePublicKey: string;
   keyFingerprint: string;
+  certificateFormat?: 2;
+  certificateSerial?: string;
+  certificateRequest?: E2eeDeviceCertificateRequestV2;
+  certificateHash?: string | null;
+  certificateExpiresAt?: string | null;
   approvalState: 'pending' | 'approved';
   approvedByDeviceId: string | null;
   approvedAt: string | null;
@@ -48,11 +74,14 @@ export interface EnterpriseE2eeDeviceVerification {
   deviceFingerprints: [string, string];
 }
 
-export interface EnterpriseE2eeDeviceApproval {
-  approverDeviceId: string;
-  targetDeviceId: string;
-  targetKeyFingerprint: string;
-  signature: string;
+export type EnterpriseE2eeDeviceApproval = E2eeDeviceCertificateApprovalV2;
+
+export interface EnterpriseAtoaAuthorizationReceipt {
+  grantId: string;
+  grantDigest: string;
+  expiresAt: string;
+  allowedSources: AtoaContextSource[];
+  authorizedMessageIds: string[];
 }
 
 export type EnterpriseE2eeKeyTransparencyEvent =
@@ -67,6 +96,7 @@ export interface EnterpriseE2eeKeyTransparencyEntry {
   deviceId: string;
   event: EnterpriseE2eeKeyTransparencyEvent;
   keyFingerprint: string;
+  certificateHash: string;
   actorDeviceId: string | null;
   previousHash: string;
   entryHash: string;
@@ -77,6 +107,9 @@ export interface EnterpriseE2eeKeyTransparencyView {
   accountId: string;
   headSequence: number;
   headHash: string;
+  treeSize: number;
+  merkleRoot: string;
+  inclusionProofs: E2eeMerkleInclusionProof[];
   entries: EnterpriseE2eeKeyTransparencyEntry[];
 }
 
@@ -164,6 +197,7 @@ interface PlaintextPayload {
 
 interface DeviceKeySet {
   deviceId: string;
+  certificateSerial: string;
   deviceName: string;
   identitySigningPublicKey: string;
   identitySigningPrivateKey: string;
@@ -180,7 +214,7 @@ interface DeviceKeyring {
   historical: DeviceKeySet[];
 }
 
-interface RecoveryPackage {
+interface RecoveryPackageV1 {
   v: 1;
   kdf: 'scrypt';
   cipher: 'aes-256-gcm';
@@ -190,14 +224,36 @@ interface RecoveryPackage {
   createdAt: string;
 }
 
+interface RecoveryPackageV2 {
+  v: 2;
+  kdf: 'scrypt';
+  cipher: 'aes-256-gcm';
+  scopeHash: string;
+  accountHash: string;
+  keyringHash: string;
+  salt: string;
+  nonce: string;
+  ciphertext: string;
+  createdAt: string;
+}
+
+type RecoveryPackage = RecoveryPackageV1 | RecoveryPackageV2;
+
 interface TransparencyCheckpoint {
-  v: 1;
+  v: 1 | 2;
   serverScope: string;
   organizationId: string;
   accountId: string;
   headSequence: number;
   headHash: string;
+  treeSize?: number;
+  merkleRoot?: string;
   updatedAt: string;
+}
+
+interface AtoaGrantLedgerFile {
+  v: 1;
+  entries: Array<{ replayKey: string; expiresAt: string }>;
 }
 
 export interface EnterpriseE2eeVaultOptions {
@@ -284,6 +340,7 @@ function newDeviceKeySet(deviceName: string, now: Date): DeviceKeySet {
   const exchange = generateKeyPairSync('x25519');
   return {
     deviceId: randomUUID(),
+    certificateSerial: randomUUID(),
     deviceName: deviceName.trim().slice(0, 120) || 'Otto device',
     identitySigningPublicKey: publicPem(identity.publicKey),
     identitySigningPrivateKey: privatePem(identity.privateKey),
@@ -311,7 +368,13 @@ function validateKeySet(value: unknown): DeviceKeySet {
       throw new Error('E2EE device key set is invalid');
     }
   }
-  const result = raw as unknown as DeviceKeySet;
+  const result = {
+    ...raw,
+    certificateSerial:
+      typeof raw.certificateSerial === 'string' && raw.certificateSerial
+        ? raw.certificateSerial
+        : `cert-${String(raw.deviceId)}`,
+  } as unknown as DeviceKeySet;
   const signingPrivate = createPrivateKey(result.identitySigningPrivateKey);
   const exchangePrivate = createPrivateKey(result.deviceExchangePrivateKey);
   if (
@@ -385,6 +448,16 @@ const TRANSPARENCY_EVENTS = new Set<EnterpriseE2eeKeyTransparencyEvent>([
   'revoked',
 ]);
 
+export function enterpriseE2eeTransparencyLeaf(
+  organizationId: string,
+  entry: EnterpriseE2eeKeyTransparencyEntry,
+): Buffer {
+  return canonicalE2eeBytes('otto:e2ee-transparency-event:v2', {
+    organizationId,
+    ...entry,
+  });
+}
+
 function validateTransparencyView(
   organizationId: string,
   view: EnterpriseE2eeKeyTransparencyView,
@@ -397,8 +470,14 @@ function validateTransparencyView(
     !Number.isSafeInteger(view.headSequence) ||
     view.headSequence < 0 ||
     !TRANSPARENCY_HASH.test(view.headHash) ||
+    !Number.isSafeInteger(view.treeSize) ||
+    view.treeSize < 0 ||
+    !TRANSPARENCY_HASH.test(view.merkleRoot) ||
+    !Array.isArray(view.inclusionProofs) ||
     !Array.isArray(view.entries) ||
-    view.entries.length !== view.headSequence
+    view.entries.length !== view.headSequence ||
+    view.entries.length !== view.treeSize ||
+    view.inclusionProofs.length !== view.treeSize
   ) {
     throw new Error('E2EE key transparency log integrity check failed');
   }
@@ -413,6 +492,7 @@ function validateTransparencyView(
       !entry.deviceId ||
       !TRANSPARENCY_EVENTS.has(entry.event) ||
       !TRANSPARENCY_HASH.test(entry.keyFingerprint) ||
+      !TRANSPARENCY_HASH.test(entry.certificateHash) ||
       (entry.actorDeviceId !== null &&
         (typeof entry.actorDeviceId !== 'string' || !entry.actorDeviceId)) ||
       entry.previousHash !== previousHash ||
@@ -432,6 +512,7 @@ function validateTransparencyView(
           deviceId: entry.deviceId,
           event: entry.event,
           keyFingerprint: entry.keyFingerprint,
+          certificateHash: entry.certificateHash,
           actorDeviceId: entry.actorDeviceId,
           previousHash: entry.previousHash,
           createdAt: entry.createdAt,
@@ -446,6 +527,27 @@ function validateTransparencyView(
   if (view.headHash !== previousHash) {
     throw new Error('E2EE key transparency log integrity check failed');
   }
+  const leaves = view.entries.map((entry) =>
+    enterpriseE2eeTransparencyLeaf(organizationId, entry),
+  );
+  if (e2eeMerkleRoot(leaves) !== view.merkleRoot) {
+    throw new Error('E2EE Merkle transparency root is invalid');
+  }
+  for (const [leafIndex, leaf] of leaves.entries()) {
+    const proof = view.inclusionProofs[leafIndex];
+    if (
+      !proof ||
+      proof.leafIndex !== leafIndex ||
+      proof.treeSize !== view.treeSize ||
+      !verifyE2eeMerkleInclusion({
+        leaf,
+        proof,
+        expectedRoot: view.merkleRoot,
+      })
+    ) {
+      throw new Error('E2EE Merkle transparency inclusion proof is invalid');
+    }
+  }
   return view;
 }
 
@@ -456,6 +558,10 @@ export class EnterpriseE2eeKeyVault {
   constructor(private readonly options: EnterpriseE2eeVaultOptions) {
     this.now = options.now ?? (() => new Date());
     this.deviceName = options.deviceName ?? (() => 'Otto desktop');
+  }
+
+  currentTime(): Date {
+    return this.now();
   }
 
   private keyringPath(serverScope: string, accountId: string): string {
@@ -474,6 +580,60 @@ export class EnterpriseE2eeKeyVault {
       .update(`${serverScope}\0${organizationId}\0${accountId}`)
       .digest('hex');
     return path.join(this.options.directory, `${digest}.transparency`);
+  }
+
+  private atoaGrantLedgerPath(serverScope: string, accountId: string): string {
+    const digest = createHash('sha256')
+      .update(`${serverScope}\0${accountId}`)
+      .digest('hex');
+    return path.join(this.options.directory, `${digest}.atoa-grants`);
+  }
+
+  consumeAtoaGrant(input: {
+    serverScope: string;
+    accountId: string;
+    replayKey: string;
+    expiresAt: string;
+  }): void {
+    const filePath = this.atoaGrantLedgerPath(input.serverScope, input.accountId);
+    const now = this.now().getTime();
+    let ledger: AtoaGrantLedgerFile = { v: 1, entries: [] };
+    try {
+      const stat = fs.lstatSync(filePath);
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        throw new Error('E2EE A2A grant ledger path must be a regular file');
+      }
+      const parsed = JSON.parse(
+        this.options.unprotect(fs.readFileSync(filePath, 'utf8')),
+      ) as Partial<AtoaGrantLedgerFile>;
+      if (
+        parsed.v !== 1 ||
+        !Array.isArray(parsed.entries) ||
+        parsed.entries.some(
+          (entry) =>
+            !entry ||
+            typeof entry.replayKey !== 'string' ||
+            typeof entry.expiresAt !== 'string' ||
+            !Number.isFinite(Date.parse(entry.expiresAt)),
+        )
+      ) {
+        throw new Error('E2EE A2A grant ledger is invalid');
+      }
+      ledger = parsed as AtoaGrantLedgerFile;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const entries = ledger.entries.filter(
+      (entry) => Date.parse(entry.expiresAt) > now - 24 * 60 * 60 * 1000,
+    );
+    if (entries.some((entry) => entry.replayKey === input.replayKey)) {
+      throw new Error('A2A authorization was already consumed');
+    }
+    entries.push({ replayKey: input.replayKey, expiresAt: input.expiresAt });
+    atomicWrite(
+      filePath,
+      this.options.protect(JSON.stringify({ v: 1, entries } satisfies AtoaGrantLedgerFile)),
+    );
   }
 
   verifyAndPinTransparencyCheckpoint(input: {
@@ -499,7 +659,7 @@ export class EnterpriseE2eeKeyVault {
         this.options.unprotect(fs.readFileSync(checkpointPath, 'utf8')),
       ) as Partial<TransparencyCheckpoint>;
       if (
-        parsed.v !== 1 ||
+        (parsed.v !== 1 && parsed.v !== 2) ||
         parsed.serverScope !== input.serverScope ||
         parsed.organizationId !== input.organizationId ||
         parsed.accountId !== view.accountId ||
@@ -533,20 +693,41 @@ export class EnterpriseE2eeKeyVault {
       ) {
         throw new Error('E2EE key transparency fork detected');
       }
+      if (checkpoint.v === 2) {
+        if (
+          checkpoint.treeSize !== checkpoint.headSequence ||
+          typeof checkpoint.merkleRoot !== 'string'
+        ) {
+          throw new Error('E2EE Merkle transparency checkpoint is invalid');
+        }
+        verifyE2eeMerkleAppendOnlySnapshot({
+          leaves: view.entries.map((entry) =>
+            enterpriseE2eeTransparencyLeaf(input.organizationId, entry),
+          ),
+          treeSize: view.treeSize,
+          rootHash: view.merkleRoot,
+          pinnedTreeSize: checkpoint.treeSize,
+          pinnedRootHash: checkpoint.merkleRoot,
+        });
+      }
     }
 
     if (
       !checkpoint ||
       checkpoint.headSequence !== view.headSequence ||
-      checkpoint.headHash !== view.headHash
+      checkpoint.headHash !== view.headHash ||
+      checkpoint.v !== 2 ||
+      checkpoint.merkleRoot !== view.merkleRoot
     ) {
       const next: TransparencyCheckpoint = {
-        v: 1,
+        v: 2,
         serverScope: input.serverScope,
         organizationId: input.organizationId,
         accountId: view.accountId,
         headSequence: view.headSequence,
         headHash: view.headHash,
+        treeSize: view.treeSize,
+        merkleRoot: view.merkleRoot,
         updatedAt: this.now().toISOString(),
       };
       atomicWrite(
@@ -618,22 +799,28 @@ export class EnterpriseE2eeKeyVault {
       p: 1,
       maxmem: 64 * 1024 * 1024,
     });
-    const cipher = createCipheriv('aes-256-gcm', key, nonce);
-    cipher.setAAD(Buffer.from('otto-e2ee-recovery-v1', 'utf8'));
     const body = Buffer.from(JSON.stringify(keyring), 'utf8');
+    const metadata = {
+      v: 2 as const,
+      kdf: 'scrypt' as const,
+      cipher: 'aes-256-gcm' as const,
+      scopeHash: createHash('sha256').update(serverScope).digest('hex'),
+      accountHash: createHash('sha256').update(accountId).digest('hex'),
+      keyringHash: createHash('sha256').update(body).digest('hex'),
+      salt: salt.toString('base64'),
+      nonce: nonce.toString('base64'),
+      createdAt: this.now().toISOString(),
+    };
+    const cipher = createCipheriv('aes-256-gcm', key, nonce);
+    cipher.setAAD(canonicalE2eeBytes('otto:e2ee-recovery:v2', metadata));
     const ciphertext = Buffer.concat([
       cipher.update(body),
       cipher.final(),
       cipher.getAuthTag(),
     ]);
-    const recovery: RecoveryPackage = {
-      v: 1,
-      kdf: 'scrypt',
-      cipher: 'aes-256-gcm',
-      salt: salt.toString('base64'),
-      nonce: nonce.toString('base64'),
+    const recovery: RecoveryPackageV2 = {
+      ...metadata,
       ciphertext: ciphertext.toString('base64'),
-      createdAt: this.now().toISOString(),
     };
     return JSON.stringify(recovery);
   }
@@ -651,7 +838,7 @@ export class EnterpriseE2eeKeyVault {
       throw new Error('E2EE recovery bundle is invalid');
     }
     if (
-      recovery.v !== 1 ||
+      (recovery.v !== 1 && recovery.v !== 2) ||
       recovery.kdf !== 'scrypt' ||
       recovery.cipher !== 'aes-256-gcm'
     ) {
@@ -670,12 +857,44 @@ export class EnterpriseE2eeKeyVault {
         maxmem: 64 * 1024 * 1024,
       });
       const decipher = createDecipheriv('aes-256-gcm', key, nonce);
-      decipher.setAAD(Buffer.from('otto-e2ee-recovery-v1', 'utf8'));
+      if (recovery.v === 2) {
+        const metadata = {
+          v: recovery.v,
+          kdf: recovery.kdf,
+          cipher: recovery.cipher,
+          scopeHash: recovery.scopeHash,
+          accountHash: recovery.accountHash,
+          keyringHash: recovery.keyringHash,
+          salt: recovery.salt,
+          nonce: recovery.nonce,
+          createdAt: recovery.createdAt,
+        };
+        if (
+          recovery.scopeHash !==
+            createHash('sha256').update(serverScope).digest('hex') ||
+          recovery.accountHash !==
+            createHash('sha256').update(accountId).digest('hex') ||
+          !TRANSPARENCY_HASH.test(recovery.keyringHash)
+        ) {
+          throw new Error('invalid');
+        }
+        decipher.setAAD(canonicalE2eeBytes('otto:e2ee-recovery:v2', metadata));
+      } else {
+        decipher.setAAD(Buffer.from('otto-e2ee-recovery-v1', 'utf8'));
+      }
       decipher.setAuthTag(sealed.subarray(sealed.length - 16));
-      const plaintext = Buffer.concat([
+      const plaintextBuffer = Buffer.concat([
         decipher.update(sealed.subarray(0, sealed.length - 16)),
         decipher.final(),
-      ]).toString('utf8');
+      ]);
+      if (
+        recovery.v === 2 &&
+        createHash('sha256').update(plaintextBuffer).digest('hex') !==
+          recovery.keyringHash
+      ) {
+        throw new Error('invalid');
+      }
+      const plaintext = plaintextBuffer.toString('utf8');
       const recovered = validateKeyring(
         JSON.parse(plaintext),
         serverScope,
@@ -852,6 +1071,31 @@ function parsePlaintextPayload(value: Buffer): PlaintextPayload {
   return payload;
 }
 
+function deviceTransparencyCertificateHash(
+  device: EnterpriseE2eeDeviceBundle,
+): string {
+  if (device.certificateFormat !== 2 || !device.certificateRequest) {
+    throw new Error('E2EE device is missing its v2 certificate request');
+  }
+  const request = verifyE2eeDeviceCertificateRequest(device.certificateRequest);
+  if (
+    request.accountId !== device.accountId ||
+    request.deviceId !== device.deviceId ||
+    request.credentialSigningPublicKey !== device.identitySigningPublicKey ||
+    request.deviceExchangePublicKey !== device.deviceExchangePublicKey
+  ) {
+    throw new Error('E2EE device certificate does not match its public keys');
+  }
+  const requestHash = e2eeDeviceCertificateRequestHash(
+    device.certificateRequest,
+  );
+  if (device.approvalState === 'pending') return requestHash;
+  if (!device.certificateHash || !TRANSPARENCY_HASH.test(device.certificateHash)) {
+    throw new Error('approved E2EE device certificate hash is unavailable');
+  }
+  return device.certificateHash;
+}
+
 export class EnterpriseE2eeCrypto {
   constructor(private readonly vault: EnterpriseE2eeKeyVault) {}
 
@@ -876,6 +1120,7 @@ export class EnterpriseE2eeCrypto {
     ) {
       throw new Error('E2EE server returned a substituted local device key');
     }
+    deviceTransparencyCertificateHash(registered);
     return registered;
   }
 
@@ -922,6 +1167,14 @@ export class EnterpriseE2eeCrypto {
       if (!pinned || pinned.entry.keyFingerprint !== device.keyFingerprint) {
         throw new Error('E2EE device directory does not match transparency log');
       }
+      if (
+        pinned.entry.certificateHash !==
+        deviceTransparencyCertificateHash(device)
+      ) {
+        throw new Error(
+          'E2EE device certificate does not match transparency log',
+        );
+      }
       const stateMatches =
         pinned.entry.event === 'revoked'
           ? device.revokedAt !== null
@@ -939,6 +1192,39 @@ export class EnterpriseE2eeCrypto {
       throw new Error('E2EE device directory does not match transparency log');
     }
     return input.devices;
+  }
+
+  createDeviceCertificateRequest(input: {
+    serverScope: string;
+    deploymentId: string;
+    organizationId: string;
+    accountId: string;
+  }): E2eeDeviceCertificateRequestV2 {
+    const active = this.vault.loadOrCreate(
+      input.serverScope,
+      input.accountId,
+    ).active;
+    const unsigned: E2eeDeviceCertificateRequestV2 = {
+      format: E2EE_TRUST_FORMAT,
+      deploymentId: input.deploymentId,
+      organizationId: input.organizationId,
+      accountId: input.accountId,
+      deviceId: active.deviceId,
+      certificateSerial: active.certificateSerial,
+      deviceName: active.deviceName,
+      credentialSigningPublicKey: active.identitySigningPublicKey,
+      deviceExchangePublicKey: active.deviceExchangePublicKey,
+      predecessorCertificateHash: null,
+      proofOfPossession: '',
+    };
+    return {
+      ...unsigned,
+      proofOfPossession: sign(
+        null,
+        e2eeDeviceCertificateRequestPayload(unsigned),
+        active.identitySigningPrivateKey,
+      ).toString('base64'),
+    };
   }
 
   localDevice(
@@ -969,6 +1255,7 @@ export class EnterpriseE2eeCrypto {
     serverScope: string;
     organizationId: string;
     accountId: string;
+    approverDevice: EnterpriseE2eeDeviceBundle;
     targetDevice: EnterpriseE2eeDeviceBundle;
   }): EnterpriseE2eeDeviceApproval {
     if (input.targetDevice.accountId !== input.accountId) {
@@ -983,24 +1270,131 @@ export class EnterpriseE2eeCrypto {
     if (active.deviceId === input.targetDevice.deviceId) {
       throw new Error('a device cannot approve itself');
     }
-    const approval = {
-      organizationId: input.organizationId,
-      accountId: input.accountId,
+    if (
+      input.approverDevice.deviceId !== active.deviceId ||
+      !input.approverDevice.certificateHash
+    ) {
+      throw new Error('current E2EE device certificate is unavailable');
+    }
+    if (!input.targetDevice.certificateRequest) {
+      throw new Error('pending E2EE device certificate request is unavailable');
+    }
+    const { proofOfPossession: _proof, ...request } =
+      input.targetDevice.certificateRequest;
+    if (
+      request.organizationId !== input.organizationId ||
+      request.accountId !== input.accountId ||
+      request.deviceId !== input.targetDevice.deviceId
+    ) {
+      throw new Error('pending E2EE device certificate request is inconsistent');
+    }
+    const approvedAt = this.vault.currentTime();
+    const unsigned: E2eeDeviceCertificateApprovalV2 = {
+      format: E2EE_TRUST_FORMAT,
+      request,
       approverDeviceId: active.deviceId,
-      targetDeviceId: input.targetDevice.deviceId,
-      targetKeyFingerprint:
-        input.targetDevice.keyFingerprint ||
-        enterpriseE2eeDeviceKeyFingerprint(input.targetDevice),
+      approverCertificateHash: input.approverDevice.certificateHash,
+      approvedAt: approvedAt.toISOString(),
+      expiresAt: new Date(
+        approvedAt.getTime() + 365 * 24 * 60 * 60 * 1000,
+      ).toISOString(),
+      approvalSignature: '',
     };
     return {
-      approverDeviceId: approval.approverDeviceId,
-      targetDeviceId: approval.targetDeviceId,
-      targetKeyFingerprint: approval.targetKeyFingerprint,
-      signature: sign(
+      ...unsigned,
+      approvalSignature: sign(
         null,
-        enterpriseE2eeDeviceApprovalSignaturePayload(approval),
+        e2eeDeviceCertificateApprovalPayload(unsigned),
         active.identitySigningPrivateKey,
       ).toString('base64'),
+    };
+  }
+
+  authorizeAtoaOnce(input: {
+    serverScope: string;
+    issuerDeploymentId: string;
+    audienceDeploymentId: string;
+    organizationId: string;
+    issuerAccountId: string;
+    requesterAccountId: string;
+    requestMessageId: string;
+    requestContent: string;
+    allowedSources: AtoaContextSource[];
+    authorizedMessageIds: string[];
+  }): EnterpriseAtoaAuthorizationReceipt {
+    const active = this.vault.loadOrCreate(
+      input.serverScope,
+      input.issuerAccountId,
+    ).active;
+    const issuedAt = this.vault.currentTime();
+    const expiresAt = new Date(issuedAt.getTime() + 3 * 60 * 1000);
+    const requestDigest = e2eeAtoaRequestDigest({
+      requestMessageId: input.requestMessageId,
+      requesterAccountId: input.requesterAccountId,
+      recipientAccountId: input.issuerAccountId,
+      content: input.requestContent,
+    });
+    const unsigned: E2eeAtoaOneTimeGrant = {
+      format: E2EE_ATOA_GRANT_FORMAT,
+      grantId: `grant_${randomUUID()}`,
+      issuerDeploymentId: input.issuerDeploymentId,
+      audienceDeploymentId: input.audienceDeploymentId,
+      organizationId: input.organizationId,
+      issuerAccountId: input.issuerAccountId,
+      issuerDeviceId: active.deviceId,
+      requesterAccountId: input.requesterAccountId,
+      requestMessageId: input.requestMessageId,
+      requestDigest,
+      allowedSources: [...input.allowedSources],
+      authorizedMessageIds: [...input.authorizedMessageIds],
+      issuedAt: issuedAt.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+      nonce: randomBytes(18).toString('base64url'),
+      signature: '',
+    };
+    const grant: E2eeAtoaOneTimeGrant = {
+      ...unsigned,
+      signature: sign(
+        null,
+        e2eeAtoaGrantPayload(unsigned),
+        active.identitySigningPrivateKey,
+      ).toString('base64'),
+    };
+    const expected = {
+      issuerDeploymentId: input.issuerDeploymentId,
+      audienceDeploymentId: input.audienceDeploymentId,
+      organizationId: input.organizationId,
+      issuerAccountId: input.issuerAccountId,
+      requesterAccountId: input.requesterAccountId,
+      requestMessageId: input.requestMessageId,
+      requestDigest,
+    };
+    const verified = verifyE2eeAtoaOneTimeGrant({
+      grant,
+      issuerSigningPublicKey: active.identitySigningPublicKey,
+      expected,
+      now: issuedAt,
+    });
+    const replayKey = [
+      verified.issuerDeploymentId,
+      verified.audienceDeploymentId,
+      verified.organizationId,
+      verified.issuerAccountId,
+      verified.requestMessageId,
+      verified.nonce,
+    ].join(':');
+    this.vault.consumeAtoaGrant({
+      serverScope: input.serverScope,
+      accountId: input.issuerAccountId,
+      replayKey,
+      expiresAt: verified.expiresAt,
+    });
+    return {
+      grantId: verified.grantId,
+      grantDigest: e2eeAtoaGrantDigest(grant),
+      expiresAt: verified.expiresAt,
+      allowedSources: [...verified.allowedSources],
+      authorizedMessageIds: [...verified.authorizedMessageIds],
     };
   }
 

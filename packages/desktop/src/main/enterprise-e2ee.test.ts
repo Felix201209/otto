@@ -2,17 +2,23 @@
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
-import { createHash, verify } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import {
+  e2eeDeviceCertificateRequestHash,
+  e2eeMerkleInclusionProof,
+  e2eeMerkleRoot,
+  verifyE2eeDeviceCertificateApproval,
+} from 'otto-server';
 
 import {
   EnterpriseE2eeCrypto,
   EnterpriseE2eeKeyVault,
-  enterpriseE2eeDeviceApprovalSignaturePayload,
   enterpriseE2eeDeviceVerification,
+  enterpriseE2eeTransparencyLeaf,
   type EnterpriseE2eeDeviceBundle,
   type EnterpriseE2eeKeyTransparencyEvent,
   type EnterpriseE2eeKeyTransparencyView,
@@ -92,6 +98,11 @@ function transparencyView(
       deviceId: device.deviceId,
       event,
       keyFingerprint: device.keyFingerprint,
+      certificateHash:
+        device.certificateHash ||
+        (device.certificateRequest
+          ? e2eeDeviceCertificateRequestHash(device.certificateRequest)
+          : device.keyFingerprint),
       actorDeviceId: event === 'bootstrap_approved' ? null : events[0]!.device.deviceId,
       previousHash,
       createdAt,
@@ -107,6 +118,18 @@ function transparencyView(
     accountId,
     headSequence: entries.length,
     headHash: previousHash,
+    treeSize: entries.length,
+    merkleRoot: e2eeMerkleRoot(
+      entries.map((entry) =>
+        enterpriseE2eeTransparencyLeaf(organizationId, entry),
+      ),
+    ),
+    inclusionProofs: entries.map((_, index) => {
+      const leaves = entries.map((entry) =>
+        enterpriseE2eeTransparencyLeaf(organizationId, entry),
+      );
+      return e2eeMerkleInclusionProof(leaves, index);
+    }),
     entries,
   };
 }
@@ -141,6 +164,25 @@ describe('enterprise private-chat E2EE', () => {
         view: extended,
       }),
     ).toEqual(extended);
+    const maliciousProofs = extended.inclusionProofs.map((proof, index) =>
+      index === 0
+        ? { ...proof, hashes: proof.hashes.map(() => 'f'.repeat(64)) }
+        : proof,
+    );
+    expect(() =>
+      alice.crypto.verifyAndPinKeyTransparency({
+        serverScope: 'https://otto.test',
+        organizationId: 'org-a',
+        view: { ...extended, inclusionProofs: maliciousProofs },
+      }),
+    ).toThrow('inclusion proof');
+    expect(() =>
+      alice.crypto.verifyAndPinKeyTransparency({
+        serverScope: 'https://otto.test',
+        organizationId: 'org-a',
+        view: { ...extended, merkleRoot: 'e'.repeat(64) },
+      }),
+    ).toThrow('root');
     expect(() =>
       alice.crypto.verifyAndPinKeyTransparency({
         serverScope: 'https://otto.test',
@@ -174,11 +216,73 @@ describe('enterprise private-chat E2EE', () => {
     expect(checkpointFiles).not.toContain(extended.headHash);
   });
 
+  it('documents the first-use split-view gap until an external witness exists', () => {
+    const firstObserver = createEndpoint('First observer');
+    const secondObserver = createEndpoint('Second observer');
+    const honestDevice = createEndpoint('Honest Alice').crypto.localDevice(
+      'https://otto.test',
+      'alice',
+    );
+    const substitutedDevice = createEndpoint(
+      'Substituted Alice',
+    ).crypto.localDevice('https://otto.test', 'alice');
+    const honestView = transparencyView('org-a', 'alice', [
+      { device: honestDevice, event: 'bootstrap_approved' },
+    ]);
+    const splitView = transparencyView('org-a', 'alice', [
+      { device: substitutedDevice, event: 'bootstrap_approved' },
+    ]);
+
+    expect(honestView.merkleRoot).not.toBe(splitView.merkleRoot);
+    expect(() =>
+      firstObserver.crypto.verifyAndPinKeyTransparency({
+        serverScope: 'https://otto.test',
+        organizationId: 'org-a',
+        view: honestView,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      secondObserver.crypto.verifyAndPinKeyTransparency({
+        serverScope: 'https://otto.test',
+        organizationId: 'org-a',
+        view: splitView,
+      }),
+    ).not.toThrow();
+  });
+
   it('rejects malformed transparency entries and inconsistent device directories', () => {
     const alice = createEndpoint('Alice laptop');
     const bob = createEndpoint('Bob laptop');
-    const aliceDevice = alice.crypto.localDevice('https://otto.test', 'alice');
-    const bobDevice = bob.crypto.localDevice('https://otto.test', 'bob');
+    const aliceLocal = alice.crypto.localDevice('https://otto.test', 'alice');
+    const bobLocal = bob.crypto.localDevice('https://otto.test', 'bob');
+    const aliceRequest = alice.crypto.createDeviceCertificateRequest({
+      serverScope: 'https://otto.test',
+      deploymentId: 'deployment-test',
+      organizationId: 'org-a',
+      accountId: 'alice',
+    });
+    const bobRequest = bob.crypto.createDeviceCertificateRequest({
+      serverScope: 'https://otto.test',
+      deploymentId: 'deployment-test',
+      organizationId: 'org-a',
+      accountId: 'bob',
+    });
+    const aliceDevice: EnterpriseE2eeDeviceBundle = {
+      ...aliceLocal,
+      certificateFormat: 2,
+      certificateSerial: aliceRequest.certificateSerial,
+      certificateRequest: aliceRequest,
+      certificateHash: e2eeDeviceCertificateRequestHash(aliceRequest),
+      certificateExpiresAt: null,
+    };
+    const bobDevice: EnterpriseE2eeDeviceBundle = {
+      ...bobLocal,
+      certificateFormat: 2,
+      certificateSerial: bobRequest.certificateSerial,
+      certificateRequest: bobRequest,
+      certificateHash: e2eeDeviceCertificateRequestHash(bobRequest),
+      certificateExpiresAt: null,
+    };
     const aliceView = transparencyView('org-a', 'alice', [
       { device: aliceDevice, event: 'bootstrap_approved' },
     ]);
@@ -234,44 +338,63 @@ describe('enterprise private-chat E2EE', () => {
     const first = aliceOne.crypto.localDevice('https://otto.test', 'alice');
     const second = aliceTwo.crypto.localDevice('https://otto.test', 'alice');
 
-    expect(
-      aliceOne.crypto.verifyLocalDeviceRegistration(first, first),
-    ).toEqual(first);
-    expect(() =>
-      aliceOne.crypto.verifyLocalDeviceRegistration(first, {
-        ...first,
-        identitySigningPublicKey: second.identitySigningPublicKey,
-        keyFingerprint: second.keyFingerprint,
-      }),
-    ).toThrow('substituted');
-
     const forward = enterpriseE2eeDeviceVerification(first, second);
     const reverse = enterpriseE2eeDeviceVerification(second, first);
     expect(forward.safetyNumber).toMatch(/^(\d{5} ){11}\d{5}$/);
     expect(reverse).toEqual(forward);
     expect(forward.qrPayload).toMatch(/^otto-e2ee-verify:v1:/);
 
+    const firstRequest = aliceOne.crypto.createDeviceCertificateRequest({
+      serverScope: 'https://otto.test',
+      deploymentId: 'deployment-test',
+      organizationId: 'org-a',
+      accountId: 'alice',
+    });
+    const secondRequest = aliceTwo.crypto.createDeviceCertificateRequest({
+      serverScope: 'https://otto.test',
+      deploymentId: 'deployment-test',
+      organizationId: 'org-a',
+      accountId: 'alice',
+    });
+    const approverDevice: EnterpriseE2eeDeviceBundle = {
+      ...first,
+      certificateFormat: 2,
+      certificateSerial: firstRequest.certificateSerial,
+      certificateRequest: firstRequest,
+      certificateHash: e2eeDeviceCertificateRequestHash(firstRequest),
+      certificateExpiresAt: null,
+    };
+    const targetDevice: EnterpriseE2eeDeviceBundle = {
+      ...second,
+      certificateFormat: 2,
+      certificateSerial: secondRequest.certificateSerial,
+      certificateRequest: secondRequest,
+      certificateHash: null,
+      certificateExpiresAt: null,
+    };
+    expect(
+      aliceOne.crypto.verifyLocalDeviceRegistration(first, approverDevice),
+    ).toEqual(approverDevice);
+    expect(() =>
+      aliceOne.crypto.verifyLocalDeviceRegistration(first, {
+        ...approverDevice,
+        identitySigningPublicKey: second.identitySigningPublicKey,
+        keyFingerprint: second.keyFingerprint,
+      }),
+    ).toThrow('substituted');
     const approval = aliceOne.crypto.signDeviceApproval({
       serverScope: 'https://otto.test',
       organizationId: 'org-a',
       accountId: 'alice',
-      targetDevice: second,
+      approverDevice,
+      targetDevice,
     });
-    expect(approval.targetKeyFingerprint).toBe(second.keyFingerprint);
     expect(
-      verify(
-        null,
-        enterpriseE2eeDeviceApprovalSignaturePayload({
-          organizationId: 'org-a',
-          accountId: 'alice',
-          approverDeviceId: approval.approverDeviceId,
-          targetDeviceId: approval.targetDeviceId,
-          targetKeyFingerprint: approval.targetKeyFingerprint,
-        }),
-        first.identitySigningPublicKey,
-        Buffer.from(approval.signature, 'base64'),
-      ),
-    ).toBe(true);
+      verifyE2eeDeviceCertificateApproval({
+        approval,
+        approverSigningPublicKey: first.identitySigningPublicKey,
+      }).request.deviceId,
+    ).toBe(second.deviceId);
   });
 
   it('encrypts for sender and recipient devices and detects message tampering', () => {
@@ -447,6 +570,11 @@ describe('enterprise private-chat E2EE', () => {
       'bob',
       'correct horse battery staple',
     );
+    expect(JSON.parse(recovery)).toMatchObject({
+      v: 2,
+      kdf: 'scrypt',
+      cipher: 'aes-256-gcm',
+    });
 
     const newBob = createEndpoint('New Bob');
     const newDeviceBeforeImport = newBob.crypto.localDevice(
@@ -478,6 +606,45 @@ describe('enterprise private-chat E2EE', () => {
         'wrong passphrase',
       ),
     ).toThrow('bundle or passphrase is invalid');
+    expect(() =>
+      newBob.vault.importRecoveryBundle(
+        'https://different-deployment.test',
+        'bob',
+        recovery,
+        'correct horse battery staple',
+      ),
+    ).toThrow('bundle or passphrase is invalid');
+    const tampered = JSON.parse(recovery) as Record<string, unknown>;
+    tampered.accountHash = 'f'.repeat(64);
+    expect(() =>
+      newBob.vault.importRecoveryBundle(
+        'https://otto.test',
+        'bob',
+        JSON.stringify(tampered),
+        'correct horse battery staple',
+      ),
+    ).toThrow('bundle or passphrase is invalid');
+  });
+
+  it('returns only the signed and consumed A2A authorization scope', () => {
+    const endpoint = createEndpoint('A2A owner');
+    const receipt = endpoint.crypto.authorizeAtoaOnce({
+      serverScope: 'https://otto.test',
+      issuerDeploymentId: 'deployment-a',
+      audienceDeploymentId: 'deployment-a',
+      organizationId: 'org-a',
+      issuerAccountId: 'alice',
+      requesterAccountId: 'bob',
+      requestMessageId: 'request-1',
+      requestContent: 'Can Otto check the selected messages?',
+      allowedSources: ['current_chat', 'schedules'],
+      authorizedMessageIds: ['message-2', 'message-1'],
+    });
+
+    expect(receipt.grantDigest).toMatch(/^[0-9a-f]{64}$/u);
+    expect(receipt.expiresAt).toBe('2026-07-31T00:03:00.000Z');
+    expect(receipt.allowedSources).toEqual(['current_chat', 'schedules']);
+    expect(receipt.authorizedMessageIds).toEqual(['message-1', 'message-2']);
   });
 
   it('keeps raw private keys out of the vault file', () => {

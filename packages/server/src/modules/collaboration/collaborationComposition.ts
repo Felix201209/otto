@@ -23,6 +23,7 @@ export interface CollaborationCompositionOptions<
   db(): Database;
   now(): number;
   createId(): string;
+  getDeploymentId(): string;
   fieldCipher?: EncryptedFieldCipher;
   attachmentObjectStore?: EncryptedObjectStore;
   getAccount(accountId: string, organizationId: string): TAccount | null;
@@ -39,6 +40,7 @@ export function createCollaborationComposition<
   const directMessageStore = {
     db: options.db,
     createId: options.createId,
+    getDeploymentId: options.getDeploymentId,
     fieldCipher: options.fieldCipher,
     attachmentObjectStore: options.attachmentObjectStore,
     getActiveAccountInOrganization(

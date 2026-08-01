@@ -882,6 +882,7 @@ export const {
   db: getDB,
   now: Date.now,
   createId: randomUUID,
+  getDeploymentId,
   fieldCipher,
   attachmentObjectStore,
   getAccount,

@@ -52,6 +52,33 @@ export type {
   FeishuRegistration,
   FeishuRegisterDeps,
 } from './feishu/register.js';
+export {
+  canonicalE2eeBytes,
+  E2EE_TRUST_FORMAT,
+  E2EE_ATOA_GRANT_FORMAT,
+  E2EE_ATOA_GRANT_MAX_LIFETIME_MS,
+  E2eeAtoaGrantLedger,
+  e2eeAtoaGrantDigest,
+  e2eeAtoaGrantPayload,
+  e2eeAtoaRequestDigest,
+  e2eeDeviceCertificateApprovalPayload,
+  e2eeDeviceCertificateHash,
+  e2eeDeviceCertificateRequestHash,
+  e2eeDeviceCertificateRequestPayload,
+  e2eeMerkleInclusionProof,
+  e2eeMerkleRoot,
+  verifyE2eeAtoaOneTimeGrant,
+  verifyE2eeDeviceCertificateApproval,
+  verifyE2eeDeviceCertificateRequest,
+  verifyE2eeMerkleAppendOnlySnapshot,
+  verifyE2eeMerkleInclusion,
+  type AtoaContextSource,
+  type E2eeAtoaGrantExpectation,
+  type E2eeAtoaOneTimeGrant,
+  type E2eeDeviceCertificateApprovalV2,
+  type E2eeDeviceCertificateRequestV2,
+  type E2eeMerkleInclusionProof,
+} from 'otto-core';
 export { registerFeishu } from './feishu/register.js';
 export {
   endpointFilePath,

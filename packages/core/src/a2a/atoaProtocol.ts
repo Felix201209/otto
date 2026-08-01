@@ -35,6 +35,8 @@ export interface AtoaResponsePayload {
   createdAt: string;
   mode: AtoaMode;
   grantedSources: AtoaContextSource[];
+  /** Digest of the locally signed, already-consumed one-time authorization. */
+  authorizationGrantDigest?: string;
 }
 
 export type ParsedAtoaMessage =
@@ -169,6 +171,7 @@ export function buildAtoaResponse(input: {
   answer: string;
   mode?: AtoaMode;
   grantedSources?: readonly AtoaContextSource[];
+  authorizationGrantDigest?: string;
 }): string {
   let question = truncateCodeUnits(input.question.trim(), 1200);
   let answer = truncateCodeUnits(input.answer.trim(), 2400);
@@ -178,6 +181,9 @@ export function buildAtoaResponse(input: {
     createdAt: new Date().toISOString(),
     mode: input.mode ?? 'answer',
     grantedSources: normalizeSources(input.grantedSources),
+    ...(input.authorizationGrantDigest
+      ? { authorizationGrantDigest: input.authorizationGrantDigest }
+      : {}),
   };
   const serialize = (nextQuestion: string, nextAnswer: string): string =>
     `${ATOA_RESPONSE_PREFIX}${JSON.stringify({
@@ -297,7 +303,10 @@ export function parseAtoaMessage(content: string): ParsedAtoaMessage | null {
         isBoundedText(raw.answer, 2400) &&
         isIsoDate(raw.createdAt) &&
         mode &&
-        grantedSources
+        grantedSources &&
+        (raw.authorizationGrantDigest === undefined ||
+          (typeof raw.authorizationGrantDigest === 'string' &&
+            /^[0-9a-f]{64}$/u.test(raw.authorizationGrantDigest)))
       ) {
         return {
           kind: 'response',
@@ -309,6 +318,9 @@ export function parseAtoaMessage(content: string): ParsedAtoaMessage | null {
             createdAt: raw.createdAt,
             mode,
             grantedSources,
+            ...(typeof raw.authorizationGrantDigest === 'string'
+              ? { authorizationGrantDigest: raw.authorizationGrantDigest }
+              : {}),
           },
         };
       }

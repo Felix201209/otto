@@ -773,6 +773,10 @@ export interface EnterpriseE2eeDevice {
   identitySigningPublicKey: string;
   deviceExchangePublicKey: string;
   keyFingerprint: string;
+  certificateFormat?: 2;
+  certificateSerial?: string;
+  certificateHash?: string | null;
+  certificateExpiresAt?: string | null;
   approvalState: 'pending' | 'approved';
   approvedByDeviceId: string | null;
   approvedAt: string | null;
@@ -800,6 +804,7 @@ export interface EnterpriseE2eeKeyTransparencyEntry {
   deviceId: string;
   event: EnterpriseE2eeKeyTransparencyEvent;
   keyFingerprint: string;
+  certificateHash: string;
   actorDeviceId: string | null;
   previousHash: string;
   entryHash: string;
@@ -810,6 +815,13 @@ export interface EnterpriseE2eeKeyTransparencyView {
   accountId: string;
   headSequence: number;
   headHash: string;
+  treeSize: number;
+  merkleRoot: string;
+  inclusionProofs: Array<{
+    leafIndex: number;
+    treeSize: number;
+    hashes: string[];
+  }>;
   entries: EnterpriseE2eeKeyTransparencyEntry[];
 }
 
@@ -834,6 +846,24 @@ export interface EnterpriseAtoaInboxMessage extends EnterpriseDirectMessage {
     positionTitle: string | null;
     role: string | null;
   };
+}
+
+export interface EnterpriseAtoaAuthorizationInput {
+  requestMessageId: string;
+  requesterAccountId: string;
+  requestContent: string;
+  allowedSources: Array<
+    'current_chat' | 'enterprise_knowledge' | 'work_logs' | 'schedules'
+  >;
+  authorizedMessageIds: string[];
+}
+
+export interface EnterpriseAtoaAuthorizationReceipt {
+  grantId: string;
+  grantDigest: string;
+  expiresAt: string;
+  allowedSources: EnterpriseAtoaAuthorizationInput['allowedSources'];
+  authorizedMessageIds: string[];
 }
 
 export interface EnterpriseRepairNotification {
@@ -1061,6 +1091,7 @@ const IPC = {
   enterpriseE2eeRecoveryExport: 'otto:enterprise-e2ee-recovery-export',
   enterpriseE2eeRecoveryImport: 'otto:enterprise-e2ee-recovery-import',
   enterpriseAtoaInbox: 'otto:enterprise-atoa-inbox',
+  enterpriseAtoaAuthorizeOnce: 'otto:enterprise-atoa-authorize-once',
   enterpriseParkServicePush: 'otto:enterprise-park-service-push',
   enterpriseParkView: 'otto:enterprise-park-view',
   enterpriseParkRegister: 'otto:enterprise-park-register',
@@ -1547,6 +1578,9 @@ export interface OttoBridge {
     passphrase: string,
   ): Promise<void>;
   enterpriseAtoaInbox(): Promise<EnterpriseAtoaInboxMessage[]>;
+  enterpriseAtoaAuthorizeOnce(
+    input: EnterpriseAtoaAuthorizationInput,
+  ): Promise<EnterpriseAtoaAuthorizationReceipt>;
   enterpriseParkServicePush(input: {
     recipientAccountId: string;
     serviceId: string;
@@ -2740,6 +2774,14 @@ const bridge: OttoBridge = {
     return ipcRenderer.invoke(IPC.enterpriseAtoaInbox) as Promise<
       EnterpriseAtoaInboxMessage[]
     >;
+  },
+  enterpriseAtoaAuthorizeOnce(
+    input: EnterpriseAtoaAuthorizationInput,
+  ): Promise<EnterpriseAtoaAuthorizationReceipt> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseAtoaAuthorizeOnce,
+      input,
+    ) as Promise<EnterpriseAtoaAuthorizationReceipt>;
   },
   enterpriseParkServicePush(input: {
     recipientAccountId: string;
