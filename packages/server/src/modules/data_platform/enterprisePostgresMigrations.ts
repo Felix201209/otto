@@ -4,11 +4,7 @@
 
 import type { PostgresMigration } from './postgresDatabaseLifecycle.js';
 
-/**
- * PostgreSQL migration and attachment control-plane schema. Domain
- * repositories remain on the local SQLite adapter until each asynchronous
- * PostgreSQL repository is migrated and a verified staging run is promoted.
- */
+/** Shared PostgreSQL platform control-plane migrations; no product tables. */
 export const ENTERPRISE_POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [
   {
     version: 1,

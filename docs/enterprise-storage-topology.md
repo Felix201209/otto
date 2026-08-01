@@ -100,20 +100,44 @@ downgrades to SQLite, process memory, or local attachment storage.
 The PostgreSQL lifecycle, migration control plane, resumable verified SQLite
 staging importer, S3 attachment adapter, Redis shared-cache/lease adapter,
 combined topology validation and production infrastructure preflight are
-implemented. Existing enterprise route repositories still use their
-synchronous SQLite contracts. If PostgreSQL is selected, the legacy server
-entry point fails closed instead of silently writing a second local SQLite
-database.
+implemented. PostgreSQL schema v4 now owns organizations, accounts, password
+sessions, organization structure and feature flags, audit events, E2EE device
+trust/transparency state, and encrypted direct messages. The enterprise
+launcher selects an isolated asynchronous PostgreSQL server before importing
+the legacy SQLite module, so clustered mode cannot create a hidden `data.db`.
+
+The clustered server currently mounts health, password login/logout/session,
+account administration, organization view/structure/features, audit, E2EE
+device approval/revocation/transparency, and E2EE ciphertext message routes.
+Every route outside that migrated core returns
+`POSTGRES_ROUTE_NOT_MIGRATED` with HTTP 503 instead of reading or writing
+SQLite.
+
+After a verified staging import, rehearse and execute the atomic core-domain
+promotion with the import run ID:
+
+```powershell
+npm run enterprise:postgres:promote --workspace=packages/server -- --run <run-id> --dry-run
+$env:OTTO_SQLITE_IMPORT_MAINTENANCE_CONFIRMED = 'true'
+npm run enterprise:postgres:promote --workspace=packages/server -- --run <run-id> --execute
+```
+
+Promotion acquires a PostgreSQL advisory lock, refuses a non-empty authority,
+validates every source table again, rejects unencrypted legacy messages, and
+commits all supported tables plus an idempotent promotion receipt in one
+transaction. If message attachments exist it refuses cutover until the S3
+migration is run, so ciphertext cannot become inaccessible.
 
 The remaining cutover work is:
 
-1. port repositories to asynchronous PostgreSQL contracts and promote verified
-   staging rows into their PostgreSQL domain schemas;
-2. switch routes only after import verification, following the documented
-   maintenance cutover and rollback gates;
-3. wire the implemented [attachment object-storage adapters](./security/attachment-object-storage.md)
+1. port SMS registration, organization invites, account sync, knowledge,
+   skills, park, ticketing, commercial-control and data-governance repositories;
+2. wire the implemented [attachment object-storage adapters](./security/attachment-object-storage.md)
    and Redis cache/lease adapter into the asynchronous enterprise routes;
+3. promote attachment ciphertext to S3 and the remaining verified staging
+   tables to their PostgreSQL domain schemas;
 4. qualify multiple replicas, backup/PITR and automatic failover.
 
-Until those stages are complete, PostgreSQL mode is a preparation target and
-must not be described as a production-ready enterprise persistence backend.
+The PostgreSQL core is a real write-serving authority, but until those stages
+are complete the full Otto Enterprise product must not be described as a
+production-ready clustered backend.

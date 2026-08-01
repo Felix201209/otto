@@ -9,7 +9,8 @@
     "otto-database-encryption": "dist/src/modules/data_platform/databaseEncryptionCli.js",
     "otto-enterprise-infrastructure": "dist/src/modules/data_platform/enterpriseInfrastructureCli.js",
     "otto-enterprise-postgres": "dist/src/modules/data_platform/postgresDatabaseCli.js",
-    "otto-enterprise-postgres-import": "dist/src/modules/data_platform/sqlitePostgresImportCli.js"
+    "otto-enterprise-postgres-import": "dist/src/modules/data_platform/sqlitePostgresImportCli.js",
+    "otto-enterprise-postgres-promote": "dist/src/enterprise/postgresPromotionCli.js"
   },
   "scripts": {
     "build": "node ../../scripts/build_package.js",
@@ -18,6 +19,7 @@
     "enterprise:seed": "node dist/src/enterprise/bin.js --seed",
     "enterprise:postgres:prepare": "node dist/src/modules/data_platform/postgresDatabaseCli.js",
     "enterprise:postgres:import": "node dist/src/modules/data_platform/sqlitePostgresImportCli.js",
+    "enterprise:postgres:promote": "node dist/src/enterprise/postgresPromotionCli.js",
     "enterprise:infrastructure:check": "node dist/src/modules/data_platform/enterpriseInfrastructureCli.js",
     "lint": "eslint . --ext .ts,.tsx",
     "format": "prettier --write .",

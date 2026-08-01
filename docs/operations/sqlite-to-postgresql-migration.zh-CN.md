@@ -15,9 +15,9 @@ SQLite/SQLCipher，不参与企业集群切换。
   不接触客户端身份私钥、设备私钥、恢复材料或附件文件密钥。
 - 执行导入前必须停止全部 SQLite 写入进程。命令只有在显式设置
   `OTTO_SQLITE_IMPORT_MAINTENANCE_CONFIRMED=true` 后才允许写入 PostgreSQL。
-- 导入只写 PostgreSQL 暂存表，不会自动把尚未迁移的同步 SQLite Repository
-  切换到 PostgreSQL。当前服务端在 PostgreSQL 模式下继续 fail-closed，避免
-  SQLite 与 PostgreSQL 同时成为权威源。
+- 导入只写 PostgreSQL 暂存表，不会自动切换权威源。只有对 verified run
+  完成独立的领域提升后，PostgreSQL 核心路由才允许使用这些数据；未迁移路由
+  返回 `POSTGRES_ROUTE_NOT_MIGRATED`，绝不回落 SQLite。
 
 ## 前置条件
 
@@ -85,6 +85,27 @@ npm run enterprise:postgres:import --workspace=packages/server -- --execute --ba
 `verified`。失败记录只保存 `source_changed`、`verification_failed` 或
 `import_failed`，不保存异常中的凭据或密钥。
 
+## verified 数据提升
+
+导入完成后，先对 run ID 执行只读演练：
+
+```powershell
+npm run enterprise:postgres:promote --workspace=packages/server -- --run <run-id> --dry-run
+```
+
+演练会重新检查 verified 状态、逐表行数、目标是否为空以及核心字段能否安全
+转换，但最终回滚事务。确认结果后执行：
+
+```powershell
+$env:OTTO_SQLITE_IMPORT_MAINTENANCE_CONFIRMED = 'true'
+npm run enterprise:postgres:promote --workspace=packages/server -- --run <run-id> --execute
+```
+
+正式提升使用 advisory lock，在单个事务内写入组织、账号、会话、组织架构、
+功能开关、审计、E2EE 设备、密钥透明日志和消息密文，并记录幂等 promotion
+receipt。目标已经存在账号或消息时拒绝覆盖；旧消息仍是明文时拒绝提升；存在
+消息附件时也会拒绝切换，必须先通过后续 S3 附件迁移完成复制和校验。
+
 ## 停机切换
 
 正式切换必须按以下顺序进行：
@@ -93,15 +114,17 @@ npm run enterprise:postgres:import --workspace=packages/server -- --execute --ba
 2. 创建最终 SQLCipher 快照并完成备份恢复抽检。
 3. 对最终快照执行演练，记录整库哈希、逐表行数和逐表哈希。
 4. 执行正式导入，确认任务状态为 `verified`，且正式结果与演练结果完全一致。
-5. 将已完成异步 PostgreSQL Repository 的服务版本部署为单个金丝雀实例；
+5. 对 verified run 先执行领域提升演练，再执行正式提升并保存 receipt。
+6. 将异步 PostgreSQL 核心服务部署为单个金丝雀实例；
    配置 PostgreSQL、Redis 和 S3，不挂载 SQLite 或本地附件目录。
-6. 验证登录、设备注册、E2EE 密文消息、多设备同步、附件、审计、备份和
+7. 验证登录、设备注册、E2EE 密文消息、多设备同步、附件、审计、备份和
    恢复，再逐步增加无状态实例。
-7. 在回滚宽限期内保留只读 SQLite 快照及密钥，禁止删除或覆盖。
+8. 在回滚宽限期内保留只读 SQLite 快照及密钥，禁止删除或覆盖。
 
-当前代码库尚未完成全部企业路由的异步 PostgreSQL Repository，因此步骤 5
-仍由启动保护明确阻断。可先完成导入演练和 verified 暂存数据，但不得宣称
-生产切换完成，也不得绕过 `requireLocalSqliteTopology`。
+当前只有账号、组织、审计和 E2EE 核心路由完成异步 PostgreSQL Repository。
+SMS 注册、邀请、知识库、园区、工单、商业控制、数据治理、附件 S3 路由及
+Redis 会话/限流仍需迁移；这些路由会显式返回 503。因此只能对核心范围做
+金丝雀验证，不能宣称完整企业生产切换完成。
 
 ## 回滚
 

@@ -20,6 +20,13 @@ export {
   startEnterpriseServer,
 } from './enterprise/server.js';
 export type { EnterpriseServerOptions } from './enterprise/server.js';
+export { startConfiguredEnterpriseServer } from './enterprise/configuredServer.js';
+export {
+  bootstrapClusteredEnterpriseAdmin,
+  createClusteredEnterpriseServer,
+  startClusteredEnterpriseServer,
+} from './enterprise/clusteredServer.js';
+export type { ClusteredEnterpriseServerOptions } from './enterprise/clusteredServer.js';
 export { createCoreConfig } from './coreConfig.js';
 export type { CreateCoreConfigOptions } from './coreConfig.js';
 export {
