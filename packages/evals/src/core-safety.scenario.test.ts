@@ -8,12 +8,10 @@ import {
   captureFinancialComputationEvidence,
   classifyFinancialInput,
   shouldBlockFinancialOutput,
-} from '../../core/src/policy/financialComputationPolicy.js';
-import {
   ToolReplayClass,
   TurnCheckpointManager,
   type TurnCheckpoint,
-} from '../../core/src/core/turnCheckpoint.js';
+} from 'otto-core';
 import { RpaRunner } from '../../rpa/src/runner.js';
 import { FileRpaRunStore } from '../../rpa/src/file-run-store.js';
 import { FileRpaArtifactStore } from '../../rpa/src/file-artifact-store.js';
