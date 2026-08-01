@@ -295,7 +295,7 @@
 /* ════════════════════════ 顶栏 ════════════════════════ */
 
 #root .otto-main { background: var(--ui-main-bg); }
-#root .otto-composer { background: var(--ui-surface); border-color: var(--ui-border-strong); }
+#root .otto-composer { background: transparent; border-color: transparent; box-shadow: none; }
 #root .otto-main__topbar { background: var(--ui-main-bg); border-bottom-color: var(--ui-border); }
 /* 「对话」label 降权：从粗蓝改为弱字距小标 */
 #root .otto-main__section-label {
@@ -488,10 +488,10 @@
 /* 大标题：代替原来的小字 + 吉祥物 */
 #root .otto-main:has(.otto-empty) .otto-empty__title {
   order: 1;
-  margin: auto 0 26px;
-  font-size: 28px;
+  margin: auto 0 30px;
+  font-size: 32px;
   font-weight: 700;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
   color: var(--ui-text-strong);
   text-align: center;
 }
@@ -515,29 +515,29 @@
 /* 示例 prompt：胶囊 → 输入框下方的纵向文字列表 */
 #root .otto-main:has(.otto-empty) .otto-empty__prompts {
   order: 3;
-  margin: 14px auto auto;
+  margin: 20px auto auto;
   width: min(720px, 92%);
   max-width: none;
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 2px;
+  gap: 4px;
 }
 #root .otto-main:has(.otto-empty) .otto-prompt-chip {
   border: 0;
   background: transparent;
   box-shadow: none;
   border-radius: 10px;
-  padding: 9px 14px;
-  font-size: 13px;
+  padding: 11px 16px;
+  font-size: 13.5px;
   color: var(--ui-text-ter);
   text-align: left;
 }
 #root .otto-main:has(.otto-empty) .otto-prompt-chip::before {
   content: '✦';
-  margin-right: 10px;
+  margin-right: 12px;
   font-size: 11px;
-  color: var(--ui-accent);
+  color: var(--ui-text-ter);
 }
 #root .otto-main:has(.otto-empty) .otto-prompt-chip:hover {
   background: var(--ui-accent-softer);
@@ -1868,3 +1868,81 @@
 }
 
 /* 暗色下注入组件的背景已由变量覆盖，无需额外规则 */
+
+
+/* ═══════════ 输入卡 1:1 复刻（目标稿：超大圆角白卡 + 柔阴影 + 重排工具行）═══════════
+ * 全局生效（空态居中与对话底钉共用同一张卡）；仅视觉，按钮功能不变。
+ * 注意：本块刻意置于文件末尾——末尾「全局圆角规范」把 .otto-composer__inner
+ * 统一为 8px，与输入卡同优先级，靠位置靠后让 28px 大圆角作为有意例外生效。 */
+#root .otto-composer__inner {
+  border: 0;
+  border-radius: 28px;
+  background: var(--ui-surface);
+  box-shadow: 0 2px 6px rgba(23, 43, 77, 0.05), 0 14px 44px rgba(23, 43, 77, 0.1);
+  transition: box-shadow var(--otto-dur, 200ms) var(--otto-ease, ease);
+}
+#root .otto-composer__inner:focus-within {
+  border-color: transparent;
+  box-shadow: 0 4px 10px rgba(23, 43, 77, 0.06), 0 18px 56px rgba(23, 43, 77, 0.15);
+}
+#root .otto-composer.is-disabled .otto-composer__inner { border-color: transparent; }
+#root .otto-composer__textarea { font-size: 15px; line-height: 1.55; padding: 18px 22px 8px; }
+#root .otto-composer__textarea::placeholder { color: var(--ui-text-ter); }
+
+/* 工具行重排：左 = ＋附件 + 授权 pill；右 = 模型选择（文字化）+ 纯黑圆形发送 */
+#root .otto-composer__bar { gap: 6px; padding: 4px 14px 13px; }
+#root .otto-attach { order: 1; }
+#root .otto-authorization { order: 2; margin-left: 0; }
+#root .otto-composer__bar > div:not([class]) { order: 3; margin-left: auto; }
+#root .otto-send { order: 4; margin-left: 0; }
+
+/* 附件：回形针图标 → 目标稿的「＋」（隐藏 svg，用字形） */
+#root .otto-attach {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+#root .otto-attach svg { display: none; }
+#root .otto-attach::before {
+  content: '+';
+  font-size: 22px;
+  font-weight: 300;
+  line-height: 1;
+  color: var(--ui-text-sec);
+}
+#root .otto-attach:hover::before { color: var(--ui-text-strong); }
+
+/* 授权触发器 → 浅灰 pill（目标稿「Approve for me」位） */
+#root .otto-authorization__trigger {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ui-text) 5%, transparent);
+  color: var(--ui-text-sec);
+  font-size: 12.5px;
+}
+#root .otto-authorization__trigger:hover { background: color-mix(in srgb, var(--ui-text) 9%, transparent); color: var(--ui-text-strong); }
+
+/* 模型选择 → 无框文字按钮（目标稿「5.6 Sol Extra High ⌄」位） */
+#root .otto-modelpill {
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+  color: var(--ui-text);
+}
+#root .otto-modelpill:hover { border-color: transparent; background: color-mix(in srgb, var(--ui-text) 6%, transparent); }
+
+/* 发送 → 近黑实心圆（目标稿纯黑圆形键）；半径显式 50% 压过全局 8px 规范 */
+#root .otto-send { width: 36px; height: 36px; border-radius: 50%; background: #1f2937; color: #ffffff; }
+#root .otto-send:hover { background: #0f1722; }
+#root .otto-send:disabled { background: color-mix(in srgb, var(--ui-text-ter) 26%, transparent); color: #ffffff; border-color: transparent; }
+#root .otto-send--stop { background: var(--ui-surface); color: var(--ui-text); border-color: var(--ui-border-strong); }
+@media (prefers-color-scheme: dark) {
+  #root .otto-send { background: #e8eaf0; color: #1f2937; }
+  #root .otto-send:hover { background: #ffffff; }
+}
