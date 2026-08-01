@@ -24,6 +24,14 @@ export interface ModelUsageRepositoryStore<
   getOrganization(organizationId: string): TOrganization | null;
   listOrganizationAccounts(organizationId: string): TAccount[];
   createUsageId(): string;
+  onRecordedUsage?(input: {
+    organizationId: string;
+    messageId: string;
+    model: string | null;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  }): void;
 }
 
 interface UsageAggregateRow {
@@ -168,8 +176,19 @@ export function recordModelUsageInRepository<
         outputTokens,
         totalTokens,
       );
+    const recorded = Number(result.changes ?? 0) > 0;
+    if (recorded) {
+      store.onRecordedUsage?.({
+        organizationId: account.organizationId,
+        messageId,
+        model,
+        inputTokens,
+        outputTokens,
+        totalTokens,
+      });
+    }
     if (ownsTransaction) database.exec('COMMIT');
-    return Number(result.changes ?? 0) > 0;
+    return recorded;
   } catch (error) {
     if (ownsTransaction && database.inTransaction) database.exec('ROLLBACK');
     throw error;

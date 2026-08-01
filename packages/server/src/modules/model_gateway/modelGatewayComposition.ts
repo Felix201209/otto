@@ -4,6 +4,7 @@
 
 import type { Database } from '../data_platform/index.js';
 import { createModelUsageFacade } from './modelUsageFacade.js';
+import type { ModelUsageRepositoryStore } from './modelUsageRepository.js';
 import type {
   ModelUsageAccount,
   ModelUsageOrganization,
@@ -18,6 +19,7 @@ export interface ModelGatewayCompositionOptions<
   getOrganization(organizationId: string): TOrganization | null;
   listOrganizationAccounts(organizationId: string): TAccount[];
   createId(): string;
+  onRecordedUsage?: ModelUsageRepositoryStore<TAccount, TOrganization>['onRecordedUsage'];
 }
 
 /** Builds tenant-scoped model metering around one stable usage ID policy. */
@@ -31,5 +33,6 @@ export function createModelGatewayComposition<
     getOrganization: options.getOrganization,
     listOrganizationAccounts: options.listOrganizationAccounts,
     createUsageId: () => `usage_${options.createId()}`,
+    onRecordedUsage: options.onRecordedUsage,
   });
 }

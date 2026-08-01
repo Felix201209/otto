@@ -105,6 +105,10 @@ import { installAppMenu } from './menu.js';
 import { UpdateService } from './update-service.js';
 import { IncrementalUpdateService } from './incremental-update-service.js';
 import {
+  checkForUpdateUsingPolicy,
+  resolveDesktopDistribution,
+} from './update-policy-adapter.js';
+import {
   EnterpriseNotificationIdentityBoundary,
   NotificationService,
   type NotificationPayload,
@@ -762,6 +766,33 @@ const updateService = new UpdateService(
 const incrementalUpdateService = new IncrementalUpdateService(
   () => mainWindow?.webContents,
 );
+const desktopDistributionId = resolveDesktopDistribution(
+  process.env.OTTO_DISTRIBUTION_ID,
+  app.getName(),
+);
+
+async function checkDesktopUpdate() {
+  const session = enterpriseClient.snapshot();
+  return checkForUpdateUsingPolicy({
+    distributionId: desktopDistributionId,
+    currentVersion: app.getVersion(),
+    hasEnterpriseSession: Boolean(session.token),
+    resolvePolicy: () => enterpriseClient.getDeploymentUpdatePolicy({
+      distributionId: desktopDistributionId,
+      currentVersion: app.getVersion(),
+    }),
+    checkLegacy: () => updateService.checkForUpdate(),
+    checkManagedFull: (reference) => updateService.checkForUpdate({
+      manifestUrl: reference.url,
+      manifestSha256: reference.sha256,
+      releasePageUrl: reference.url,
+    }),
+    checkIncremental: (reference) => incrementalUpdateService.checkForUpdates(
+      reference.url,
+      reference.sha256,
+    ),
+  });
+}
 
 function moduleUpdateFingerprint(updates: EnterpriseModuleUpdateDescriptor[]): string {
   return updates
@@ -3060,7 +3091,7 @@ function registerIpc(): void {
   // 结果全部结构化透传，不在这里加工：「检查失败」与「已是最新」是 UpdateService
   // 返回的两种不同 status，任何一层都不许把失败粉饰成最新。
   ipcMain.handle(IPC.appVersion, () => app.getVersion());
-  ipcMain.handle(IPC.updateCheck, () => updateService.checkForUpdate());
+  ipcMain.handle(IPC.updateCheck, () => checkDesktopUpdate());
   ipcMain.handle(IPC.updateDownload, () => updateService.downloadUpdate());
   ipcMain.handle(IPC.updateCancel, () => {
     updateService.cancelDownload();

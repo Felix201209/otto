@@ -136,6 +136,9 @@ export async function dispatchEnterpriseRoute({
       res,
       url,
       principal: adminPrincipal,
+      memberPrincipal: memberAccount
+        ? { organizationId: memberAccount.organizationId }
+        : null,
       services: db,
       readBody,
       sendJSON,

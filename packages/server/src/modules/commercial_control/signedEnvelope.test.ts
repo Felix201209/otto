@@ -53,6 +53,14 @@ describe('Ed25519 signed envelopes', () => {
     expect(
       verifyEd25519Envelope({ seats: 20 }, signature, ['not-a-key']).valid,
     ).toBe(false);
+    expect(
+      verifyEd25519Envelope(
+        { seats: 20 },
+        signature,
+        [key.publicKey],
+        '0000000000000000',
+      ).valid,
+    ).toBe(false);
   });
 
   it('loads either one PEM key or a JSON rotation list', () => {
@@ -64,5 +72,28 @@ describe('Ed25519 signed envelopes', () => {
       second,
     ]);
     expect(parsePublicKeyList('[broken')).toEqual([]);
+  });
+
+  it('accepts active and retired keyring entries while excluding revoked keys', () => {
+    const active = keys().publicKey;
+    const retired = keys().publicKey;
+    const revoked = keys().publicKey;
+    const unknown = keys().publicKey;
+    const keyring = JSON.stringify({
+      keyring: {
+        version: 1,
+        keys: [
+          { keyId: publicKeyId(active), publicKeyPem: active, state: 'active' },
+          { keyId: publicKeyId(retired), publicKeyPem: retired, state: 'retired' },
+          { keyId: publicKeyId(revoked), publicKeyPem: revoked, state: 'revoked' },
+          { keyId: publicKeyId(unknown), publicKeyPem: unknown, state: 'disabled' },
+        ],
+      },
+    });
+    expect(parsePublicKeyList(keyring)).toEqual([active, retired]);
+    expect(parsePublicKeyList(
+      keyring,
+      JSON.stringify([publicKeyId(retired)]),
+    )).toEqual([active]);
   });
 });

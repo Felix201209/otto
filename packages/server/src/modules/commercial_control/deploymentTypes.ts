@@ -10,6 +10,7 @@ import type {
 export type DeploymentLicenseStatus =
   | 'active'
   | 'expiring'
+  | 'grace'
   | 'expired'
   | 'revoked'
   | 'missing'
@@ -24,10 +25,21 @@ export interface DeploymentLicenseLeaseView {
   expiresAt: string | null;
   lastRefreshAt: string | null;
   lastError: string | null;
+  activeSeatCount: number | null;
+  seatStatus:
+    | 'unreported'
+    | 'within_limit'
+    | 'over_limit_monitor'
+    | 'overage_grace'
+    | 'blocked'
+    | null;
+  graceReasons: Array<'expiration' | 'seat_overage'>;
+  graceExpiresAt: string | null;
 }
 
 export interface DeploymentLicenseView {
   id: string;
+  revision: number;
   deploymentId: string;
   organizationId: string | null;
   machineFingerprint: string | null;
@@ -35,6 +47,8 @@ export interface DeploymentLicenseView {
   plan: string;
   expiresAt: string;
   seatLimit: number;
+  gracePeriodMs: number;
+  seatEnforcement: 'monitor' | 'enforce';
   activeSeatCount: number;
   seatLimitExceeded: boolean;
   modules: string[];
@@ -63,6 +77,14 @@ export interface PrivateDeploymentStatus {
     failed: number;
     sent: number;
     lastQueuedAt: string | null;
+  };
+  billing: {
+    queued: number;
+    failed: number;
+    sent: number;
+    discarded: number;
+    lastQueuedAt: string | null;
+    lastError: string | null;
   };
   dataBoundary: {
     uploadsContentByDefault: false;

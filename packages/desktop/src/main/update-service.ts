@@ -49,6 +49,7 @@ import {
 } from './update-core.js';
 import { computeFileSha256, verifyBeforeInstall } from './update-verify.js';
 import { downloadToFile } from './update-download.js';
+import { parseVerifiedManifestJson } from './update-manifest-integrity.js';
 import {
   FALLBACK_RELEASE_API_URL,
   GITHUB_MANIFEST_URL,
@@ -88,10 +89,11 @@ async function fetchJsonWithRetry(
   url: string,
   timeoutMs: number,
   attempts: number,
+  expectedSha256?: string,
 ): Promise<FetchJsonResult> {
   let last: FetchJsonResult = { ok: false, error: 'no attempt' };
   for (let i = 0; i < attempts; i++) {
-    last = await fetchJson(url, timeoutMs);
+    last = await fetchJson(url, timeoutMs, expectedSha256);
     if (last.ok) return last;
     if (i < attempts - 1) {
       await new Promise((r) => setTimeout(r, 800 * (i + 1)));
@@ -100,7 +102,11 @@ async function fetchJsonWithRetry(
   return last;
 }
 
-async function fetchJson(url: string, timeoutMs: number): Promise<FetchJsonResult> {
+async function fetchJson(
+  url: string,
+  timeoutMs: number,
+  expectedSha256?: string,
+): Promise<FetchJsonResult> {
   const controller = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -121,7 +127,7 @@ async function fetchJson(url: string, timeoutMs: number): Promise<FetchJsonResul
       return { ok: false, error: `更新源返回 HTTP ${res.status}`, httpStatus: res.status };
     }
     try {
-      return { ok: true, json: (await res.json()) as unknown };
+      return parseVerifiedManifestJson(await res.text(), expectedSha256);
     } catch {
       return { ok: false, error: '更新清单不是有效的 JSON' };
     }
@@ -138,6 +144,12 @@ async function fetchJson(url: string, timeoutMs: number): Promise<FetchJsonResul
   } finally {
     clearTimeout(timer);
   }
+}
+
+export interface ManagedUpdateSource {
+  manifestUrl: string;
+  manifestSha256: string;
+  releasePageUrl?: string;
 }
 
 export class UpdateService {
@@ -165,7 +177,7 @@ export class UpdateService {
    * 检查更新：可选企业 HTTPS 镜像 → GitHub latest.json → Releases API 兜底。
    * 永远返回结构化结果；失败 = 'check-failed'，与「已是最新」严格区分。
    */
-  async checkForUpdate(): Promise<UpdateCheckResult> {
+  async checkForUpdate(source?: ManagedUpdateSource): Promise<UpdateCheckResult> {
     // 新一轮检查一开始就清掉旧可下载态，防止本次失败后还能下载上次资产。
     this.lastAvailable = null;
     this.allowedAssetOrigins = [];
@@ -175,12 +187,31 @@ export class UpdateService {
     // 1) 完整清单源。企业部署可用 OTTO_UPDATE_MANIFEST_URL 指向自己的 HTTPS 镜像；
     // 配置非法就忽略，镜像失败/清单不合法继续尝试 GitHub，绝不再硬编码未部署路由。
     const manifestErrors: string[] = [];
-    const manifestUrls = resolveManifestUrls(process.env.OTTO_UPDATE_MANIFEST_URL);
+    let managedManifestUrl: string | null = null;
+    if (source) {
+      try {
+        const parsed = new URL(source.manifestUrl);
+        if (parsed.protocol !== 'https:' || parsed.username || parsed.password) {
+          throw new Error('managed update URL is invalid');
+        }
+        managedManifestUrl = parsed.toString();
+      } catch {
+        return {
+          status: 'check-failed',
+          currentVersion,
+          message: '企业更新策略中的完整安装包清单地址无效',
+        };
+      }
+    }
+    const manifestUrls = managedManifestUrl
+      ? [managedManifestUrl]
+      : resolveManifestUrls(process.env.OTTO_UPDATE_MANIFEST_URL);
     for (const manifestUrl of manifestUrls) {
       const result = await fetchJsonWithRetry(
         manifestUrl,
         CHECK_TIMEOUT_MS,
-        manifestUrl === PRIMARY_MANIFEST_URL ? 2 : 1,
+        source || manifestUrl === PRIMARY_MANIFEST_URL ? 2 : 1,
+        source?.manifestSha256,
       );
       const sourceName = (() => {
         try { return new URL(manifestUrl).hostname; } catch { return '更新源'; }
@@ -189,7 +220,7 @@ export class UpdateService {
         manifestErrors.push(`${sourceName}：${result.error}`);
         continue;
       }
-      const sourceAllowedOrigins = manifestUrl === GITHUB_MANIFEST_URL
+      const sourceAllowedOrigins = !source && manifestUrl === GITHUB_MANIFEST_URL
         ? []
         : [new URL(manifestUrl).origin];
       const parsed = parseManifest(result.json, sourceAllowedOrigins);
@@ -198,12 +229,25 @@ export class UpdateService {
         continue;
       }
       return this.remember(
-        resolveCheckOutcome(parsed.manifest, currentVersion, assetKey, RELEASE_PAGE_URL),
+        resolveCheckOutcome(
+          parsed.manifest,
+          currentVersion,
+          assetKey,
+          source?.releasePageUrl ?? RELEASE_PAGE_URL,
+        ),
         sourceAllowedOrigins,
       );
     }
 
     // 2) 兜底：Releases API（所有完整清单源失败时）。
+    if (source) {
+      return {
+        status: 'check-failed',
+        currentVersion,
+        message: `受管更新清单校验失败：${manifestErrors.join('；')}`,
+      };
+    }
+
     const fallback = await fetchJson(FALLBACK_RELEASE_API_URL, CHECK_TIMEOUT_MS);
     if (!fallback.ok) {
       return {

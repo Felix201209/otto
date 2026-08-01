@@ -9,9 +9,9 @@ import { PassThrough } from 'node:stream';
 import * as path from 'node:path';
 import {
   createMessageConnection,
-  ReadableStreamMessageReader,
-  WriteableStreamMessageWriter,
-} from 'vscode-jsonrpc';
+  StreamMessageReader,
+  StreamMessageWriter,
+} from 'vscode-jsonrpc/node.js';
 import { createLSPClient, stopLSPClient } from './client.js';
 import type { MessageConnection } from 'vscode-jsonrpc';
 
@@ -48,8 +48,8 @@ async function runHandshakeScenario(input: {
   const { fakeProcess, serverReader, serverWriter } = createDuplexTransport();
 
   const serverConnection = createMessageConnection(
-    new ReadableStreamMessageReader(serverReader as never),
-    new WriteableStreamMessageWriter(serverWriter as never),
+    new StreamMessageReader(serverReader),
+    new StreamMessageWriter(serverWriter),
   );
 
   serverConnection.onRequest('initialize', async () => {

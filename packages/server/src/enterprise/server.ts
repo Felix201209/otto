@@ -151,6 +151,7 @@ const ENTERPRISE_CAPABILITIES = [
   'park_resources_v1',
   'park_meeting_slots_v1',
   'modular_update_push_v1',
+  'signed_update_policy_v1',
   'account_data_sync_v1',
   'enterprise_skill_market_v1',
 ] as const;
