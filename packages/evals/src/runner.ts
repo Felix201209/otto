@@ -4,6 +4,9 @@ import { mkdir, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { DeterministicScenario, EvaluationReport } from './contracts.js';
 
+/** The minimum safety lanes required before a release can claim mature-agent safeguards. */
+export const REQUIRED_RELEASE_LANES = ['spreadsheet', 'recovery', 'rpa', 'policy'] as const;
+
 export async function runDeterministicScenarios(
   scenarios: readonly DeterministicScenario[],
 ): Promise<EvaluationReport> {
@@ -29,4 +32,12 @@ export async function writeEvaluationReport(report: EvaluationReport, artifactDi
   const temporary = `${target}.${process.pid}.tmp`;
   await writeFile(temporary, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
   await rename(temporary, target);
+}
+
+export function assertReleaseGate(report: EvaluationReport): void {
+  const failed = report.scenarios.filter((scenario) => !scenario.passed);
+  if (failed.length > 0) throw new Error(`Deterministic evaluation failed: ${failed.map((scenario) => scenario.id).join(', ')}`);
+  const lanes = new Set(report.scenarios.map((scenario) => scenario.lane));
+  const missing = REQUIRED_RELEASE_LANES.filter((lane) => !lanes.has(lane));
+  if (missing.length > 0) throw new Error(`Deterministic evaluation is incomplete; missing lanes: ${missing.join(', ')}`);
 }
