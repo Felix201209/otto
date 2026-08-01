@@ -1946,3 +1946,10 @@
   #root .otto-send { background: #e8eaf0; color: #1f2937; }
   #root .otto-send:hover { background: #ffffff; }
 }
+
+
+/* 文本域滚动条残影：macOS「始终显示滚动条」时，overflow:auto 的 textarea 即使
+   不溢出也会在卡片右缘常驻一截灰色 gutter（用户截图圈出的"上下拖动条"）。
+   隐藏它；超过 180px 最大高度后滚轮/触控板滚动不受影响。 */
+#root .otto-composer__textarea { scrollbar-width: none; }
+#root .otto-composer__textarea::-webkit-scrollbar { display: none; }
