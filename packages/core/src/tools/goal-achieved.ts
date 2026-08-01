@@ -205,14 +205,16 @@ export class GoalAchievedTool extends BaseTool<GoalAchievedParams, ToolResult> {
           evaluationPassed = false;
           feedback = verdict.feedback;
         } else {
-          // 降级：评估运行失败（可能网络/额度），回退到自觉完成模式
-          console.warn(`[GoalAchievedTool] Evaluator run failed, falling back to self-judgment: ${verdict.feedback}`);
-          evaluationPassed = true;
+          // A configured independent evaluator is a safety boundary. If it is
+          // unavailable, only an explicit user /goal clear may release the contract.
+          console.warn(`[GoalAchievedTool] Evaluator run failed; keeping goal active: ${verdict.feedback}`);
+          evaluationPassed = false;
+          feedback = verdict.feedback || 'Independent evaluator was unavailable.';
         }
       } catch (err) {
-        // 降级：发生异常时回退到自觉完成模式
-        console.warn(`[GoalAchievedTool] Error during evaluation run, falling back to self-judgment:`, err);
-        evaluationPassed = true;
+        console.warn(`[GoalAchievedTool] Error during evaluation run; keeping goal active:`, err);
+        evaluationPassed = false;
+        feedback = err instanceof Error ? err.message : String(err);
       }
     }
 

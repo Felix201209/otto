@@ -66,6 +66,7 @@ bundle
 # Test report files
 junit.xml
 packages/*/coverage/
+packages/evals/artifacts/
 
 # Generated files
 packages/cli/src/generated/

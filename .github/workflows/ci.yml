@@ -79,6 +79,12 @@ jobs:
       - name: 🔍 Typecheck (all workspaces, including desktop)
         run: npm run typecheck --workspaces --if-present
 
+      - name: 🧹 Lint all production packages
+        run: npm run lint:ci
+
+      - name: 🎯 Deterministic agent safety evaluations
+        run: npm run eval:deterministic
+
       - name: 🧪 Focused release regressions
         run: |
           npx vitest run \
@@ -100,3 +106,6 @@ jobs:
 
       - name: 🧪 Test desktop
         run: npm run test --workspace=packages/desktop
+
+      - name: 🧪 Test durable workflow and RPA runtime
+        run: npm run test --workspace=packages/workflow && npm run test --workspace=packages/rpa

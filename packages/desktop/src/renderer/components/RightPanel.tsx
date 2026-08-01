@@ -139,7 +139,7 @@ function visibleProfiles(
 }
 
 export function RightPanel({
-  busy,
+  busy: _busy,
   presentation = 'panel',
   mode = 'personal',
   enterpriseRole,
