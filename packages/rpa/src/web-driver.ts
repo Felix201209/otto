@@ -51,7 +51,7 @@ export class RunScopedWebDriver implements RpaDriver {
     switch (action) {
       case 'web.navigate': {
         const url = safeUrl(requiredString(args, 'url'));
-        const session = await this.sessionFor(input.run.id);
+        const session = await this.sessionFor(input.run.id, true);
         await session.page.goto(url, { waitUntil: 'networkidle', timeout: wait });
         return { output: { url } };
       }
@@ -97,9 +97,12 @@ export class RunScopedWebDriver implements RpaDriver {
     await session.close();
   }
 
-  private async sessionFor(runId: string): Promise<RpaWebSession> {
+  private async sessionFor(runId: string, createForNavigation = false): Promise<RpaWebSession> {
     const existing = this.sessions.get(runId);
     if (existing) return existing;
+    if (!createForNavigation) {
+      throw new Error('RPA browser context is unavailable for this run. Resume from a web.navigate checkpoint; do not replay a page action in a new blank session.');
+    }
     const created = await this.factory.create();
     this.sessions.set(runId, created);
     return created;

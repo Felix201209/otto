@@ -40,4 +40,12 @@ describe('RunScopedWebDriver', () => {
     await expect(driver.execute(input('web.navigate', { url: 'https://user:secret@example.com' }))).rejects.toThrow('credential-free');
     expect(factory.create).not.toHaveBeenCalled();
   });
+
+  it('fails closed when a resumed run lacks its original browser context', async () => {
+    const factory = { create: vi.fn() };
+    const driver = new RunScopedWebDriver(factory);
+
+    await expect(driver.execute(input('web.fill', { selector: '#amount', value: '100' }))).rejects.toThrow('browser context is unavailable');
+    expect(factory.create).not.toHaveBeenCalled();
+  });
 });
