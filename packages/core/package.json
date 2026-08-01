@@ -50,6 +50,7 @@
     "micromatch": "^4.0.8",
     "mime-types": "^3.0.2",
     "open": "^10.1.2",
+    "otto-rpa": "file:../rpa",
     "pdf-parse": "^1.1.1",
     "pdf2json": "^3.1.6",
     "pptxgenjs": "4.0.1",

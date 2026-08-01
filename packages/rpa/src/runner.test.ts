@@ -15,6 +15,7 @@ function memoryStore(): RpaRunStore {
         id,
         workflowId: workflow.id,
         workflowVersion: workflow.version,
+        workflow: structuredClone(workflow),
         state: 'pending',
         revision: 1,
         currentStepId: null,

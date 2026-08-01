@@ -40,7 +40,7 @@ export class RpaRunner {
     if (!run || ['awaiting_approval', 'paused', 'unknown_outcome', 'failed', 'cancelled', 'succeeded'].includes(run.state)) {
       return run;
     }
-    const workflow = this.workflow(run.workflowId, run.workflowVersion);
+    const workflow = this.workflowForRun(run);
     const step = workflow.steps.find((candidate) => receiptFor(run, candidate.id)?.state === 'pending');
     if (!step) return this.finish(run);
 
@@ -89,7 +89,7 @@ export class RpaRunner {
   async recover(runId: string): Promise<RpaRun | null> {
     const run = await this.store.get(runId);
     if (!run) return null;
-    const workflow = this.workflow(run.workflowId, run.workflowVersion);
+    const workflow = this.workflowForRun(run);
     const active = run.currentStepId ? receiptFor(run, run.currentStepId) : undefined;
     if (!active || active.state !== 'started') return run;
     const step = workflow.steps.find((candidate) => candidate.id === active.stepId);
@@ -155,5 +155,12 @@ export class RpaRunner {
     const workflow = this.workflows.get(`${id}@${version}`);
     if (!workflow) throw new Error(`RPA workflow is not installed: ${id}@${version}`);
     return workflow;
+  }
+
+  private workflowForRun(run: RpaRun): RpaWorkflowV1 {
+    if (run.workflow.id !== run.workflowId || run.workflow.version !== run.workflowVersion) {
+      throw new Error(`Persisted RPA workflow binding is invalid for ${run.id}.`);
+    }
+    return run.workflow;
   }
 }

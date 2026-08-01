@@ -1454,6 +1454,7 @@ export class Config {
     await registerLazyCoreTool('AnalyzeDataTool', 'analyze_data', async () => (await import('../tools/analyze-data.js')).AnalyzeDataTool, this); // 数据分析出图（DuckDB/gnuplot）
     await registerLazyCoreTool('DiagnoseSystemTool', 'diagnose_system', async () => (await import('../tools/diagnose-system.js')).DiagnoseSystemTool, this); // 系统诊断（macOS/Windows）
     await registerLazyCoreTool('WebAutomationTool', 'web_automation', async () => (await import('../tools/web-automation.js')).WebAutomationTool, this);
+    await registerLazyCoreTool('RpaRunTool', 'rpa_run', async () => (await import('../tools/rpa-run.js')).RpaRunTool, this);
     await registerLazyCoreTool('MultiChannelTool', 'multi_channel', async () => (await import('../tools/multi-channel.js')).MultiChannelTool, this); // 多渠道消息（飞书/企微/钉钉等）
     await registerLazyCoreTool('MemoryManagerTool', 'memory_manager', async () => (await import('../tools/memory-manager.js')).MemoryManagerTool, this); // 知识沉淀 + HR 生命周期
     await registerLazyCoreTool('FeishuProjectCollabTool', 'feishu_project_collab', async () => (await import('../tools/feishu-project-collab.js')).FeishuProjectCollabTool, this); // 飞书项目协作：表格/多维表格/验收节点/提醒/进度同步

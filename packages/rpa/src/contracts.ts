@@ -56,6 +56,8 @@ export interface RpaRun {
   id: string;
   workflowId: string;
   workflowVersion: 1;
+  /** Persisted definition makes recovery independent of a process-local registry. */
+  workflow: RpaWorkflowV1;
   state: RpaRunState;
   revision: number;
   currentStepId: string | null;
