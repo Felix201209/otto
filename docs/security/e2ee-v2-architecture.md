@@ -41,6 +41,22 @@ chain again and reject a directory whose displayed state is not backed by valid
 signatures. Modifying the database therefore cannot manufacture a trusted
 device.
 
+## Trust-directory API
+
+The enterprise server advertises `e2ee_device_trust_v2` and exposes only the
+device-trust foundation under `/enterprise/e2ee/*`. Every endpoint requires an
+account session. Root registration, device registration, approval and
+revocation must carry the authenticated account and organization in their
+signed payload; the HTTP adapter rejects a mismatched scope before signature
+verification. Directory and transparency lookups can target only active
+accounts in the caller's organization and return a generic not-found response
+for cross-tenant identifiers.
+
+`GET /enterprise/e2ee/status` deliberately reports `foundation-only` and
+`enabled: false`. There is no encrypted-message send endpoint in this phase,
+and the desktop client must not interpret successful device registration as
+permission to label a conversation E2EE or silently fall back to plaintext.
+
 ## Transparency and recovery
 
 Every root, credential, approval and revocation is appended to an account Merkle

@@ -604,6 +604,119 @@ export interface EnterpriseUnreadMessageNotification {
   createdAt: string;
 }
 
+export const OTTO_E2EE_PROTOCOL_ID = 'otto-mls-v1' as const;
+export const OTTO_E2EE_TRUST_VERSION = 2 as const;
+
+export interface EnterpriseE2eeCapabilityStatus {
+  protocolId: typeof OTTO_E2EE_PROTOCOL_ID;
+  releaseState: 'foundation-only' | 'audited-disabled' | 'enabled';
+  enabled: boolean;
+  externalAuditCompleted: boolean;
+  mlsEngineReady: boolean;
+  reason: string;
+}
+
+export interface EnterpriseE2eeAccountRootRegistration {
+  protocolId: typeof OTTO_E2EE_PROTOCOL_ID;
+  trustVersion: typeof OTTO_E2EE_TRUST_VERSION;
+  organizationId: string;
+  accountId: string;
+  rootSigningPublicKey: string;
+  recoveryPublicKey: string;
+  issuedAt: string;
+  nonce: string;
+  signature: string;
+  recoverySignature: string;
+}
+
+export interface EnterpriseE2eeBootstrapProof {
+  type: 'bootstrap';
+  organizationId: string;
+  accountId: string;
+  targetDeviceId: string;
+  targetCredentialHash: string;
+  issuedAt: string;
+  nonce: string;
+  signature: string;
+}
+
+export interface EnterpriseE2eeDeviceRegistration {
+  protocolId: typeof OTTO_E2EE_PROTOCOL_ID;
+  trustVersion: typeof OTTO_E2EE_TRUST_VERSION;
+  organizationId: string;
+  accountId: string;
+  deviceId: string;
+  deviceName: string;
+  signingPublicKey: string;
+  mlsKeyPackage: string;
+  issuedAt: string;
+  expiresAt: string;
+  nonce: string;
+  signature: string;
+  bootstrap?: EnterpriseE2eeBootstrapProof;
+}
+
+interface EnterpriseE2eeDeviceProofBase {
+  organizationId: string;
+  accountId: string;
+  actorDeviceId: string;
+  targetDeviceId: string;
+  targetCredentialHash: string;
+  issuedAt: string;
+  nonce: string;
+  signature: string;
+}
+
+export interface EnterpriseE2eeDeviceApprovalProof
+  extends EnterpriseE2eeDeviceProofBase {
+  type: 'approval';
+}
+
+export interface EnterpriseE2eeDeviceRevocationProof
+  extends EnterpriseE2eeDeviceProofBase {
+  type: 'revocation';
+}
+
+export interface EnterpriseE2eeDeviceDirectory {
+  protocolId: typeof OTTO_E2EE_PROTOCOL_ID;
+  trustVersion: typeof OTTO_E2EE_TRUST_VERSION;
+  organizationId: string;
+  accountId: string;
+  root: EnterpriseE2eeAccountRootRegistration & {
+    rootKeyId: string;
+    transparencySequence: number;
+  };
+  devices: Array<EnterpriseE2eeDeviceRegistration & {
+    bootstrap?: undefined;
+    credentialHash: string;
+    state: 'pending' | 'approved' | 'revoked' | 'expired';
+    transparencySequence: number;
+  }>;
+  proofs: Array<{
+    proofId: string;
+    proof: EnterpriseE2eeBootstrapProof
+      | EnterpriseE2eeDeviceApprovalProof
+      | EnterpriseE2eeDeviceRevocationProof;
+    transparencySequence: number;
+  }>;
+  transparency: {
+    checkpoint: { size: number; rootHash: string };
+    leaves: Array<{
+      accountSequence: number;
+      kind: 'account_root_registered' | 'device_registered'
+        | 'device_bootstrapped' | 'device_approved' | 'device_revoked';
+      payload: unknown;
+      leafHash: string;
+    }>;
+  };
+}
+
+export interface EnterpriseE2eeTransparencyInclusionProof {
+  accountSequence: number;
+  checkpoint: { size: number; rootHash: string };
+  nodes: Array<{ position: 'left' | 'right'; hash: string }>;
+}
+
 export interface EnterpriseAtoaInboxMessage extends EnterpriseDirectMessage {
   peerAccountId: string;
   /** 由企业服务端按 peerAccountId 查询并回传，不能来自消息正文。 */
@@ -1749,6 +1862,87 @@ export class EnterpriseClient {
       attachments: Array.isArray(message.attachments) ? message.attachments : [],
     }));
   }
+
+  async getE2eeCapabilityStatus(): Promise<EnterpriseE2eeCapabilityStatus> {
+    this.requireE2eeSession();
+    await this.assertCompatibleServer(this.serverUrl, ['e2ee_device_trust_v2']);
+    return (await this.request<{ status: EnterpriseE2eeCapabilityStatus }>(
+      '/enterprise/e2ee/status',
+    )).status;
+  }
+
+  async registerE2eeAccountRoot(
+    input: EnterpriseE2eeAccountRootRegistration,
+  ): Promise<EnterpriseE2eeDeviceDirectory> {
+    this.assertCurrentE2eeScope(input);
+    await this.assertCompatibleServer(this.serverUrl, ['e2ee_device_trust_v2']);
+    return (await this.request<{ directory: EnterpriseE2eeDeviceDirectory }>(
+      '/enterprise/e2ee/account-root',
+      { method: 'POST', body: JSON.stringify(input) },
+    )).directory;
+  }
+
+  async registerE2eeDevice(
+    input: EnterpriseE2eeDeviceRegistration,
+  ): Promise<EnterpriseE2eeDeviceDirectory> {
+    this.assertCurrentE2eeScope(input);
+    await this.assertCompatibleServer(this.serverUrl, ['e2ee_device_trust_v2']);
+    return (await this.request<{ directory: EnterpriseE2eeDeviceDirectory }>(
+      '/enterprise/e2ee/devices/register',
+      { method: 'POST', body: JSON.stringify(input) },
+    )).directory;
+  }
+
+  async approveE2eeDevice(
+    proof: EnterpriseE2eeDeviceApprovalProof,
+  ): Promise<EnterpriseE2eeDeviceDirectory> {
+    this.assertCurrentE2eeScope(proof);
+    await this.assertCompatibleServer(this.serverUrl, ['e2ee_device_trust_v2']);
+    return (await this.request<{ directory: EnterpriseE2eeDeviceDirectory }>(
+      '/enterprise/e2ee/devices/approve',
+      { method: 'POST', body: JSON.stringify(proof) },
+    )).directory;
+  }
+
+  async revokeE2eeDevice(
+    proof: EnterpriseE2eeDeviceRevocationProof,
+  ): Promise<EnterpriseE2eeDeviceDirectory> {
+    this.assertCurrentE2eeScope(proof);
+    await this.assertCompatibleServer(this.serverUrl, ['e2ee_device_trust_v2']);
+    return (await this.request<{ directory: EnterpriseE2eeDeviceDirectory }>(
+      '/enterprise/e2ee/devices/revoke',
+      { method: 'POST', body: JSON.stringify(proof) },
+    )).directory;
+  }
+
+  async getE2eeDeviceDirectory(
+    accountId?: string,
+  ): Promise<EnterpriseE2eeDeviceDirectory> {
+    this.requireE2eeSession();
+    await this.assertCompatibleServer(this.serverUrl, ['e2ee_device_trust_v2']);
+    const query = accountId
+      ? `?accountId=${encodeURIComponent(accountId)}`
+      : '';
+    return (await this.request<{ directory: EnterpriseE2eeDeviceDirectory }>(
+      `/enterprise/e2ee/directory${query}`,
+    )).directory;
+  }
+
+  async getE2eeTransparencyInclusionProof(
+    accountSequence: number,
+    accountId?: string,
+  ): Promise<EnterpriseE2eeTransparencyInclusionProof> {
+    this.requireE2eeSession();
+    if (!Number.isSafeInteger(accountSequence) || accountSequence < 1) {
+      throw new Error('E2EE transparency sequence is invalid');
+    }
+    await this.assertCompatibleServer(this.serverUrl, ['e2ee_device_trust_v2']);
+    const query = new URLSearchParams({ sequence: String(accountSequence) });
+    if (accountId) query.set('accountId', accountId);
+    return (await this.request<{ proof: EnterpriseE2eeTransparencyInclusionProof }>(
+      `/enterprise/e2ee/transparency?${query.toString()}`,
+    )).proof;
+  }
   async listUnreadDirectMessageNotifications(): Promise<EnterpriseUnreadMessageNotification[]> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     await this.assertCompatibleServer(this.serverUrl, ['unread_message_notifications_v1']);
@@ -1957,6 +2151,26 @@ export class EnterpriseClient {
       this.compatibleCapabilities.clear();
     }
     this.serverUrl = serverUrl;
+  }
+
+  private requireE2eeSession(): EnterpriseAccount {
+    if (!this.token || !this.currentAccount) {
+      throw new Error('登录已失效，请重新登录');
+    }
+    return this.currentAccount;
+  }
+
+  private assertCurrentE2eeScope(input: {
+    organizationId: string;
+    accountId: string;
+  }): void {
+    const account = this.requireE2eeSession();
+    if (
+      input.organizationId !== account.organizationId
+      || input.accountId !== account.id
+    ) {
+      throw new Error('E2EE device trust scope does not match the current account');
+    }
   }
 
   private beginAuthOperation(serverUrl: string): number {

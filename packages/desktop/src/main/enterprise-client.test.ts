@@ -60,6 +60,7 @@ const API_V2_HEALTH = {
     'account_presence_v1',
     'modular_update_push_v1',
     'signed_update_policy_v1',
+    'e2ee_device_trust_v2',
   ],
 };
 
@@ -1418,5 +1419,133 @@ describe('EnterpriseClient', () => {
       success: true,
       eventId: 'a'.repeat(64),
     });
+  });
+});
+
+describe('EnterpriseClient E2EE device trust API', () => {
+  const accountRoot = {
+    protocolId: 'otto-mls-v1' as const,
+    trustVersion: 2 as const,
+    organizationId: ACCOUNT.organizationId,
+    accountId: ACCOUNT.id,
+    rootSigningPublicKey: 'root-public-key',
+    recoveryPublicKey: 'recovery-public-key',
+    issuedAt: '2026-08-01T08:00:00.000Z',
+    nonce: 'a'.repeat(22),
+    signature: 'root-signature',
+    recoverySignature: 'recovery-signature',
+  };
+  const device = {
+    protocolId: 'otto-mls-v1' as const,
+    trustVersion: 2 as const,
+    organizationId: ACCOUNT.organizationId,
+    accountId: ACCOUNT.id,
+    deviceId: 'device-a',
+    deviceName: 'Office PC',
+    signingPublicKey: 'device-public-key',
+    mlsKeyPackage: 'key-package',
+    issuedAt: '2026-08-01T08:00:00.000Z',
+    expiresAt: '2027-08-01T08:00:00.000Z',
+    nonce: 'b'.repeat(22),
+    signature: 'device-signature',
+  };
+  const approval = {
+    type: 'approval' as const,
+    organizationId: ACCOUNT.organizationId,
+    accountId: ACCOUNT.id,
+    actorDeviceId: 'device-a',
+    targetDeviceId: 'device-b',
+    targetCredentialHash: 'c'.repeat(64),
+    issuedAt: '2026-08-01T08:00:00.000Z',
+    nonce: 'd'.repeat(22),
+    signature: 'approval-signature',
+  };
+  const revocation = { ...approval, type: 'revocation' as const };
+  const directory = {
+    protocolId: 'otto-mls-v1',
+    trustVersion: 2,
+    organizationId: ACCOUNT.organizationId,
+    accountId: ACCOUNT.id,
+    root: accountRoot,
+    devices: [],
+    proofs: [],
+    transparency: {
+      checkpoint: { size: 1, rootHash: 'e'.repeat(64) },
+      leaves: [],
+    },
+  };
+
+  it('uses typed authenticated endpoints for trust lifecycle and transparency', async () => {
+    const status = {
+      protocolId: 'otto-mls-v1',
+      releaseState: 'foundation-only',
+      enabled: false,
+      externalAuditCompleted: false,
+      mlsEngineReady: false,
+      reason: 'not released',
+    };
+    const inclusionProof = {
+      accountSequence: 1,
+      checkpoint: { size: 1, rootHash: 'e'.repeat(64) },
+      nodes: [],
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT,
+        token: 'session-token',
+        expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, { status }))
+      .mockResolvedValueOnce(jsonResponse(200, { directory }))
+      .mockResolvedValueOnce(jsonResponse(201, { directory }))
+      .mockResolvedValueOnce(jsonResponse(200, { directory }))
+      .mockResolvedValueOnce(jsonResponse(200, { directory }))
+      .mockResolvedValueOnce(jsonResponse(200, { directory }))
+      .mockResolvedValueOnce(jsonResponse(200, { proof: inclusionProof }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
+
+    await expect(client.getE2eeCapabilityStatus()).resolves.toEqual(status);
+    await expect(client.registerE2eeAccountRoot(accountRoot)).resolves.toEqual(directory);
+    await expect(client.registerE2eeDevice(device)).resolves.toEqual(directory);
+    await expect(client.approveE2eeDevice(approval)).resolves.toEqual(directory);
+    await expect(client.revokeE2eeDevice(revocation)).resolves.toEqual(directory);
+    await expect(client.getE2eeDeviceDirectory('account/peer')).resolves.toEqual(directory);
+    await expect(client.getE2eeTransparencyInclusionProof(1, 'account/peer'))
+      .resolves.toEqual(inclusionProof);
+
+    expect(fetchMock.mock.calls.slice(2).map(([url]) => url)).toEqual([
+      'https://enterprise.otto.test/enterprise/e2ee/status',
+      'https://enterprise.otto.test/enterprise/e2ee/account-root',
+      'https://enterprise.otto.test/enterprise/e2ee/devices/register',
+      'https://enterprise.otto.test/enterprise/e2ee/devices/approve',
+      'https://enterprise.otto.test/enterprise/e2ee/devices/revoke',
+      'https://enterprise.otto.test/enterprise/e2ee/directory?accountId=account%2Fpeer',
+      'https://enterprise.otto.test/enterprise/e2ee/transparency?sequence=1&accountId=account%2Fpeer',
+    ]);
+    for (const call of fetchMock.mock.calls.slice(2)) {
+      expect((call[1] as RequestInit).headers).toMatchObject({
+        authorization: 'Bearer session-token',
+      });
+    }
+  });
+
+  it('rejects a signed mutation scoped to another account before network access', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT,
+        token: 'session-token',
+        expiresAt: '2099-01-01',
+      }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
+
+    await expect(client.registerE2eeAccountRoot({
+      ...accountRoot,
+      accountId: 'account-b',
+    })).rejects.toThrow('E2EE device trust scope does not match the current account');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

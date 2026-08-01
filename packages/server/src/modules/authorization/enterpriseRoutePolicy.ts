@@ -90,6 +90,7 @@ export function isMemberRoute(path: string): boolean {
     MEMBER_ROUTES.has(path) ||
     path.startsWith('/enterprise/skills/') ||
     path.startsWith('/enterprise/knowledge/') ||
+    path.startsWith('/enterprise/e2ee/') ||
     path === '/enterprise/atoa/inbox' ||
     path.startsWith('/enterprise/messages/') ||
     path.startsWith('/enterprise/message-attachments/') ||

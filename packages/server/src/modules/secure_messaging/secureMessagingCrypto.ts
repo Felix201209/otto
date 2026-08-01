@@ -45,18 +45,25 @@ export function canonicalE2eeJson(value: unknown): string {
 }
 
 function ed25519PublicKey(value: string): KeyObject {
-  const trimmed = value.trim().replace(/\\n/g, '\n');
-  const key = trimmed.includes('BEGIN PUBLIC KEY')
-    ? createPublicKey(trimmed)
-    : createPublicKey({
-        key: Buffer.from(trimmed, 'base64'),
-        format: 'der',
-        type: 'spki',
-      });
-  if (key.asymmetricKeyType !== 'ed25519') {
-    throw new Error('E2EE signing key must be Ed25519');
+  try {
+    const trimmed = value.trim().replace(/\\n/g, '\n');
+    const key = trimmed.includes('BEGIN PUBLIC KEY')
+      ? createPublicKey(trimmed)
+      : createPublicKey({
+          key: Buffer.from(trimmed, 'base64'),
+          format: 'der',
+          type: 'spki',
+        });
+    if (key.asymmetricKeyType !== 'ed25519') {
+      throw new Error('E2EE signing key must be Ed25519');
+    }
+    return key;
+  } catch (error) {
+    if (error instanceof Error && error.message === 'E2EE signing key must be Ed25519') {
+      throw error;
+    }
+    throw new Error('E2EE signing public key is invalid');
   }
-  return key;
 }
 
 export function normalizeE2eePublicKey(value: string): string {

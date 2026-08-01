@@ -154,6 +154,7 @@ const ENTERPRISE_CAPABILITIES = [
   'signed_update_policy_v1',
   'account_data_sync_v1',
   'enterprise_skill_market_v1',
+  'e2ee_device_trust_v2',
 ] as const;
 
 export interface DeploymentInfo {

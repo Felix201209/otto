@@ -92,6 +92,8 @@ describe('authorization module boundary', () => {
     expect(authorization.isAdminRoute('/enterprise/accounts/member-1')).toBe(true);
     expect(authorization.isMemberRoute('/enterprise/messages/member-1')).toBe(true);
     expect(authorization.isMemberRoute('/enterprise/account-sync')).toBe(true);
+    expect(authorization.isMemberRoute('/enterprise/e2ee/status')).toBe(true);
+    expect(authorization.isMemberRoute('/enterprise/e2ee/devices/register')).toBe(true);
     expect(authorization.isLicenseMaintenanceRoute('/enterprise/account-sync')).toBe(true);
     expect(authorization.isAdminRoute('/enterprise/deployment/data-protection')).toBe(true);
     expect(

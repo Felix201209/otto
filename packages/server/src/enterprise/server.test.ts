@@ -9,11 +9,18 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import { request as httpRequest, type Server } from 'node:http';
-import { createHash, generateKeyPairSync, sign } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { canonicalJson } from '../modules/commercial_control/signedEnvelope.js';
+import {
+  ED25519_SIGNATURE_PREFIX,
+  OTTO_E2EE_PROTOCOL_ID,
+  OTTO_E2EE_TRUST_VERSION,
+  accountRootSigningPayload,
+  canonicalE2eeJson,
+} from '../modules/secure_messaging/index.js';
 import {
   buildAtoaRequest,
   buildAtoaResponse,
@@ -572,8 +579,113 @@ describe('受保护 vs 公开路由边界', () => {
       'data_protection_v1',
       'encrypted_attachment_storage_v1',
       'encrypted_message_storage_v1',
+      'e2ee_device_trust_v2',
     ]));
     expect(body.uptime).toEqual(expect.any(Number));
+  });
+
+  it('E2EE device trust HTTP API is session-bound and same-organization only', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const database = await import('./db.js');
+    const member = database.createAccount({
+      username: 'e2ee-member',
+      password: 'e2ee-member-password',
+      name: 'E2EE Member',
+    });
+    const otherOrganization = database.createOrganization({
+      name: 'Other E2EE Tenant',
+      slug: 'other-e2ee-tenant',
+    });
+    const otherMember = database.createAccount({
+      organizationId: otherOrganization.id,
+      username: 'other-e2ee-member',
+      password: 'other-e2ee-password',
+      name: 'Other E2EE Member',
+    });
+    const token = database.createAuthSession(member.id).token;
+    const auth = {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    };
+
+    expect((await fetch(`${base}/enterprise/e2ee/status`)).status).toBe(401);
+    const status = await fetch(`${base}/enterprise/e2ee/status`, { headers: auth });
+    expect(status.status).toBe(200);
+    await expect(status.json()).resolves.toMatchObject({
+      status: {
+        protocolId: 'otto-mls-v1',
+        releaseState: 'foundation-only',
+        enabled: false,
+      },
+    });
+
+    const crossTenant = await fetch(
+      `${base}/enterprise/e2ee/directory?accountId=${encodeURIComponent(otherMember.id)}`,
+      { headers: auth },
+    );
+    expect(crossTenant.status).toBe(404);
+
+    const rootPair = generateKeyPairSync('ed25519');
+    const recoveryPair = generateKeyPairSync('ed25519');
+    const unsignedRoot = {
+      protocolId: OTTO_E2EE_PROTOCOL_ID,
+      trustVersion: OTTO_E2EE_TRUST_VERSION,
+      organizationId: member.organizationId,
+      accountId: member.id,
+      rootSigningPublicKey: rootPair.publicKey
+        .export({ format: 'der', type: 'spki' as const })
+        .toString('base64'),
+      recoveryPublicKey: recoveryPair.publicKey
+        .export({ format: 'der', type: 'spki' as const })
+        .toString('base64'),
+      issuedAt: new Date().toISOString(),
+      nonce: randomBytes(24).toString('base64url'),
+    };
+    const signE2ee = (privateKey: typeof rootPair.privateKey) =>
+      `${ED25519_SIGNATURE_PREFIX}${sign(
+        null,
+        Buffer.from(canonicalE2eeJson(accountRootSigningPayload(unsignedRoot))),
+        privateKey,
+      ).toString('base64url')}`;
+    const rootRegistration = {
+      ...unsignedRoot,
+      signature: signE2ee(rootPair.privateKey),
+      recoverySignature: signE2ee(recoveryPair.privateKey),
+    };
+    const registered = await fetch(`${base}/enterprise/e2ee/account-root`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify(rootRegistration),
+    });
+    expect(registered.status).toBe(200);
+    await expect(registered.json()).resolves.toMatchObject({
+      directory: {
+        organizationId: member.organizationId,
+        accountId: member.id,
+        devices: [],
+        transparency: { checkpoint: { size: 1 } },
+      },
+    });
+
+    const proof = await fetch(
+      `${base}/enterprise/e2ee/transparency?sequence=1`,
+      { headers: auth },
+    );
+    expect(proof.status).toBe(200);
+    await expect(proof.json()).resolves.toMatchObject({
+      proof: { accountSequence: 1, checkpoint: { size: 1 } },
+    });
+
+    const forgedScope = await fetch(`${base}/enterprise/e2ee/account-root`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({
+        ...rootRegistration,
+        organizationId: otherOrganization.id,
+        accountId: otherMember.id,
+      }),
+    });
+    expect(forgedScope.status).toBe(403);
   });
 
   it('private deployment license enforcement keeps only maintenance routes open', async () => {
@@ -591,6 +703,18 @@ describe('受保护 vs 公开路由边界', () => {
 
     const publicPark = await fetch(`${base}/enterprise/park/services?parkId=park_missing`);
     expect(publicPark.status).toBe(402);
+
+    const database = await import('./db.js');
+    const member = database.createAccount({
+      username: 'license-e2ee-member',
+      password: 'license-e2ee-password',
+      name: 'License E2EE Member',
+    });
+    const memberToken = database.createAuthSession(member.id).token;
+    const blockedE2ee = await fetch(`${base}/enterprise/e2ee/status`, {
+      headers: { authorization: `Bearer ${memberToken}` },
+    });
+    expect(blockedE2ee.status).toBe(402);
 
     const status = await fetch(`${base}/enterprise/deployment/status`, { headers });
     expect(status.status).toBe(200);

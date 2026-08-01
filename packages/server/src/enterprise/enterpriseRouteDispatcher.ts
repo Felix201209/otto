@@ -16,6 +16,7 @@ import {
   type AuthRouteSmsSender,
 } from './authRoutes.js';
 import { handleCommunicationRoute } from './communicationRoutes.js';
+import { handleSecureMessagingRoute } from './secureMessagingRoutes.js';
 import { handleDataGovernanceRoute } from '../modules/data_governance/index.js';
 import { handleCreditsRoute } from './creditsRoutes.js';
 import {
@@ -395,6 +396,22 @@ export async function dispatchEnterpriseRoute({
       res,
       url,
       adminPrincipal,
+      sendJSON,
+    })
+  ) {
+    return true;
+  }
+
+  if (
+    await handleSecureMessagingRoute({
+      path,
+      method,
+      url,
+      req,
+      res,
+      memberAccount,
+      services: db,
+      readBody,
       sendJSON,
     })
   ) {
