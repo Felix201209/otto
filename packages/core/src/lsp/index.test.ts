@@ -10,11 +10,13 @@ import * as os from 'node:os';
 import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import { PassThrough } from 'node:stream';
+/* eslint-disable import/no-internal-modules -- test must mirror the production Node transport. */
 import {
   createMessageConnection,
-  ReadableStreamMessageReader,
-  WriteableStreamMessageWriter,
-} from 'vscode-jsonrpc';
+  StreamMessageReader,
+  StreamMessageWriter,
+} from 'vscode-jsonrpc/node.js';
+/* eslint-enable import/no-internal-modules */
 import { LSPManager } from './index.js';
 
 function createDuplexTransport() {
@@ -28,8 +30,8 @@ function createDuplexTransport() {
   };
 
   const serverConnection = createMessageConnection(
-    new ReadableStreamMessageReader(clientToServer as never),
-    new WriteableStreamMessageWriter(serverToClient as never),
+    new StreamMessageReader(clientToServer),
+    new StreamMessageWriter(serverToClient),
   );
 
   return { fakeProcess, serverConnection };

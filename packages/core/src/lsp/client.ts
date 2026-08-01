@@ -8,11 +8,13 @@
 import { pathToFileURL } from 'node:url';
 import * as path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
+/* eslint-disable import/no-internal-modules -- documented Node transport required for child-process streams. */
 import {
   createMessageConnection,
-  ReadableStreamMessageReader,
-  WriteableStreamMessageWriter,
-} from 'vscode-jsonrpc';
+  StreamMessageReader,
+  StreamMessageWriter,
+} from 'vscode-jsonrpc/node.js';
+/* eslint-enable import/no-internal-modules */
 import type { LSPClientInfo } from './types.js';
 
 export async function createLSPClient(input: {
@@ -39,8 +41,8 @@ export async function createLSPClient(input: {
 
   // 1. 建立基于 Stdio 的连接
   const connection = createMessageConnection(
-    new ReadableStreamMessageReader(input.server.process.stdout! as unknown as ConstructorParameters<typeof ReadableStreamMessageReader>[0]),
-    new WriteableStreamMessageWriter(input.server.process.stdin! as unknown as ConstructorParameters<typeof WriteableStreamMessageWriter>[0]),
+    new StreamMessageReader(input.server.process.stdout!),
+    new StreamMessageWriter(input.server.process.stdin!),
   );
 
   // 2. 监听错误和关闭
