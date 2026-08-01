@@ -7,11 +7,13 @@
 import { describe, it, expect } from 'vitest';
 import { PassThrough } from 'node:stream';
 import * as path from 'node:path';
+/* eslint-disable import/no-internal-modules -- documented Node transport is required for stream-backed LSP fixtures. */
 import {
   createMessageConnection,
   StreamMessageReader,
   StreamMessageWriter,
 } from 'vscode-jsonrpc/node.js';
+/* eslint-enable import/no-internal-modules */
 import { createLSPClient, stopLSPClient } from './client.js';
 import type { MessageConnection } from 'vscode-jsonrpc';
 

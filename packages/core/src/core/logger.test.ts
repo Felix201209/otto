@@ -29,14 +29,12 @@ vi.mock('../utils/paths.js', async (importOriginal) => {
 });
 
 const LOG_FILE_NAME = 'logs.json';
-const CHECKPOINT_FILE_NAME = 'checkpoint.json';
 
 describe('Logger', () => {
   let logger: Logger;
   const testSessionId = 'test-session-id';
   let testGeminiDir: string;
   let testLogFilePath: string;
-  let testCheckpointFilePath: string;
 
   beforeEach(async () => {
     vi.resetAllMocks();
@@ -48,7 +46,6 @@ describe('Logger', () => {
     (getProjectTempDir as Mock).mockReturnValue(testGeminiDir);
 
     testLogFilePath = path.join(testGeminiDir, LOG_FILE_NAME);
-    testCheckpointFilePath = path.join(testGeminiDir, CHECKPOINT_FILE_NAME);
 
     // Ensure the directory exists for the test
     await fs.mkdir(testGeminiDir, { recursive: true });
