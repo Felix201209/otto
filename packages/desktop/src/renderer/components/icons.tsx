@@ -90,6 +90,15 @@ export function IconList({ size, className }: IconProps): React.JSX.Element {
   );
 }
 
+export function IconSearch({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <circle cx="10.5" cy="10.5" r="6.5" />
+      <path d="m16 16 4.5 4.5" />
+    </svg>
+  );
+}
+
 export function IconChevron({ size, className }: IconProps): React.JSX.Element {
   return (
     <svg {...base(size)} className={className}>

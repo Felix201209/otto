@@ -1,5 +1,5 @@
 // 浏览器预览构建：esbuild 打包 renderer → dist-preview/（不进 git，仅本地预览用）
-const esbuild = require('D:/Node/node_cache/_npx/beb367dfa21eb3f5/node_modules/esbuild');
+const esbuild = require('esbuild');
 const path = require('path');
 const fs = require('fs');
 
@@ -28,7 +28,7 @@ esbuild.build({
   const template = fs.readFileSync(path.join(root, 'src/renderer/index.html'), 'utf8');
   const html = template.replace(
     '</body>',
-    '  <link rel="stylesheet" href="./main.css" />\n  <script src="./main.js"></script>\n  </body>',
+    `  <link rel="stylesheet" href="./main.css?v=${Date.now()}" />\n  <script src="./main.js?v=${Date.now()}"></script>\n  </body>`,
   );
   fs.writeFileSync(path.join(outdir, 'index.html'), html);
   console.log('PREVIEW_READY ' + outdir);

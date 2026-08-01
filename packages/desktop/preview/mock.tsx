@@ -80,19 +80,44 @@ const MODELS: Frame[] = [
 
 const previewAccount = {
   id: 'browser-dev',
-  organizationId: 'local',
-  organizationName: '本地开发',
+  organizationId: 'park-admin',
+  organizationName: '宏创园区管理方',
   employeeId: null,
   username: 'dev',
   phone: null,
-  name: '开发者',
-  role: '成员',
-  department: '本地调试',
-  isAdmin: false,
+  name: '园区管理员',
+  role: '园区管理员',
+  department: '园区管理部',
+  departmentId: 'park-dept',
+  isAdmin: true,
   status: 'active',
   tags: [],
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
+};
+
+const previewTenantOrganizations = [
+  { id: 'tenant-smart', name: '宏创智能制造', slug: 'hongchuang-smart', parkId: 'park-hc', status: 'active', industry: '智能制造', employeeCount: 36, departmentCount: 4, onlineCount: 12, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'tenant-digital', name: '北辰数字科技', slug: 'beichen-digital', parkId: 'park-hc', status: 'active', industry: '软件与信息服务', employeeCount: 24, departmentCount: 3, onlineCount: 8, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'tenant-logistics', name: '远达供应链', slug: 'yuanda-logistics', parkId: 'park-hc', status: 'active', industry: '现代物流', employeeCount: 18, departmentCount: 3, onlineCount: 5, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+];
+
+const previewOrganizationViews: Record<string, any> = {
+  'tenant-smart': {
+    organization: { id: 'tenant-smart', name: '宏创智能制造', status: 'active', industry: '智能制造', createdAt: new Date().toISOString() },
+    employeeCount: 36,
+    members: [
+      { id: 'smart-owner', username: 'smart.owner', name: '李总', role: '企业负责人', department: '管理层', departmentId: 'smart-management', positionId: 'smart-owner-pos', positionTitle: '企业负责人', avatarUrl: null, isAdmin: true, status: 'active', ottoOnline: true },
+      { id: 'smart-pm', username: 'smart.pm', name: '王敏', role: '项目经理', department: '研发中心', departmentId: 'smart-rd', positionId: 'smart-pm-pos', positionTitle: '项目经理', avatarUrl: null, isAdmin: false, status: 'active', ottoOnline: true },
+      { id: 'smart-engineer', username: 'smart.engineer', name: '周工', role: '工程师', department: '研发中心', departmentId: 'smart-rd', positionId: 'smart-engineer-pos', positionTitle: '工程师', avatarUrl: null, isAdmin: false, status: 'active', ottoOnline: false },
+    ],
+    structure: [
+      { id: 'smart-management', organizationId: 'tenant-smart', name: '管理层', parentDepartmentId: null, memberCount: 1, positions: [{ id: 'smart-owner-pos', organizationId: 'tenant-smart', departmentId: 'smart-management', title: '企业负责人', roleMapping: 'enterprise_admin', createdAt: '', updatedAt: '' }], createdAt: '', updatedAt: '' },
+      { id: 'smart-rd', organizationId: 'tenant-smart', name: '研发中心', parentDepartmentId: null, memberCount: 2, positions: [{ id: 'smart-pm-pos', organizationId: 'tenant-smart', departmentId: 'smart-rd', title: '项目经理', roleMapping: 'department_admin', createdAt: '', updatedAt: '' }, { id: 'smart-engineer-pos', organizationId: 'tenant-smart', departmentId: 'smart-rd', title: '工程师', roleMapping: 'member', createdAt: '', updatedAt: '' }], createdAt: '', updatedAt: '' },
+      { id: 'smart-product', organizationId: 'tenant-smart', name: '产品组', parentDepartmentId: 'smart-rd', memberCount: 0, positions: [], createdAt: '', updatedAt: '' },
+    ],
+    park: { id: 'park-hc', name: '宏创园区', brandName: '宏创园区服务', adminOrganizationId: 'park-admin', status: 'active', createdAt: '', updatedAt: '', isAdminOrganization: false },
+  },
 };
 
 const previewPublication = {
@@ -234,13 +259,17 @@ const mockBridge = {
   async enterpriseUsageRecord(): Promise<any> { return { recorded: false, source: 'client_reported' }; },
   async enterpriseKnowledgeRecord(): Promise<any> { return { status: 'added', added: true }; },
   async enterpriseKnowledgeList(): Promise<any> { return []; },
-  async enterpriseOrganizationView(): Promise<any> {
+  async enterpriseOrganizationView(organizationId?: string): Promise<any> {
+    if (organizationId && previewOrganizationViews[organizationId]) return previewOrganizationViews[organizationId];
     return {
-      organization: { id: 'local', name: '本地开发', status: 'active', createdAt: new Date().toISOString() },
+      organization: { id: 'park-admin', name: '宏创园区管理方', status: 'active', industry: '园区运营服务', createdAt: new Date().toISOString() },
       members: [previewAccount],
       employeeCount: 1,
+      structure: [{ id: 'park-dept', organizationId: 'park-admin', name: '园区管理部', parentDepartmentId: null, memberCount: 1, positions: [], createdAt: '', updatedAt: '' }],
+      park: { id: 'park-hc', name: '宏创园区', brandName: '宏创园区服务', adminOrganizationId: 'park-admin', status: 'active', createdAt: '', updatedAt: '', isAdminOrganization: true },
     };
   },
+  async enterpriseParkTenants(): Promise<any> { return previewTenantOrganizations; },
   async enterpriseOrganizationInviteGet(): Promise<any> {
     return {
       organization: { id: 'local', name: '本地开发' },

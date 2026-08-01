@@ -13,6 +13,7 @@ export const IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR: DatabaseSchemaC
           id TEXT PRIMARY KEY,
           organization_id TEXT NOT NULL,
           name TEXT NOT NULL COLLATE NOCASE,
+          parent_department_id TEXT,
           created_at TEXT NOT NULL DEFAULT (datetime('now')),
           updated_at TEXT NOT NULL DEFAULT (datetime('now')),
           UNIQUE(organization_id, name),
@@ -38,5 +39,12 @@ export const IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR: DatabaseSchemaC
         CREATE INDEX IF NOT EXISTS idx_organization_positions_org
           ON organization_positions(organization_id, department_id, title);
       `);
+
+      const columns = database
+        .prepare('PRAGMA table_info(organization_departments)')
+        .all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === 'parent_department_id')) {
+        database.exec('ALTER TABLE organization_departments ADD COLUMN parent_department_id TEXT');
+      }
     },
   };

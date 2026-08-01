@@ -15,6 +15,7 @@ export const IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor
           slug TEXT NOT NULL COLLATE NOCASE UNIQUE,
           invite_secret TEXT NOT NULL,
           park_id TEXT,
+          industry TEXT,
           status TEXT NOT NULL DEFAULT 'active'
             CHECK(status IN ('active', 'disabled')),
           created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -27,6 +28,9 @@ export const IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor
         .all() as Array<{ name: string }>;
       if (!columns.some((column) => column.name === 'park_id')) {
         database.exec('ALTER TABLE organizations ADD COLUMN park_id TEXT');
+      }
+      if (!columns.some((column) => column.name === 'industry')) {
+        database.exec('ALTER TABLE organizations ADD COLUMN industry TEXT');
       }
 
       database.exec(`

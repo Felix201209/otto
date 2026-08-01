@@ -21,25 +21,57 @@ if (!previewWindow.otto) {
   let sessions = [makeSession('preview-session', '园区服务本地演示')];
   let models = readModels();
   const previewAccount = {
-    id: 'preview-account',
-    organizationId: 'preview-organization',
-    organizationName: '北控宏创科技园',
+    id: 'browser-dev',
+    organizationId: 'preview-park-admin',
+    organizationName: '宏创园区管理方',
     accountType: 'enterprise',
-    employeeId: 'preview-employee',
-    username: 'preview.user',
+    employeeId: null,
+    username: 'park.admin',
     phone: '+8613800000000',
-    name: '本地测试用户',
-    role: '企业员工',
-    department: '入驻企业',
+    name: '园区管理员',
+    role: '园区管理员',
+    department: '园区管理部',
+    departmentId: 'preview-park-dept',
     positionId: null,
-    positionTitle: '员工',
-    isAdmin: false,
+    positionTitle: '园区管理员',
+    isAdmin: true,
     status: 'active',
-    tags: ['企业用户'],
+    tags: ['园区管理员'],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
+  const previewTenantOrganizations = [
+    { id: 'preview-tenant-smart', name: '宏创智能制造', slug: 'hongchuang-smart', parkId: 'preview-park', status: 'active', industry: '智能制造', employeeCount: 36, departmentCount: 4, onlineCount: 12, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: 'preview-tenant-digital', name: '北辰数字科技', slug: 'beichen-digital', parkId: 'preview-park', status: 'active', industry: '软件与信息服务', employeeCount: 24, departmentCount: 3, onlineCount: 8, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: 'preview-tenant-logistics', name: '远达供应链', slug: 'yuanda-logistics', parkId: 'preview-park', status: 'active', industry: '现代物流', employeeCount: 18, departmentCount: 3, onlineCount: 5, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  ];
   let previewTickets: Array<Record<string, unknown>> = [];
+  let previewParkPublications: Array<Record<string, unknown>> = [
+    {
+      id: 'preview-publication-announcement',
+      kind: 'announcement',
+      title: '园区公共区域维护通知',
+      body: '本周六 09:00–12:00 对公共区域进行例行维护，请各企业提前安排好出入和访客接待。',
+      createdAt: new Date(Date.now() - 45 * 60_000).toISOString(),
+      readAt: null,
+      submittedAt: null,
+      responseData: null,
+      recipientCount: 78,
+      readCount: 41,
+    },
+    {
+      id: 'preview-publication-satisfaction',
+      kind: 'satisfaction',
+      title: '2026 年第二季度园区服务满意度调查',
+      body: '请结合本季度使用体验，对物业、会议室、停车和网络等园区服务进行评价。',
+      createdAt: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
+      readAt: null,
+      submittedAt: null,
+      responseData: null,
+      recipientCount: 78,
+      readCount: 32,
+    },
+  ];
   const previewDirectMessages = new Map<string, Array<Record<string, unknown>>>();
   // 演示未读：演示同事发来两条消息未读，打开会话后（listMessages）清除，模拟后端标已读
   const previewUnread = new Map<string, Record<string, unknown>>();
@@ -101,7 +133,7 @@ if (!previewWindow.otto) {
     {
       id: id('preview-message'),
       senderAccountId: 'preview-colleague',
-      recipientAccountId: 'preview-account',
+      recipientAccountId: previewAccount.id,
       content: '下午三点的项目例会改到中型会议室了，记得提前五分钟到。',
       createdAt: new Date(Date.now() - 40 * 60_000).toISOString(),
       readAt: null,
@@ -109,7 +141,7 @@ if (!previewWindow.otto) {
     {
       id: id('preview-message'),
       senderAccountId: 'preview-colleague',
-      recipientAccountId: 'preview-account',
+      recipientAccountId: previewAccount.id,
       content: '上次说的报修工单模板我放在共享文档里了，你看下格式对不对。',
       createdAt: new Date(Date.now() - 12 * 60_000).toISOString(),
       readAt: null,
@@ -222,59 +254,8 @@ if (!previewWindow.otto) {
       knowledge: true,
       skill_market: true,
     }),
-    enterpriseOrganizationView: () => Promise.resolve({
-      organization: {
-        id: previewAccount.organizationId,
-        name: previewAccount.organizationName,
-        status: 'active',
-        parkId: 'preview-park',
-        createdAt: previewAccount.createdAt,
-      },
-      members: [
-        {
-          ...previewAccount,
-          role: '企业员工',
-          department: '入驻企业',
-          departmentId: 'preview-department',
-          positionTitle: '员工',
-          avatarUrl: null,
-          ottoOnline: true,
-          ottoLastSeenAt: new Date().toISOString(),
-        },
-        {
-          id: 'preview-colleague',
-          username: 'preview.colleague',
-          name: '演示同事',
-          role: '企业员工',
-          department: '入驻企业',
-          departmentId: 'preview-department',
-          positionId: null,
-          positionTitle: '项目经理',
-          avatarUrl: null,
-          isAdmin: false,
-          status: 'active',
-          ottoOnline: true,
-          ottoLastSeenAt: new Date().toISOString(),
-        },
-        {
-          id: 'preview-colleague-two',
-          username: 'preview.colleague.two',
-          name: '演示同事二',
-          role: '企业员工',
-          department: '入驻企业',
-          departmentId: 'preview-department',
-          positionId: null,
-          positionTitle: '运营经理',
-          avatarUrl: null,
-          isAdmin: false,
-          status: 'active',
-          ottoOnline: false,
-          ottoLastSeenAt: new Date(Date.now() - 20 * 60_000).toISOString(),
-        },
-      ],
-      employeeCount: 3,
-      structure: [],
-      features: {
+    enterpriseOrganizationView: (organizationId?: string) => {
+      const features = {
         enterprise_tree: true,
         park_service: true,
         feishu_auto_reply: false,
@@ -282,8 +263,36 @@ if (!previewWindow.otto) {
         atoa: true,
         knowledge: true,
         skill_market: true,
-      },
-    }),
+      };
+      if (organizationId === 'preview-tenant-smart') {
+        const members = [
+          { id: 'smart-owner', username: 'smart.owner', name: '李总', role: '企业负责人', department: '管理层', departmentId: 'smart-management', positionId: 'smart-owner-pos', positionTitle: '企业负责人', avatarUrl: null, isAdmin: true, status: 'active', ottoOnline: true },
+          { id: 'smart-pm', username: 'smart.pm', name: '王敏', role: '项目经理', department: '研发中心', departmentId: 'smart-rd', positionId: 'smart-pm-pos', positionTitle: '项目经理', avatarUrl: null, isAdmin: false, status: 'active', ottoOnline: true },
+          { id: 'smart-engineer', username: 'smart.engineer', name: '周工', role: '工程师', department: '研发中心', departmentId: 'smart-rd', positionId: 'smart-engineer-pos', positionTitle: '工程师', avatarUrl: null, isAdmin: false, status: 'active', ottoOnline: false },
+        ];
+        return Promise.resolve({
+          organization: { id: 'preview-tenant-smart', name: '宏创智能制造', status: 'active', industry: '智能制造', parkId: 'preview-park', createdAt: previewAccount.createdAt },
+          members,
+          employeeCount: members.length,
+          structure: [
+            { id: 'smart-management', organizationId: 'preview-tenant-smart', name: '管理层', parentDepartmentId: null, memberCount: 1, positions: [{ id: 'smart-owner-pos', organizationId: 'preview-tenant-smart', departmentId: 'smart-management', title: '企业负责人', roleMapping: 'enterprise_admin', createdAt: '', updatedAt: '' }], createdAt: '', updatedAt: '' },
+            { id: 'smart-rd', organizationId: 'preview-tenant-smart', name: '研发中心', parentDepartmentId: null, memberCount: 2, positions: [{ id: 'smart-pm-pos', organizationId: 'preview-tenant-smart', departmentId: 'smart-rd', title: '项目经理', roleMapping: 'department_admin', createdAt: '', updatedAt: '' }, { id: 'smart-engineer-pos', organizationId: 'preview-tenant-smart', departmentId: 'smart-rd', title: '工程师', roleMapping: 'member', createdAt: '', updatedAt: '' }], createdAt: '', updatedAt: '' },
+            { id: 'smart-product', organizationId: 'preview-tenant-smart', name: '产品组', parentDepartmentId: 'smart-rd', memberCount: 0, positions: [], createdAt: '', updatedAt: '' },
+          ],
+          park: { id: 'preview-park', name: '宏创园区', brandName: '宏创园区服务', adminOrganizationId: 'preview-park-admin', status: 'active', createdAt: '', updatedAt: '', isAdminOrganization: false },
+          features,
+        });
+      }
+      return Promise.resolve({
+        organization: { id: previewAccount.organizationId, name: previewAccount.organizationName, status: 'active', industry: '园区运营服务', parkId: 'preview-park', createdAt: previewAccount.createdAt },
+        members: [previewAccount],
+        employeeCount: 1,
+        structure: [{ id: 'preview-park-dept', organizationId: previewAccount.organizationId, name: '园区管理部', parentDepartmentId: null, memberCount: 1, positions: [], createdAt: '', updatedAt: '' }],
+        park: { id: 'preview-park', name: '宏创园区', brandName: '宏创园区服务', adminOrganizationId: previewAccount.organizationId, status: 'active', createdAt: '', updatedAt: '', isAdminOrganization: true },
+        features,
+      });
+    },
+    enterpriseParkTenants: () => Promise.resolve(previewTenantOrganizations),
     enterpriseMessagesList: (peerAccountId: string) => {
       // 与真实后端一致：拉取会话消息即标记该 peer 已读，下轮轮询未读清零
       previewUnread.delete(peerAccountId);
@@ -359,11 +368,11 @@ if (!previewWindow.otto) {
       name: '北控宏创科技园',
       slug: 'browser-preview',
       brandName: '北控宏创园区服务',
-      adminOrganizationId: 'preview-park-admin',
+      adminOrganizationId: previewAccount.organizationId,
       status: 'active',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      isAdminOrganization: false,
+      isAdminOrganization: true,
       services: [
         { parkId: 'preview-park', id: 'renovation', name: '装修管理', enabled: true, config: {}, updatedAt: new Date().toISOString() },
         { parkId: 'preview-park', id: 'parking', name: '停车办理', enabled: true, config: {}, updatedAt: new Date().toISOString() },
@@ -379,7 +388,24 @@ if (!previewWindow.otto) {
       tenantRoomNumber: '1203 室',
     }),
     enterpriseTicketList: () => Promise.resolve(previewTickets),
-    enterpriseParkPublications: () => Promise.resolve([]),
+    enterpriseParkPublications: () => Promise.resolve(previewParkPublications.map((item) => ({ ...item }))),
+    enterpriseParkPublicationRead: (publicationId: string) => {
+      const next = previewParkPublications.find((item) => item.id === publicationId);
+      if (!next) return Promise.reject(new Error('园区通知不存在'));
+      next.readAt = new Date().toISOString();
+      next.readCount = Number(next.readCount ?? 0) + 1;
+      return Promise.resolve({ ...next });
+    },
+    enterpriseParkSurveySubmit: (publicationId: string, responseData: Record<string, string>) => {
+      const next = previewParkPublications.find((item) => item.id === publicationId);
+      if (!next || next.kind !== 'satisfaction') return Promise.reject(new Error('满意度调查不存在'));
+      const wasUnread = !next.readAt;
+      next.submittedAt = new Date().toISOString();
+      next.responseData = { ...responseData };
+      next.readAt = next.readAt ?? new Date().toISOString();
+      next.readCount = Number(next.readCount ?? 0) + (wasUnread ? 1 : 0);
+      return Promise.resolve({ ...next });
+    },
     enterpriseParkResources: () => Promise.resolve({
       settings: {
         parkingTotal: 180,

@@ -7,7 +7,7 @@
 /**
  * 左侧栏。以会话列表为主体：
  *   品牌 otto✦ / + 新建对话 / 今天·昨天分组会话列表（flex:1 主体）/
- *   查看全部对话 / 设置与诊断中心（左下角常驻入口）。
+ *   底部账号区（辅助入口与当前账号）。
  *   常用工具（企业专家入口、全部智能体）已迁往右侧 RightPanel。
  *
  * 会话项支持 hover 溢出菜单（⋯ → 重命名 / 删除）：
@@ -20,12 +20,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { SessionSummary } from 'otto-server';
 import { type SessionGroup } from '../state/useOttoStore.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
-import { SourceBadge } from './SourceBadge.js';
 import {
   IconPlus,
-  IconList,
   IconChevronDown,
-  IconSettings,
   IconUserAvatar,
 } from './icons.js';
 import { LogoutConfirmDialog } from './LogoutConfirmDialog.js';
@@ -102,20 +99,16 @@ interface SidebarProps {
 export function Sidebar({
   groups,
   activeSessionId,
-  hubActive = false,
   activeView = 'chat',
   accountManagementActive = false,
-  updateBadge = false,
   enterpriseAccount,
   enterpriseUnreadCounts = {},
   onSelect,
   onNewChat,
-  onOpenHub,
   onOpenAccounts,
   onNavigate,
   onJoinEnterprise,
   onLogout,
-  onViewAll,
   onRename,
   onDelete,
   unreadSessions,
@@ -193,15 +186,15 @@ export function Sidebar({
       ) : null}
 
       <div className="otto-sidebar__workspace">
-        <section className="otto-conversations" aria-label="对话任务">
+        <section className="otto-conversations" aria-label="任务">
           <button
             type="button"
             className="otto-conversations__toggle"
             onClick={() => setSessionsOpen((value) => !value)}
             aria-expanded={sessionsOpen}
-            aria-label={`对话任务（${sessionCount}）`}
+            aria-label={`任务（${sessionCount}）`}
           >
-            <span>对话任务（{sessionCount}）</span>
+            <span>任务（{sessionCount}）</span>
             <IconChevronDown
               size={13}
               className={'otto-conversations__chevron' + (sessionsOpen ? '' : ' is-collapsed')}
@@ -250,29 +243,6 @@ export function Sidebar({
             CEO 管理
           </button>
         ) : null}
-        <button type="button" className="otto-viewall" onClick={onViewAll}>
-          <IconList size={16} />
-          查看全部对话
-        </button>
-        {/* 设置与诊断中心常驻入口：常见任务区已迁右面板，设置类入口按惯例落左下角。 */}
-        <button
-          type="button"
-          className={'otto-viewall otto-viewall--hub' + (hubActive ? ' is-active' : '')}
-          onClick={onOpenHub}
-          aria-current={hubActive ? 'page' : undefined}
-          title="设置与诊断中心"
-        >
-          <IconSettings size={16} />
-          设置与诊断
-          {updateBadge ? (
-            <span
-              className="otto-viewall__dot"
-              role="status"
-              aria-label="有可用更新"
-              title="发现新版本，进入「软件更新」查看"
-            />
-          ) : null}
-        </button>
         {enterpriseAccount?.accountType === 'personal' && onJoinEnterprise ? (
           <button
             type="button"
@@ -482,14 +452,6 @@ function SessionItem({
           <IconMoreDots />
         </button>
       </div>
-      {session.lastMessagePreview ? (
-        <div className="otto-session__preview">{session.lastMessagePreview}</div>
-      ) : null}
-      {session.source !== 'local' ? (
-        <div className="otto-session__meta">
-          <SourceBadge source={session.source} />
-        </div>
-      ) : null}
 
       {mode === 'menu' ? (
         <div
