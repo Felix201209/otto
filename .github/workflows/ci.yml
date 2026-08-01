@@ -106,11 +106,12 @@ jobs:
             src/main/enterprise-client.test.ts \
             scripts/packaging-contract.test.mjs \
             src/main/video-editor-resource.test.ts
-          npm --workspace otto-server run test -- \
-            src/enterprise/db.test.ts \
-            src/enterprise/parkEndpoints.test.ts \
-            src/server.test.ts \
-            src/enterprise/server.test.ts
+          # Server suites share SQLite fixtures and module mocks, so run each
+          # focused regression in a fresh worker process.
+          npm --workspace otto-server run test -- src/enterprise/db.test.ts
+          npm --workspace otto-server run test -- src/enterprise/parkEndpoints.test.ts
+          npm --workspace otto-server run test -- src/server.test.ts
+          npm --workspace otto-server run test -- src/enterprise/server.test.ts
 
       - name: 🧪 Test core
         run: npm run test --workspace=packages/core
