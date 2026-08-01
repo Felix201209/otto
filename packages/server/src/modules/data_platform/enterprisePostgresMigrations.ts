@@ -5,8 +5,9 @@
 import type { PostgresMigration } from './postgresDatabaseLifecycle.js';
 
 /**
- * PostgreSQL migration control-plane schema. Domain repositories remain on the
- * local SQLite adapter until each async PostgreSQL repository is migrated.
+ * PostgreSQL migration and attachment control-plane schema. Domain
+ * repositories remain on the local SQLite adapter until each asynchronous
+ * PostgreSQL repository is migrated and a verified staging run is promoted.
  */
 export const ENTERPRISE_POSTGRES_MIGRATIONS: readonly PostgresMigration[] = [
   {
@@ -103,6 +104,43 @@ CREATE TABLE attachment_object_access (
 );
 CREATE INDEX attachment_object_access_lookup
   ON attachment_object_access (organization_id, account_id, attachment_id);`,
+  },
+  {
+    version: 3,
+    name: 'sqlite-import-staging',
+    sql: `
+CREATE TABLE otto_sqlite_import_tables (
+  run_id TEXT NOT NULL REFERENCES otto_sqlite_import_runs(id) ON DELETE CASCADE,
+  table_name TEXT NOT NULL CHECK (length(table_name) BETWEEN 1 AND 255),
+  source_schema_sql TEXT NOT NULL CHECK (length(source_schema_sql) > 0),
+  column_names JSONB NOT NULL CHECK (jsonb_typeof(column_names) = 'array'),
+  primary_key JSONB NOT NULL CHECK (jsonb_typeof(primary_key) = 'array'),
+  source_row_count BIGINT NOT NULL CHECK (source_row_count >= 0),
+  source_row_sha256 TEXT NOT NULL CHECK (source_row_sha256 ~ '^[0-9a-f]{64}$'),
+  copied_row_count BIGINT CHECK (copied_row_count >= 0),
+  copied_row_sha256 TEXT CHECK (copied_row_sha256 ~ '^[0-9a-f]{64}$'),
+  state TEXT NOT NULL CHECK (state IN ('copying', 'verified', 'failed')),
+  completed_at TIMESTAMPTZ,
+  PRIMARY KEY (run_id, table_name),
+  CHECK (
+    state <> 'verified' OR
+    (copied_row_count = source_row_count AND copied_row_sha256 = source_row_sha256)
+  )
+);
+
+CREATE TABLE otto_sqlite_import_rows (
+  run_id TEXT NOT NULL,
+  table_name TEXT NOT NULL,
+  row_index BIGINT NOT NULL CHECK (row_index >= 0),
+  row_sha256 TEXT NOT NULL CHECK (row_sha256 ~ '^[0-9a-f]{64}$'),
+  row_data JSONB NOT NULL CHECK (jsonb_typeof(row_data) = 'array'),
+  PRIMARY KEY (run_id, table_name, row_index),
+  FOREIGN KEY (run_id, table_name)
+    REFERENCES otto_sqlite_import_tables(run_id, table_name) ON DELETE CASCADE
+);
+
+CREATE INDEX otto_sqlite_import_rows_verification
+  ON otto_sqlite_import_rows (run_id, table_name, row_index);`,
   },
 ];
 

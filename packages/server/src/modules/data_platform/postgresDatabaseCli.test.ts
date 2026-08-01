@@ -70,7 +70,7 @@ describe('enterprise PostgreSQL preparation CLI', () => {
     ).resolves.toMatchObject({
       ready: true,
       backend: 'postgresql',
-      schemaVersion: 2,
+      schemaVersion: 3,
     });
 
     expect(pool.ended).toBe(1);

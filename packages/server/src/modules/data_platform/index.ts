@@ -28,6 +28,7 @@ export * from './enterpriseInfrastructureCli.js';
 export * from './postgresDatabaseLifecycle.js';
 export * from './nodePostgresPool.js';
 export * from './enterprisePostgresMigrations.js';
+export * from './sqlitePostgresImport.js';
 export * from './enterpriseBackupFacade.js';
 export * from './databaseSchemaContributor.js';
 export * from './dataPlatformComposition.js';

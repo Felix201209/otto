@@ -61,6 +61,13 @@ migration checksums, applies missing migrations atomically, and refuses a
 read-only standby or a schema newer than the running Otto version. Its output
 contains only a credential-free database target.
 
+The resumable SQLite/SQLCipher staging importer and the Chinese cutover and
+rollback runbook are documented in
+[SQLite/SQLCipher 到 PostgreSQL 迁移手册](./operations/sqlite-to-postgresql-migration.zh-CN.md).
+The importer defaults to a connection-free dry run, computes logical database,
+table, and row hashes, and requires an explicit stopped-writer maintenance
+confirmation before it writes PostgreSQL staging tables.
+
 Before deploying replicas, run the full shared-infrastructure preflight:
 
 ```powershell
@@ -90,21 +97,23 @@ downgrades to SQLite, process memory, or local attachment storage.
 
 ## Migration status
 
-The PostgreSQL lifecycle, migration control plane, S3 attachment adapter,
-Redis shared-cache/lease adapter, combined topology validation and production
-infrastructure preflight are implemented. Existing enterprise route
-repositories still use their synchronous SQLite contracts. If PostgreSQL is
-selected, the legacy server entry point fails closed instead of silently
-writing a second local SQLite database.
+The PostgreSQL lifecycle, migration control plane, resumable verified SQLite
+staging importer, S3 attachment adapter, Redis shared-cache/lease adapter,
+combined topology validation and production infrastructure preflight are
+implemented. Existing enterprise route repositories still use their
+synchronous SQLite contracts. If PostgreSQL is selected, the legacy server
+entry point fails closed instead of silently writing a second local SQLite
+database.
 
 The remaining cutover work is:
 
-1. port repositories to asynchronous PostgreSQL contracts;
-2. add a resumable SQLite-to-PostgreSQL importer with row-count and hash checks;
-3. switch routes only after import verification, with a documented rollback;
-4. wire the implemented [attachment object-storage adapters](./security/attachment-object-storage.md)
+1. port repositories to asynchronous PostgreSQL contracts and promote verified
+   staging rows into their PostgreSQL domain schemas;
+2. switch routes only after import verification, following the documented
+   maintenance cutover and rollback gates;
+3. wire the implemented [attachment object-storage adapters](./security/attachment-object-storage.md)
    and Redis cache/lease adapter into the asynchronous enterprise routes;
-5. qualify multiple replicas, backup/PITR and automatic failover.
+4. qualify multiple replicas, backup/PITR and automatic failover.
 
 Until those stages are complete, PostgreSQL mode is a preparation target and
 must not be described as a production-ready enterprise persistence backend.
