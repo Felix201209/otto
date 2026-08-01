@@ -97,16 +97,20 @@ jobs:
 
       - name: 🧪 Focused release regressions
         run: |
-          npx vitest run \
-            packages/core/src/config/lazy-heavy-tools.registration.test.ts \
-            packages/core/src/core/customModelAdapter.test.ts \
-            packages/desktop/src/main/enterprise-client.test.ts \
-            packages/desktop/scripts/packaging-contract.test.mjs \
-            packages/desktop/src/main/video-editor-resource.test.ts \
-            packages/server/src/enterprise/db.test.ts \
-            packages/server/src/enterprise/parkEndpoints.test.ts \
-            packages/server/src/server.test.ts \
-            packages/server/src/enterprise/server.test.ts
+          # Each workspace owns its Vitest configuration and mocks. Running all
+          # packages through the root runner leaks mocks between suites.
+          npm --workspace otto-core run test -- \
+            src/config/lazy-heavy-tools.registration.test.ts \
+            src/core/customModelAdapter.test.ts
+          npm --workspace otto-desktop run test -- \
+            src/main/enterprise-client.test.ts \
+            scripts/packaging-contract.test.mjs \
+            src/main/video-editor-resource.test.ts
+          npm --workspace otto-server run test -- \
+            src/enterprise/db.test.ts \
+            src/enterprise/parkEndpoints.test.ts \
+            src/server.test.ts \
+            src/enterprise/server.test.ts
 
       - name: 🧪 Test core
         run: npm run test --workspace=packages/core
