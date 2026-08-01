@@ -477,6 +477,73 @@
 #root .otto-preview-person.is-selected { background: var(--ui-accent-softer); }
 #root .otto-preview-person-detail { background: var(--ui-card); border-color: var(--ui-border); }
 
+/* ═══════════ 空会话首页：居中式开场（对标目标稿）═══════════
+ * 有 .otto-empty（无消息）时：thread/inner/empty 三层 display:contents 摊平进
+ * .otto-main 的 flex 列，标题 → 输入框 → 建议列表依次排布，auto 外边距垂直居中；
+ * 发出首条消息后 .otto-empty 消失，所有规则自动还原为常规底钉布局。 */
+#root .otto-main:has(.otto-empty) .otto-thread,
+#root .otto-main:has(.otto-empty) .otto-thread__inner,
+#root .otto-main:has(.otto-empty) .otto-empty { display: contents; }
+
+/* 大标题：代替原来的小字 + 吉祥物 */
+#root .otto-main:has(.otto-empty) .otto-empty__title {
+  order: 1;
+  margin: auto 0 26px;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--ui-text-strong);
+  text-align: center;
+}
+/* 吉祥物带行内 display:block（GeneratedIcon 内联样式），此处不得已用 !important */
+#root .otto-main:has(.otto-empty) .otto-empty img { display: none !important; }
+#root .otto-main:has(.otto-empty) .otto-empty > div:not([class]) { display: none; }
+
+/* 输入框上移到标题下方：去掉整条白底，只留圆角框本身 */
+#root .otto-main:has(.otto-empty) .otto-composer {
+  order: 2;
+  margin: 0 auto;
+  width: min(720px, 92%);
+  padding: 0;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+#root .otto-main:has(.otto-empty) .otto-composer__inner { max-width: none; }
+#root .otto-main:has(.otto-empty) .otto-composer__hint { text-align: center; }
+
+/* 示例 prompt：胶囊 → 输入框下方的纵向文字列表 */
+#root .otto-main:has(.otto-empty) .otto-empty__prompts {
+  order: 3;
+  margin: 14px auto auto;
+  width: min(720px, 92%);
+  max-width: none;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+#root .otto-main:has(.otto-empty) .otto-prompt-chip {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 10px;
+  padding: 9px 14px;
+  font-size: 13px;
+  color: var(--ui-text-ter);
+  text-align: left;
+}
+#root .otto-main:has(.otto-empty) .otto-prompt-chip::before {
+  content: '✦';
+  margin-right: 10px;
+  font-size: 11px;
+  color: var(--ui-accent);
+}
+#root .otto-main:has(.otto-empty) .otto-prompt-chip:hover {
+  background: var(--ui-accent-softer);
+  color: var(--ui-accent);
+}
+
 /* ════════════════════════ enhance.js 注入组件 ════════════════════════ */
 
 /* —— 一级「组织架构」主视图：覆盖主内容区，左侧导航保持可用 —— */
