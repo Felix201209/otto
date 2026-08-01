@@ -6,19 +6,26 @@
  * local authority or split writes between databases.
  */
 
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import {
   createServer,
   type IncomingMessage,
   type Server,
   type ServerResponse,
 } from 'node:http';
+import { createAliyunLoginSmsFromEnv } from 'otto-core';
 
 import type {
   E2eeAttachmentCiphertextInput,
   E2eeMessageEnvelope,
 } from '../modules/collaboration/index.js';
 import { E2EE_ATTACHMENT_MAX_CIPHERTEXT_BYTES } from '../modules/collaboration/index.js';
+import {
+  buildOrganizationInviteLink,
+  isAcceptableAccountPassword,
+  isOrganizationInviteCode,
+  resolveEnterprisePublicBaseUrl,
+} from '../modules/identity_organization/index.js';
 import {
   buildNodePostgresPoolConfig,
   ciphertextSha256,
@@ -38,12 +45,14 @@ import {
 import type { ClusteredEnterpriseSharedState } from './clusteredSharedState.js';
 import {
   createPostgresEnterpriseCoreRepository,
+  normalizePostgresEnterprisePhone,
   type PostgresEnterpriseAccountView,
   type PostgresEnterpriseCoreRepository,
   type PostgresE2eeAttachmentReferenceInput,
   type UpdatePostgresEnterpriseAccountInput,
 } from './postgresCoreRepository.js';
 import { ENTERPRISE_POSTGRES_MIGRATIONS } from './postgresMigrations.js';
+import { sendPublicInvitePage } from './publicInvitePage.js';
 
 const DEFAULT_PORT = 7777;
 const DEFAULT_BODY_LIMIT = 1_000_000;
@@ -55,6 +64,8 @@ export interface ClusteredEnterpriseServerOptions {
   adminToken?: string;
   appVersion?: string;
   buildCommit?: string;
+  publicUrl?: string;
+  smsSender?: ClusteredEnterpriseSmsSender | null;
   infrastructure?: ClusteredEnterpriseInfrastructure;
   /** @deprecated Inject the complete clustered infrastructure instead. */
   repository?: PostgresEnterpriseCoreRepository;
@@ -67,6 +78,10 @@ export interface ClusteredEnterpriseServerOptions {
     password: string;
     name: string;
   };
+}
+
+export interface ClusteredEnterpriseSmsSender {
+  sendVerificationCode(phone: string, code: string): Promise<boolean>;
 }
 
 type JsonBody = Record<string, unknown>;
@@ -310,6 +325,8 @@ export function createClusteredEnterpriseServer(
     topologyDescription?: Record<string, unknown>;
     sharedState?: ClusteredEnterpriseSharedState;
     attachmentStorage?: AttachmentStorageService;
+    publicUrl?: string;
+    smsSender?: ClusteredEnterpriseSmsSender | null;
     startedAt?: string;
   } = {},
 ): {
@@ -322,6 +339,9 @@ export function createClusteredEnterpriseServer(
   const port = options.port ?? DEFAULT_PORT;
   const adminToken = options.adminToken?.trim() || randomBytes(24).toString('base64url');
   const startedAt = options.startedAt ?? new Date().toISOString();
+  const publicBaseUrl = resolveEnterprisePublicBaseUrl({
+    configuredUrl: options.publicUrl,
+  });
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url || '/', 'http://127.0.0.1');
@@ -363,6 +383,8 @@ export function createClusteredEnterpriseServer(
             'e2ee_private_messages_v1',
             'e2ee_device_trust_v1',
             'postgresql_authority_v1',
+            'postgresql_registration_v1',
+            'organization_invites_v1',
             ...(options.attachmentStorage
               ? [
                   'direct_message_attachments_v1',
@@ -372,6 +394,155 @@ export function createClusteredEnterpriseServer(
               : []),
             ...(options.sharedState ? ['redis_shared_state_v1'] : []),
           ],
+        });
+        return;
+      }
+
+      if (path.startsWith('/enterprise/join/') && method === 'GET') {
+        let code = '';
+        try {
+          code = decodeURIComponent(path.slice('/enterprise/join/'.length));
+        } catch {
+          sendPublicInvitePage(res, 404);
+          return;
+        }
+        if (!isOrganizationInviteCode(code)) {
+          sendPublicInvitePage(res, 404);
+          return;
+        }
+        const invite = await repository.inspectOrganizationInvite(code);
+        if (invite.status === 'invalid') {
+          sendPublicInvitePage(res, 404);
+        } else if (invite.status !== 'active') {
+          sendPublicInvitePage(res, 410);
+        } else {
+          sendPublicInvitePage(res, 200, code, publicBaseUrl);
+        }
+        return;
+      }
+
+      if (
+        path === '/enterprise/auth/register/sms/request' &&
+        method === 'POST'
+      ) {
+        if (!options.smsSender) {
+          sendJson(res, 503, {
+            error: 'SMS registration is not configured',
+            code: 'SMS_UNAVAILABLE',
+          });
+          return;
+        }
+        const body = await readJsonBody(req);
+        const phone = typeof body.phone === 'string' ? body.phone : '';
+        const localPhone = normalizePostgresEnterprisePhone(phone).slice(3);
+        const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
+        const issued = await repository.requestSmsRegistration({
+          phone,
+          code,
+          inviteCode:
+            typeof body.inviteCode === 'string' ? body.inviteCode : null,
+        });
+        if (issued.state === 'phone-conflict') {
+          sendJson(res, 409, { error: 'phone is already registered' });
+          return;
+        }
+        if (issued.state === 'invalid-invite') {
+          sendJson(res, 403, { error: 'organization invitation is unavailable' });
+          return;
+        }
+        if (issued.state === 'cooldown' || issued.state === 'hourly-limit') {
+          res.setHeader('Retry-After', String(issued.retryAfterSeconds));
+          sendJson(res, 429, {
+            error: 'SMS verification requests are rate limited',
+            retryAfterSeconds: issued.retryAfterSeconds,
+          });
+          return;
+        }
+        if (issued.state !== 'issued') {
+          sendJson(res, 503, { error: 'SMS registration state is unavailable' });
+          return;
+        }
+        let sent = false;
+        try {
+          sent = await options.smsSender.sendVerificationCode(localPhone, code);
+        } catch {
+          sent = false;
+        }
+        if (!sent) {
+          await repository.discardSmsRegistrationChallenge(issued.challengeId);
+          sendJson(res, 502, { error: 'SMS verification delivery failed' });
+          return;
+        }
+        sendJson(res, 200, {
+          challengeId: issued.challengeId,
+          expiresAt: issued.expiresAt,
+          retryAfterSeconds: issued.retryAfterSeconds,
+          registrationMode: issued.registrationMode,
+          organization: issued.organization,
+        });
+        return;
+      }
+
+      if (
+        path === '/enterprise/auth/register/sms/verify' &&
+        method === 'POST'
+      ) {
+        const body = await readJsonBody(req);
+        const challengeId =
+          typeof body.challengeId === 'string' ? body.challengeId : '';
+        const code = typeof body.code === 'string' ? body.code.trim() : '';
+        const name = typeof body.name === 'string' ? body.name.trim() : '';
+        const password = typeof body.password === 'string' ? body.password : '';
+        if (body.legalConsent !== true) {
+          sendJson(res, 400, { error: 'legal consent is required' });
+          return;
+        }
+        if (
+          !challengeId.startsWith('smsreg_') ||
+          !/^\d{6}$/u.test(code) ||
+          !name ||
+          name.length > 120 ||
+          !isAcceptableAccountPassword(password)
+        ) {
+          sendJson(res, 400, { error: 'registration details are invalid' });
+          return;
+        }
+        const completed = await repository.completeSmsRegistration({
+          challengeId,
+          code,
+          name,
+          password,
+          legalConsent: true,
+        });
+        if (completed.state === 'phone-conflict') {
+          sendJson(res, 409, { error: 'phone is already registered' });
+          return;
+        }
+        if (completed.state === 'invite-unavailable') {
+          sendJson(res, 409, { error: 'organization invitation is unavailable' });
+          return;
+        }
+        if (completed.state !== 'registered') {
+          sendJson(res, 401, {
+            error: 'SMS verification code is invalid or unavailable',
+            reason: completed.state,
+            attemptsRemaining:
+              'attemptsRemaining' in completed
+                ? completed.attemptsRemaining
+                : undefined,
+          });
+          return;
+        }
+        const session = await repository.createAuthSession(completed.account.id);
+        await options.sharedState?.cacheSession(
+          session.token,
+          session.expiresAt,
+          completed.account,
+        );
+        sendJson(res, 200, {
+          account: completed.account,
+          ...session,
+          legalConsentRecorded: true,
         });
         return;
       }
@@ -543,6 +714,109 @@ export function createClusteredEnterpriseServer(
             principal.organizationId,
             Number(url.searchParams.get('limit') || 200),
           ),
+        });
+        return;
+      }
+
+      if (
+        path === '/enterprise/organization/invite' &&
+        (method === 'GET' || method === 'POST')
+      ) {
+        const principal = await requireAdministrator({
+          repository,
+          req,
+          res,
+          adminToken,
+          sharedState: options.sharedState,
+        });
+        if (!principal) return;
+        const invite =
+          method === 'POST'
+            ? await (async () => {
+                const body = await readJsonBody(req);
+                return repository.issueOrganizationInvite({
+                  organizationId: principal.organizationId,
+                  createdByAccountId:
+                    principal.kind === 'account' ? principal.account.id : null,
+                  defaultDepartment:
+                    typeof body.defaultDepartment === 'string'
+                      ? body.defaultDepartment
+                      : null,
+                  departmentId:
+                    typeof body.departmentId === 'string'
+                      ? body.departmentId
+                      : null,
+                  positionId:
+                    typeof body.positionId === 'string' ? body.positionId : null,
+                  positionTitle:
+                    typeof body.positionTitle === 'string'
+                      ? body.positionTitle
+                      : null,
+                  defaultRole:
+                    typeof body.defaultRole === 'string' ? body.defaultRole : null,
+                  maxUses:
+                    body.maxUses == null ? null : Number(body.maxUses),
+                });
+              })()
+            : await repository.getOrganizationInvite(principal.organizationId);
+        if (!invite) {
+          sendJson(res, 404, { error: 'organization invitation not found' });
+          return;
+        }
+        sendJson(res, method === 'POST' ? 201 : 200, {
+          invite: {
+            ...invite,
+            link: buildOrganizationInviteLink(publicBaseUrl, invite.code),
+          },
+        });
+        return;
+      }
+
+      if (
+        path === '/enterprise/auth/join-organization' &&
+        method === 'POST'
+      ) {
+        const account = await requireMember(
+          repository,
+          req,
+          res,
+          options.sharedState,
+        );
+        if (!account) return;
+        const body = await readJsonBody(req);
+        const inviteCode =
+          typeof body.inviteCode === 'string' ? body.inviteCode.trim() : '';
+        if (!isOrganizationInviteCode(inviteCode)) {
+          sendJson(res, 400, { error: 'organization invitation is invalid' });
+          return;
+        }
+        const joined = await repository.joinOrganizationWithInvite({
+          accountId: account.id,
+          inviteCode,
+        });
+        if (joined.state === 'invalid-invite') {
+          sendJson(res, 403, { error: 'organization invitation is unavailable' });
+          return;
+        }
+        if (joined.state === 'not-personal') {
+          sendJson(res, 409, { error: 'only personal accounts can join an organization' });
+          return;
+        }
+        if (joined.state === 'security-state-present') {
+          sendJson(res, 409, {
+            error: 'local E2EE security state must be reset before joining',
+            code: 'E2EE_STATE_RESET_REQUIRED',
+          });
+          return;
+        }
+        if (joined.state !== 'joined') {
+          sendJson(res, 503, { error: 'organization join state is unavailable' });
+          return;
+        }
+        await options.sharedState?.revokeSession(bearerToken(req));
+        sendJson(res, 200, {
+          account: joined.account,
+          requiresLogin: true,
         });
         return;
       }
@@ -1138,6 +1412,12 @@ export async function startClusteredEnterpriseServer(
       topologyDescription: infrastructure.topologyDescription,
       sharedState: infrastructure.sharedState,
       attachmentStorage: infrastructure.attachmentStorage,
+      publicUrl:
+        options.publicUrl ?? process.env.OTTO_ENTERPRISE_PUBLIC_URL,
+      smsSender:
+        options.smsSender !== undefined
+          ? options.smsSender
+          : createAliyunLoginSmsFromEnv(),
     });
     const maintenance = createClusteredAttachmentMaintenance({
       storage: infrastructure.attachmentStorage,

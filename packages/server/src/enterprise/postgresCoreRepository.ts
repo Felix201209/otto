@@ -41,6 +41,7 @@ import type {
   PostgresClientLike,
   PostgresPoolLike,
 } from '../modules/data_platform/postgresDatabaseLifecycle.js';
+import { createPostgresRegistrationRepository } from './postgresRegistrationRepository.js';
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 const KEY_FINGERPRINT = /^[0-9a-f]{64}$/;
@@ -2067,6 +2068,14 @@ export function createPostgresEnterpriseCoreRepository(input: {
     };
   }
 
+  const registration = createPostgresRegistrationRepository({
+    pool: input.pool,
+    defaultOrganizationId,
+    normalizePhone: normalizePostgresEnterprisePhone,
+    getAccount,
+    logAudit,
+  });
+
   return {
     defaultOrganizationId,
     readiness,
@@ -2105,6 +2114,7 @@ export function createPostgresEnterpriseCoreRepository(input: {
     claimExpiredUnboundAttachments,
     completeExpiredUnboundAttachment,
     listUnreadE2eeNotifications,
+    ...registration,
   };
 }
 

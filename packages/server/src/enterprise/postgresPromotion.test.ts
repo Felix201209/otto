@@ -2,6 +2,7 @@
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
+import { createHash, createHmac } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -26,6 +27,7 @@ function dryRunPool(
     targetAccounts?: number;
     withAttachments?: boolean;
     preparedAttachments?: boolean;
+    withInvites?: boolean;
   } = {},
 ) {
   const statements: string[] = [];
@@ -49,6 +51,7 @@ function dryRunPool(
         const tableName = String(values[1]);
         if (
           tableName !== 'organizations' &&
+          !(input.withInvites && tableName === 'organization_invites') &&
           !(input.withAttachments &&
             ['direct_messages', 'direct_message_attachments'].includes(
               tableName,
@@ -63,10 +66,28 @@ function dryRunPool(
                 'name',
                 'slug',
                 'park_id',
+                'invite_secret',
                 'status',
                 'created_at',
                 'updated_at',
               ]
+            : tableName === 'organization_invites'
+              ? [
+                  'id',
+                  'organization_id',
+                  'nonce',
+                  'issued_at_ms',
+                  'expires_at_ms',
+                  'revoked_at_ms',
+                  'created_by_account_id',
+                  'default_department',
+                  'department_id',
+                  'position_id',
+                  'position_title',
+                  'default_role',
+                  'max_uses',
+                  'used_count',
+                ]
             : tableName === 'direct_messages'
               ? [
                   'id',
@@ -146,6 +167,26 @@ function dryRunPool(
             },
           ]);
         }
+        if (tableName === 'organization_invites') {
+          return result([{
+            row_data: [
+              'orginvite_1',
+              'org_default',
+              'legacy-nonce-1234567890',
+              Date.parse('2026-08-01T00:00:00.000Z'),
+              Date.parse('2026-08-08T00:00:00.000Z'),
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              3,
+              1,
+            ],
+          }]);
+        }
         return result([
           {
             row_data: [
@@ -153,6 +194,7 @@ function dryRunPool(
               'Otto',
               'otto-default',
               null,
+              '1'.repeat(64),
               'active',
               '2026-08-01 00:00:00',
               '2026-08-01 00:00:00',
@@ -187,6 +229,9 @@ function dryRunPool(
               ]
             : [],
         );
+      }
+      if (sql.includes('SELECT invite_secret FROM organizations')) {
+        return result([{ invite_secret: '1'.repeat(64) }]);
       }
       if (sql.includes('INSERT INTO otto_sqlite_import_promotions')) {
         return result([
@@ -315,5 +360,39 @@ describe('verified SQLite PostgreSQL promotion', () => {
       ),
     ).toBe(true);
     expect(statements.at(-1)).toBe('COMMIT');
+  });
+
+  it('preserves legacy invite validity while storing only a searchable hash', async () => {
+    const { pool, client, statements } = dryRunPool({ withInvites: true });
+
+    await expect(
+      promoteVerifiedSqliteImport({
+        pool,
+        runId: 'import_1',
+        dryRun: false,
+      }),
+    ).resolves.toMatchObject({ state: 'promoted' });
+
+    const calls = vi.mocked(client.query).mock.calls;
+    const inserted = calls.find(([sql]) =>
+      sql.includes('INSERT INTO organization_invites'),
+    );
+    expect(inserted).toBeDefined();
+    const values = inserted![1]!;
+    const digest = createHmac('sha256', '1'.repeat(64))
+      .update('org_default:legacy-nonce-1234567890')
+      .digest();
+    const alphabet =
+      'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+    const rawCode = Array.from({ length: 12 }, (_, index) =>
+      alphabet[digest[index]! % alphabet.length],
+    ).join('');
+    expect(values[3]).toBe(
+      createHash('sha256').update(rawCode).digest('hex'),
+    );
+    expect(values).not.toContain(rawCode);
+    expect(
+      statements.some((sql) => sql.includes('invite_secret = COALESCE')),
+    ).toBe(true);
   });
 });

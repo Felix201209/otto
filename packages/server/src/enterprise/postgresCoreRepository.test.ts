@@ -66,6 +66,25 @@ describe('PostgreSQL enterprise core authority', () => {
     );
   });
 
+  it('installs PostgreSQL authority for invitations, SMS registration and legal consent', () => {
+    const migration = ENTERPRISE_POSTGRES_MIGRATIONS.find(
+      (candidate) => candidate.version === 7,
+    );
+    expect(migration).toMatchObject({
+      version: 7,
+      name: 'enterprise-registration-authority',
+    });
+    for (const table of [
+      'organization_invites',
+      'sms_registration_challenges',
+      'legal_consents',
+    ]) {
+      expect(migration!.sql).toContain(`CREATE TABLE ${table}`);
+    }
+    expect(migration!.sql).toContain('code_hash TEXT NOT NULL UNIQUE');
+    expect(migration!.sql).not.toContain('code TEXT NOT NULL');
+  });
+
   it('normalizes mainland phone numbers without importing the SQLite repository', () => {
     expect(normalizePostgresEnterprisePhone('138 0013 8000')).toBe(
       '+8613800138000',

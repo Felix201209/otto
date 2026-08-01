@@ -460,6 +460,82 @@ CREATE UNIQUE INDEX otto_sqlite_import_attachment_objects_s3_key
   ON otto_sqlite_import_attachment_objects (s3_storage_key)
   WHERE s3_storage_key IS NOT NULL;`,
   },
+  {
+    version: 7,
+    name: 'enterprise-registration-authority',
+    sql: `
+ALTER TABLE organizations
+  ADD COLUMN invite_secret TEXT
+  CHECK (invite_secret IS NULL OR invite_secret ~ '^[0-9a-f]{64}$');
+
+CREATE TABLE organization_invites (
+  id TEXT PRIMARY KEY,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  nonce TEXT NOT NULL CHECK (length(nonce) BETWEEN 16 AND 200),
+  code_hash TEXT NOT NULL UNIQUE CHECK (code_hash ~ '^[0-9a-f]{64}$'),
+  issued_at TIMESTAMPTZ NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  revoked_at TIMESTAMPTZ,
+  created_by_account_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
+  default_department TEXT CHECK (default_department IS NULL OR length(default_department) <= 120),
+  department_id TEXT,
+  position_id TEXT,
+  position_title TEXT CHECK (position_title IS NULL OR length(position_title) <= 120),
+  default_role TEXT CHECK (default_role IS NULL OR length(default_role) <= 120),
+  max_uses INTEGER CHECK (max_uses BETWEEN 1 AND 10000),
+  used_count INTEGER NOT NULL DEFAULT 0 CHECK (used_count >= 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CHECK (expires_at > issued_at),
+  CHECK (max_uses IS NULL OR used_count <= max_uses),
+  FOREIGN KEY (organization_id, department_id)
+    REFERENCES organization_departments(organization_id, id) ON DELETE RESTRICT,
+  FOREIGN KEY (organization_id, position_id)
+    REFERENCES organization_positions(organization_id, id) ON DELETE RESTRICT
+);
+CREATE INDEX organization_invites_current
+  ON organization_invites (organization_id, issued_at DESC);
+CREATE INDEX organization_invites_active
+  ON organization_invites (organization_id, expires_at)
+  WHERE revoked_at IS NULL;
+
+CREATE TABLE sms_registration_challenges (
+  id TEXT PRIMARY KEY,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  phone TEXT NOT NULL CHECK (phone ~ '^\\+86[1-9][0-9]{10}$'),
+  code_hash TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  attempts_remaining INTEGER NOT NULL DEFAULT 5
+    CHECK (attempts_remaining BETWEEN 0 AND 5),
+  organization_invite_id TEXT REFERENCES organization_invites(id) ON DELETE RESTRICT,
+  department TEXT,
+  department_id TEXT,
+  position_id TEXT,
+  position_title TEXT,
+  role TEXT,
+  consumed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX sms_registration_challenges_phone_recent
+  ON sms_registration_challenges (phone, created_at DESC);
+CREATE INDEX sms_registration_challenges_expiry
+  ON sms_registration_challenges (expires_at)
+  WHERE consumed_at IS NULL;
+
+CREATE TABLE legal_consents (
+  account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  document_id TEXT NOT NULL CHECK (document_id IN ('terms', 'privacy')),
+  document_version TEXT NOT NULL,
+  policy_hash TEXT NOT NULL CHECK (policy_hash ~ '^[0-9a-f]{64}$'),
+  source TEXT NOT NULL CHECK (source IN ('registration', 'settings', 'migration')),
+  accepted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (account_id, document_id, document_version),
+  FOREIGN KEY (account_id, organization_id)
+    REFERENCES accounts(id, organization_id) ON DELETE CASCADE
+);
+CREATE INDEX legal_consents_account
+  ON legal_consents (account_id, accepted_at DESC);`,
+  },
 ];
 
 export const ENTERPRISE_POSTGRES_SCHEMA_VERSION =

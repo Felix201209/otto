@@ -179,6 +179,199 @@ describe('clustered PostgreSQL enterprise server', () => {
     });
   });
 
+  it('issues organization invites through PostgreSQL without exposing a stored code', async () => {
+    const issueOrganizationInvite = vi.fn(async () => ({
+      id: 'orginvite_1',
+      organizationId: 'org_default',
+      code: 'ABCD-EFGH-JKLM',
+      status: 'active' as const,
+      defaultDepartment: null,
+      departmentId: null,
+      positionId: null,
+      positionTitle: null,
+      defaultRole: null,
+      maxUses: 3,
+      usedCount: 0,
+      issuedAt: '2026-08-01T00:00:00.000Z',
+      expiresAt: '2026-08-08T00:00:00.000Z',
+      validHours: 168 as const,
+    }));
+    const repo = {
+      ...repository(),
+      issueOrganizationInvite,
+    } as unknown as PostgresEnterpriseCoreRepository;
+    const { baseUrl } = await listen(repo, {
+      publicUrl: 'https://join.otto.example',
+    });
+
+    const response = await fetch(`${baseUrl}/enterprise/organization/invite`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer clustered-session-token',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ maxUses: 3 }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      invite: {
+        code: 'ABCD-EFGH-JKLM',
+        link: 'https://join.otto.example/enterprise/join/ABCD-EFGH-JKLM',
+      },
+    });
+    expect(issueOrganizationInvite).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organizationId: 'org_default',
+        createdByAccountId: 'acc_admin',
+        maxUses: 3,
+      }),
+    );
+  });
+
+  it('serves active public invitation pages from PostgreSQL inspection state', async () => {
+    const repo = {
+      ...repository(),
+      inspectOrganizationInvite: vi.fn(async () => ({
+        status: 'active' as const,
+        organizationId: 'org_default',
+      })),
+    } as unknown as PostgresEnterpriseCoreRepository;
+    const { baseUrl } = await listen(repo, {
+      publicUrl: 'https://join.otto.example',
+    });
+
+    const response = await fetch(
+      `${baseUrl}/enterprise/join/ABCD-EFGH-JKLM`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/html');
+    expect(await response.text()).toContain('ABCD-EFGH-JKLM');
+  });
+
+  it('requests and completes SMS registration through PostgreSQL state', async () => {
+    const requestSmsRegistration = vi.fn(async () => ({
+      state: 'issued' as const,
+      challengeId: 'smsreg_1',
+      expiresAt: '2026-08-01T00:05:00.000Z',
+      retryAfterSeconds: 60,
+      registrationMode: 'personal' as const,
+      organization: null,
+    }));
+    const completeSmsRegistration = vi.fn(async () => ({
+      state: 'registered' as const,
+      account: { ...account, id: 'acc_new', accountType: 'personal' as const },
+    }));
+    const repo = {
+      ...repository(),
+      requestSmsRegistration,
+      discardSmsRegistrationChallenge: vi.fn(async () => undefined),
+      completeSmsRegistration,
+    } as unknown as PostgresEnterpriseCoreRepository;
+    const smsSender = {
+      sendVerificationCode: vi.fn(async () => true),
+    };
+    const { baseUrl } = await listen(repo, { smsSender });
+
+    const request = await fetch(
+      `${baseUrl}/enterprise/auth/register/sms/request`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ phone: '13800138000' }),
+      },
+    );
+    expect(request.status).toBe(200);
+    expect(await request.json()).toMatchObject({
+      challengeId: 'smsreg_1',
+      registrationMode: 'personal',
+    });
+    expect(smsSender.sendVerificationCode).toHaveBeenCalledWith(
+      '13800138000',
+      expect.stringMatching(/^\d{6}$/),
+    );
+
+    const verify = await fetch(
+      `${baseUrl}/enterprise/auth/register/sms/verify`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          challengeId: 'smsreg_1',
+          code: '123456',
+          name: 'New User',
+          password: 'Secure-password-2026',
+          legalConsent: true,
+        }),
+      },
+    );
+    expect(verify.status).toBe(200);
+    expect(await verify.json()).toMatchObject({
+      account: { id: 'acc_new', accountType: 'personal' },
+      token: 'clustered-session-token',
+      legalConsentRecorded: true,
+    });
+    expect(completeSmsRegistration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        challengeId: 'smsreg_1',
+        code: '123456',
+        legalConsent: true,
+      }),
+    );
+  });
+
+  it('joins a personal account to an enterprise and expires stale sessions', async () => {
+    const personal = {
+      ...account,
+      id: 'acc_personal',
+      organizationId: 'org_personal',
+      organizationName: 'Personal',
+      accountType: 'personal' as const,
+      isAdmin: false,
+    };
+    const joined = {
+      ...personal,
+      organizationId: 'org_default',
+      organizationName: 'Otto',
+      accountType: 'enterprise' as const,
+    };
+    const joinOrganizationWithInvite = vi.fn(async () => ({
+      state: 'joined' as const,
+      account: joined,
+    }));
+    const repo = {
+      ...repository(),
+      getAccountBySession: vi.fn(async () => personal),
+      joinOrganizationWithInvite,
+    } as unknown as PostgresEnterpriseCoreRepository;
+    const { baseUrl } = await listen(repo);
+
+    const response = await fetch(
+      `${baseUrl}/enterprise/auth/join-organization`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer personal-session',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ inviteCode: 'ABCD-EFGH-JKLM' }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      account: { id: 'acc_personal', organizationId: 'org_default' },
+      requiresLogin: true,
+    });
+    expect(joinOrganizationWithInvite).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: 'acc_personal',
+        inviteCode: 'ABCD-EFGH-JKLM',
+      }),
+    );
+  });
+
   it('does not authorize an empty configured system token', async () => {
     const repo = repository();
     const created = createClusteredEnterpriseServer(repo, {

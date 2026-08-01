@@ -6,6 +6,8 @@
  * promotion receipt and no partial domain state can commit.
  */
 
+import { createHash, createHmac } from 'node:crypto';
+
 import type {
   PostgresClientLike,
   PostgresPoolLike,
@@ -16,6 +18,8 @@ import {
 } from './postgresImportStaging.js';
 
 const PROMOTION_LOCK_KEY = 0x4f545450;
+const INVITE_ALPHABET =
+  'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
 
 interface ImportRunRow extends Record<string, unknown> {
   id: string;
@@ -76,6 +80,7 @@ const PROMOTION_ORDER = [
   'organization_departments',
   'organization_positions',
   'accounts',
+  'organization_invites',
   'account_tags',
   'auth_sessions',
   'audit_logs',
@@ -112,6 +117,21 @@ function optionalTimestamp(value: unknown, label: string): string | null {
   return value === null || value === undefined || value === ''
     ? null
     : timestamp(value, label);
+}
+
+function millisecondTimestamp(value: unknown, label: string): string {
+  const milliseconds = integerValue(value, label);
+  const date = new Date(milliseconds);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`SQLite promotion ${label} is invalid`);
+  }
+  return date.toISOString();
+}
+
+function optionalMillisecondTimestamp(value: unknown, label: string): string | null {
+  return value === null || value === undefined || value === ''
+    ? null
+    : millisecondTimestamp(value, label);
 }
 
 function booleanValue(value: unknown): boolean {
@@ -188,11 +208,12 @@ async function insertOrganizations(
     const id = stringValue(row.id, 'organization id');
     await client.query(
       `INSERT INTO organizations
-        (id, name, slug, type, status, park_id, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz, $8::timestamptz)
+        (id, name, slug, type, status, park_id, invite_secret, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9::timestamptz)
        ON CONFLICT (id) DO UPDATE SET
          name = EXCLUDED.name, slug = EXCLUDED.slug, type = EXCLUDED.type,
          status = EXCLUDED.status, park_id = EXCLUDED.park_id,
+         invite_secret = COALESCE(EXCLUDED.invite_secret, organizations.invite_secret),
          created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at`,
       [
         id,
@@ -201,6 +222,7 @@ async function insertOrganizations(
         id.startsWith('personal_') ? 'personal' : 'enterprise',
         row.status === 'disabled' ? 'disabled' : 'active',
         optionalString(row.park_id),
+        optionalString(row.invite_secret),
         timestamp(row.created_at, 'organization created_at'),
         timestamp(row.updated_at, 'organization updated_at'),
       ],
@@ -209,6 +231,82 @@ async function insertOrganizations(
       `INSERT INTO organization_features (organization_id)
        VALUES ($1) ON CONFLICT (organization_id) DO NOTHING`,
       [id],
+    );
+  }
+}
+
+function deriveImportedInviteCode(input: {
+  organizationId: string;
+  inviteSecret: string;
+  nonce: string;
+}): string {
+  if (!/^[0-9a-f]{64}$/u.test(input.inviteSecret)) {
+    throw new Error('SQLite promotion organization invite secret is invalid');
+  }
+  const digest = createHmac('sha256', input.inviteSecret)
+    .update(`${input.organizationId}:${input.nonce}`)
+    .digest();
+  let code = '';
+  for (let index = 0; index < 12; index += 1) {
+    code += INVITE_ALPHABET[digest[index]! % INVITE_ALPHABET.length];
+  }
+  return `${code.slice(0, 4)}-${code.slice(4, 8)}-${code.slice(8)}`;
+}
+
+async function insertOrganizationInvites(
+  client: PostgresClientLike,
+  rows: DecodedRow[],
+): Promise<void> {
+  for (const row of rows) {
+    const organizationId = stringValue(
+      row.organization_id,
+      'invite organization id',
+    );
+    const secretResult = await client.query<
+      { invite_secret: string | null } & Record<string, unknown>
+    >(
+      'SELECT invite_secret FROM organizations WHERE id = $1',
+      [organizationId],
+    );
+    const inviteSecret = secretResult.rows[0]?.invite_secret;
+    if (!inviteSecret) {
+      throw new Error(
+        `SQLite promotion organization ${organizationId} has invitations but no invite secret`,
+      );
+    }
+    const nonce = stringValue(row.nonce, 'invite nonce');
+    const code = deriveImportedInviteCode({
+      organizationId,
+      inviteSecret,
+      nonce,
+    });
+    const normalizedCode = code.replaceAll('-', '');
+    await client.query(
+      `INSERT INTO organization_invites
+        (id, organization_id, nonce, code_hash, issued_at, expires_at,
+         revoked_at, created_by_account_id, default_department, department_id,
+         position_id, position_title, default_role, max_uses, used_count)
+       VALUES ($1, $2, $3, $4, $5::timestamptz, $6::timestamptz,
+               $7::timestamptz, $8, $9, $10, $11, $12, $13, $14, $15)`,
+      [
+        stringValue(row.id, 'invite id'),
+        organizationId,
+        nonce,
+        createHash('sha256').update(normalizedCode).digest('hex'),
+        millisecondTimestamp(row.issued_at_ms, 'invite issued_at_ms'),
+        millisecondTimestamp(row.expires_at_ms, 'invite expires_at_ms'),
+        optionalMillisecondTimestamp(row.revoked_at_ms, 'invite revoked_at_ms'),
+        optionalString(row.created_by_account_id),
+        optionalString(row.default_department),
+        optionalString(row.department_id),
+        optionalString(row.position_id),
+        optionalString(row.position_title),
+        optionalString(row.default_role),
+        row.max_uses == null ? null : integerValue(row.max_uses, 'invite max_uses'),
+        row.used_count == null
+          ? 0
+          : integerValue(row.used_count, 'invite used_count'),
+      ],
     );
   }
 }
@@ -684,6 +782,7 @@ const INSERTS: Record<
   organization_departments: insertDepartments,
   organization_positions: insertPositions,
   accounts: insertAccounts,
+  organization_invites: insertOrganizationInvites,
   account_tags: insertTags,
   auth_sessions: insertSessions,
   audit_logs: insertAudits,
