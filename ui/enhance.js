@@ -1793,7 +1793,11 @@
     if (projectMenuEl) { closeProjectMenu(); return; }
     projectMenuEl = document.createElement('div');
     projectMenuEl.className = 'otto-uiux-projectbar__menu';
-    projectMenuEl.innerHTML = PROJECTS.map(function (proj) {
+    // 不强制选择：提供「不关联项目」用于清除已选
+    var clearItem = '<button type="button" data-project=""' +
+      (!currentProject ? ' class="is-active"' : '') + '>' +
+      FOLDER_SVG + '<span>不关联项目</span><small>可随时选择</small></button>';
+    projectMenuEl.innerHTML = clearItem + PROJECTS.map(function (proj) {
       return '<button type="button" data-project="' + escapeHtml(proj.name) + '"' +
         (proj.name === currentProject ? ' class="is-active"' : '') + '>' +
         FOLDER_SVG + '<span>' + escapeHtml(proj.name) + '</span><small>' +
@@ -1802,8 +1806,11 @@
     projectMenuEl.addEventListener('click', function (event) {
       var btn = event.target.closest ? event.target.closest('[data-project]') : null;
       if (!btn) return;
-      currentProject = btn.getAttribute('data-project');
-      try { localStorage.setItem(PROJECT_KEY, JSON.stringify(currentProject)); } catch (err) { /* ignore */ }
+      currentProject = btn.getAttribute('data-project') || null;
+      try {
+        if (currentProject) localStorage.setItem(PROJECT_KEY, JSON.stringify(currentProject));
+        else localStorage.removeItem(PROJECT_KEY);
+      } catch (err) { /* ignore */ }
       var label = $('.otto-uiux-projectbar__label', projectBarEl);
       if (label) label.textContent = projectBarLabel();
       closeProjectMenu();
@@ -1843,9 +1850,9 @@
     }
     var r = composer.getBoundingClientRect();
     projectBarEl.style.display = '';
-    projectBarEl.style.top = (r.bottom + 10) + 'px';
-    projectBarEl.style.left = (r.left + 18) + 'px';
-    projectBarEl.style.width = (r.width - 36) + 'px';
+    projectBarEl.style.top = (r.bottom - 12) + 'px';
+    projectBarEl.style.left = (r.left + 14) + 'px';
+    projectBarEl.style.width = (r.width - 28) + 'px';
     document.body.classList.add('otto-uiux-has-projectbar');
   }
 
