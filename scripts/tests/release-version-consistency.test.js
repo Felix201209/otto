@@ -77,5 +77,12 @@ describe('release version displays', () => {
     expect(workflow).not.toContain(
       '      - name: Install dependencies\n        run: npm install',
     );
+
+    const ciWorkflow = readFileSync(
+      path.resolve('.github/workflows/ci.yml'),
+      'utf8',
+    );
+    expect(ciWorkflow).toMatch(/Install dependencies\n\s+run: npm ci/);
+    expect(ciWorkflow).not.toMatch(/Install dependencies\n\s+run: npm install/);
   });
 });

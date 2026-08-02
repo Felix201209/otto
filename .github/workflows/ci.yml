@@ -53,7 +53,7 @@ jobs:
       # （lib/postinstall.js）会读取 GITHUB_TOKEN 环境变量做鉴权请求，传入
       # workflow 自带的 token 即可避免限流。
       - name: 📦 Install dependencies
-        run: npm install
+        run: npm ci
         env:
           PYTHON: python3.11
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
