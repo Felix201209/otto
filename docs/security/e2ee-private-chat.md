@@ -243,14 +243,24 @@ Before deleting events it advances a per-conversation retention floor. A client
 whose cursor falls behind that floor receives an explicit secure-session-reset
 error instead of silently processing an incomplete Commit history.
 
+The desktop MLS path now also has a crash-safe application outbox. Encryption
+creates an opaque random event ID and stores only the ciphertext, group binding,
+epoch and FIFO order in the same authenticated encrypted native snapshot before
+the transport upload begins. A bound, idempotent server response is required
+before the entry is acknowledged and removed. After a process or network
+failure, pending ciphertext is replayed in ratchet order with the same event ID;
+item and byte limits prevent unbounded local growth. Plaintext is never written
+to the outbox. The external native IPC exposes no direct application
+encrypt/decrypt bypass around the durable outbox and receive cursor.
+
 This is still not the active chat protocol. No production server advertises
 `e2ee_mls_v1`. If a server does advertise that capability, the desktop refuses
 to read or send through the legacy envelope instead of silently downgrading.
-The initial handshake and polling coordinator is not yet a production
-background event loop. Processing later remote member Commits, a durable
-outbox for locally encrypted application events, multi-device fan-out,
-user-visible safety-state reset, state migration/recovery policy,
-multi-platform native packaging, and external review are still required. The
-release gate therefore keeps `desktopTransportSessionOrchestration` false.
-Until those controls and an external audit pass the release gate, the
-production status remains `device-envelope-v1`.
+The initial handshake, polling and outbox coordinator is not yet a production
+background event loop or connected to the production chat composer. Processing
+later remote member Commits, retry scheduling and backoff, multi-device fan-out,
+user-visible safety-state reset, state migration/recovery policy, multi-platform
+native packaging, and external review are still required. The release gate
+therefore keeps `desktopTransportSessionOrchestration` false. Until those
+controls and an external audit pass the release gate, the production status
+remains `device-envelope-v1`.

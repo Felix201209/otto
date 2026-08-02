@@ -370,6 +370,10 @@ export interface MlsApplicationCiphertext {
   ciphertext: string;
 }
 
+export interface MlsPendingApplication extends MlsApplicationCiphertext {
+  event_id: string;
+}
+
 export interface MlsDecryptedApplication {
   protocol: 'mls10-openmls-0.8';
   conversationId: string;
@@ -608,6 +612,27 @@ function validateGroupState(
   return state as MlsGroupState;
 }
 
+function validatePendingApplication(
+  result: unknown,
+  conversationId: string,
+): MlsPendingApplication {
+  const pending = result as Partial<MlsPendingApplication>;
+  if (
+    pending.protocol !== 'mls10-openmls-0.8' ||
+    pending.conversation_id !== conversationId ||
+    typeof pending.event_id !== 'string' ||
+    !/^mls-[0-9a-f]{64}$/.test(pending.event_id) ||
+    !isBase64(pending.group_id) ||
+    !Number.isSafeInteger(pending.epoch) ||
+    (pending.epoch ?? -1) < 0 ||
+    !isBase64(pending.ciphertext) ||
+    pending.ciphertext.length > 2 * 1024 * 1024
+  ) {
+    throw new Error('native MLS pending application response is invalid');
+  }
+  return pending as MlsPendingApplication;
+}
+
 /**
  * Thin typed client for the native OpenMLS process. Signature keys, HPKE init
  * private keys and epoch secrets remain inside Rust. When persistence is
@@ -825,78 +850,63 @@ export class OpenMlsNativeKernel {
     return validateGroupState(result, conversation);
   }
 
-  async encryptApplication(
+  async encryptTransportApplication(
     conversationId: string,
     plaintext: Uint8Array,
-  ): Promise<MlsApplicationCiphertext> {
+  ): Promise<MlsPendingApplication> {
     await this.init();
     const conversation = mlsConversationId(conversationId);
     if (plaintext.byteLength < 1 || plaintext.byteLength > 1024 * 1024) {
       throw new Error('MLS application plaintext size is invalid');
     }
-    const result = (await this.native.call('mls.application.encrypt', {
+    const result = await this.native.call('mls.application.encrypt_transport', {
       device_scope: this.scope,
       conversation_id: conversation,
       plaintext: Buffer.from(plaintext).toString('base64'),
-    })) as Partial<MlsApplicationCiphertext>;
+    });
     await this.persistState();
-    if (
-      result.protocol !== 'mls10-openmls-0.8' ||
-      result.conversation_id !== conversation ||
-      !isBase64(result.group_id) ||
-      !Number.isSafeInteger(result.epoch) ||
-      (result.epoch ?? -1) < 0 ||
-      !isBase64(result.ciphertext)
-    ) {
-      throw new Error('native MLS ciphertext response is invalid');
-    }
-    return result as MlsApplicationCiphertext;
+    return validatePendingApplication(result, conversation);
   }
 
-  async decryptApplication(
+  async listPendingApplications(
     conversationId: string,
-    ciphertext: string,
-  ): Promise<MlsDecryptedApplication> {
+  ): Promise<MlsPendingApplication[]> {
     await this.init();
     const conversation = mlsConversationId(conversationId);
-    if (!isBase64(ciphertext) || ciphertext.length > 2 * 1024 * 1024) {
-      throw new Error('MLS application ciphertext is invalid');
-    }
-    const result = (await this.native.call('mls.application.decrypt', {
+    const result = await this.native.call('mls.application.outbox.list', {
       device_scope: this.scope,
       conversation_id: conversation,
-      ciphertext,
-    })) as {
-      protocol?: unknown;
-      conversation_id?: unknown;
-      group_id?: unknown;
-      epoch?: unknown;
-      sender_device_scope?: unknown;
-      plaintext?: unknown;
-    };
-    await this.persistState();
-    if (
-      result.protocol !== 'mls10-openmls-0.8' ||
-      result.conversation_id !== conversation ||
-      !isBase64(result.group_id) ||
-      !Number.isSafeInteger(result.epoch) ||
-      (result.epoch as number) < 0 ||
-      typeof result.sender_device_scope !== 'string' ||
-      !/^[^/\s]+\/[^/\s]+\/[^/\s]+\/[^/\s]+$/.test(
-        result.sender_device_scope,
-      ) ||
-      !isBase64(result.plaintext)
-    ) {
-      throw new Error('native MLS plaintext response is invalid');
+    });
+    if (!Array.isArray(result) || result.length > 1_000) {
+      throw new Error('native MLS application outbox response is invalid');
     }
-    return {
-      protocol: 'mls10-openmls-0.8',
-      conversationId: conversation,
-      groupId: result.group_id,
-      epoch: result.epoch as number,
-      senderDeviceScope: result.sender_device_scope,
-      plaintext: new Uint8Array(Buffer.from(result.plaintext, 'base64')),
-    };
+    const pending = result.map((item) =>
+      validatePendingApplication(item, conversation),
+    );
+    if (new Set(pending.map((item) => item.event_id)).size !== pending.length) {
+      throw new Error('native MLS application outbox response is invalid');
+    }
+    return pending;
+  }
+
+  async acknowledgePendingApplication(
+    conversationId: string,
+    eventId: string,
+  ): Promise<void> {
+    await this.init();
+    const conversation = mlsConversationId(conversationId);
+    if (!/^mls-[0-9a-f]{64}$/.test(eventId)) {
+      throw new Error('MLS application event id is invalid');
+    }
+    const result = (await this.native.call('mls.application.outbox.ack', {
+      device_scope: this.scope,
+      conversation_id: conversation,
+      event_id: eventId,
+    })) as { event_id?: unknown };
+    if (result.event_id !== eventId) {
+      throw new Error('native MLS application acknowledgement is invalid');
+    }
+    await this.persistState();
   }
 
   async transportCursor(conversationId: string): Promise<number> {

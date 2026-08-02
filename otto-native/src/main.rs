@@ -179,7 +179,7 @@ mod tests {
         let encrypted = call_mls(
             Request {
                 id: None,
-                method: "mls.application.encrypt".into(),
+                method: "mls.application.encrypt_transport".into(),
                 params: Some(serde_json::json!({
                     "device_scope": alice_scope,
                     "conversation_id": conversation,
@@ -188,14 +188,28 @@ mod tests {
             },
             &mut alice,
         );
+        let pending = call_mls(
+            Request {
+                id: None,
+                method: "mls.application.outbox.list".into(),
+                params: Some(serde_json::json!({
+                    "device_scope": alice_scope,
+                    "conversation_id": conversation
+                })),
+            },
+            &mut alice,
+        );
+        assert_eq!(pending.as_array().unwrap().len(), 1);
+        assert_eq!(pending[0]["event_id"], encrypted["event_id"]);
         let decrypted = call_mls(
             Request {
                 id: None,
-                method: "mls.application.decrypt".into(),
+                method: "mls.application.decrypt_transport".into(),
                 params: Some(serde_json::json!({
                     "device_scope": bob_scope,
                     "conversation_id": conversation,
-                    "ciphertext": encrypted["ciphertext"]
+                    "ciphertext": encrypted["ciphertext"],
+                    "sequence": 1
                 })),
             },
             &mut bob,
@@ -204,6 +218,30 @@ mod tests {
             BASE64.decode(decrypted["plaintext"].as_str().unwrap()).unwrap(),
             b"hello over rpc"
         );
+        call_mls(
+            Request {
+                id: None,
+                method: "mls.application.outbox.ack".into(),
+                params: Some(serde_json::json!({
+                    "device_scope": alice_scope,
+                    "conversation_id": conversation,
+                    "event_id": encrypted["event_id"]
+                })),
+            },
+            &mut alice,
+        );
+        let pending = call_mls(
+            Request {
+                id: None,
+                method: "mls.application.outbox.list".into(),
+                params: Some(serde_json::json!({
+                    "device_scope": alice_scope,
+                    "conversation_id": conversation
+                })),
+            },
+            &mut alice,
+        );
+        assert!(pending.as_array().unwrap().is_empty());
     }
 }
 
@@ -599,7 +637,7 @@ fn handle_request(
             )?)
             .map_err(|error| format!("MLS response serialization failed: {error}"))
         }
-        "mls.application.encrypt" => {
+        "mls.application.encrypt_transport" => {
             let p = params.ok_or("Missing params")?;
             let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
             let conversation = p["conversation_id"]
@@ -612,29 +650,33 @@ fn handle_request(
             let plaintext = BASE64
                 .decode(encoded)
                 .map_err(|_| "MLS application plaintext is not valid base64")?;
-            serde_json::to_value(mls_kernel.encrypt_application(
+            serde_json::to_value(mls_kernel.encrypt_transport_application(
                 scope,
                 conversation,
                 &plaintext,
             )?)
             .map_err(|error| format!("MLS response serialization failed: {error}"))
         }
-        "mls.application.decrypt" => {
+        "mls.application.outbox.list" => {
             let p = params.ok_or("Missing params")?;
             let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
             let conversation = p["conversation_id"]
                 .as_str()
                 .ok_or("Missing conversation_id")?;
-            let ciphertext = p["ciphertext"].as_str().ok_or("Missing ciphertext")?;
-            let decrypted = mls_kernel.decrypt_application(scope, conversation, ciphertext)?;
-            Ok(serde_json::json!({
-                "protocol": decrypted.protocol,
-                "conversation_id": decrypted.conversation_id,
-                "group_id": decrypted.group_id,
-                "epoch": decrypted.epoch,
-                "sender_device_scope": decrypted.sender_device_scope,
-                "plaintext": BASE64.encode(decrypted.plaintext)
-            }))
+            serde_json::to_value(
+                mls_kernel.list_pending_applications(scope, conversation)?,
+            )
+            .map_err(|error| format!("MLS response serialization failed: {error}"))
+        }
+        "mls.application.outbox.ack" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            let conversation = p["conversation_id"]
+                .as_str()
+                .ok_or("Missing conversation_id")?;
+            let event_id = p["event_id"].as_str().ok_or("Missing event_id")?;
+            mls_kernel.acknowledge_pending_application(scope, conversation, event_id)?;
+            Ok(serde_json::json!({"event_id": event_id}))
         }
         "mls.application.decrypt_transport" => {
             let p = params.ok_or("Missing params")?;

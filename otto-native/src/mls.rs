@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use aes_gcm::aead::rand_core::RngCore;
@@ -25,6 +25,8 @@ const MAX_APPLICATION_BYTES: usize = 1024 * 1024;
 const MAX_CIPHERTEXT_BASE64: usize = 2 * 1024 * 1024;
 const MAX_STATE_PLAINTEXT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_STATE_ENVELOPE_BYTES: usize = 96 * 1024 * 1024;
+const MAX_PENDING_APPLICATIONS: usize = 1_000;
+const MAX_PENDING_APPLICATION_BYTES: usize = 32 * 1024 * 1024;
 const STATE_CIPHER: &str = "aes-256-gcm";
 
 #[derive(Debug, SerdeSerialize)]
@@ -76,6 +78,16 @@ pub struct ExportedApplicationMessage {
     pub ciphertext: String,
 }
 
+#[derive(Clone, Debug, SerdeSerialize)]
+pub struct ExportedPendingApplication {
+    pub protocol: &'static str,
+    pub event_id: String,
+    pub conversation_id: String,
+    pub group_id: String,
+    pub epoch: u64,
+    pub ciphertext: String,
+}
+
 #[derive(Debug)]
 pub struct DecryptedApplicationMessage {
     pub protocol: &'static str,
@@ -108,6 +120,8 @@ struct PersistedMlsState {
     pending_invitations: Vec<PersistedPendingInvitation>,
     #[serde(default)]
     transport_cursors: Vec<PersistedTransportCursor>,
+    #[serde(default)]
+    pending_applications: Vec<PersistedPendingApplication>,
 }
 
 #[derive(SerdeSerialize, SerdeDeserialize)]
@@ -148,6 +162,39 @@ struct PersistedPendingInvitation {
 struct PersistedTransportCursor {
     conversation_id: String,
     sequence: u64,
+}
+
+#[derive(SerdeSerialize, SerdeDeserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedPendingApplication {
+    event_id: String,
+    conversation_id: String,
+    group_id: String,
+    epoch: u64,
+    ciphertext: String,
+    created_order: u64,
+}
+
+#[derive(Clone)]
+struct PendingApplication {
+    conversation_id: String,
+    group_id: String,
+    epoch: u64,
+    ciphertext: String,
+    created_order: u64,
+}
+
+impl PendingApplication {
+    fn export(&self, event_id: &str) -> ExportedPendingApplication {
+        ExportedPendingApplication {
+            protocol: PROTOCOL,
+            event_id: event_id.to_string(),
+            conversation_id: self.conversation_id.clone(),
+            group_id: self.group_id.clone(),
+            epoch: self.epoch,
+            ciphertext: self.ciphertext.clone(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -195,6 +242,7 @@ pub struct MlsKernel {
     groups: HashMap<String, MlsGroup>,
     pending_invitations: HashMap<String, PendingMemberInvitation>,
     transport_cursors: HashMap<String, u64>,
+    pending_applications: HashMap<String, PendingApplication>,
     persistence_scope: Option<String>,
     persistence_key: Option<Zeroizing<Vec<u8>>>,
 }
@@ -291,6 +339,18 @@ impl MlsKernel {
                 sequence: *sequence,
             })
             .collect();
+        let pending_applications = self
+            .pending_applications
+            .iter()
+            .map(|(event_id, application)| PersistedPendingApplication {
+                event_id: event_id.clone(),
+                conversation_id: application.conversation_id.clone(),
+                group_id: application.group_id.clone(),
+                epoch: application.epoch,
+                ciphertext: application.ciphertext.clone(),
+                created_order: application.created_order,
+            })
+            .collect();
         let snapshot = PersistedMlsState {
             format: 1,
             device_scope: scope.clone(),
@@ -300,6 +360,7 @@ impl MlsKernel {
             groups,
             pending_invitations,
             transport_cursors,
+            pending_applications,
         };
         let plaintext = Zeroizing::new(
             serde_json::to_vec(&snapshot)
@@ -341,6 +402,7 @@ impl MlsKernel {
             || !self.available_key_packages.is_empty()
             || !self.pending_invitations.is_empty()
             || !self.transport_cursors.is_empty()
+            || !self.pending_applications.is_empty()
         {
             return Err("MLS state restore requires a pristine kernel".into());
         }
@@ -530,6 +592,57 @@ impl MlsKernel {
             }
         }
 
+        if snapshot.pending_applications.len() > MAX_PENDING_APPLICATIONS {
+            return Err("MLS restored application outbox exceeds its item limit".into());
+        }
+        let mut pending_application_bytes = 0usize;
+        let mut pending_application_orders = HashSet::new();
+        let mut pending_applications = HashMap::new();
+        for pending in snapshot.pending_applications {
+            let conversation_id = validate_conversation_id(&pending.conversation_id)?;
+            decode_base64(
+                "MLS restored pending application",
+                &pending.ciphertext,
+                MAX_CIPHERTEXT_BASE64,
+            )?;
+            pending_application_bytes = pending_application_bytes
+                .checked_add(pending.ciphertext.len())
+                .ok_or_else(|| "MLS restored application outbox size overflow".to_string())?;
+            if pending_application_bytes > MAX_PENDING_APPLICATION_BYTES {
+                return Err("MLS restored application outbox exceeds its size limit".into());
+            }
+            if pending.created_order == 0
+                || !pending_application_orders
+                    .insert((conversation_id.clone(), pending.created_order))
+            {
+                return Err("MLS restored application outbox order is invalid".into());
+            }
+            let group = groups
+                .get(&conversation_id)
+                .ok_or_else(|| "MLS restored pending application group is missing".to_string())?;
+            if BASE64.encode(group.group_id().as_slice()) != pending.group_id
+                || group.epoch().as_u64() != pending.epoch
+            {
+                return Err("MLS restored pending application state is inconsistent".into());
+            }
+            let event_id = validate_application_event_id(&pending.event_id)?;
+            if pending_applications
+                .insert(
+                    event_id,
+                    PendingApplication {
+                        conversation_id,
+                        group_id: pending.group_id,
+                        epoch: pending.epoch,
+                        ciphertext: pending.ciphertext,
+                        created_order: pending.created_order,
+                    },
+                )
+                .is_some()
+            {
+                return Err("MLS restored pending application identity is invalid".into());
+            }
+        }
+
         let persistence_key = self
             .persistence_key
             .take()
@@ -549,6 +662,7 @@ impl MlsKernel {
             groups,
             pending_invitations,
             transport_cursors,
+            pending_applications,
             persistence_scope: Some(persistence_scope),
             persistence_key: Some(persistence_key),
         };
@@ -966,6 +1080,110 @@ impl MlsKernel {
         })
     }
 
+    pub fn encrypt_transport_application(
+        &mut self,
+        raw_scope: &str,
+        raw_conversation_id: &str,
+        plaintext: &[u8],
+    ) -> Result<ExportedPendingApplication, String> {
+        let scope = validate_scope(raw_scope)?;
+        let conversation_id = validate_conversation_id(raw_conversation_id)?;
+        self.require_identity(&scope)?;
+        if self.pending_applications.len() >= MAX_PENDING_APPLICATIONS {
+            return Err("MLS application outbox item limit reached".into());
+        }
+        let pending_bytes = self
+            .pending_applications
+            .values()
+            .try_fold(0usize, |total, application| {
+                total
+                    .checked_add(application.ciphertext.len())
+                    .ok_or_else(|| "MLS application outbox size overflow".to_string())
+            })?;
+        if pending_bytes
+            .checked_add(MAX_CIPHERTEXT_BASE64)
+            .ok_or_else(|| "MLS application outbox size overflow".to_string())?
+            > MAX_PENDING_APPLICATION_BYTES
+        {
+            return Err("MLS application outbox size limit reached".into());
+        }
+        let event_id = loop {
+            let mut random = [0u8; 32];
+            OsRng.fill_bytes(&mut random);
+            let candidate = format!("mls-{}", hex::encode(random));
+            if !self.pending_applications.contains_key(&candidate) {
+                break candidate;
+            }
+        };
+        let created_order = self
+            .pending_applications
+            .values()
+            .filter(|application| application.conversation_id == conversation_id)
+            .map(|application| application.created_order)
+            .max()
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or_else(|| "MLS application outbox order overflow".to_string())?;
+        let encrypted = self.encrypt_application(&scope, &conversation_id, plaintext)?;
+        let pending = PendingApplication {
+            conversation_id,
+            group_id: encrypted.group_id,
+            epoch: encrypted.epoch,
+            ciphertext: encrypted.ciphertext,
+            created_order,
+        };
+        let exported = pending.export(&event_id);
+        if self.pending_applications.insert(event_id, pending).is_some() {
+            return Err("MLS application outbox identity collision".into());
+        }
+        Ok(exported)
+    }
+
+    pub fn list_pending_applications(
+        &self,
+        raw_scope: &str,
+        raw_conversation_id: &str,
+    ) -> Result<Vec<ExportedPendingApplication>, String> {
+        let scope = validate_scope(raw_scope)?;
+        let conversation_id = validate_conversation_id(raw_conversation_id)?;
+        self.require_identity(&scope)?;
+        let mut pending = self
+            .pending_applications
+            .iter()
+            .filter(|(_, application)| application.conversation_id == conversation_id)
+            .map(|(event_id, application)| application.export(event_id))
+            .collect::<Vec<_>>();
+        pending.sort_by(|left, right| {
+            let left_order = self.pending_applications[&left.event_id].created_order;
+            let right_order = self.pending_applications[&right.event_id].created_order;
+            left_order
+                .cmp(&right_order)
+                .then_with(|| left.event_id.cmp(&right.event_id))
+        });
+        Ok(pending)
+    }
+
+    pub fn acknowledge_pending_application(
+        &mut self,
+        raw_scope: &str,
+        raw_conversation_id: &str,
+        raw_event_id: &str,
+    ) -> Result<(), String> {
+        let scope = validate_scope(raw_scope)?;
+        let conversation_id = validate_conversation_id(raw_conversation_id)?;
+        self.require_identity(&scope)?;
+        let event_id = validate_application_event_id(raw_event_id)?;
+        let pending = self
+            .pending_applications
+            .get(&event_id)
+            .ok_or_else(|| "MLS pending application is missing".to_string())?;
+        if pending.conversation_id != conversation_id {
+            return Err("MLS pending application conversation binding is invalid".into());
+        }
+        self.pending_applications.remove(&event_id);
+        Ok(())
+    }
+
     pub fn decrypt_application(
         &mut self,
         raw_scope: &str,
@@ -1157,6 +1375,17 @@ fn is_sha256(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn validate_application_event_id(raw: &str) -> Result<String, String> {
+    let event_id = raw.trim();
+    let digest = event_id
+        .strip_prefix("mls-")
+        .ok_or_else(|| "MLS application event id is invalid".to_string())?;
+    if !is_sha256(digest) {
+        return Err("MLS application event id is invalid".into());
+    }
+    Ok(event_id.to_string())
 }
 
 #[cfg(test)]
@@ -1504,5 +1733,107 @@ mod tests {
             &invitation.welcome,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn encrypted_snapshot_restores_and_acknowledges_the_application_outbox() {
+        let alice_scope = "server-a/org-a/alice/alice-device";
+        let bob_scope = "server-a/org-a/bob/bob-device";
+        let conversation = "conversation-outbox";
+        let alice_state_key = BASE64.encode([13u8; 32]);
+        let mut alice = MlsKernel::default();
+        let mut bob = MlsKernel::default();
+        alice
+            .configure_persistence(alice_scope, &alice_state_key)
+            .unwrap();
+        alice.initialize(alice_scope).unwrap();
+        bob.initialize(bob_scope).unwrap();
+        let bob_key_package = bob.create_key_package(bob_scope).unwrap();
+        alice.create_group(alice_scope, conversation).unwrap();
+        let invitation = alice
+            .add_member(alice_scope, conversation, &bob_key_package.key_package)
+            .unwrap();
+        let committed = alice
+            .merge_pending_commit(alice_scope, conversation)
+            .unwrap();
+        bob.join_group(
+            bob_scope,
+            conversation,
+            &bob_key_package.reference,
+            &committed.group_id,
+            &invitation.welcome,
+        )
+        .unwrap();
+
+        let queued = alice
+            .encrypt_transport_application(alice_scope, conversation, b"survive restart")
+            .unwrap();
+        let queued_second = alice
+            .encrypt_transport_application(alice_scope, conversation, b"second message")
+            .unwrap();
+        assert!(queued.event_id.starts_with("mls-"));
+        assert!(is_sha256(&queued.event_id[4..]));
+        let before_restart = alice
+            .list_pending_applications(alice_scope, conversation)
+            .unwrap();
+        assert_eq!(before_restart.len(), 2);
+        assert_eq!(before_restart[0].event_id, queued.event_id);
+        assert_eq!(before_restart[1].event_id, queued_second.event_id);
+        assert!(alice
+            .acknowledge_pending_application(
+                alice_scope,
+                "another-conversation",
+                &queued.event_id,
+            )
+            .unwrap_err()
+            .contains("conversation binding"));
+
+        let snapshot = alice.export_encrypted_state(alice_scope).unwrap();
+        assert!(!snapshot.contains("survive restart"));
+        let mut restored = MlsKernel::default();
+        restored
+            .configure_persistence(alice_scope, &alice_state_key)
+            .unwrap();
+        restored
+            .restore_encrypted_state(alice_scope, &snapshot)
+            .unwrap();
+        let replay = restored
+            .list_pending_applications(alice_scope, conversation)
+            .unwrap();
+        assert_eq!(replay.len(), 2);
+        assert_eq!(replay[0].event_id, queued.event_id);
+        assert_eq!(replay[0].ciphertext, queued.ciphertext);
+        assert_eq!(replay[1].event_id, queued_second.event_id);
+        assert_eq!(
+            restored.pending_applications[&replay[0].event_id].created_order,
+            1
+        );
+        assert_eq!(
+            restored.pending_applications[&replay[1].event_id].created_order,
+            2
+        );
+        let decrypted = bob
+            .decrypt_application(bob_scope, conversation, &replay[0].ciphertext)
+            .unwrap();
+        assert_eq!(decrypted.plaintext, b"survive restart");
+        let decrypted = bob
+            .decrypt_application(bob_scope, conversation, &replay[1].ciphertext)
+            .unwrap();
+        assert_eq!(decrypted.plaintext, b"second message");
+
+        restored
+            .acknowledge_pending_application(alice_scope, conversation, &queued.event_id)
+            .unwrap();
+        restored
+            .acknowledge_pending_application(
+                alice_scope,
+                conversation,
+                &queued_second.event_id,
+            )
+            .unwrap();
+        assert!(restored
+            .list_pending_applications(alice_scope, conversation)
+            .unwrap()
+            .is_empty());
     }
 }

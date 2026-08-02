@@ -12,13 +12,13 @@ import path from 'node:path';
 import {
   FileMlsStatePersistence,
   OpenMlsNativeKernel,
-  type MlsApplicationCiphertext,
   type MlsDecryptedApplication,
   type MlsDeviceScope,
   type MlsGroupInspection,
   type MlsGroupState,
   type MlsKeyPackage,
   type MlsMemberInvitation,
+  type MlsPendingApplication,
   type MlsStatePersistence,
 } from '@otto/native';
 
@@ -137,14 +137,17 @@ export interface EnterpriseMlsKernel {
     expectedGroupId: string,
     welcome: string,
   ): Promise<MlsGroupState>;
-  encryptApplication(
+  encryptTransportApplication(
     conversationId: string,
     plaintext: Uint8Array,
-  ): Promise<MlsApplicationCiphertext>;
-  decryptApplication(
+  ): Promise<MlsPendingApplication>;
+  listPendingApplications(
     conversationId: string,
-    ciphertext: string,
-  ): Promise<MlsDecryptedApplication>;
+  ): Promise<MlsPendingApplication[]>;
+  acknowledgePendingApplication(
+    conversationId: string,
+    eventId: string,
+  ): Promise<void>;
   transportCursor(conversationId: string): Promise<number>;
   acknowledgeTransportEvent(
     conversationId: string,
@@ -561,26 +564,36 @@ export class EnterpriseMlsSessionManager {
     );
   }
 
-  encryptApplication(
+  encryptTransportApplication(
     peerAccountId: string,
     plaintext: Uint8Array,
-  ): Promise<MlsApplicationCiphertext> {
+  ): Promise<MlsPendingApplication> {
     return this.withReadyKernel((active) =>
-      active.kernel.encryptApplication(
+      active.kernel.encryptTransportApplication(
         this.conversationId(active, peerAccountId),
         plaintext,
       ),
     );
   }
 
-  decryptApplication(
+  listPendingApplications(
     peerAccountId: string,
-    ciphertext: string,
-  ): Promise<MlsDecryptedApplication> {
+  ): Promise<MlsPendingApplication[]> {
     return this.withReadyKernel((active) =>
-      active.kernel.decryptApplication(
+      active.kernel.listPendingApplications(
         this.conversationId(active, peerAccountId),
-        ciphertext,
+      ),
+    );
+  }
+
+  acknowledgePendingApplication(
+    peerAccountId: string,
+    eventId: string,
+  ): Promise<void> {
+    return this.withReadyKernel((active) =>
+      active.kernel.acknowledgePendingApplication(
+        this.conversationId(active, peerAccountId),
+        eventId,
       ),
     );
   }
@@ -703,6 +716,17 @@ export interface EnterpriseMlsSessionOperations {
     expectedGroupId: string,
     welcome: string,
   ): Promise<MlsGroupState>;
+  encryptTransportApplication(
+    peerAccountId: string,
+    plaintext: Uint8Array,
+  ): Promise<MlsPendingApplication>;
+  listPendingApplications(
+    peerAccountId: string,
+  ): Promise<MlsPendingApplication[]>;
+  acknowledgePendingApplication(
+    peerAccountId: string,
+    eventId: string,
+  ): Promise<void>;
   transportCursor(peerAccountId: string): Promise<number>;
   advanceTransportCursor(
     peerAccountId: string,
@@ -875,6 +899,38 @@ export class EnterpriseMlsSessionCoordinator {
     });
   }
 
+  flushPendingApplications(
+    peerAccountId: string,
+  ): Promise<EnterpriseMlsTransportEvent[]> {
+    return this.exclusive(this.peerOperations, peerAccountId, async () => {
+      const scope = this.sessions.activeScope();
+      return this.flushPendingApplicationsUnlocked(peerAccountId, scope);
+    });
+  }
+
+  sendApplication(
+    peerAccountId: string,
+    plaintext: Uint8Array,
+  ): Promise<EnterpriseMlsTransportEvent> {
+    return this.exclusive(this.peerOperations, peerAccountId, async () => {
+      const scope = this.sessions.activeScope();
+      await this.flushPendingApplicationsUnlocked(peerAccountId, scope);
+      const group = await this.sessions.inspectGroup(peerAccountId);
+      this.assertApplicationGroupReady(group);
+      const pending = await this.sessions.encryptTransportApplication(
+        peerAccountId,
+        plaintext,
+      );
+      this.assertPendingApplicationMatchesGroup(
+        peerAccountId,
+        scope,
+        pending,
+        group,
+      );
+      return this.deliverPendingApplication(peerAccountId, scope, pending);
+    });
+  }
+
   poll(peerAccountId: string, limit = 100): Promise<EnterpriseMlsPollResult> {
     return this.exclusive(this.peerOperations, peerAccountId, async () => {
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
@@ -1029,6 +1085,98 @@ export class EnterpriseMlsSessionCoordinator {
     );
     if (joined.group_id !== event.groupId || joined.epoch !== event.epoch) {
       throw new Error('MLS joined group does not match Welcome event');
+    }
+  }
+
+  private async flushPendingApplicationsUnlocked(
+    peerAccountId: string,
+    scope: MlsDeviceScope,
+  ): Promise<EnterpriseMlsTransportEvent[]> {
+    const pending = await this.sessions.listPendingApplications(peerAccountId);
+    if (pending.length === 0) return [];
+    const group = await this.sessions.inspectGroup(peerAccountId);
+    this.assertApplicationGroupReady(group);
+    const delivered: EnterpriseMlsTransportEvent[] = [];
+    for (const application of pending) {
+      this.assertPendingApplicationMatchesGroup(
+        peerAccountId,
+        scope,
+        application,
+        group,
+      );
+      delivered.push(
+        await this.deliverPendingApplication(
+          peerAccountId,
+          scope,
+          application,
+        ),
+      );
+    }
+    return delivered;
+  }
+
+  private async deliverPendingApplication(
+    peerAccountId: string,
+    scope: MlsDeviceScope,
+    pending: MlsPendingApplication,
+  ): Promise<EnterpriseMlsTransportEvent> {
+    const event = await this.transport.appendMlsTransportEvent(peerAccountId, {
+      senderDeviceId: scope.deviceId,
+      eventId: pending.event_id,
+      eventType: 'application',
+      epoch: pending.epoch,
+      groupId: pending.group_id,
+      payload: pending.ciphertext,
+    });
+    if (
+      event.eventId !== pending.event_id ||
+      event.conversationId !== pending.conversation_id ||
+      event.senderAccountId !== scope.accountId ||
+      event.senderDeviceId !== scope.deviceId ||
+      event.recipientAccountId !== null ||
+      event.recipientDeviceId !== null ||
+      event.eventType !== 'application' ||
+      event.epoch !== pending.epoch ||
+      event.groupId !== pending.group_id ||
+      event.payload !== pending.ciphertext ||
+      event.keyPackageReference !== null
+    ) {
+      throw new Error('MLS application acknowledgement binding is invalid');
+    }
+    await this.sessions.acknowledgePendingApplication(
+      peerAccountId,
+      pending.event_id,
+    );
+    return event;
+  }
+
+  private assertApplicationGroupReady(
+    group: MlsGroupInspection | null,
+  ): asserts group is MlsGroupInspection {
+    if (!group || group.pending_commit || group.member_count < 2) {
+      throw new Error('MLS direct session is not ready for application messages');
+    }
+  }
+
+  private assertPendingApplicationMatchesGroup(
+    peerAccountId: string,
+    scope: MlsDeviceScope,
+    pending: MlsPendingApplication,
+    group: MlsGroupInspection,
+  ): void {
+    const conversationId = enterpriseMlsDirectConversationId({
+      organizationId: scope.organizationId,
+      accountId: scope.accountId,
+      peerAccountId,
+    });
+    if (
+      pending.conversation_id !== conversationId ||
+      pending.group_id !== group.group_id ||
+      pending.epoch !== group.epoch
+    ) {
+      throw new Error(
+        'MLS pending application does not match active group state; security state reset is required',
+      );
     }
   }
 

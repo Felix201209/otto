@@ -9,6 +9,7 @@
     "desktopInitialSessionOrchestration": true,
     "crashSafeInitialHandshakeRecovery": true,
     "durableTransportCursor": true,
+    "durableApplicationOutbox": true,
     "transportSessionHistory": true,
     "transportSessionReset": true,
     "externalAuditCompleted": false,

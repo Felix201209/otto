@@ -3,7 +3,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { MlsGroupInspection, MlsKeyPackage } from '@otto/native';
+import type {
+  MlsGroupInspection,
+  MlsKeyPackage,
+  MlsPendingApplication,
+} from '@otto/native';
 
 import {
   EnterpriseMlsSessionCoordinator,
@@ -98,21 +102,18 @@ function fakeKernel() {
       ...groupState,
       conversation_id: conversationId,
     })),
-    encryptApplication: vi.fn(async (conversationId: string) => ({
+    encryptTransportApplication: vi.fn(async (conversationId: string) => ({
       protocol: 'mls10-openmls-0.8' as const,
+      event_id: `mls-${'a'.repeat(64)}`,
       conversation_id: conversationId,
       group_id: 'Z3JvdXA=',
       epoch: 1,
       ciphertext: 'Y2lwaGVydGV4dA==',
     })),
-    decryptApplication: vi.fn(async (conversationId: string) => ({
-      protocol: 'mls10-openmls-0.8' as const,
-      conversationId,
-      groupId: 'Z3JvdXA=',
-      epoch: 1,
-      senderDeviceScope: 'server/org-a/account-b/device-b',
-      plaintext: new Uint8Array([1, 2, 3]),
-    })),
+    listPendingApplications: vi.fn(
+      async (): Promise<MlsPendingApplication[]> => [],
+    ),
+    acknowledgePendingApplication: vi.fn(async () => undefined),
     transportCursor: vi.fn(async () => 0),
     acknowledgeTransportEvent: vi.fn(async () => undefined),
     decryptTransportApplication: vi.fn(async (conversationId: string) => ({
@@ -302,8 +303,15 @@ describe('EnterpriseMlsSessionManager', () => {
     });
 
     await manager.createGroup('account-b');
-    await manager.encryptApplication('account-b', new Uint8Array([1]));
-    await manager.decryptApplication('account-b', 'Y2lwaGVydGV4dA==');
+    await manager.encryptTransportApplication(
+      'account-b',
+      new Uint8Array([2]),
+    );
+    await manager.listPendingApplications('account-b');
+    await manager.acknowledgePendingApplication(
+      'account-b',
+      `mls-${'a'.repeat(64)}`,
+    );
     await manager.transportCursor('account-b');
     await manager.advanceTransportCursor('account-b', 4);
     await manager.decryptTransportApplication(
@@ -313,13 +321,14 @@ describe('EnterpriseMlsSessionManager', () => {
     );
 
     expect(kernel.createGroup).toHaveBeenCalledWith(conversationId);
-    expect(kernel.encryptApplication).toHaveBeenCalledWith(
+    expect(kernel.encryptTransportApplication).toHaveBeenCalledWith(
       conversationId,
-      new Uint8Array([1]),
+      new Uint8Array([2]),
     );
-    expect(kernel.decryptApplication).toHaveBeenCalledWith(
+    expect(kernel.listPendingApplications).toHaveBeenCalledWith(conversationId);
+    expect(kernel.acknowledgePendingApplication).toHaveBeenCalledWith(
       conversationId,
-      'Y2lwaGVydGV4dA==',
+      `mls-${'a'.repeat(64)}`,
     );
     expect(kernel.transportCursor).toHaveBeenCalledWith(conversationId);
     expect(kernel.acknowledgeTransportEvent).toHaveBeenCalledWith(
@@ -407,6 +416,18 @@ function coordinatorHarness(keyPackages: MlsKeyPackage[] = []) {
     mergePendingCommit: vi.fn(async () => group),
     inspectGroup: vi.fn(async (): Promise<MlsGroupInspection | null> => null),
     joinGroup: vi.fn(async () => group),
+    encryptTransportApplication: vi.fn(async () => ({
+      protocol: 'mls10-openmls-0.8' as const,
+      event_id: `mls-${'2'.repeat(64)}`,
+      conversation_id: group.conversation_id,
+      group_id: group.group_id,
+      epoch: group.epoch,
+      ciphertext: 'bmV3LWNpcGhlcnRleHQ=',
+    })),
+    listPendingApplications: vi.fn(
+      async (): Promise<MlsPendingApplication[]> => [],
+    ),
+    acknowledgePendingApplication: vi.fn(async () => undefined),
     transportCursor: vi.fn(async () => 0),
     advanceTransportCursor: vi.fn(async () => undefined),
     decryptTransportApplication: vi.fn(async () => ({
@@ -590,6 +611,131 @@ describe('EnterpriseMlsSessionCoordinator', () => {
     ).resolves.toEqual({ state: 'waiting-for-peer-commit', group: null });
     expect(sessions.createGroup).not.toHaveBeenCalled();
     expect(transport.claimMlsKeyPackage).not.toHaveBeenCalled();
+  });
+
+  it('replays the durable application outbox before encrypting a new message', async () => {
+    const { group, sessions, transport } = coordinatorHarness();
+    const recovered: MlsPendingApplication = {
+      protocol: 'mls10-openmls-0.8',
+      event_id: `mls-${'1'.repeat(64)}`,
+      conversation_id: group.conversation_id,
+      group_id: group.group_id,
+      epoch: group.epoch,
+      ciphertext: 'cmVjb3ZlcmVkLWNpcGhlcnRleHQ=',
+    };
+    sessions.listPendingApplications.mockResolvedValue([recovered]);
+    sessions.inspectGroup.mockResolvedValue({
+      ...group,
+      pending_commit: false,
+      pending_invitation: null,
+    });
+    const coordinator = new EnterpriseMlsSessionCoordinator(
+      sessions,
+      transport,
+    );
+
+    await expect(
+      coordinator.sendApplication('account-b', new Uint8Array([4, 5, 6])),
+    ).resolves.toMatchObject({
+      eventId: `mls-${'2'.repeat(64)}`,
+      eventType: 'application',
+    });
+
+    expect(
+      transport.appendMlsTransportEvent.mock.calls.map(
+        ([, input]) => input.eventId,
+      ),
+    ).toEqual([recovered.event_id, `mls-${'2'.repeat(64)}`]);
+    expect(sessions.acknowledgePendingApplication.mock.calls).toEqual([
+      ['account-b', recovered.event_id],
+      ['account-b', `mls-${'2'.repeat(64)}`],
+    ]);
+    expect(sessions.encryptTransportApplication).toHaveBeenCalledWith(
+      'account-b',
+      new Uint8Array([4, 5, 6]),
+    );
+    expect(
+      sessions.acknowledgePendingApplication.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      sessions.encryptTransportApplication.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('keeps a pending application when transport delivery fails', async () => {
+    const { group, sessions, transport } = coordinatorHarness();
+    const recovered: MlsPendingApplication = {
+      protocol: 'mls10-openmls-0.8',
+      event_id: `mls-${'3'.repeat(64)}`,
+      conversation_id: group.conversation_id,
+      group_id: group.group_id,
+      epoch: group.epoch,
+      ciphertext: 'cmV0cnktY2lwaGVydGV4dA==',
+    };
+    sessions.listPendingApplications.mockResolvedValue([recovered]);
+    sessions.inspectGroup.mockResolvedValue({
+      ...group,
+      pending_commit: false,
+      pending_invitation: null,
+    });
+    transport.appendMlsTransportEvent.mockRejectedValueOnce(
+      new Error('transport unavailable'),
+    );
+    const coordinator = new EnterpriseMlsSessionCoordinator(
+      sessions,
+      transport,
+    );
+
+    await expect(
+      coordinator.sendApplication('account-b', new Uint8Array([7])),
+    ).rejects.toThrow('transport unavailable');
+    expect(sessions.acknowledgePendingApplication).not.toHaveBeenCalled();
+    expect(sessions.encryptTransportApplication).not.toHaveBeenCalled();
+  });
+
+  it('does not acknowledge a transport response with different security bindings', async () => {
+    const { group, sessions, transport } = coordinatorHarness();
+    const recovered: MlsPendingApplication = {
+      protocol: 'mls10-openmls-0.8',
+      event_id: `mls-${'4'.repeat(64)}`,
+      conversation_id: group.conversation_id,
+      group_id: group.group_id,
+      epoch: group.epoch,
+      ciphertext: 'YmluZGluZy1jaXBoZXJ0ZXh0',
+    };
+    sessions.listPendingApplications.mockResolvedValue([recovered]);
+    sessions.inspectGroup.mockResolvedValue({
+      ...group,
+      pending_commit: false,
+      pending_invitation: null,
+    });
+    transport.appendMlsTransportEvent.mockImplementationOnce(
+      async (peerAccountId, input) => ({
+        sequence: 1,
+        eventId: input.eventId,
+        conversationId: group.conversation_id,
+        sessionGeneration: 1,
+        senderAccountId: 'account-a',
+        senderDeviceId: input.senderDeviceId,
+        recipientAccountId: peerAccountId,
+        recipientDeviceId: null,
+        eventType: 'application',
+        epoch: input.epoch,
+        groupId: input.groupId,
+        payload: input.payload,
+        keyPackageReference: null,
+        createdAt: '2026-08-02T00:02:00.000Z',
+        expiresAt: '2026-10-31T00:02:00.000Z',
+      }),
+    );
+    const coordinator = new EnterpriseMlsSessionCoordinator(
+      sessions,
+      transport,
+    );
+
+    await expect(
+      coordinator.flushPendingApplications('account-b'),
+    ).rejects.toThrow('acknowledgement binding is invalid');
+    expect(sessions.acknowledgePendingApplication).not.toHaveBeenCalled();
   });
 
   it('joins from Welcome and atomically advances application cursor on decrypt', async () => {
