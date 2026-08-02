@@ -1988,39 +1988,6 @@
 #root .otto-custom-agents__head > button { border-radius: 12px; }
 #root .otto-collab-drawer { border-radius: 16px; }
 
-/* ═══════════ 悬浮宠物：可拖动、全页面常驻 ═══════════
- * 舞台原位隐藏（visibility 保活，React 仍逐帧驱动雪碧图），
- * 克隆体挂在 body 上随用户拖拽。 */
-body.otto-uiux-pet-float #root .otto-right-panel__pet-heading { display: none; }
-body.otto-uiux-pet-float #root .otto-pet-stage {
-  position: fixed;
-  left: -9999px;
-  bottom: 0;
-  visibility: hidden;
-  pointer-events: none;
-}
-.otto-uiux-pet {
-  position: fixed;
-  z-index: 300;
-  width: 96px;
-  height: 96px;
-  cursor: grab;
-  touch-action: none;
-  user-select: none;
-  -webkit-user-select: none;
-  filter: drop-shadow(0 6px 14px rgba(23, 43, 77, 0.18));
-  transition: filter 160ms ease;
-}
-.otto-uiux-pet.is-dragging {
-  cursor: grabbing;
-  filter: drop-shadow(0 12px 24px rgba(23, 43, 77, 0.28));
-  transition: none;
-}
-.otto-uiux-pet .otto-pet-stage__motion {
-  transform: translateX(-50%) scale(0.66);
-  transform-origin: bottom center;
-}
-
 /* ═══════════ 选择项目条（空态首页，输入卡下方；mock 交互） ═══════════ */
 .otto-uiux-projectbar {
   position: fixed;
@@ -2156,29 +2123,6 @@ body.otto-uiux-has-projectbar #root .otto-main:has(.otto-empty) .otto-empty__pro
 .otto-uiux-account-menu__chev { color: var(--otto-text-tertiary, #aeaeb2); font-size: 15px; transition: transform 140ms ease; }
 .otto-uiux-account-menu__item.is-open .otto-uiux-account-menu__chev { transform: rotate(90deg); }
 .otto-uiux-account-menu__hint { color: var(--otto-text-tertiary, #aeaeb2); font-size: 12px; }
-.otto-uiux-account-menu__switch {
-  position: relative;
-  flex: none;
-  width: 30px;
-  height: 18px;
-  border-radius: 999px;
-  background: #d9d9de;
-  transition: background 160ms ease;
-}
-.otto-uiux-account-menu__switch::after {
-  content: '';
-  position: absolute;
-  left: 2px;
-  top: 2px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
-  transition: transform 160ms ease;
-}
-.otto-uiux-account-menu__switch.is-on { background: var(--otto-accent-hover, #0ea5e9); }
-.otto-uiux-account-menu__switch.is-on::after { transform: translateX(12px); }
 .otto-uiux-account-menu__usage { display: grid; gap: 10px; padding: 4px 12px 10px 36px; }
 .otto-uiux-account-menu__usage[hidden] { display: none; }
 .otto-uiux-account-menu__usage-row { display: grid; grid-template-columns: 1fr auto; gap: 3px 8px; align-items: baseline; font-size: 11px; }
@@ -2279,3 +2223,49 @@ body.otto-uiux-has-projectbar #root .otto-main:has(.otto-empty) .otto-empty__pro
   border-color: color-mix(in srgb, var(--ui-accent) 35%, transparent);
   background: var(--ui-accent-soft);
 }
+
+/* ═══════════ 顶栏瘦身 + 空态去刺猬 + 账号头像去绿 + 推荐问题选中态 + 专家图标统一 ═══════════
+ * 身份面包屑与右上「本」头像移出布局与无障碍树（display:none 而非 opacity），
+ * 用户身份入口只保留左下角账号区。 */
+#root .otto-main__topbar > span:not([class]),
+#root .otto-main__topbar [title="当前产品身份"] { display: none !important; }
+#root .otto-main__topbar .otto-user-avatar { display: none; }
+
+/* 空态悬浮刺猬移除（工作台悬浮宠物一并下线；登录/品牌页资产不受影响） */
+#root .otto-empty > img { display: none; }
+/* 右栏宠物舞台与标题同步移除（原悬浮克隆已删，原位舞台不再保留） */
+#root .otto-right-panel__pet-heading { display: none; }
+#root .otto-right-panel .otto-pet-stage { display: none; }
+
+/* 账号头像：亮绿 → 中性灰（走 token，深浅色自适配；真实在线点仍用语义绿） */
+#root .otto-sidebar-account__avatar { background: var(--otto-border); color: var(--otto-text-secondary); }
+.otto-uiux-account-menu__avatar { background: var(--otto-border, #ececec); color: var(--otto-text-secondary, #8a8a8e); }
+
+/* 推荐问题：hover / focus / selected 三态分明，选中用中性浅灰（不用高饱和蓝）。
+ * padding+负 margin 保持原排版不位移。 */
+#root .otto-prompt-chip {
+  padding: 3px 8px;
+  margin: -3px -8px;
+  border-radius: 8px;
+  transition: background 140ms ease, color 140ms ease;
+}
+#root .otto-prompt-chip:hover { background: color-mix(in srgb, var(--otto-text) 5%, transparent); }
+#root .otto-prompt-chip:focus-visible { outline: none; box-shadow: var(--otto-shadow-focus, 0 0 0 3px rgba(56, 189, 248, 0.28)); }
+#root .otto-main:has(.otto-empty) .otto-prompt-chip.is-selected,
+#root .otto-prompt-chip.is-selected {
+  background: color-mix(in srgb, var(--otto-text) 8%, transparent);
+  color: var(--otto-text);
+}
+
+/* 企业专家卡：统一 SVG 图标容器（替换 PNG/文字首字；与右栏 dev 图标容器同体系） */
+.otto-uiux-profile-icon {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--otto-accent, #38bdf8) 12%, transparent);
+  color: var(--otto-accent, #38bdf8);
+}
+.otto-uiux-profile-icon svg { width: 15px; height: 15px; display: block; }

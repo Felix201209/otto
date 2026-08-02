@@ -837,12 +837,22 @@
         if (accountMenuEl) closeAccountMenu(); else openAccountMenu();
         return;
       }
+      // 0.6) 空会话推荐问题：填入输入框（不发送）并标记选中态
+      var promptChip = e.target.closest ? e.target.closest('.otto-prompt-chip') : null;
+      if (promptChip) {
+        e.stopPropagation();
+        e.preventDefault();
+        selectPromptChip(promptChip);
+        return;
+      }
+      if (e.target.closest && e.target.closest('.otto-send')) clearPromptSelection();
       var conversationRow = e.target.closest ? e.target.closest('.otto-session') : null;
       if (conversationRow && !conversationRow.classList.contains('otto-uiux-session')) {
         $$('.otto-uiux-session').forEach(function (session) {
           session.classList.remove('otto-session--active');
           session.removeAttribute('aria-current');
         });
+        clearPromptSelection();
         activeNavigationKind = 'workbench';
         setTimeout(syncNavigationState, 80);
       }
@@ -1704,13 +1714,6 @@
     }
   });
 
-  /* ──────────────────────── 顶栏面包屑：悬浮看全文 ──────────────────────── */
-
-  function applyBreadcrumbTitle() {
-    var span = $('.otto-main__topbar > span:not([class])');
-    if (span && !span.title) span.title = span.textContent.trim();
-  }
-
   function applyTerminology() {
     $$('[aria-label="设置与诊断中心"]').forEach(function (element) {
       element.setAttribute('aria-label', '设置');
@@ -1901,124 +1904,17 @@
     document.body.classList.add('otto-uiux-has-projectbar');
   }
 
-  /* ──────────────────────── 悬浮宠物：可拖动、全页面常驻 ────────────────────────
-   * 原位舞台 visibility:hidden 保活（React 继续逐帧驱动雪碧图行内样式），
-   * body 上的克隆体用 MutationObserver 镜像行内样式 → 动画不打烊；
-   * 位移类不镜像——宠物停在用户拖到的位置原地动。 */
-  var PET_KEY = 'otto.uiux.pet.pos.v1';
-  var petFloatEl = null;
-  var petSpriteSource = null;
-  var petObserver = null;
-
-  function syncPetClone() {
-    if (!petFloatEl || !petSpriteSource || !petSpriteSource.isConnected) return;
-    var cloneSprite = petFloatEl.firstChild.firstChild;
-    if (!cloneSprite) return;
-    var style = petSpriteSource.getAttribute('style');
-    if (style) cloneSprite.setAttribute('style', style);
-    if (cloneSprite.className !== petSpriteSource.className) {
-      cloneSprite.className = petSpriteSource.className;
-    }
-  }
-
-  function petDefaultPosition() {
-    petFloatEl.style.left = Math.max(12, window.innerWidth - 128) + 'px';
-    petFloatEl.style.top = Math.max(64, window.innerHeight - 132) + 'px';
-  }
-
-  function attachPetDrag() {
-    var dragging = false;
-    var startX = 0, startY = 0, originX = 0, originY = 0;
-    petFloatEl.addEventListener('pointerdown', function (event) {
-      dragging = true;
-      petFloatEl.classList.add('is-dragging');
-      try { petFloatEl.setPointerCapture(event.pointerId); } catch (err) { /* ignore */ }
-      startX = event.clientX;
-      startY = event.clientY;
-      var rect = petFloatEl.getBoundingClientRect();
-      originX = rect.left;
-      originY = rect.top;
-      event.preventDefault();
-    });
-    petFloatEl.addEventListener('pointermove', function (event) {
-      if (!dragging) return;
-      var nextX = Math.max(4, Math.min(window.innerWidth - 100, originX + event.clientX - startX));
-      var nextY = Math.max(4, Math.min(window.innerHeight - 100, originY + event.clientY - startY));
-      petFloatEl.style.left = nextX + 'px';
-      petFloatEl.style.top = nextY + 'px';
-    });
-    var finish = function () {
-      if (!dragging) return;
-      dragging = false;
-      petFloatEl.classList.remove('is-dragging');
-      try {
-        localStorage.setItem(PET_KEY, JSON.stringify({
-          left: petFloatEl.style.left,
-          top: petFloatEl.style.top,
-        }));
-      } catch (err) { /* ignore */ }
-    };
-    petFloatEl.addEventListener('pointerup', finish);
-    petFloatEl.addEventListener('pointercancel', finish);
-  }
-
-  function setupPetFloat() {
-    var sprite = $('.otto-pet-stage__motion .otto-pet-stage__sprite');
-    if (!sprite) return false;
-    if (!petFloatEl) {
-      petFloatEl = document.createElement('div');
-      petFloatEl.className = 'otto-uiux-pet';
-      petFloatEl.setAttribute('role', 'img');
-      petFloatEl.setAttribute('aria-label', '小刺猬 Otto（可拖动）');
-      petFloatEl.setAttribute('title', '拖我到任意位置');
-      petFloatEl.innerHTML =
-        '<div class="otto-pet-stage__motion"><div class="otto-pet-stage__sprite"></div></div>';
-      document.body.appendChild(petFloatEl);
-      var saved = null;
-      try { saved = JSON.parse(localStorage.getItem(PET_KEY) || 'null'); } catch (err) { /* ignore */ }
-      if (saved && saved.left && saved.top) {
-        petFloatEl.style.left = saved.left;
-        petFloatEl.style.top = saved.top;
-      } else {
-        petDefaultPosition();
-      }
-      attachPetDrag();
-      if (isPetHidden()) petFloatEl.style.display = 'none';
-    }
-    petSpriteSource = sprite;
-    syncPetClone();
-    if (petObserver) petObserver.disconnect();
-    petObserver = new MutationObserver(syncPetClone);
-    var motion = $('.otto-pet-stage__motion');
-    if (motion) {
-      petObserver.observe(motion, { attributes: true, subtree: true, attributeFilter: ['style', 'class'] });
-    }
-    document.body.classList.add('otto-uiux-pet-float');
-    return true;
-  }
-
   /* ──────────────────────── 头像账号菜单：设置入口收口到左下角 ────────────────────────
-   * 用户卡整卡可点，弹出菜单：用量剩余（mock 展开）、显示宠物（真实开关）、
+   * 用户卡整卡可点，弹出菜单：用量剩余（mock 展开）、
    * 设置（复用设置中心，CSS 全页化）、退出登录（转触发原有退出钮，逻辑不动）。 */
-  var PET_HIDDEN_KEY = 'otto.uiux.pet.hidden.v1';
   var accountMenuEl = null;
   var accountBackdropEl = null;
 
   var ACCOUNT_ICONS = {
     usage: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2.7 10.5a5.3 5.3 0 1 1 10.6 0"/><path d="M8 10.2l2.4-3"/></svg>',
-    pet: '<svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="10.2" r="3.1"/><circle cx="4.6" cy="6.4" r="1.5"/><circle cx="8" cy="5" r="1.5"/><circle cx="11.4" cy="6.4" r="1.5"/></svg>',
     settings: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="2.1"/><path d="M8 2v1.7M8 12.3V14M2 8h1.7M12.3 8H14M3.8 3.8l1.2 1.2M11 11l1.2 1.2M12.2 3.8L11 5M5 11l-1.2 1.2"/></svg>',
     logout: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.2 2.8H4a1.2 1.2 0 0 0-1.2 1.2v8a1.2 1.2 0 0 0 1.2 1.2h2.2"/><path d="M10.4 5.2L13.2 8l-2.8 2.8M13 8H6.4"/></svg>',
   };
-
-  function isPetHidden() {
-    try { return localStorage.getItem(PET_HIDDEN_KEY) === '1'; } catch (err) { return false; }
-  }
-
-  function applyPetVisibility(hidden) {
-    try { localStorage.setItem(PET_HIDDEN_KEY, hidden ? '1' : '0'); } catch (err) { /* ignore */ }
-    if (petFloatEl) petFloatEl.style.display = hidden ? 'none' : '';
-  }
 
   function closeAccountMenu() {
     if (accountMenuEl) { accountMenuEl.remove(); accountMenuEl = null; }
@@ -2035,16 +1931,6 @@
       var open = panel.hasAttribute('hidden');
       if (open) panel.removeAttribute('hidden'); else panel.setAttribute('hidden', '');
       item.classList.toggle('is-open', open);
-      return;
-    }
-    if (kind === 'pet') {
-      var hidden = !isPetHidden();
-      applyPetVisibility(hidden);
-      var sw = $('.otto-uiux-account-menu__switch', item);
-      if (sw) {
-        sw.classList.toggle('is-on', !hidden);
-        sw.setAttribute('aria-checked', String(!hidden));
-      }
       return;
     }
     if (kind === 'settings') {
@@ -2072,7 +1958,6 @@
     var avatarText = avatarEl ? avatarEl.textContent.trim() : '用';
     var nameText = nameEl ? nameEl.textContent.trim() : '本地用户';
     var orgText = orgEl ? orgEl.textContent.trim() : '';
-    var petHidden = isPetHidden();
 
     accountBackdropEl = document.createElement('div');
     accountBackdropEl.className = 'otto-uiux-account-backdrop';
@@ -2112,12 +1997,6 @@
         '</div>' +
         '<p class="otto-uiux-account-menu__usage-note">预览环境模拟数据，正式版读取真实用量。</p>' +
       '</div>' +
-      '<button type="button" class="otto-uiux-account-menu__item" data-am="pet">' +
-        ACCOUNT_ICONS.pet +
-        '<span class="otto-uiux-account-menu__label">显示宠物</span>' +
-        '<span class="otto-uiux-account-menu__switch' + (petHidden ? '' : ' is-on') +
-          '" role="switch" aria-checked="' + String(!petHidden) + '"></span>' +
-      '</button>' +
       '<button type="button" class="otto-uiux-account-menu__item" data-am="settings">' +
         ACCOUNT_ICONS.settings +
         '<span class="otto-uiux-account-menu__label">设置</span>' +
@@ -2143,6 +2022,84 @@
     accountMenuEl.style.bottom = Math.max(8, bottom) + 'px';
   }
 
+  /* ──────────────────────── 空态推荐问题：填入输入框（不自动发送）+ 浅灰选中态 ────────────────────────
+   * React 原有点击会直接发送；capture 拦截后改为填入 textarea（native setter + input 事件，
+   * 让 React 受控组件同步）。选中互斥；发送 / 切换会话后清除。 */
+  function clearPromptSelection() {
+    $$('.otto-prompt-chip.is-selected').forEach(function (chip) {
+      chip.classList.remove('is-selected');
+      chip.setAttribute('aria-pressed', 'false');
+    });
+  }
+
+  function selectPromptChip(chip) {
+    clearPromptSelection();
+    chip.classList.add('is-selected');
+    chip.setAttribute('aria-pressed', 'true');
+    var textarea = $('.otto-composer__textarea');
+    if (!textarea) return;
+    var setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+    setter.call(textarea, chip.textContent.trim());
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    textarea.focus();
+  }
+
+  function applyPromptChips() {
+    $$('.otto-prompt-chip').forEach(function (chip) {
+      if (!chip.hasAttribute('aria-pressed')) chip.setAttribute('aria-pressed', 'false');
+    });
+  }
+
+  // 键盘 Enter 发送后同样清掉选中态（capture 阶段记录，不影响 React 发送流程）
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+    if (e.target && e.target.classList && e.target.classList.contains('otto-composer__textarea')) {
+      clearPromptSelection();
+    }
+  }, true);
+
+  /* ──────────────────────── 企业专家卡图标：统一为 inline SVG ────────────────────────
+   * 原 PNG 刺绣图（GeneratedIcon）与文字首字占位统一替换为 24 视窗 outline SVG，
+   * 图形复用 icons.tsx 既有设计（Agent/Search/File/Copy/CalendarCheck），缺位补语义图形。 */
+  var PROFILE_ICON_SVGS = [
+    ['企业工作', '<rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 4.5V8"/><circle cx="12" cy="4" r="1.1"/><path d="M9.2 13h.01M14.8 13h.01"/><path d="M2.5 12.5v3M21.5 12.5v3"/>'],
+    ['PPT', '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M12 16v3M9 21h6"/><path d="m9.5 12 2-2 2 2 2.5-3"/>'],
+    ['会议', '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/><path d="m9 15.5 2 2 4-4"/>'],
+    ['Word', '<path d="M14 3v5h5"/><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M8 12h8M8 16h5"/>'],
+    ['Excel', '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 10h16M4 15h16M10 4v16"/>'],
+    ['PDF', '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>'],
+    ['数据可视化', '<path d="M4 20V4"/><path d="M4 20h16"/><path d="M9 16v-5M13 16V8M17 16v-3"/>'],
+    ['市场竞品', '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/>'],
+    ['品牌营销', '<path d="M4 20l1-4L16.5 4.5a2.1 2.1 0 0 1 3 3L8 19l-4 1Z"/>'],
+  ];
+
+  function applyProfileIcons() {
+    $$('.otto-profile-card').forEach(function (card) {
+      if (card.getAttribute('data-uiux-icon') === '1') return;
+      var text = card.textContent || '';
+      var paths = null;
+      for (var i = 0; i < PROFILE_ICON_SVGS.length; i++) {
+        if (text.indexOf(PROFILE_ICON_SVGS[i][0]) !== -1) { paths = PROFILE_ICON_SVGS[i][1]; break; }
+      }
+      if (!paths) return;
+      card.setAttribute('data-uiux-icon', '1');
+      var holder = document.createElement('span');
+      holder.className = 'otto-uiux-profile-icon';
+      holder.setAttribute('aria-hidden', 'true');
+      holder.innerHTML =
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" ' +
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + paths + '</svg>';
+      var legacy = $('.otto-profile-card__mark', card) || $('img.otto-generated-icon', card);
+      if (legacy) {
+        legacy.style.display = 'none';
+        legacy.setAttribute('aria-hidden', 'true');
+        legacy.parentNode.insertBefore(holder, legacy);
+      } else {
+        card.insertBefore(holder, card.firstChild);
+      }
+    });
+  }
+
   /* ──────────────────────── 启动与重渲染守护 ──────────────────────── */
 
   // React 重渲染会抹掉我们加在 #root 内的 class（折叠态、过滤态），
@@ -2159,12 +2116,12 @@
         applyParkServiceEntry();
         applyExpertsCollapse();
         applyInboxFilter();
-        applyBreadcrumbTitle();
         applyTerminology();
         syncWorklogPosition();
         syncOrganizationPosition();
         syncProjectBar();
-        setupPetFloat();
+        applyPromptChips();
+        applyProfileIcons();
       } catch (err) {
         console.warn(LOG, '重放增强异常', err);
       }
@@ -2180,10 +2137,15 @@
       syncNavigationState();
       applyParkServiceEntry();
       applyExpertsCollapse();
-      applyBreadcrumbTitle();
       applyTerminology();
       syncProjectBar();
-      setupPetFloat();
+      applyPromptChips();
+      applyProfileIcons();
+      // 悬浮宠物已下线：清掉旧版本遗留的本地状态
+      try {
+        localStorage.removeItem('otto.uiux.pet.pos.v1');
+        localStorage.removeItem('otto.uiux.pet.hidden.v1');
+      } catch (err) { /* ignore */ }
       var observer = new MutationObserver(scheduleReapply);
       observer.observe(root, { childList: true, subtree: true });
       // 首次访问引导（localStorage 记住，不再打扰）
