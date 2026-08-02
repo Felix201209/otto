@@ -257,7 +257,13 @@ describe('管理端鉴权：受保护路由需正确 token', { timeout: 15_000 }
 
   it('完全不带 token 访问受保护路由 → 401', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
-    for (const p of ['/enterprise/report', '/enterprise/employees', '/enterprise/audit', '/enterprise/export']) {
+    for (const p of [
+      '/enterprise/report',
+      '/enterprise/employees',
+      '/enterprise/audit',
+      '/enterprise/export',
+      '/enterprise/deployment/status',
+    ]) {
       const res = await fetch(`${base}${p}`);
       expect(res.status, `${p} 应 401`).toBe(401);
     }
@@ -524,16 +530,19 @@ describe('受保护 vs 公开路由边界', () => {
       appVersion: '1.8.4-test',
       buildCommit: 'abc123def456',
       schemaVersion: database.ENTERPRISE_SCHEMA_VERSION,
-      deployment: {
-        license: { status: 'active', enforce: false },
-        dataBoundary: {
-          uploadsContentByDefault: false,
-          includesUserMessages: false,
-          includesFiles: false,
-          includesMeetingAudio: false,
-        },
-      },
     });
+    for (const privateField of [
+      'dataGovernance',
+      'dataProtection',
+      'deployment',
+      'repairNotifications',
+      'runtimeVersion',
+      'sms',
+      'startedAt',
+      'uptime',
+    ]) {
+      expect(body).not.toHaveProperty(privateField);
+    }
     expect(body.capabilities).toEqual(expect.arrayContaining([
       'password_auth',
       'sms_login',
@@ -573,8 +582,7 @@ describe('受保护 vs 公开路由边界', () => {
       'encrypted_attachment_storage_v1',
       'encrypted_message_storage_v1',
     ]));
-    expect(body.uptime).toEqual(expect.any(Number));
-  });
+  }, 15_000);
 
   it('private deployment license enforcement keeps only maintenance routes open', async () => {
     process.env.OTTO_LICENSE_ENFORCE = 'true';
@@ -867,7 +875,7 @@ describe('受保护 vs 公开路由边界', () => {
     expect(billingCalls.filter((url) => url.endsWith('/capture'))).toHaveLength(1);
   }, 60_000);
 
-  it('admin publishes modular update manifest and health exposes the active result', async () => {
+  it('admin publishes modular updates without exposing deployment details in public health', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
     const headers = { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' };
 
@@ -937,12 +945,9 @@ describe('受保护 vs 公开路由边界', () => {
 
     const health = await fetch(`${base}/enterprise/health`);
     expect(health.status).toBe(200);
-    const body = await health.json() as {
-      capabilities: string[];
-      deployment: { moduleUpdates: { modules: unknown[] } };
-    };
+    const body = await health.json() as { capabilities: string[] };
     expect(body.capabilities).toContain('modular_update_push_v1');
-    expect(body.deployment.moduleUpdates.modules).toHaveLength(1);
+    expect(body).not.toHaveProperty('deployment');
   });
 
   it('账号恢复接口只读写当前账号快照，并返回可重试的版本冲突', async () => {
