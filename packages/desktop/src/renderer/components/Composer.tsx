@@ -45,6 +45,7 @@ import {
   IconSettings,
   IconStop,
   IconClose,
+  IconFolder,
 } from './icons.js';
 
 async function blobToWav(blob: Blob): Promise<Uint8Array> {
@@ -90,15 +91,24 @@ function readBlobText(blob: Blob): Promise<string> {
 const MODEL_SEARCH_THRESHOLD = 8;
 
 function attachmentKey(attachment: Attachment): string {
-  return 'id' in attachment
-    ? attachment.id
-    : `file-${attachment.filePath}-${attachment.fileName}`;
+  if ('id' in attachment) return attachment.id;
+  if ('folderPath' in attachment) return `folder-${attachment.folderPath}-${attachment.folderName}`;
+  return `file-${attachment.filePath}-${attachment.fileName}`;
 }
 
 /** 图片协议本身不要求路径，但桌面端会为用户明确选择/拖入的图片保留路径用于展示。 */
 function attachmentLocalPath(attachment: Attachment): string | null {
+  if ('folderPath' in attachment) return attachment.folderPath;
   const value = (attachment as Attachment & { filePath?: string }).filePath;
   return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function attachmentName(attachment: Attachment): string {
+  return 'folderName' in attachment ? attachment.folderName : attachment.fileName;
+}
+
+function isFolderAttachment(attachment: Attachment): boolean {
+  return 'folderPath' in attachment;
 }
 
 function attachmentTypeLabel(fileName: string): string {
@@ -629,6 +639,29 @@ export function Composer({
     }
   }, [attachments.length]);
 
+  const pickFolders = useCallback(() => {
+    setAttachError(null);
+    void (async () => {
+      try {
+        const paths = await window.otto.selectFolders();
+        if (paths.length === 0) return;
+        const room = MAX_ATTACHMENTS - attachments.length;
+        if (room <= 0) {
+          setAttachError(`最多只能添加 ${MAX_ATTACHMENTS} 个附件`);
+          return;
+        }
+        const added = paths.slice(0, room).map((folderPath) => {
+          const segments = folderPath.split(/[\\/]/u).filter(Boolean);
+          return { folderName: segments.at(-1) ?? folderPath, folderPath };
+        });
+        setAttachments((prev) => [...prev, ...added]);
+        setAttachError(paths.length > room ? `一次最多添加 ${MAX_ATTACHMENTS} 个附件` : null);
+      } catch (error) {
+        setAttachError(error instanceof Error ? error.message : '目录附件授权失败');
+      }
+    })();
+  }, [attachments.length]);
+
   // 拖拽文件进入
   const onDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -1019,6 +1052,9 @@ export function Composer({
             <button type="button" onClick={() => { pickFiles(); setContextMenu(null); }}>
               选择文件…
             </button>
+            <button type="button" onClick={() => { pickFolders(); setContextMenu(null); }}>
+              选择文件夹…
+            </button>
           </div>
         </>
       ) : null}
@@ -1028,17 +1064,19 @@ export function Composer({
             {attachments.map((attachment) => {
               const key = attachmentKey(attachment);
               const image = isImageAttachment(attachment);
+              const folder = isFolderAttachment(attachment);
               const localPath = attachmentLocalPath(attachment);
-              const typeLabel = attachmentTypeLabel(attachment.fileName);
-              const typeKey = attachmentTypeKey(attachment.fileName);
-              const displayName = attachmentFileName(attachment.fileName);
+              const name = attachmentName(attachment);
+              const typeLabel = folder ? '目录' : attachmentTypeLabel(name);
+              const typeKey = folder ? 'DIR' : attachmentTypeKey(name);
+              const displayName = folder ? name : attachmentFileName(name);
               const size = attachmentSizes[key] ?? (
                 image ? attachment.originalSize : undefined
               );
               return (
                 <div
                   key={key}
-                  className={`otto-attachment otto-attachment--${image ? 'image' : 'file'}`}
+                  className={`otto-attachment otto-attachment--${image ? 'image' : folder ? 'folder' : 'file'}`}
                 >
                   {image ? (
                     <img
@@ -1057,14 +1095,14 @@ export function Composer({
                   <div className="otto-attachment__copy">
                     <span
                       className="otto-attachment__file-name"
-                      title={attachment.fileName}
+                      title={name}
                     >
                       {displayName}
                     </span>
                     <span className="otto-attachment__meta">
                       {typeLabel}{size != null ? ` · ${formatAttachmentSize(size)}` : ''}
                     </span>
-                    {localPath && localPath !== attachment.fileName ? (
+                    {localPath && localPath !== name ? (
                       <span className="otto-attachment__path" title={localPath}>
                         {localPath.length > 50
                           ? `…${localPath.slice(-47)}`
@@ -1075,8 +1113,8 @@ export function Composer({
                   <button
                     type="button"
                     className="otto-attachment__remove"
-                    title={`移除 ${attachment.fileName}`}
-                    aria-label={`移除 ${attachment.fileName}`}
+                    title={`移除 ${name}`}
+                    aria-label={`移除 ${name}`}
                     onClick={() => removeAttachment(key)}
                   >
                     <IconClose size={13} />
@@ -1194,6 +1232,17 @@ export function Composer({
             disabled={disabled || attaching}
           >
             <IconPaperclip size={17} />
+          </button>
+
+          <button
+            type="button"
+            className="otto-attach"
+            title="添加文件夹"
+            aria-label="添加文件夹"
+            onClick={pickFolders}
+            disabled={disabled || attaching}
+          >
+            <IconFolder size={17} />
           </button>
 
           <div className="otto-authorization">

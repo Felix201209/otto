@@ -433,6 +433,7 @@ const IPC = {
   inspectLocalPath: 'otto:inspect-local-path',
   activateLocalPath: 'otto:activate-local-path',
   selectFiles: 'otto:select-files',
+  selectFolders: 'otto:select-folders',
   grantBrowserFile: 'otto:grant-browser-file',
   authorizeMessageFiles: 'otto:authorize-message-files',
   readFilePath: 'otto:read-file-path',
@@ -4125,6 +4126,17 @@ function registerIpc(): void {
     return fileAccessGrants.grant(result.filePaths);
   });
 
+  // Windows 不支持在同一个对话框中可靠混用 openFile/openDirectory；目录单独显式选择，
+  // renderer 不能提交裸路径扩大授权范围。
+  ipcMain.handle(IPC.selectFolders, async () => {
+    const win = mainWindow;
+    const result = await (win
+      ? dialog.showOpenDialog(win, { properties: ['openDirectory', 'multiSelections'] })
+      : dialog.showOpenDialog({ properties: ['openDirectory', 'multiSelections'] }));
+    if (result.canceled || result.filePaths.length === 0) return [];
+    return fileAccessGrants.grantDirectories(result.filePaths);
+  });
+
   // 拖拽/隐藏 input 的 File 路径由可信 preload 通过 webUtils 提取后送到这里。
   // renderer 只能传 File 对象给 contextBridge，没有任意字符串 grant API。
   ipcMain.handle(IPC.grantBrowserFile, (_e, filePath: unknown) => {
@@ -4138,16 +4150,23 @@ function registerIpc(): void {
 
   // preload 在 send_user_message 真正写入 WS 前调用。renderer 无 ipcRenderer，
   // 也拿不到 server endpoint/clientToken，因此不能绕过此复核直发裸路径。
-  ipcMain.handle(IPC.authorizeMessageFiles, (_e, filePaths: unknown) => {
+  ipcMain.handle(IPC.authorizeMessageFiles, (_e, references: unknown) => {
     if (
-      !Array.isArray(filePaths) ||
-      filePaths.length === 0 ||
-      filePaths.length > 6 ||
-      filePaths.some((value) => typeof value !== 'string' || value.length === 0)
+      !Array.isArray(references) ||
+      references.length === 0 ||
+      references.length > 6 ||
+      references.some((value) =>
+        !value || typeof value !== 'object' ||
+        typeof (value as { path?: unknown }).path !== 'string' ||
+        !(value as { path: string }).path ||
+        !['file', 'directory'].includes(String((value as { kind?: unknown }).kind)))
     ) {
       throw new Error('附件路径格式无效');
     }
-    return fileAccessGrants.resolveAll(filePaths as string[], 50 * 1024 * 1024);
+    return fileAccessGrants.resolveReferences(
+      references as Array<{ path: string; kind: 'file' | 'directory' }>,
+      50 * 1024 * 1024,
+    );
   });
 
   // 读取用户本进程中通过原生选择器明确授权的文件，返回 Base64 + 元数据。

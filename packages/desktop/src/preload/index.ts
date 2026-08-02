@@ -975,6 +975,7 @@ const IPC = {
   inspectLocalPath: 'otto:inspect-local-path',
   activateLocalPath: 'otto:activate-local-path',
   selectFiles: 'otto:select-files',
+  selectFolders: 'otto:select-folders',
   grantBrowserFile: 'otto:grant-browser-file',
   authorizeMessageFiles: 'otto:authorize-message-files',
   readFilePath: 'otto:read-file-path',
@@ -1171,6 +1172,8 @@ export interface OttoBridge {
    * 用户主动授权选择，不受浏览器沙箱限制。
    */
   selectFiles(): Promise<string[]>;
+  /** 原生目录选择器：仅返回本次由用户明确选择并登记到授权账本的真实目录。 */
+  selectFolders(): Promise<string[]>;
   /**
    * Electron 32+ 不再提供 File.path；通过 webUtils 恢复用户拖入/浏览器选择文件的
    * 真实本地路径。只接受浏览器 File 对象，不能用任意字符串伪造路径。
@@ -1849,8 +1852,8 @@ const bridge: OttoBridge = {
     }
     void authorizeOutboundFileReferences(
       frame,
-      (filePaths) =>
-        ipcRenderer.invoke(IPC.authorizeMessageFiles, filePaths) as Promise<
+      (references) =>
+        ipcRenderer.invoke(IPC.authorizeMessageFiles, references) as Promise<
           string[]
         >,
     )
@@ -1938,6 +1941,10 @@ const bridge: OttoBridge = {
 
   selectFiles(): Promise<string[]> {
     return ipcRenderer.invoke(IPC.selectFiles) as Promise<string[]>;
+  },
+
+  selectFolders(): Promise<string[]> {
+    return ipcRenderer.invoke(IPC.selectFolders) as Promise<string[]>;
   },
 
   getPathForFile(file: File): string {
