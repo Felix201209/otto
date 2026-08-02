@@ -83,6 +83,7 @@ pub struct ExportedPendingApplication {
     pub protocol: &'static str,
     pub event_id: String,
     pub conversation_id: String,
+    pub peer_account_id: String,
     pub group_id: String,
     pub epoch: u64,
     pub ciphertext: String,
@@ -169,6 +170,7 @@ struct PersistedTransportCursor {
 struct PersistedPendingApplication {
     event_id: String,
     conversation_id: String,
+    peer_account_id: String,
     group_id: String,
     epoch: u64,
     ciphertext: String,
@@ -178,6 +180,7 @@ struct PersistedPendingApplication {
 #[derive(Clone)]
 struct PendingApplication {
     conversation_id: String,
+    peer_account_id: String,
     group_id: String,
     epoch: u64,
     ciphertext: String,
@@ -190,6 +193,7 @@ impl PendingApplication {
             protocol: PROTOCOL,
             event_id: event_id.to_string(),
             conversation_id: self.conversation_id.clone(),
+            peer_account_id: self.peer_account_id.clone(),
             group_id: self.group_id.clone(),
             epoch: self.epoch,
             ciphertext: self.ciphertext.clone(),
@@ -345,6 +349,7 @@ impl MlsKernel {
             .map(|(event_id, application)| PersistedPendingApplication {
                 event_id: event_id.clone(),
                 conversation_id: application.conversation_id.clone(),
+                peer_account_id: application.peer_account_id.clone(),
                 group_id: application.group_id.clone(),
                 epoch: application.epoch,
                 ciphertext: application.ciphertext.clone(),
@@ -598,8 +603,16 @@ impl MlsKernel {
         let mut pending_application_bytes = 0usize;
         let mut pending_application_orders = HashSet::new();
         let mut pending_applications = HashMap::new();
+        let local_account_id = scope
+            .split('/')
+            .nth(2)
+            .ok_or_else(|| "MLS decrypted state device scope is invalid".to_string())?;
         for pending in snapshot.pending_applications {
             let conversation_id = validate_conversation_id(&pending.conversation_id)?;
+            let peer_account_id = validate_account_id(&pending.peer_account_id)?;
+            if peer_account_id == local_account_id {
+                return Err("MLS restored application outbox peer is invalid".into());
+            }
             decode_base64(
                 "MLS restored pending application",
                 &pending.ciphertext,
@@ -620,6 +633,9 @@ impl MlsKernel {
             let group = groups
                 .get(&conversation_id)
                 .ok_or_else(|| "MLS restored pending application group is missing".to_string())?;
+            if !group_contains_account(group, &scope, &peer_account_id)? {
+                return Err("MLS restored application outbox peer binding is invalid".into());
+            }
             if BASE64.encode(group.group_id().as_slice()) != pending.group_id
                 || group.epoch().as_u64() != pending.epoch
             {
@@ -631,6 +647,7 @@ impl MlsKernel {
                     event_id,
                     PendingApplication {
                         conversation_id,
+                        peer_account_id,
                         group_id: pending.group_id,
                         epoch: pending.epoch,
                         ciphertext: pending.ciphertext,
@@ -1084,11 +1101,23 @@ impl MlsKernel {
         &mut self,
         raw_scope: &str,
         raw_conversation_id: &str,
+        raw_peer_account_id: &str,
         plaintext: &[u8],
     ) -> Result<ExportedPendingApplication, String> {
         let scope = validate_scope(raw_scope)?;
         let conversation_id = validate_conversation_id(raw_conversation_id)?;
+        let peer_account_id = validate_account_id(raw_peer_account_id)?;
         self.require_identity(&scope)?;
+        if scope.split('/').nth(2) == Some(peer_account_id.as_str()) {
+            return Err("MLS application outbox peer is invalid".into());
+        }
+        let group = self
+            .groups
+            .get(&conversation_id)
+            .ok_or_else(|| "MLS group is missing".to_string())?;
+        if !group_contains_account(group, &scope, &peer_account_id)? {
+            return Err("MLS application outbox peer binding is invalid".into());
+        }
         if self.pending_applications.len() >= MAX_PENDING_APPLICATIONS {
             return Err("MLS application outbox item limit reached".into());
         }
@@ -1127,6 +1156,7 @@ impl MlsKernel {
         let encrypted = self.encrypt_application(&scope, &conversation_id, plaintext)?;
         let pending = PendingApplication {
             conversation_id,
+            peer_account_id,
             group_id: encrypted.group_id,
             epoch: encrypted.epoch,
             ciphertext: encrypted.ciphertext,
@@ -1143,14 +1173,25 @@ impl MlsKernel {
         &self,
         raw_scope: &str,
         raw_conversation_id: &str,
+        raw_peer_account_id: &str,
     ) -> Result<Vec<ExportedPendingApplication>, String> {
         let scope = validate_scope(raw_scope)?;
         let conversation_id = validate_conversation_id(raw_conversation_id)?;
+        let peer_account_id = validate_account_id(raw_peer_account_id)?;
         self.require_identity(&scope)?;
+        if self.pending_applications.values().any(|application| {
+            application.conversation_id == conversation_id
+                && application.peer_account_id != peer_account_id
+        }) {
+            return Err("MLS application outbox peer binding is invalid".into());
+        }
         let mut pending = self
             .pending_applications
             .iter()
-            .filter(|(_, application)| application.conversation_id == conversation_id)
+            .filter(|(_, application)| {
+                application.conversation_id == conversation_id
+                    && application.peer_account_id == peer_account_id
+            })
             .map(|(event_id, application)| application.export(event_id))
             .collect::<Vec<_>>();
         pending.sort_by(|left, right| {
@@ -1163,21 +1204,42 @@ impl MlsKernel {
         Ok(pending)
     }
 
+    pub fn list_pending_application_peers(
+        &self,
+        raw_scope: &str,
+    ) -> Result<Vec<String>, String> {
+        let scope = validate_scope(raw_scope)?;
+        self.require_identity(&scope)?;
+        let mut peers = self
+            .pending_applications
+            .values()
+            .map(|application| application.peer_account_id.clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        peers.sort();
+        Ok(peers)
+    }
+
     pub fn acknowledge_pending_application(
         &mut self,
         raw_scope: &str,
         raw_conversation_id: &str,
+        raw_peer_account_id: &str,
         raw_event_id: &str,
     ) -> Result<(), String> {
         let scope = validate_scope(raw_scope)?;
         let conversation_id = validate_conversation_id(raw_conversation_id)?;
+        let peer_account_id = validate_account_id(raw_peer_account_id)?;
         self.require_identity(&scope)?;
         let event_id = validate_application_event_id(raw_event_id)?;
         let pending = self
             .pending_applications
             .get(&event_id)
             .ok_or_else(|| "MLS pending application is missing".to_string())?;
-        if pending.conversation_id != conversation_id {
+        if pending.conversation_id != conversation_id
+            || pending.peer_account_id != peer_account_id
+        {
             return Err("MLS pending application conversation binding is invalid".into());
         }
         self.pending_applications.remove(&event_id);
@@ -1296,6 +1358,20 @@ fn export_group_state(conversation_id: &str, group: &MlsGroup) -> ExportedGroupS
     }
 }
 
+fn group_contains_account(
+    group: &MlsGroup,
+    local_scope: &str,
+    account_id: &str,
+) -> Result<bool, String> {
+    for member in group.members() {
+        let member_scope = validate_member_credential(&member.credential, local_scope)?;
+        if member_scope.split('/').nth(2) == Some(account_id) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn validate_conversation_id(raw: &str) -> Result<String, String> {
     let conversation_id = raw.trim();
     if conversation_id.is_empty()
@@ -1320,6 +1396,19 @@ fn validate_device_id(raw: &str) -> Result<String, String> {
         return Err("MLS device id is invalid".into());
     }
     Ok(device_id.to_string())
+}
+
+fn validate_account_id(raw: &str) -> Result<String, String> {
+    let account_id = raw.trim();
+    if account_id.is_empty()
+        || account_id.len() > 200
+        || !account_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
+    {
+        return Err("MLS account id is invalid".into());
+    }
+    Ok(account_id.to_string())
 }
 
 fn decode_base64(label: &str, encoded: &str, max_encoded_len: usize) -> Result<Vec<u8>, String> {
@@ -1765,24 +1854,45 @@ mod tests {
         )
         .unwrap();
 
+        assert!(alice
+            .encrypt_transport_application(alice_scope, conversation, "alice", b"invalid route")
+            .unwrap_err()
+            .contains("peer is invalid"));
+        assert!(alice
+            .encrypt_transport_application(alice_scope, conversation, "mallory", b"invalid route")
+            .unwrap_err()
+            .contains("peer binding"));
+
         let queued = alice
-            .encrypt_transport_application(alice_scope, conversation, b"survive restart")
+            .encrypt_transport_application(
+                alice_scope,
+                conversation,
+                "bob",
+                b"survive restart",
+            )
             .unwrap();
         let queued_second = alice
-            .encrypt_transport_application(alice_scope, conversation, b"second message")
+            .encrypt_transport_application(alice_scope, conversation, "bob", b"second message")
             .unwrap();
         assert!(queued.event_id.starts_with("mls-"));
         assert!(is_sha256(&queued.event_id[4..]));
         let before_restart = alice
-            .list_pending_applications(alice_scope, conversation)
+            .list_pending_applications(alice_scope, conversation, "bob")
             .unwrap();
         assert_eq!(before_restart.len(), 2);
         assert_eq!(before_restart[0].event_id, queued.event_id);
         assert_eq!(before_restart[1].event_id, queued_second.event_id);
+        assert_eq!(
+            alice
+                .list_pending_application_peers(alice_scope)
+                .unwrap(),
+            vec!["bob".to_string()]
+        );
         assert!(alice
             .acknowledge_pending_application(
                 alice_scope,
                 "another-conversation",
+                "bob",
                 &queued.event_id,
             )
             .unwrap_err()
@@ -1798,7 +1908,7 @@ mod tests {
             .restore_encrypted_state(alice_scope, &snapshot)
             .unwrap();
         let replay = restored
-            .list_pending_applications(alice_scope, conversation)
+            .list_pending_applications(alice_scope, conversation, "bob")
             .unwrap();
         assert_eq!(replay.len(), 2);
         assert_eq!(replay[0].event_id, queued.event_id);
@@ -1822,17 +1932,27 @@ mod tests {
         assert_eq!(decrypted.plaintext, b"second message");
 
         restored
-            .acknowledge_pending_application(alice_scope, conversation, &queued.event_id)
+            .acknowledge_pending_application(
+                alice_scope,
+                conversation,
+                "bob",
+                &queued.event_id,
+            )
             .unwrap();
         restored
             .acknowledge_pending_application(
                 alice_scope,
                 conversation,
+                "bob",
                 &queued_second.event_id,
             )
             .unwrap();
         assert!(restored
-            .list_pending_applications(alice_scope, conversation)
+            .list_pending_applications(alice_scope, conversation, "bob")
+            .unwrap()
+            .is_empty());
+        assert!(restored
+            .list_pending_application_peers(alice_scope)
             .unwrap()
             .is_empty());
     }

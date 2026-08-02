@@ -253,12 +253,22 @@ item and byte limits prevent unbounded local growth. Plaintext is never written
 to the outbox. The external native IPC exposes no direct application
 encrypt/decrypt bypass around the durable outbox and receive cursor.
 
+The encrypted outbox also retains the validated peer-account route so a restart
+can discover every pending direct session without a plaintext side index. The
+desktop retry scheduler attempts delivery immediately after MLS activation,
+uses jittered exponential backoff with a 1-second base and 60-second cap after
+failures, and uses a 30-second idle scan after success. A successful identity
+refresh or system resume wakes it immediately. Peer sessions are flushed
+independently so one blocked session does not starve the others. Logout,
+identity replacement and application shutdown stop the scheduler and wait for
+an active acknowledgement before closing or replacing the native MLS identity.
+
 This is still not the active chat protocol. No production server advertises
 `e2ee_mls_v1`. If a server does advertise that capability, the desktop refuses
 to read or send through the legacy envelope instead of silently downgrading.
 The initial handshake, polling and outbox coordinator is not yet a production
 background event loop or connected to the production chat composer. Processing
-later remote member Commits, retry scheduling and backoff, multi-device fan-out,
+later remote member Commits, background inbound polling, multi-device fan-out,
 user-visible safety-state reset, state migration/recovery policy, multi-platform
 native packaging, and external review are still required. The release gate
 therefore keeps `desktopTransportSessionOrchestration` false. Until those

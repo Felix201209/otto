@@ -183,6 +183,7 @@ mod tests {
                 params: Some(serde_json::json!({
                     "device_scope": alice_scope,
                     "conversation_id": conversation,
+                    "peer_account_id": "bob",
                     "plaintext": BASE64.encode(b"hello over rpc")
                 })),
             },
@@ -194,7 +195,8 @@ mod tests {
                 method: "mls.application.outbox.list".into(),
                 params: Some(serde_json::json!({
                     "device_scope": alice_scope,
-                    "conversation_id": conversation
+                    "conversation_id": conversation,
+                    "peer_account_id": "bob"
                 })),
             },
             &mut alice,
@@ -225,6 +227,7 @@ mod tests {
                 params: Some(serde_json::json!({
                     "device_scope": alice_scope,
                     "conversation_id": conversation,
+                    "peer_account_id": "bob",
                     "event_id": encrypted["event_id"]
                 })),
             },
@@ -236,7 +239,8 @@ mod tests {
                 method: "mls.application.outbox.list".into(),
                 params: Some(serde_json::json!({
                     "device_scope": alice_scope,
-                    "conversation_id": conversation
+                    "conversation_id": conversation,
+                    "peer_account_id": "bob"
                 })),
             },
             &mut alice,
@@ -643,6 +647,9 @@ fn handle_request(
             let conversation = p["conversation_id"]
                 .as_str()
                 .ok_or("Missing conversation_id")?;
+            let peer_account_id = p["peer_account_id"]
+                .as_str()
+                .ok_or("Missing peer_account_id")?;
             let encoded = p["plaintext"].as_str().ok_or("Missing plaintext")?;
             if encoded.len() > 1_398_104 {
                 return Err("MLS application plaintext size is invalid".into());
@@ -653,6 +660,7 @@ fn handle_request(
             serde_json::to_value(mls_kernel.encrypt_transport_application(
                 scope,
                 conversation,
+                peer_account_id,
                 &plaintext,
             )?)
             .map_err(|error| format!("MLS response serialization failed: {error}"))
@@ -663,10 +671,19 @@ fn handle_request(
             let conversation = p["conversation_id"]
                 .as_str()
                 .ok_or("Missing conversation_id")?;
+            let peer_account_id = p["peer_account_id"]
+                .as_str()
+                .ok_or("Missing peer_account_id")?;
             serde_json::to_value(
-                mls_kernel.list_pending_applications(scope, conversation)?,
+                mls_kernel.list_pending_applications(scope, conversation, peer_account_id)?,
             )
             .map_err(|error| format!("MLS response serialization failed: {error}"))
+        }
+        "mls.application.outbox.list_peers" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            serde_json::to_value(mls_kernel.list_pending_application_peers(scope)?)
+                .map_err(|error| format!("MLS response serialization failed: {error}"))
         }
         "mls.application.outbox.ack" => {
             let p = params.ok_or("Missing params")?;
@@ -674,8 +691,16 @@ fn handle_request(
             let conversation = p["conversation_id"]
                 .as_str()
                 .ok_or("Missing conversation_id")?;
+            let peer_account_id = p["peer_account_id"]
+                .as_str()
+                .ok_or("Missing peer_account_id")?;
             let event_id = p["event_id"].as_str().ok_or("Missing event_id")?;
-            mls_kernel.acknowledge_pending_application(scope, conversation, event_id)?;
+            mls_kernel.acknowledge_pending_application(
+                scope,
+                conversation,
+                peer_account_id,
+                event_id,
+            )?;
             Ok(serde_json::json!({"event_id": event_id}))
         }
         "mls.application.decrypt_transport" => {

@@ -139,13 +139,17 @@ export interface EnterpriseMlsKernel {
   ): Promise<MlsGroupState>;
   encryptTransportApplication(
     conversationId: string,
+    peerAccountId: string,
     plaintext: Uint8Array,
   ): Promise<MlsPendingApplication>;
   listPendingApplications(
     conversationId: string,
+    peerAccountId: string,
   ): Promise<MlsPendingApplication[]>;
+  listPendingApplicationPeers(): Promise<string[]>;
   acknowledgePendingApplication(
     conversationId: string,
+    peerAccountId: string,
     eventId: string,
   ): Promise<void>;
   transportCursor(conversationId: string): Promise<number>;
@@ -571,6 +575,7 @@ export class EnterpriseMlsSessionManager {
     return this.withReadyKernel((active) =>
       active.kernel.encryptTransportApplication(
         this.conversationId(active, peerAccountId),
+        peerAccountId,
         plaintext,
       ),
     );
@@ -582,7 +587,14 @@ export class EnterpriseMlsSessionManager {
     return this.withReadyKernel((active) =>
       active.kernel.listPendingApplications(
         this.conversationId(active, peerAccountId),
+        peerAccountId,
       ),
+    );
+  }
+
+  listPendingApplicationPeers(): Promise<string[]> {
+    return this.withReadyKernel((active) =>
+      active.kernel.listPendingApplicationPeers(),
     );
   }
 
@@ -593,6 +605,7 @@ export class EnterpriseMlsSessionManager {
     return this.withReadyKernel((active) =>
       active.kernel.acknowledgePendingApplication(
         this.conversationId(active, peerAccountId),
+        peerAccountId,
         eventId,
       ),
     );
@@ -723,6 +736,7 @@ export interface EnterpriseMlsSessionOperations {
   listPendingApplications(
     peerAccountId: string,
   ): Promise<MlsPendingApplication[]>;
+  listPendingApplicationPeers(): Promise<string[]>;
   acknowledgePendingApplication(
     peerAccountId: string,
     eventId: string,
@@ -906,6 +920,28 @@ export class EnterpriseMlsSessionCoordinator {
       const scope = this.sessions.activeScope();
       return this.flushPendingApplicationsUnlocked(peerAccountId, scope);
     });
+  }
+
+  async flushAllPendingApplications(): Promise<number> {
+    const peers = await this.sessions.listPendingApplicationPeers();
+    let deliveredEvents = 0;
+    const failures: unknown[] = [];
+    for (const peerAccountId of peers) {
+      try {
+        deliveredEvents += (
+          await this.flushPendingApplications(peerAccountId)
+        ).length;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures,
+        `MLS outbox delivery failed for ${failures.length} peer session(s)`,
+      );
+    }
+    return deliveredEvents;
   }
 
   sendApplication(
@@ -1171,6 +1207,7 @@ export class EnterpriseMlsSessionCoordinator {
     });
     if (
       pending.conversation_id !== conversationId ||
+      pending.peer_account_id !== peerAccountId ||
       pending.group_id !== group.group_id ||
       pending.epoch !== group.epoch
     ) {
@@ -1203,5 +1240,142 @@ export class EnterpriseMlsSessionCoordinator {
       if (operations.get(key) === settled) operations.delete(key);
     });
     return result;
+  }
+}
+
+export interface EnterpriseMlsOutboxRetryOperations {
+  flushAllPendingApplications(): Promise<number>;
+}
+
+export interface EnterpriseMlsOutboxRetrySchedulerOptions {
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+  idleDelayMs?: number;
+  jitterRatio?: number;
+  random?: () => number;
+  onError?: (error: unknown) => void;
+}
+
+/**
+ * Process-local retry loop for ciphertext that is already durable in the
+ * encrypted native outbox. It never accepts plaintext and waits for an active
+ * delivery to settle during shutdown so the MLS kernel cannot change identity
+ * underneath an acknowledgement.
+ */
+export class EnterpriseMlsOutboxRetryScheduler {
+  private readonly baseDelayMs: number;
+  private readonly maxDelayMs: number;
+  private readonly idleDelayMs: number;
+  private readonly jitterRatio: number;
+  private readonly random: () => number;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private inFlight: Promise<void> | null = null;
+  private running = false;
+  private generation = 0;
+  private failures = 0;
+  private wakeRequested = false;
+
+  constructor(
+    private readonly operations: EnterpriseMlsOutboxRetryOperations,
+    private readonly options: EnterpriseMlsOutboxRetrySchedulerOptions = {},
+  ) {
+    this.baseDelayMs = options.baseDelayMs ?? 1_000;
+    this.maxDelayMs = options.maxDelayMs ?? 60_000;
+    this.idleDelayMs = options.idleDelayMs ?? 30_000;
+    this.jitterRatio = options.jitterRatio ?? 0.2;
+    this.random = options.random ?? Math.random;
+    if (
+      !Number.isSafeInteger(this.baseDelayMs) ||
+      this.baseDelayMs < 1 ||
+      !Number.isSafeInteger(this.maxDelayMs) ||
+      this.maxDelayMs < this.baseDelayMs ||
+      !Number.isSafeInteger(this.idleDelayMs) ||
+      this.idleDelayMs < 1 ||
+      !Number.isFinite(this.jitterRatio) ||
+      this.jitterRatio < 0 ||
+      this.jitterRatio > 0.5
+    ) {
+      throw new Error('MLS outbox retry policy is invalid');
+    }
+  }
+
+  start(): void {
+    if (this.running) return;
+    this.running = true;
+    this.generation += 1;
+    this.failures = 0;
+    this.wakeRequested = false;
+    this.schedule(0, this.generation);
+  }
+
+  wake(): void {
+    if (!this.running) return;
+    this.failures = 0;
+    if (this.inFlight) {
+      this.wakeRequested = true;
+      return;
+    }
+    this.schedule(0, this.generation);
+  }
+
+  async stop(): Promise<void> {
+    this.running = false;
+    this.generation += 1;
+    this.wakeRequested = false;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = undefined;
+    }
+    await this.inFlight;
+  }
+
+  private schedule(delayMs: number, generation: number): void {
+    if (!this.running || generation !== this.generation) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      void this.run(generation);
+    }, delayMs);
+    this.timer.unref?.();
+  }
+
+  private async run(generation: number): Promise<void> {
+    if (!this.running || generation !== this.generation || this.inFlight) return;
+    let failed = false;
+    const operation = (async () => {
+      try {
+        await this.operations.flushAllPendingApplications();
+        this.failures = 0;
+      } catch (error) {
+        failed = true;
+        this.failures += 1;
+        try {
+          this.options.onError?.(error);
+        } catch {
+          // Observability callbacks must not terminate the security retry loop.
+        }
+      }
+    })();
+    this.inFlight = operation;
+    await operation;
+    if (this.inFlight === operation) this.inFlight = null;
+    if (!this.running || generation !== this.generation) return;
+    if (this.wakeRequested) {
+      this.wakeRequested = false;
+      this.schedule(0, generation);
+      return;
+    }
+    this.schedule(failed ? this.retryDelay() : this.idleDelayMs, generation);
+  }
+
+  private retryDelay(): number {
+    const exponent = Math.min(Math.max(this.failures - 1, 0), 30);
+    const raw = Math.min(this.baseDelayMs * 2 ** exponent, this.maxDelayMs);
+    const sample = this.random();
+    const normalized = Number.isFinite(sample)
+      ? Math.min(Math.max(sample, 0), 1)
+      : 0.5;
+    const jitter = raw * this.jitterRatio * (normalized * 2 - 1);
+    return Math.min(this.maxDelayMs, Math.max(1, Math.round(raw + jitter)));
   }
 }

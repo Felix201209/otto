@@ -37,6 +37,7 @@ import {
   Menu,
   nativeImage,
   nativeTheme,
+  powerMonitor,
   safeStorage,
   screen,
   session,
@@ -154,6 +155,7 @@ import {
   EnterpriseE2eeKeyVault,
 } from './enterprise-e2ee.js';
 import {
+  EnterpriseMlsOutboxRetryScheduler,
   EnterpriseMlsSessionCoordinator,
   EnterpriseMlsSessionManager,
 } from './enterprise-mls.js';
@@ -643,6 +645,7 @@ async function synchronizeAuthenticatedEnterpriseAccount(
     serverManager.setAuthenticatedEnterpriseAccount(next),
   );
   if (!account) {
+    await enterpriseMlsOutboxRetry.stop();
     await enterpriseMls.close();
     return;
   }
@@ -652,11 +655,13 @@ async function synchronizeAuthenticatedEnterpriseAccount(
   try {
     e2eeDevice = await enterpriseClient.ensureE2eeDeviceReady();
   } catch (error) {
+    await enterpriseMlsOutboxRetry.stop();
     await enterpriseMls.close();
     console.warn('[otto-desktop] E2EE device registration failed:', error);
   }
   if (e2eeDevice) {
     if (enterpriseClient.supportsMlsTransportFoundation()) {
+      await enterpriseMlsOutboxRetry.stop();
       try {
         await enterpriseMls.activate({
           serverUrl: enterpriseClient.snapshot().serverUrl,
@@ -665,13 +670,23 @@ async function synchronizeAuthenticatedEnterpriseAccount(
           deviceId: e2eeDevice.deviceId,
           approvalState: e2eeDevice.approvalState,
         });
-        await enterpriseMlsCoordinator.ensurePublishedKeyPackage();
+        enterpriseMlsOutboxRetry.start();
+        try {
+          await enterpriseMlsCoordinator.ensurePublishedKeyPackage();
+        } catch (error) {
+          console.warn('[otto-desktop] MLS KeyPackage publication failed:', error);
+        }
       } catch (error) {
+        await enterpriseMlsOutboxRetry.stop();
         console.warn('[otto-desktop] MLS desktop session is blocked:', error);
       }
     } else {
+      await enterpriseMlsOutboxRetry.stop();
       await enterpriseMls.close();
     }
+  } else {
+    await enterpriseMlsOutboxRetry.stop();
+    await enterpriseMls.close();
   }
   const identity = accountDataSyncIdentity(account);
   if (!identity) return;
@@ -781,6 +796,17 @@ const enterpriseClient = new EnterpriseClient(
 const enterpriseMlsCoordinator = new EnterpriseMlsSessionCoordinator(
   enterpriseMls,
   enterpriseClient,
+);
+const enterpriseMlsOutboxRetry = new EnterpriseMlsOutboxRetryScheduler(
+  enterpriseMlsCoordinator,
+  {
+    onError: (error) => {
+      console.warn(
+        '[otto-desktop] MLS ciphertext outbox retry failed:',
+        error instanceof Error ? error.message : 'unknown failure',
+      );
+    },
+  },
 );
 const enterpriseSkillUsageReporter = new EnterpriseSkillUsageReporter({
   skillsRoot: userSkillsRootDir,
@@ -934,6 +960,7 @@ function startEnterpriseIdentityRefresh(): void {
         );
         if (outcome === 'refreshed' && session.account) {
           notifyEnterpriseAccountUpdated(session.account);
+          enterpriseMlsOutboxRetry.wake();
         }
       })
       .catch((error) => {
@@ -4325,6 +4352,9 @@ if (!gotLock) {
     startEnterpriseIdentityRefresh();
     startEnterpriseModuleUpdatePolling();
     startEnterpriseSkillUsageReporting();
+    powerMonitor.on('resume', () => {
+      if (!isQuitting) enterpriseMlsOutboxRetry.wake();
+    });
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
@@ -4368,6 +4398,7 @@ if (!gotLock) {
     // 关窗不杀：server + 飞书守护继续运行。
     void flushEnterpriseAccountDataSync(3_000)
       .catch(logAccountDataSyncFailure)
+      .then(() => enterpriseMlsOutboxRetry.stop())
       .then(() => enterpriseMls.close())
       .then(() => serverManager.shutdown(isQuitting))
       .catch((error) => {

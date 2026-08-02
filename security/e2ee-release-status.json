@@ -10,6 +10,7 @@
     "crashSafeInitialHandshakeRecovery": true,
     "durableTransportCursor": true,
     "durableApplicationOutbox": true,
+    "backgroundOutboxRetry": true,
     "transportSessionHistory": true,
     "transportSessionReset": true,
     "externalAuditCompleted": false,

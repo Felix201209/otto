@@ -12,6 +12,7 @@ import type {
 import {
   EnterpriseMlsSessionCoordinator,
   EnterpriseMlsSessionManager,
+  EnterpriseMlsOutboxRetryScheduler,
   enterpriseMlsDirectConversationId,
   type EnterpriseMlsSessionOperations,
   type EnterpriseMlsTransportClient,
@@ -29,6 +30,7 @@ async function temporaryDirectory(): Promise<string> {
 }
 
 afterEach(async () => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   await Promise.all(
     temporaryDirectories
@@ -102,17 +104,21 @@ function fakeKernel() {
       ...groupState,
       conversation_id: conversationId,
     })),
-    encryptTransportApplication: vi.fn(async (conversationId: string) => ({
+    encryptTransportApplication: vi.fn(
+      async (conversationId: string, peerAccountId: string) => ({
       protocol: 'mls10-openmls-0.8' as const,
       event_id: `mls-${'a'.repeat(64)}`,
       conversation_id: conversationId,
+      peer_account_id: peerAccountId,
       group_id: 'Z3JvdXA=',
       epoch: 1,
       ciphertext: 'Y2lwaGVydGV4dA==',
-    })),
+      }),
+    ),
     listPendingApplications: vi.fn(
       async (): Promise<MlsPendingApplication[]> => [],
     ),
+    listPendingApplicationPeers: vi.fn(async (): Promise<string[]> => []),
     acknowledgePendingApplication: vi.fn(async () => undefined),
     transportCursor: vi.fn(async () => 0),
     acknowledgeTransportEvent: vi.fn(async () => undefined),
@@ -308,6 +314,7 @@ describe('EnterpriseMlsSessionManager', () => {
       new Uint8Array([2]),
     );
     await manager.listPendingApplications('account-b');
+    await manager.listPendingApplicationPeers();
     await manager.acknowledgePendingApplication(
       'account-b',
       `mls-${'a'.repeat(64)}`,
@@ -323,11 +330,17 @@ describe('EnterpriseMlsSessionManager', () => {
     expect(kernel.createGroup).toHaveBeenCalledWith(conversationId);
     expect(kernel.encryptTransportApplication).toHaveBeenCalledWith(
       conversationId,
+      'account-b',
       new Uint8Array([2]),
     );
-    expect(kernel.listPendingApplications).toHaveBeenCalledWith(conversationId);
+    expect(kernel.listPendingApplications).toHaveBeenCalledWith(
+      conversationId,
+      'account-b',
+    );
+    expect(kernel.listPendingApplicationPeers).toHaveBeenCalledOnce();
     expect(kernel.acknowledgePendingApplication).toHaveBeenCalledWith(
       conversationId,
+      'account-b',
       `mls-${'a'.repeat(64)}`,
     );
     expect(kernel.transportCursor).toHaveBeenCalledWith(conversationId);
@@ -420,6 +433,7 @@ function coordinatorHarness(keyPackages: MlsKeyPackage[] = []) {
       protocol: 'mls10-openmls-0.8' as const,
       event_id: `mls-${'2'.repeat(64)}`,
       conversation_id: group.conversation_id,
+      peer_account_id: 'account-b',
       group_id: group.group_id,
       epoch: group.epoch,
       ciphertext: 'bmV3LWNpcGhlcnRleHQ=',
@@ -427,6 +441,7 @@ function coordinatorHarness(keyPackages: MlsKeyPackage[] = []) {
     listPendingApplications: vi.fn(
       async (): Promise<MlsPendingApplication[]> => [],
     ),
+    listPendingApplicationPeers: vi.fn(async (): Promise<string[]> => []),
     acknowledgePendingApplication: vi.fn(async () => undefined),
     transportCursor: vi.fn(async () => 0),
     advanceTransportCursor: vi.fn(async () => undefined),
@@ -619,6 +634,7 @@ describe('EnterpriseMlsSessionCoordinator', () => {
       protocol: 'mls10-openmls-0.8',
       event_id: `mls-${'1'.repeat(64)}`,
       conversation_id: group.conversation_id,
+      peer_account_id: 'account-b',
       group_id: group.group_id,
       epoch: group.epoch,
       ciphertext: 'cmVjb3ZlcmVkLWNpcGhlcnRleHQ=',
@@ -667,6 +683,7 @@ describe('EnterpriseMlsSessionCoordinator', () => {
       protocol: 'mls10-openmls-0.8',
       event_id: `mls-${'3'.repeat(64)}`,
       conversation_id: group.conversation_id,
+      peer_account_id: 'account-b',
       group_id: group.group_id,
       epoch: group.epoch,
       ciphertext: 'cmV0cnktY2lwaGVydGV4dA==',
@@ -698,6 +715,7 @@ describe('EnterpriseMlsSessionCoordinator', () => {
       protocol: 'mls10-openmls-0.8',
       event_id: `mls-${'4'.repeat(64)}`,
       conversation_id: group.conversation_id,
+      peer_account_id: 'account-b',
       group_id: group.group_id,
       epoch: group.epoch,
       ciphertext: 'YmluZGluZy1jaXBoZXJ0ZXh0',
@@ -736,6 +754,27 @@ describe('EnterpriseMlsSessionCoordinator', () => {
       coordinator.flushPendingApplications('account-b'),
     ).rejects.toThrow('acknowledgement binding is invalid');
     expect(sessions.acknowledgePendingApplication).not.toHaveBeenCalled();
+  });
+
+  it('continues flushing other peer outboxes and reports partial failure', async () => {
+    const { sessions, transport } = coordinatorHarness();
+    sessions.listPendingApplicationPeers.mockResolvedValue([
+      'account-b',
+      'account-c',
+    ]);
+    const coordinator = new EnterpriseMlsSessionCoordinator(
+      sessions,
+      transport,
+    );
+    const flush = vi
+      .spyOn(coordinator, 'flushPendingApplications')
+      .mockRejectedValueOnce(new Error('peer session blocked'))
+      .mockResolvedValueOnce([transportEvent({ eventId: 'application-c' })]);
+
+    await expect(coordinator.flushAllPendingApplications()).rejects.toThrow(
+      'failed for 1 peer session',
+    );
+    expect(flush.mock.calls).toEqual([['account-b'], ['account-c']]);
   });
 
   it('joins from Welcome and atomically advances application cursor on decrypt', async () => {
@@ -804,5 +843,73 @@ describe('EnterpriseMlsSessionCoordinator', () => {
         },
       ],
     });
+  });
+});
+
+describe('EnterpriseMlsOutboxRetryScheduler', () => {
+  it('uses bounded exponential backoff and wakes immediately after recovery', async () => {
+    vi.useFakeTimers();
+    const onError = vi.fn();
+    const flushAllPendingApplications = vi
+      .fn<() => Promise<number>>()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockRejectedValueOnce(new Error('still offline'))
+      .mockResolvedValue(1);
+    const scheduler = new EnterpriseMlsOutboxRetryScheduler(
+      { flushAllPendingApplications },
+      {
+        baseDelayMs: 100,
+        maxDelayMs: 250,
+        idleDelayMs: 1_000,
+        jitterRatio: 0,
+        onError,
+      },
+    );
+
+    scheduler.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(flushAllPendingApplications).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(99);
+    expect(flushAllPendingApplications).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(flushAllPendingApplications).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(199);
+    expect(flushAllPendingApplications).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(flushAllPendingApplications).toHaveBeenCalledTimes(3);
+    expect(onError).toHaveBeenCalledTimes(2);
+
+    scheduler.wake();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(flushAllPendingApplications).toHaveBeenCalledTimes(4);
+    await scheduler.stop();
+  });
+
+  it('waits for an active delivery and schedules nothing after stop', async () => {
+    vi.useFakeTimers();
+    let finishDelivery!: (count: number) => void;
+    const flushAllPendingApplications = vi.fn(
+      () =>
+        new Promise<number>((resolve) => {
+          finishDelivery = resolve;
+        }),
+    );
+    const scheduler = new EnterpriseMlsOutboxRetryScheduler(
+      { flushAllPendingApplications },
+      { jitterRatio: 0 },
+    );
+
+    scheduler.start();
+    await vi.advanceTimersByTimeAsync(0);
+    let stopped = false;
+    const stopping = scheduler.stop().then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    finishDelivery(0);
+    await stopping;
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(flushAllPendingApplications).toHaveBeenCalledOnce();
   });
 });
