@@ -257,7 +257,7 @@ describe('ParkServicesPlugin', () => {
     expect(Array.from(document.querySelectorAll('.otto-park-service__name')).slice(0, 2).map((node) => node.textContent)).toEqual(['园区公告', '满意度调查']);
   });
 
-  it('园区窗口支持最小化、最大化还原和拖动', () => {
+  it('园区窗口支持最小化、最大化还原和拖动', async () => {
     render(<ParkServicesPlugin />);
     openDialog();
 
@@ -288,6 +288,7 @@ describe('ParkServicesPlugin', () => {
       fireEvent(header, pointerEvent('pointerup', 145, 125));
     });
     expect(dialog.getAttribute('style')).toContain('translate(45px, 25px)');
+    await act(async () => { await Promise.resolve(); });
   });
 
   it('可以同时打开多个园区服务窗口，并分别最小化和继续办理', () => {
@@ -681,6 +682,7 @@ describe('ParkServicesPlugin', () => {
     render(<ParkServicesPlugin />);
     openDialog();
     fireEvent.click(await screen.findByText('停车办理'));
+    await waitFor(() => expect(window.otto.enterpriseTicketList).toHaveBeenCalled());
     const form = await screen.findByLabelText('停车办理申请表');
     await waitFor(() => expect((screen.getByLabelText('公司名称') as HTMLInputElement).value).toBe('测试企业'));
     fireEvent.change(screen.getByLabelText('申请内容'), { target: { value: 'underground-fixed' } });

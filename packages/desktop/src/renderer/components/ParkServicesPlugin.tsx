@@ -1642,6 +1642,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
         }
         const identity = `${session.account.organizationId}:${session.account.id}`;
         if (ticketPollIdentity.current !== identity) {
+          const previousIdentity = ticketPollIdentity.current;
           ticketPollIdentity.current = identity;
           ticketPollInitialized.current = false;
           notifiedTicketKeys.current.clear();
@@ -1649,7 +1650,10 @@ export function ParkServicesPlugin(): React.JSX.Element {
           setOwnHistory([]);
           setBackgroundTickets([]);
           setBackgroundTicketSummaryCount(0);
-          setServiceWindows([]);
+          // Initial identity hydration must not close a form the user opened
+          // while the first ticket poll was still in flight. Only a real
+          // account or organization switch invalidates open service windows.
+          if (previousIdentity !== null) setServiceWindows([]);
         }
         const tickets = await window.otto.enterpriseTicketList();
         if (cancelled) return;

@@ -63,9 +63,9 @@
     "test:integration:sandbox:docker": "GEMINI_SANDBOX=docker node integration-tests/run-tests.js",
     "test:integration:sandbox:podman": "GEMINI_SANDBOX=podman node integration-tests/run-tests.js",
     "lint": "npm run lint:ci",
-    "lint:fix": "eslint packages/server/src packages/desktop/src packages/adapters/mem0 otto-native/src/index.ts scripts deployment/enterprise-oneclick start-enterprise.cjs \"packages/desktop/*.{js,mjs,cjs}\" --ext .ts,.tsx,.js,.mjs,.cjs --fix",
+    "lint:fix": "eslint packages/server/src packages/desktop/src otto-native/src/index.ts scripts deployment/enterprise-oneclick start-enterprise.cjs \"packages/desktop/*.{js,mjs,cjs}\" --ext .ts,.tsx,.js,.mjs,.cjs --fix",
     "lint:core:legacy": "eslint packages/core/src --ext .ts,.tsx",
-    "lint:ci": "eslint packages/server/src packages/desktop/src packages/adapters/mem0 otto-native/src/index.ts scripts deployment/enterprise-oneclick start-enterprise.cjs \"packages/desktop/*.{js,mjs,cjs}\" --ext .ts,.tsx,.js,.mjs,.cjs --max-warnings 0",
+    "lint:ci": "eslint packages/server/src packages/desktop/src otto-native/src/index.ts scripts deployment/enterprise-oneclick start-enterprise.cjs \"packages/desktop/*.{js,mjs,cjs}\" --ext .ts,.tsx,.js,.mjs,.cjs --max-warnings 0",
     "format": "prettier --write .",
     "typecheck": "npm run typecheck --workspace=packages/core --if-present && npm run typecheck --workspace=packages/server --if-present && npm run typecheck --workspace=packages/desktop --if-present",
     "preflight": "npm run clean && npm ci && npm run format && npm run lint:ci && npm run build && npm run typecheck && npm run test:ci",
@@ -82,7 +82,6 @@
   "devDependencies": {
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.1",
-    "@types/diff": "^7.0.2",
     "@types/fs-extra": "^11.0.4",
     "@types/html-to-text": "^9.0.4",
     "@types/micromatch": "^4.0.9",
@@ -121,8 +120,8 @@
     "yargs": "17.7.2"
   },
   "dependencies": {
-    "@langchain/core": "^1.2.1",
-    "@langchain/langgraph": "^1.4.7",
+    "@langchain/core": "1.2.4",
+    "@langchain/langgraph": "1.4.8",
     "@larksuiteoapi/node-sdk": "^1.71.1",
     "@vscode/ripgrep": "1.17.0",
     "fs-extra": "^11.3.1",
@@ -148,6 +147,7 @@
     },
     "@grpc/grpc-js": "^1.14.4",
     "@isaacs/brace-expansion": "^5.0.1",
+    "brace-expansion@^2.0.0": "^2.1.3",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@xmldom/xmldom": "^0.8.13",
     "form-data": "^4.0.6",

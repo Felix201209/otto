@@ -139,11 +139,11 @@ async function compressImage(
   console.log(`🖼️  Jimp图片压缩开始 - 原始大小: ${originalSizeKB}KB, 格式: ${mimeType}`);
 
   try {
-    const { default: Jimp } = await import('jimp');
+    const { Jimp, JimpMime, ResizeStrategy } = await import('jimp');
     // 使用Jimp加载图片
     const image = await Jimp.read(imageBuffer);
-    const originalWidth = image.getWidth();
-    const originalHeight = image.getHeight();
+    const originalWidth = image.width;
+    const originalHeight = image.height;
 
     console.log(`📏 图片元数据: ${originalWidth}x${originalHeight}, 格式: ${mimeType}`);
 
@@ -176,8 +176,12 @@ async function compressImage(
     let resizedImage = image;
     if (originalWidth > targetWidth || originalHeight > targetHeight) {
       // Jimp.RESIZE_BEZIER provides good quality for downscaling
-      resizedImage = image.scaleToFit(targetWidth, targetHeight, Jimp.RESIZE_BEZIER);
-      console.log(`📐 图片已缩放至: ${resizedImage.getWidth()}x${resizedImage.getHeight()}`);
+      resizedImage.scaleToFit({
+        w: targetWidth,
+        h: targetHeight,
+        mode: ResizeStrategy.BEZIER,
+      });
+      console.log(`📐 图片已缩放至: ${resizedImage.width}x${resizedImage.height}`);
     }
 
     let compressedBuffer: Buffer;
@@ -187,8 +191,12 @@ async function compressImage(
     console.log('🎨 转换为JPEG格式进行激进压缩...');
 
     // Try different quality levels and choose the best compression
-    const jpegNormal = await resizedImage.quality(JPEG_QUALITY).getBufferAsync(Jimp.MIME_JPEG);
-    const jpegAggressive = await resizedImage.quality(JPEG_QUALITY_AGGRESSIVE).getBufferAsync(Jimp.MIME_JPEG);
+    const jpegNormal = await resizedImage.getBuffer(JimpMime.jpeg, {
+      quality: JPEG_QUALITY,
+    });
+    const jpegAggressive = await resizedImage.getBuffer(JimpMime.jpeg, {
+      quality: JPEG_QUALITY_AGGRESSIVE,
+    });
 
     // Choose the version with better compression
     compressedBuffer = jpegAggressive.length < jpegNormal.length ? jpegAggressive : jpegNormal;
@@ -210,23 +218,29 @@ async function compressImage(
       while (currentBuffer.length > maxSize && attempts < maxAttempts) {
         attempts++;
         // 每次将尺寸缩小20%
-        const currentWidth = currentImage.getWidth();
-        const currentHeight = currentImage.getHeight();
+        const currentWidth = currentImage.width;
+        const currentHeight = currentImage.height;
         const newWidth = Math.floor(currentWidth * 0.8);
         const newHeight = Math.floor(currentHeight * 0.8);
 
         console.log(`🔄 兜底压缩第${attempts}次: ${currentWidth}x${currentHeight} → ${newWidth}x${newHeight}`);
 
-        currentImage = currentImage.resize(newWidth, newHeight, Jimp.RESIZE_BEZIER);
+        currentImage.resize({
+          w: newWidth,
+          h: newHeight,
+          mode: ResizeStrategy.BEZIER,
+        });
 
         // 使用最激进的质量
-        currentBuffer = await currentImage.quality(JPEG_QUALITY_AGGRESSIVE).getBufferAsync(Jimp.MIME_JPEG);
+        currentBuffer = await currentImage.getBuffer(JimpMime.jpeg, {
+          quality: JPEG_QUALITY_AGGRESSIVE,
+        });
 
         console.log(`📏 当前大小: ${Math.round(currentBuffer.length/1024)}KB`);
       }
 
       if (currentBuffer.length <= maxSize) {
-        console.log(`✅ 兜底压缩成功！最终尺寸: ${currentImage.getWidth()}x${currentImage.getHeight()}`);
+        console.log(`✅ 兜底压缩成功！最终尺寸: ${currentImage.width}x${currentImage.height}`);
         compressedBuffer = currentBuffer;
         resizedImage = currentImage;
       } else {

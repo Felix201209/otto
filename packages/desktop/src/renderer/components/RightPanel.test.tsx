@@ -4,6 +4,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -16,7 +17,10 @@ import { BASE_AGENT_PROFILES } from '../agents/departmentAgents.js';
 import type { CustomAgentDefinition } from '../customAgents.js';
 import { clearEnterpriseOrganizationFeaturesCache } from '../state/enterpriseOrganizationFeatures.js';
 
-afterEach(() => {
+afterEach(async () => {
+  await act(async () => {
+    await Promise.resolve();
+  });
   cleanup();
   clearEnterpriseOrganizationFeaturesCache();
   delete (window as unknown as { otto?: unknown }).otto;
@@ -40,8 +44,9 @@ interface TestWorkLogDay {
 function installBridge(
   recent: TestWorkLogDay[] | (() => Promise<TestWorkLogDay[]>) = [],
   knowledgeEnabled = false,
-  skillMarketEnabled = true,
+  skillMarketEnabled = false,
 ) {
+  const pending = new Promise<never>(() => undefined);
   const openPath = vi.fn(async () => undefined);
   const saveTextFile = vi.fn(async () => '/tmp/edited-worklog.md');
   const selectFiles = vi.fn(async () => ['/tmp/enterprise-summary.md']);
@@ -77,7 +82,7 @@ function installBridge(
   const enterpriseKnowledgeReview = vi.fn(async () => ({}));
   const enterpriseKnowledgeRevise = vi.fn(async () => ({}));
   const enterpriseKnowledgeRevisions = vi.fn(async (): Promise<unknown[]> => []);
-  const enterpriseOrganizationFeaturesGet = vi.fn(async () => ({
+  const organizationFeatures = {
     enterprise_tree: true,
     park_service: true,
     feishu_auto_reply: true,
@@ -85,7 +90,12 @@ function installBridge(
     atoa: true,
     knowledge: knowledgeEnabled,
     skill_market: skillMarketEnabled,
-  }));
+  };
+  const enterpriseOrganizationFeaturesGet = vi.fn(() =>
+    knowledgeEnabled || skillMarketEnabled
+      ? Promise.resolve(organizationFeatures)
+      : pending,
+  );
   const workLogReport = vi.fn(async () => ({
     ok: true,
     date: '2026-07-10',
@@ -95,7 +105,7 @@ function installBridge(
     message: '已生成并保存「市场竞品调研报告」',
   }));
   (window as unknown as { otto: unknown }).otto = {
-    parkConfig: async () => null,
+    parkConfig: () => pending,
     workLogRecent: typeof recent === 'function' ? recent : async () => recent,
     workLogToday: async () => ({
       summary: '今天还没有工作记录。',
@@ -371,6 +381,7 @@ describe('RightPanel fixed Agent catalog', () => {
 
   it('keeps the park service entry wired to the park-services event', async () => {
     installBridge();
+    Object.assign(window.otto, { parkConfig: async () => null });
     const parkOpen = vi.fn();
     window.addEventListener('otto:open-park-services', parkOpen, { once: true });
 
@@ -397,13 +408,16 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(screen.getByText('点击把命令填入输入框，回车执行')).toBeTruthy();
   });
 
-  it('does not keep the legacy mascot stage in the right panel', () => {
+  it('does not keep the legacy mascot stage in the right panel', async () => {
     installBridge();
     render(<RightPanel busy={false} />);
     expect(screen.queryByTestId('otto-pet-stage')).toBeNull();
 
     fireEvent.click(screen.getByRole('tab', { name: '工作日志' }));
 
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '刷新' }).hasAttribute('disabled')).toBe(false);
+    });
     expect(screen.queryByTestId('otto-pet-stage')).toBeNull();
   });
 
@@ -562,7 +576,7 @@ describe('RightPanel fixed Agent catalog', () => {
   });
 
   it('keeps enterprise tabs, Skill Zone, and collaboration in fixed-catalog mode', async () => {
-    installBridge([], true);
+    installBridge([], true, true);
     const openSkillZone = vi.fn();
     render(
       <RightPanel

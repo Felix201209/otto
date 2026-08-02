@@ -14,10 +14,7 @@ const EXCLUDED_DIRS = new Set(['node_modules', 'dist', 'coverage', 'release']);
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 const IMPORT_RE = /\b(?:import|export)\s+(?:type\s+)?(?:[\s\S]*?\s+from\s+)?['"]([^'"]+)['"]|import\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
 
-const BASELINE = new Set([
-  'packages/adapters/mem0/index.ts -> ../../core/src/config/config.js (#90: adapter package is not a workspace yet; migrate to otto-core public exports)',
-  'packages/adapters/mem0/index.ts -> ../../core/src/memory/memoryProvider.js (#90: adapter package is not a workspace yet; migrate to otto-core public exports)',
-]);
+const BASELINE = new Set();
 
 const ALLOWED_CORE_SOURCE_IMPORTS = new Set([
   'packages/core/src/a2a/atoaProtocol.js',
