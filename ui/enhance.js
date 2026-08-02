@@ -50,7 +50,9 @@
       { n: '6', label: '活跃对话' },
       { n: '9', label: '工具调用' },
     ];
-    var html = '<div class="otto-enhance-worklog__head"><strong>工作日志</strong>' +
+    var html = '<div class="otto-enhance-worklog__head">' +
+      '<button class="otto-enhance-worklog__back" type="button">‹ 返回</button>' +
+      '<strong>工作日志</strong>' +
       '<span class="otto-enhance-worklog__demo">演示数据</span></div>' +
       '<div class="otto-enhance-worklog__stats">' +
       stats.map(function (s) {
@@ -94,6 +96,10 @@
     if (worklogEl) { syncWorklogPosition(); return; }
     worklogEl = buildWorklog();
     document.body.appendChild(worklogEl);
+    $('.otto-enhance-worklog__back', worklogEl).addEventListener('click', function () {
+      removeWorklog();
+      unmarkWorklogTab();
+    });
     syncWorklogPosition();
     worklogSyncTimer = setInterval(syncWorklogPosition, 400);
   }
@@ -107,6 +113,15 @@
     $$('.otto-right-panel__tab').forEach(function (t) {
       t.classList.toggle('is-active', t.textContent.trim() === '工作日志');
       if (t.textContent.trim() === '工作日志') t.setAttribute('aria-selected', 'true');
+    });
+  }
+
+  function unmarkWorklogTab() {
+    $$('.otto-right-panel__tab').forEach(function (t) {
+      if (t.textContent.trim() === '工作日志') {
+        t.classList.remove('is-active');
+        t.removeAttribute('aria-selected');
+      }
     });
   }
 
@@ -493,6 +508,7 @@
     el.setAttribute('aria-label', '组织架构');
     el.innerHTML =
       '<header class="otto-org-page__header">' +
+      '<button class="otto-org-page__back" type="button" data-org-back>‹ 返回</button>' +
       '<div class="otto-org-page__heading"><span>组织管理</span>' +
       '<h1>组织架构</h1><p>北控宏创科技园 · 6 位成员 · 3 个一级部门</p></div>' +
       '<div class="otto-org-page__viewmode" role="group" aria-label="架构展开方式">' +
@@ -577,6 +593,11 @@
       organizationEl = buildOrganizationPage();
       document.body.appendChild(organizationEl);
       organizationEl.addEventListener('click', function (event) {
+        if (event.target.closest && event.target.closest('[data-org-back]')) {
+          closeOrganizationPage();
+          setTimeout(syncNavigationState, 80);
+          return;
+        }
         var memberButton = event.target.closest
           ? event.target.closest('[data-org-member]') : null;
         if (memberButton) {
@@ -767,7 +788,9 @@
       setActiveNavigation('settings');
       return;
     }
-    if (activeNavigationKind === 'settings') activeNavigationKind = 'workbench';
+    if (activeNavigationKind === 'settings' || activeNavigationKind === 'organization') {
+      activeNavigationKind = 'workbench';
+    }
     if (activeNavigationKind === 'messages' && !$('.otto-preview-overlay')) {
       activeNavigationKind = 'workbench';
     }
@@ -891,6 +914,8 @@
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
     if (accountMenuEl) { closeAccountMenu(); e.stopPropagation(); return; }
+    if (worklogEl) { removeWorklog(); unmarkWorklogTab(); e.stopPropagation(); return; }
+    if (organizationEl) { closeOrganizationPage(); setTimeout(syncNavigationState, 80); e.stopPropagation(); return; }
     if (parkEl) { closeParkServices(); e.stopPropagation(); return; }
     if (allconvEl) { closeAllconvMock(); e.stopPropagation(); return; }
     if (tourState.active) { finishTour(); return; }

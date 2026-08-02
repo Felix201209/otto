@@ -2197,3 +2197,85 @@ body.otto-uiux-has-projectbar #root .otto-main:has(.otto-empty) .otto-empty__pro
   border-radius: 0;
   box-shadow: none;
 }
+
+/* ═══════════ 点开即独立全页：消息 / 组织架构 / 园区服务 / 全部对话 / 工作日志 ═══════════
+ * 所有「点开」的内容表面统一为占满窗口的独立页面（对齐设置页），
+ * 不再以居中浮层卡片出现；页面内左上角「返回」或 Esc 回到工作台。 */
+
+/* —— 我的消息（React 预览层，面板铺满） —— */
+#root .otto-preview-overlay { padding: 0; background: var(--ui-main-bg); backdrop-filter: none; }
+#root .otto-preview-panel {
+  width: 100vw;
+  max-width: none;
+  height: 100vh;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* —— 组织架构：盖过侧栏成为整窗页面（JS 内联 left 由 !important 压制） —— */
+.otto-enhance-orgpage.otto-enhance-orgpage { left: 0 !important; z-index: 80; }
+.otto-enhance-orgpage .otto-org-page__heading { margin-right: auto; }
+
+/* —— 园区服务：窗口化浮层 → 全页（隐藏最小化/最大化，保留关闭） —— */
+.otto-enhance-park.otto-enhance-park { padding: 0; place-items: stretch; background: var(--ui-main-bg); }
+.otto-enhance-park .otto-enhance-park__dialog {
+  width: 100vw;
+  height: 100vh;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.otto-enhance-park [data-park-window="minimize"],
+.otto-enhance-park [data-park-window="maximize"] { display: none; }
+
+/* —— 全部对话：全页，内容列居中限宽保证可读性 —— */
+.otto-enhance-allconv.otto-enhance-allconv { padding: 0; place-items: stretch; background: var(--ui-main-bg); backdrop-filter: none; }
+.otto-enhance-allconv .otto-enhance-allconv__panel {
+  width: 100vw;
+  max-width: none;
+  height: 100vh;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.otto-enhance-allconv__head,
+.otto-enhance-allconv__search,
+.otto-enhance-allconv__list { width: 100%; max-width: 880px; margin-left: auto; margin-right: auto; }
+
+/* —— 工作日志：从右栏贴片升级为全页（内联定位由 !important 压制），内容列居中限宽 —— */
+.otto-enhance-worklog.otto-enhance-worklog {
+  top: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 80;
+  padding: 22px 28px;
+}
+.otto-enhance-worklog > * { width: 100%; max-width: 880px; margin-left: auto; margin-right: auto; }
+
+/* —— 全页共用的「返回」钮 —— */
+.otto-org-page__back,
+.otto-enhance-worklog__back {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: 999px;
+  background: var(--ui-surface);
+  color: var(--ui-text-sec);
+  font: 650 12px var(--otto-font, -apple-system, 'PingFang SC', sans-serif);
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+.otto-org-page__back:hover,
+.otto-enhance-worklog__back:hover {
+  color: var(--ui-accent);
+  border-color: color-mix(in srgb, var(--ui-accent) 35%, transparent);
+  background: var(--ui-accent-soft);
+}
