@@ -141,6 +141,13 @@ jobs:
           npm run typecheck
           npm run test:ci
 
+      - name: Enforce release attestation
+        run: |
+          node scripts/verify-release-attestation.mjs \
+            --file .github/release-attestation.json \
+            --version "${{ steps.version.outputs.version }}" \
+            --commit "${GITHUB_SHA}"
+
       - name: Focused regression tests
         run: |
           npx vitest run \

@@ -2,6 +2,17 @@
 
 这份文档是 Otto 发版前的硬门禁。没有完成并记录这里的检查，就不要打 tag、创建 Release、上传安装包或升级企业服务器。
 
+## 0.2 可执行发布审核（不可跳过）
+
+`.github/release-attestation.json` 是发布审批记录，不是可选模板。每次发版必须在提交中更新它，并且 Release workflow 会拒绝下列任一项缺失或不匹配的版本：
+
+- `version` 与本次 release 版本一致，`sourceCommit` 与触发 workflow 的 40 位 commit 一致。
+- 成功 CI 的 HTTPS 链接与产物校验说明。
+- 桌面实机 smoke、企业 canary、回滚准备、安全与高风险变更审核，全部标记为 `passed` 并附可追溯证据。
+- 风险摘要和高风险变更列表；无高风险变更时列表可以为空，但摘要仍必须明确说明。
+
+默认文件刻意处于 `UNRELEASED` / `pending` 状态，因此不能被意外用来发版。不要通过修改 workflow 或伪造证据绕过该门禁；需要补充审核项时先扩展 `scripts/verify-release-attestation.mjs` 的 required checks。
+
 ## 0. 发布原则
 
 - 发布源必须是 `origin/internal` 上的明确 commit；不要从本地脏树、过期 tag 或临时构建目录发版。
