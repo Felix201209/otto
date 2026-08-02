@@ -62,7 +62,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
         env:
           PYTHON: python3.11
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -138,6 +138,7 @@ jobs:
       - name: Release quality gates
         run: |
           npm run lint:ci
+          npm run build
           npm run typecheck
           npm run test:ci
 

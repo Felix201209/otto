@@ -47,6 +47,19 @@ const RUNTIME_ENTRY = path.resolve(
 const SYSTEMD_SERVICE = path.resolve(
   'deployment/enterprise-oneclick/templates/otto-enterprise.service',
 );
+const SERVER_DATABASE_SOURCE = readFileSync(SERVER_DATABASE, 'utf8');
+const ENTERPRISE_SCHEMA_VERSION = Number(
+  /export const ENTERPRISE_SCHEMA_VERSION\s*=\s*(\d+)/.exec(
+    SERVER_DATABASE_SOURCE,
+  )?.[1],
+);
+if (!Number.isInteger(ENTERPRISE_SCHEMA_VERSION)) {
+  throw new Error('unable to resolve ENTERPRISE_SCHEMA_VERSION for release tests');
+}
+const SUPPORTED_SCHEMA_VERSIONS = Array.from(
+  { length: ENTERPRISE_SCHEMA_VERSION - 1 },
+  (_, index) => index + 2,
+);
 
 function mode(target) {
   return statSync(target).mode & 0o777;
@@ -148,7 +161,7 @@ describe('enterprise one-click service layout', () => {
 describe('enterprise one-click schema contract', () => {
   it('derives one LSTC schema contract from the server source and release manifest', () => {
     const bundle = readFileSync(BUNDLE_SCRIPT, 'utf8');
-    const serverDatabase = readFileSync(SERVER_DATABASE, 'utf8');
+    const serverDatabase = SERVER_DATABASE_SOURCE;
     const databaseTool = readFileSync(DB_TOOL, 'utf8');
     const migrationCheck = readFileSync(MIGRATE_CHECK, 'utf8');
     const healthCheck = readFileSync(HEALTH_CHECK, 'utf8');
@@ -158,7 +171,7 @@ describe('enterprise one-click schema contract', () => {
 
     expect(bundle).toContain("const releaseChannel = 'lstc'");
     expect(serverDatabase).toContain(
-      'export const ENTERPRISE_SCHEMA_VERSION = 16',
+      `export const ENTERPRISE_SCHEMA_VERSION = ${ENTERPRISE_SCHEMA_VERSION}`,
     );
     expect(bundle).toContain('releaseChannel,');
     expect(bundle).toContain(
@@ -182,7 +195,7 @@ describe('enterprise one-click schema contract', () => {
     expect(exporter).toContain('SCHEMA_TO=');
   });
 
-  it('accepts v3-v16 databases and rejects a future v17 database', () => {
+  it(`accepts v3-v${ENTERPRISE_SCHEMA_VERSION} databases and rejects a future v${ENTERPRISE_SCHEMA_VERSION + 1} database`, () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-oneclick-schema-'));
     try {
       const createDatabase = (schemaVersion) => {
@@ -197,13 +210,18 @@ describe('enterprise one-click schema contract', () => {
         return target;
       };
 
-      for (const schemaVersion of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]) {
+      for (const schemaVersion of SUPPORTED_SCHEMA_VERSIONS.filter(
+        (version) => version >= 3,
+      )) {
         const inspected = spawnSync(
           process.execPath,
           [DB_TOOL, 'inspect', createDatabase(schemaVersion)],
           {
             encoding: 'utf8',
-            env: { ...process.env, OTTO_EXPECTED_SCHEMA_VERSION: '16' },
+            env: {
+              ...process.env,
+              OTTO_EXPECTED_SCHEMA_VERSION: String(ENTERPRISE_SCHEMA_VERSION),
+            },
           },
         );
         expect(inspected.status, inspected.stderr).toBe(0);
@@ -215,27 +233,35 @@ describe('enterprise one-click schema contract', () => {
         });
       }
 
-      const v17 = spawnSync(
+      const future = spawnSync(
         process.execPath,
-        [DB_TOOL, 'inspect', createDatabase(17)],
+        [DB_TOOL, 'inspect', createDatabase(ENTERPRISE_SCHEMA_VERSION + 1)],
         {
           encoding: 'utf8',
-          env: { ...process.env, OTTO_EXPECTED_SCHEMA_VERSION: '16' },
+          env: {
+            ...process.env,
+            OTTO_EXPECTED_SCHEMA_VERSION: String(ENTERPRISE_SCHEMA_VERSION),
+          },
         },
       );
-      expect(v17.status).toBe(5);
-      expect(v17.stderr).toContain('高于部署包支持的 16');
+      expect(future.status).toBe(5);
+      expect(future.stderr).toContain(
+        `高于部署包支持的 ${ENTERPRISE_SCHEMA_VERSION}`,
+      );
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }
   }, 20_000);
 
-  it('backs up v3 before migration and verifies that v16 preserves every row', () => {
+  it(`backs up v3 before migration and verifies that v${ENTERPRISE_SCHEMA_VERSION} preserves every row`, () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-oneclick-upgrade-'));
     try {
       const source = path.join(sandbox, 'source-v3.db');
       const backup = path.join(sandbox, 'backup-v3.db');
-      const migrated = path.join(sandbox, 'migrated-v16.db');
+      const migrated = path.join(
+        sandbox,
+        `migrated-v${ENTERPRISE_SCHEMA_VERSION}.db`,
+      );
       const sourceDatabase = new DatabaseSync(source);
       sourceDatabase.exec(`
         CREATE TABLE accounts (id TEXT PRIMARY KEY, name TEXT NOT NULL);
@@ -264,7 +290,9 @@ describe('enterprise one-click schema contract', () => {
       );
       expect(copyResult.status, copyResult.stderr).toBe(0);
       const migratedDatabase = new DatabaseSync(migrated);
-      migratedDatabase.exec('PRAGMA user_version = 16;');
+      migratedDatabase.exec(
+        `PRAGMA user_version = ${ENTERPRISE_SCHEMA_VERSION};`,
+      );
       migratedDatabase.close();
 
       const comparison = spawnSync(
@@ -275,7 +303,10 @@ describe('enterprise one-click schema contract', () => {
       expect(comparison.status, comparison.stderr).toBe(0);
       expect(JSON.parse(comparison.stdout)).toMatchObject({
         before: { userVersion: 3, rowCounts: { accounts: 2 } },
-        after: { userVersion: 16, rowCounts: { accounts: 2 } },
+        after: {
+          userVersion: ENTERPRISE_SCHEMA_VERSION,
+          rowCounts: { accounts: 2 },
+        },
         preservedTables: 1,
       });
     } finally {
@@ -293,8 +324,8 @@ describe('enterprise one-click schema contract', () => {
         buildCommit: '0'.repeat(40),
         sourceCommit: '1'.repeat(40),
         database: {
-          schemaFrom: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-          schemaTo: 16,
+          schemaFrom: SUPPORTED_SCHEMA_VERSIONS,
+          schemaTo: ENTERPRISE_SCHEMA_VERSION,
           futureSchemaPolicy: 'reject',
         },
         files: {},
@@ -315,8 +346,8 @@ describe('enterprise one-click schema contract', () => {
         ok: true,
         releaseChannel: 'lstc',
         database: {
-          schemaFrom: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-          schemaTo: 16,
+          schemaFrom: SUPPORTED_SCHEMA_VERSIONS,
+          schemaTo: ENTERPRISE_SCHEMA_VERSION,
           futureSchemaPolicy: 'reject',
         },
       });
@@ -329,9 +360,7 @@ describe('enterprise one-click schema contract', () => {
       expect(stale.status).toBe(3);
       expect(stale.stderr).toContain('manifest.json 格式不正确');
 
-      manifest.database.schemaFrom = [
-        2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
-      ];
+      manifest.database.schemaFrom = SUPPORTED_SCHEMA_VERSIONS;
       delete manifest.releaseChannel;
       writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
       const unmarked = spawnSync(process.execPath, [VERIFY_RELEASE, sandbox], {
@@ -344,7 +373,7 @@ describe('enterprise one-click schema contract', () => {
     }
   });
 
-  it('accepts only a completed v16 migration readiness result', () => {
+  it(`accepts only a completed v${ENTERPRISE_SCHEMA_VERSION} migration readiness result`, () => {
     const sandbox = mkdtempSync(
       path.join(tmpdir(), 'otto-oneclick-readiness-'),
     );
@@ -360,7 +389,7 @@ describe('enterprise one-click schema contract', () => {
       );
       writeFileSync(
         path.join(release, 'manifest.json'),
-        `${JSON.stringify({ database: { schemaTo: 16 } })}\n`,
+        `${JSON.stringify({ database: { schemaTo: ENTERPRISE_SCHEMA_VERSION } })}\n`,
       );
       const writeDatabaseModule = (schemaVersion) => {
         writeFileSync(
@@ -373,7 +402,7 @@ describe('enterprise one-click schema contract', () => {
         );
       };
 
-      writeDatabaseModule(16);
+      writeDatabaseModule(ENTERPRISE_SCHEMA_VERSION);
       const ready = spawnSync(
         process.execPath,
         [MIGRATE_CHECK, release, data],
@@ -382,7 +411,7 @@ describe('enterprise one-click schema contract', () => {
       expect(ready.status, ready.stderr).toBe(0);
       expect(JSON.parse(ready.stdout)).toEqual({
         ready: true,
-        schemaVersion: 16,
+        schemaVersion: ENTERPRISE_SCHEMA_VERSION,
       });
 
       writeDatabaseModule(3);
