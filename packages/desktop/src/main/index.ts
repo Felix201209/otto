@@ -153,7 +153,10 @@ import {
   EnterpriseE2eeCrypto,
   EnterpriseE2eeKeyVault,
 } from './enterprise-e2ee.js';
-import { EnterpriseMlsSessionManager } from './enterprise-mls.js';
+import {
+  EnterpriseMlsSessionCoordinator,
+  EnterpriseMlsSessionManager,
+} from './enterprise-mls.js';
 import {
   ENTERPRISE_TRAY_POPOVER_WIDTH,
   enterpriseTrayPopoverHeight,
@@ -662,6 +665,7 @@ async function synchronizeAuthenticatedEnterpriseAccount(
           deviceId: e2eeDevice.deviceId,
           approvalState: e2eeDevice.approvalState,
         });
+        await enterpriseMlsCoordinator.ensurePublishedKeyPackage();
       } catch (error) {
         console.warn('[otto-desktop] MLS desktop session is blocked:', error);
       }
@@ -773,6 +777,10 @@ const enterpriseClient = new EnterpriseClient(
     }
   },
   enterpriseE2ee,
+);
+const enterpriseMlsCoordinator = new EnterpriseMlsSessionCoordinator(
+  enterpriseMls,
+  enterpriseClient,
 );
 const enterpriseSkillUsageReporter = new EnterpriseSkillUsageReporter({
   skillsRoot: userSkillsRootDir,

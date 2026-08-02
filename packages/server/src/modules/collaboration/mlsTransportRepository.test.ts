@@ -95,7 +95,7 @@ function createHarness(options: {
 }
 
 describe('MLS ciphertext transport repository', () => {
-  it('publishes packages only for approved devices and claims each package once', () => {
+  it('publishes packages only for approved devices and recovers an unfinished claim', () => {
     const { database, facade } = createHarness();
     try {
       const published = facade.publishMlsKeyPackage({
@@ -103,6 +103,7 @@ describe('MLS ciphertext transport repository', () => {
         accountId: 'bob',
         deviceId: 'bob-1',
         ciphersuite: MLS_SUITE,
+        reference: 'c'.repeat(64),
         keyPackage: opaque('key-package'),
       });
       expect(published).toMatchObject({
@@ -111,7 +112,7 @@ describe('MLS ciphertext transport repository', () => {
         ciphersuite: MLS_SUITE,
         claimedAt: null,
       });
-      expect(published.reference).toMatch(/^[0-9a-f]{64}$/);
+      expect(published.reference).toBe('c'.repeat(64));
 
       expect(() =>
         facade.publishMlsKeyPackage({
@@ -138,7 +139,11 @@ describe('MLS ciphertext transport repository', () => {
           requesterDeviceId: 'alice-1',
           recipientAccountId: 'bob',
         }),
-      ).toBeNull();
+      ).toMatchObject({
+        reference: published.reference,
+        accountId: 'bob',
+        claimedAt: expect.any(String),
+      });
     } finally {
       database.close();
     }

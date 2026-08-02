@@ -273,6 +273,10 @@ export async function handleCommunicationRoute({
             : ('' as Parameters<
                 typeof db.publishMlsKeyPackage
               >[0]['ciphersuite']),
+        reference:
+          typeof body.keyPackageReference === 'string'
+            ? body.keyPackageReference
+            : undefined,
         keyPackage: typeof body.keyPackage === 'string' ? body.keyPackage : '',
       });
       sendJSON(res, 201, { keyPackage });

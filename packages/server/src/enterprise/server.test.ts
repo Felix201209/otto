@@ -2262,6 +2262,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       body: JSON.stringify({
         deviceId: bobDevice.deviceId,
         ciphersuite: 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519',
+        keyPackageReference: 'd'.repeat(64),
         keyPackage: opaque('key-package'),
       }),
     });
@@ -2269,6 +2270,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     const keyPackage = (await published.json()) as {
       keyPackage: { reference: string };
     };
+    expect(keyPackage.keyPackage.reference).toBe('d'.repeat(64));
     const claimed = await fetch(
       `${base}/enterprise/e2ee/mls/key-packages/claim`,
       {
@@ -2295,7 +2297,10 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         }),
       },
     );
-    expect(claimedAgain.status).toBe(404);
+    expect(claimedAgain.status).toBe(200);
+    await expect(claimedAgain.json()).resolves.toMatchObject({
+      keyPackage: { reference: keyPackage.keyPackage.reference },
+    });
 
     const eventsUrl = `${base}/enterprise/e2ee/mls/conversations/${encodeURIComponent(bob.id)}/events`;
     const groupId = opaque('group');

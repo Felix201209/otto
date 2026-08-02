@@ -74,6 +74,7 @@ export interface PublishMlsKeyPackageInput {
   accountId: string;
   deviceId: string;
   ciphersuite: typeof MLS_CIPHERSUITE;
+  reference?: string;
   keyPackage: string;
 }
 
@@ -525,7 +526,9 @@ export function publishMlsKeyPackageInRepository(
     'MLS KeyPackage',
     MLS_KEY_PACKAGE_MAX_BYTES,
   );
-  const reference = mlsKeyPackageReference(keyPackage);
+  const reference = raw.reference
+    ? requireMlsKeyPackageReference(raw.reference)
+    : mlsKeyPackageReference(keyPackage);
   const database = store.db();
   const nowMs = storeNow(store);
   const now = isoTime(nowMs);
@@ -637,6 +640,31 @@ export function claimMlsKeyPackageInRepository(
     requesterDeviceId,
   );
   return withMlsMutation(database, () => {
+    const recoverable = database
+      .prepare(
+        `SELECT package.* FROM mls_key_packages AS package
+         JOIN e2ee_devices AS device
+           ON device.organization_id = package.organization_id
+          AND device.account_id = package.account_id
+          AND device.device_id = package.device_id
+         WHERE package.organization_id = ? AND package.account_id = ?
+           AND package.claimed_by_account_id = ?
+           AND package.claimed_by_device_id = ?
+           AND package.claimed_at IS NOT NULL
+           AND package.welcome_event_id IS NULL
+           AND package.expires_at > ?
+           AND device.approval_state = 'approved' AND device.revoked_at IS NULL
+         ORDER BY package.claimed_at, package.key_package_reference
+         LIMIT 1`,
+      )
+      .get(
+        organizationId,
+        recipientAccountId,
+        requesterAccountId,
+        requesterDeviceId,
+        now,
+      ) as KeyPackageRow | undefined;
+    if (recoverable) return keyPackageView(recoverable);
     const row = database
       .prepare(
         `SELECT package.* FROM mls_key_packages AS package

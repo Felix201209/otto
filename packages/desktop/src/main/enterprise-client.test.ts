@@ -12,7 +12,6 @@ import {
 import {
   ENTERPRISE_MLS_CIPHERSUITE,
   enterpriseMlsDirectConversationId,
-  enterpriseMlsKeyPackageReference,
 } from './enterprise-mls.js';
 import type {
   EnterpriseE2eeCrypto,
@@ -188,12 +187,10 @@ describe('EnterpriseClient', () => {
 
   it('wires the inactive MLS ciphertext transport without enabling MLS chat', async () => {
     const keyPackageBytes = Buffer.from('local-key-package').toString('base64');
-    const keyPackageReference =
-      enterpriseMlsKeyPackageReference(keyPackageBytes);
+    const keyPackageReference = 'a'.repeat(64);
     const peerKeyPackageBytes =
       Buffer.from('peer-key-package').toString('base64');
-    const peerKeyPackageReference =
-      enterpriseMlsKeyPackageReference(peerKeyPackageBytes);
+    const peerKeyPackageReference = 'b'.repeat(64);
     const conversationId = enterpriseMlsDirectConversationId({
       organizationId: ACCOUNT.organizationId,
       accountId: ACCOUNT.id,
@@ -296,6 +293,9 @@ describe('EnterpriseClient', () => {
       'https://enterprise.otto.test/enterprise/e2ee/mls/conversations/acc_peer/events',
       'https://enterprise.otto.test/enterprise/e2ee/mls/conversations/acc_peer/events?afterSequence=0&limit=25',
     ]);
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toMatchObject({
+      keyPackageReference,
+    });
   });
 
   it('rejects MLS transport responses whose cursor or account-pair binding is invalid', async () => {

@@ -201,6 +201,7 @@ describe('clustered PostgreSQL enterprise server', () => {
       body: JSON.stringify({
         deviceId: 'admin-device',
         ciphersuite: keyPackage.ciphersuite,
+        keyPackageReference: keyPackage.reference,
         keyPackage: keyPackage.keyPackage,
       }),
     });
@@ -239,6 +240,7 @@ describe('clustered PostgreSQL enterprise server', () => {
         organizationId: 'org_default',
         accountId: 'acc_admin',
         deviceId: 'admin-device',
+        reference: keyPackage.reference,
       }),
     );
     expect(claimMlsKeyPackage).toHaveBeenCalledWith(

@@ -182,11 +182,31 @@ Every response is checked for ciphersuite, payload bounds, deterministic
 organization/account-pair conversation binding, device binding, and monotonic
 cursor order before it can reach the native boundary. Local OpenMLS group and
 application operations derive the same deterministic conversation ID instead
-of accepting an arbitrary caller-supplied group namespace.
+of accepting an arbitrary caller-supplied group namespace. The desktop also
+publishes a native OpenMLS KeyPackage reference for each approved device; the
+server treats that protocol reference as opaque and no longer substitutes an
+unrelated application-level digest.
+
+The inactive desktop path now has initial-session orchestration without being
+wired into production chat. A deterministic account ordering prevents both
+participants from racing to create different initial groups. KeyPackage claims
+are recoverable only by the same requester account and device until Welcome is
+bound, pending Commit/Welcome bytes survive restart in the encrypted native
+snapshot, and their event IDs are deterministic so a lost response can be
+replayed through the server's idempotency check. The desktop publishes one
+recoverable KeyPackage after approved-device activation.
+
+Each device keeps its per-conversation transport cursor inside the same
+authenticated native snapshot as the OpenMLS ratchet. Initial Commit and
+Welcome events can therefore resume after restart, and application-message
+decryption advances the native cursor before that combined state is atomically
+persisted. A cursor never moves backwards. Events for another local device are
+skipped without attempting to consume that device's Welcome material.
 
 The server now exposes an inactive `e2ee_mls_transport_v1` foundation in both
 SQLite development mode and the PostgreSQL clustered authority. It publishes
-approved-device KeyPackages, claims each package once, binds Welcome messages
+approved-device KeyPackages, claims each package once (with an unfinished
+claim recoverable only by the same requester device), binds Welcome messages
 to the claimed device, relays opaque Commit/Welcome/application bytes, and
 enforces conversation-scoped epoch and idempotency rules. PostgreSQL claims use
 row locks with `SKIP LOCKED`; neither implementation stores plaintext or client
@@ -226,9 +246,11 @@ error instead of silently processing an incomplete Commit history.
 This is still not the active chat protocol. No production server advertises
 `e2ee_mls_v1`. If a server does advertise that capability, the desktop refuses
 to read or send through the legacy envelope instead of silently downgrading.
-The typed desktop transport primitives are not yet a background event loop or
-an atomic client session orchestrator: processing commits on existing remote
-members, crash-safe handshake recovery, user-visible safety-state reset, state
-migration/recovery policy, multi-platform native packaging, and external review
-are still required. Until those controls and an external audit pass the release
-gate, the production status remains `device-envelope-v1`.
+The initial handshake and polling coordinator is not yet a production
+background event loop. Processing later remote member Commits, a durable
+outbox for locally encrypted application events, multi-device fan-out,
+user-visible safety-state reset, state migration/recovery policy,
+multi-platform native packaging, and external review are still required. The
+release gate therefore keeps `desktopTransportSessionOrchestration` false.
+Until those controls and an external audit pass the release gate, the
+production status remains `device-envelope-v1`.

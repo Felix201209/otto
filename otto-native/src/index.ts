@@ -1,6 +1,6 @@
 /**
  * @otto/native - Rust native bindings for Otto
- * 
+ *
  * Provides high-performance implementations of:
  * - Session Store (sled-based KV with LRU cache)
  * - Encryption Store (AES-256-GCM)
@@ -61,7 +61,10 @@ interface JsonRpcResponse {
 class NativeProcess extends EventEmitter {
   private process: ChildProcess | null = null;
   private requestId = 0;
-  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  private pending = new Map<
+    number,
+    { resolve: (v: unknown) => void; reject: (e: Error) => void }
+  >();
   private buffer = '';
   private binaryPath: string;
 
@@ -77,9 +80,30 @@ class NativeProcess extends EventEmitter {
       path.join(__dirname, '..', 'bin', 'otto-native'),
       path.join(__dirname, '..', 'target', 'release', 'otto-native.exe'),
       path.join(__dirname, '..', 'target', 'release', 'otto-native'),
-      path.join(__dirname, '..', 'target', 'x86_64-pc-windows-gnu', 'release', 'otto-native.exe'),
-      path.join(__dirname, '..', 'target', 'x86_64-unknown-linux-gnu', 'release', 'otto-native'),
-      path.join(__dirname, '..', 'target', 'x86_64-apple-darwin', 'release', 'otto-native'),
+      path.join(
+        __dirname,
+        '..',
+        'target',
+        'x86_64-pc-windows-gnu',
+        'release',
+        'otto-native.exe',
+      ),
+      path.join(
+        __dirname,
+        '..',
+        'target',
+        'x86_64-unknown-linux-gnu',
+        'release',
+        'otto-native',
+      ),
+      path.join(
+        __dirname,
+        '..',
+        'target',
+        'x86_64-apple-darwin',
+        'release',
+        'otto-native',
+      ),
     ];
 
     for (const candidate of candidates) {
@@ -157,7 +181,10 @@ class NativeProcess extends EventEmitter {
     }
   }
 
-  async call(method: string, params?: Record<string, unknown>): Promise<unknown> {
+  async call(
+    method: string,
+    params?: Record<string, unknown>,
+  ): Promise<unknown> {
     if (!this.process) {
       await this.start();
     }
@@ -185,7 +212,11 @@ export class SessionStore {
   private native: NativeProcess;
   private initialized = false;
 
-  constructor(private dbPath: string, private cacheSize?: number, binaryPath?: string) {
+  constructor(
+    private dbPath: string,
+    private cacheSize?: number,
+    binaryPath?: string,
+  ) {
     this.native = new NativeProcess(binaryPath);
   }
 
@@ -240,7 +271,11 @@ export class EncryptionStore {
   private native: NativeProcess;
   private initialized = false;
 
-  constructor(private dbPath: string, private key: string, binaryPath?: string) {
+  constructor(
+    private dbPath: string,
+    private key: string,
+    binaryPath?: string,
+  ) {
     this.native = new NativeProcess(binaryPath);
   }
 
@@ -316,8 +351,15 @@ export interface MlsMemberInvitation {
   conversation_id: string;
   group_id: string;
   epoch: number;
+  key_package_reference: string;
+  recipient_device_id: string;
   commit: string;
   welcome: string;
+}
+
+export interface MlsGroupInspection extends MlsGroupState {
+  pending_commit: boolean;
+  pending_invitation: MlsMemberInvitation | null;
 }
 
 export interface MlsApplicationCiphertext {
@@ -521,7 +563,10 @@ export class FileMlsStatePersistence implements MlsStatePersistence {
   }
 
   async save(encryptedState: string): Promise<void> {
-    const serialized = await fs.promises.readFile(this.options.filePath, 'utf8');
+    const serialized = await fs.promises.readFile(
+      this.options.filePath,
+      'utf8',
+    );
     const current = parseMlsStateManifest(JSON.parse(serialized));
     const next = parseMlsStateManifest({ ...current, encryptedState });
     await writePrivateFileAtomic(
@@ -618,6 +663,33 @@ export class OpenMlsNativeKernel {
     return keyPackage as MlsKeyPackage;
   }
 
+  async listKeyPackages(): Promise<MlsKeyPackage[]> {
+    await this.init();
+    const result = await this.native.call('mls.key_package.list', {
+      device_scope: this.scope,
+    });
+    if (!Array.isArray(result)) {
+      throw new Error('native MLS KeyPackage list response is invalid');
+    }
+    const references = new Set<string>();
+    return result.map((value) => {
+      const keyPackage = value as Partial<MlsKeyPackage>;
+      if (
+        keyPackage.protocol !== 'mls10-openmls-0.8' ||
+        keyPackage.ciphersuite !==
+          'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519' ||
+        typeof keyPackage.reference !== 'string' ||
+        !/^[0-9a-f]{64}$/.test(keyPackage.reference) ||
+        references.has(keyPackage.reference) ||
+        !isBase64(keyPackage.key_package)
+      ) {
+        throw new Error('native MLS KeyPackage list entry is invalid');
+      }
+      references.add(keyPackage.reference);
+      return keyPackage as MlsKeyPackage;
+    });
+  }
+
   async consumeKeyPackage(reference: string): Promise<void> {
     await this.init();
     if (!/^[0-9a-f]{64}$/.test(reference)) {
@@ -665,12 +737,55 @@ export class OpenMlsNativeKernel {
       !isBase64(result.group_id) ||
       !Number.isSafeInteger(result.epoch) ||
       (result.epoch ?? -1) < 0 ||
+      typeof result.key_package_reference !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(result.key_package_reference) ||
+      result.key_package_reference !== keyPackage.reference ||
+      typeof result.recipient_device_id !== 'string' ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(result.recipient_device_id) ||
       !isBase64(result.commit) ||
       !isBase64(result.welcome)
     ) {
       throw new Error('native MLS member invitation is invalid');
     }
     return result as MlsMemberInvitation;
+  }
+
+  async inspectGroup(
+    conversationId: string,
+  ): Promise<MlsGroupInspection | null> {
+    await this.init();
+    const conversation = mlsConversationId(conversationId);
+    const result = (await this.native.call('mls.group.inspect', {
+      device_scope: this.scope,
+      conversation_id: conversation,
+    })) as Partial<MlsGroupInspection> | null;
+    if (result === null) return null;
+    const state = validateGroupState(result, conversation);
+    if (
+      typeof result.pending_commit !== 'boolean' ||
+      (result.pending_invitation !== null &&
+        (typeof result.pending_invitation !== 'object' ||
+          result.pending_invitation.protocol !== 'mls10-openmls-0.8' ||
+          result.pending_invitation.conversation_id !== conversation ||
+          result.pending_invitation.group_id !== state.group_id ||
+          result.pending_invitation.epoch !== state.epoch ||
+          !/^[0-9a-f]{64}$/.test(
+            result.pending_invitation.key_package_reference,
+          ) ||
+          !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(
+            result.pending_invitation.recipient_device_id,
+          ) ||
+          !isBase64(result.pending_invitation.commit) ||
+          !isBase64(result.pending_invitation.welcome))) ||
+      (result.pending_invitation !== null) !== result.pending_commit
+    ) {
+      throw new Error('native MLS group inspection response is invalid');
+    }
+    return {
+      ...state,
+      pending_commit: result.pending_commit,
+      pending_invitation: result.pending_invitation ?? null,
+    };
   }
 
   async mergePendingCommit(conversationId: string): Promise<MlsGroupState> {
@@ -773,6 +888,98 @@ export class OpenMlsNativeKernel {
       !isBase64(result.plaintext)
     ) {
       throw new Error('native MLS plaintext response is invalid');
+    }
+    return {
+      protocol: 'mls10-openmls-0.8',
+      conversationId: conversation,
+      groupId: result.group_id,
+      epoch: result.epoch as number,
+      senderDeviceScope: result.sender_device_scope,
+      plaintext: new Uint8Array(Buffer.from(result.plaintext, 'base64')),
+    };
+  }
+
+  async transportCursor(conversationId: string): Promise<number> {
+    await this.init();
+    const conversation = mlsConversationId(conversationId);
+    const result = (await this.native.call('mls.transport.cursor', {
+      device_scope: this.scope,
+      conversation_id: conversation,
+    })) as { sequence?: unknown };
+    if (
+      !Number.isSafeInteger(result.sequence) ||
+      (result.sequence as number) < 0
+    ) {
+      throw new Error('native MLS transport cursor response is invalid');
+    }
+    return result.sequence as number;
+  }
+
+  async acknowledgeTransportEvent(
+    conversationId: string,
+    sequence: number,
+  ): Promise<void> {
+    await this.init();
+    const conversation = mlsConversationId(conversationId);
+    if (!Number.isSafeInteger(sequence) || sequence < 1) {
+      throw new Error('MLS transport sequence is invalid');
+    }
+    const result = (await this.native.call('mls.transport.ack', {
+      device_scope: this.scope,
+      conversation_id: conversation,
+      sequence,
+    })) as { sequence?: unknown };
+    if (result.sequence !== sequence) {
+      throw new Error('native MLS transport acknowledgement is invalid');
+    }
+    await this.persistState();
+  }
+
+  async decryptTransportApplication(
+    conversationId: string,
+    ciphertext: string,
+    sequence: number,
+  ): Promise<MlsDecryptedApplication> {
+    await this.init();
+    const conversation = mlsConversationId(conversationId);
+    if (
+      !isBase64(ciphertext) ||
+      ciphertext.length > 2 * 1024 * 1024 ||
+      !Number.isSafeInteger(sequence) ||
+      sequence < 1
+    ) {
+      throw new Error('MLS transport application parameters are invalid');
+    }
+    const result = (await this.native.call(
+      'mls.application.decrypt_transport',
+      {
+        device_scope: this.scope,
+        conversation_id: conversation,
+        ciphertext,
+        sequence,
+      },
+    )) as {
+      protocol?: unknown;
+      conversation_id?: unknown;
+      group_id?: unknown;
+      epoch?: unknown;
+      sender_device_scope?: unknown;
+      plaintext?: unknown;
+    };
+    await this.persistState();
+    if (
+      result.protocol !== 'mls10-openmls-0.8' ||
+      result.conversation_id !== conversation ||
+      !isBase64(result.group_id) ||
+      !Number.isSafeInteger(result.epoch) ||
+      (result.epoch as number) < 0 ||
+      typeof result.sender_device_scope !== 'string' ||
+      !/^[^/\s]+\/[^/\s]+\/[^/\s]+\/[^/\s]+$/.test(
+        result.sender_device_scope,
+      ) ||
+      !isBase64(result.plaintext)
+    ) {
+      throw new Error('native MLS transport plaintext response is invalid');
     }
     return {
       protocol: 'mls10-openmls-0.8',
@@ -893,7 +1100,10 @@ export class Tokenizer {
   private native: NativeProcess;
   private initialized = false;
 
-  constructor(private model: string, binaryPath?: string) {
+  constructor(
+    private model: string,
+    binaryPath?: string,
+  ) {
     this.native = new NativeProcess(binaryPath);
   }
 
@@ -942,7 +1152,7 @@ export class AgentPool {
   constructor(
     private maxMemoryMb: number = 256,
     private maxAgents: number = 10,
-    binaryPath?: string
+    binaryPath?: string,
   ) {
     this.native = new NativeProcess(binaryPath);
   }
@@ -993,10 +1203,18 @@ export class AgentPool {
     return (result as { results: string[] }).results;
   }
 
-  async stats(): Promise<{ current_memory_mb: number; max_memory_mb: number; agent_count: number }> {
+  async stats(): Promise<{
+    current_memory_mb: number;
+    max_memory_mb: number;
+    agent_count: number;
+  }> {
     await this.init();
     const result = await this.native.call('agent_pool.stats');
-    return result as { current_memory_mb: number; max_memory_mb: number; agent_count: number };
+    return result as {
+      current_memory_mb: number;
+      max_memory_mb: number;
+      agent_count: number;
+    };
   }
 
   async listAgents(): Promise<AgentInfo[]> {
@@ -1023,7 +1241,9 @@ export class AgentPool {
 
 let sharedProcess: NativeProcess | null = null;
 
-export async function getSharedProcess(binaryPath?: string): Promise<NativeProcess> {
+export async function getSharedProcess(
+  binaryPath?: string,
+): Promise<NativeProcess> {
   if (!sharedProcess) {
     sharedProcess = new NativeProcess(binaryPath);
     await sharedProcess.start();

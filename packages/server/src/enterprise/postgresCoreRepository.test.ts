@@ -130,7 +130,7 @@ describe('PostgreSQL enterprise core authority', () => {
     expect(migration!.sql).toContain('mls_group_sessions_active');
   });
 
-  it('claims a KeyPackage once with a locked skip-locked PostgreSQL transaction', async () => {
+  it('checks for a recoverable claim before locking a new KeyPackage', async () => {
     const statements: Array<{ sql: string; values: readonly unknown[] }> = [];
     const packageRow = {
       key_package_reference: 'a'.repeat(64),
@@ -153,6 +153,12 @@ describe('PostgreSQL enterprise core authority', () => {
         }
         if (sql.includes('SELECT 1 FROM e2ee_devices')) {
           return result([{ available: 1 }]);
+        }
+        if (
+          sql.includes('SELECT package.* FROM mls_key_packages') &&
+          sql.includes('claimed_by_account_id = $3')
+        ) {
+          return result();
         }
         if (sql.includes('SELECT package.* FROM mls_key_packages')) {
           return result([packageRow]);
@@ -192,7 +198,7 @@ describe('PostgreSQL enterprise core authority', () => {
     });
     expect(
       statements.find((statement) =>
-        statement.sql.includes('SELECT package.* FROM mls_key_packages'),
+        statement.sql.includes('FOR UPDATE OF package SKIP LOCKED'),
       )?.sql,
     ).toContain('FOR UPDATE OF package SKIP LOCKED');
     expect(statements.map((statement) => statement.sql.trim())).toEqual(

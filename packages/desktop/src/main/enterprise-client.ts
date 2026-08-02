@@ -20,7 +20,6 @@ import {
 import {
   ENTERPRISE_MLS_CIPHERSUITE,
   enterpriseMlsDirectConversationId,
-  enterpriseMlsKeyPackageReference,
   parseEnterpriseMlsPublishedKeyPackage,
   parseEnterpriseMlsTransportEvent,
   type EnterpriseMlsAppendTransportEventInput,
@@ -1062,8 +1061,7 @@ export class EnterpriseClient {
     if (
       keyPackage.protocol !== 'mls10-openmls-0.8' ||
       keyPackage.ciphersuite !== ENTERPRISE_MLS_CIPHERSUITE ||
-      keyPackage.reference !==
-        enterpriseMlsKeyPackageReference(keyPackage.key_package)
+      !/^[0-9a-f]{64}$/.test(keyPackage.reference)
     ) {
       throw new Error('local MLS KeyPackage is invalid');
     }
@@ -1076,6 +1074,7 @@ export class EnterpriseClient {
             body: JSON.stringify({
               deviceId,
               ciphersuite: keyPackage.ciphersuite,
+              keyPackageReference: keyPackage.reference,
               keyPackage: keyPackage.key_package,
             }),
           },

@@ -1924,7 +1924,9 @@ export function createPostgresEnterpriseCoreRepository(input: {
       'MLS KeyPackage',
       MLS_KEY_PACKAGE_MAX_BYTES,
     );
-    const reference = mlsKeyPackageReference(keyPackage);
+    const reference = raw.reference
+      ? requireMlsKeyPackageReference(raw.reference)
+      : mlsKeyPackageReference(keyPackage);
     const now = mlsNow();
     return transaction(input.pool, async (client) => {
       await client.query(
@@ -2043,6 +2045,32 @@ export function createPostgresEnterpriseCoreRepository(input: {
         requesterAccountId,
         requesterDeviceId,
       );
+      const recoverable = await client.query<MlsKeyPackageRow>(
+        `SELECT package.* FROM mls_key_packages AS package
+         JOIN e2ee_devices AS device
+           ON device.organization_id = package.organization_id
+          AND device.account_id = package.account_id
+          AND device.device_id = package.device_id
+         WHERE package.organization_id = $1 AND package.account_id = $2
+           AND package.claimed_by_account_id = $3
+           AND package.claimed_by_device_id = $4
+           AND package.claimed_at IS NOT NULL
+           AND package.welcome_event_id IS NULL
+           AND package.expires_at > $5::timestamptz
+           AND device.approval_state = 'approved' AND device.revoked_at IS NULL
+         ORDER BY package.claimed_at, package.key_package_reference
+         LIMIT 1`,
+        [
+          organizationId,
+          recipientAccountId,
+          requesterAccountId,
+          requesterDeviceId,
+          now.iso,
+        ],
+      );
+      if (recoverable.rows[0]) {
+        return mlsKeyPackageView(recoverable.rows[0]);
+      }
       const available = await client.query<MlsKeyPackageRow>(
         `SELECT package.* FROM mls_key_packages AS package
          JOIN e2ee_devices AS device

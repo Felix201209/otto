@@ -44,14 +44,27 @@ pub struct ExportedGroupState {
     pub member_count: usize,
 }
 
-#[derive(Debug, SerdeSerialize)]
+#[derive(Clone, Debug, SerdeSerialize)]
 pub struct ExportedMemberAdd {
     pub protocol: &'static str,
     pub conversation_id: String,
     pub group_id: String,
     pub epoch: u64,
+    pub key_package_reference: String,
+    pub recipient_device_id: String,
     pub commit: String,
     pub welcome: String,
+}
+
+#[derive(Debug, SerdeSerialize)]
+pub struct ExportedGroupInspection {
+    pub protocol: &'static str,
+    pub conversation_id: String,
+    pub group_id: String,
+    pub epoch: u64,
+    pub member_count: usize,
+    pub pending_commit: bool,
+    pub pending_invitation: Option<ExportedMemberAdd>,
 }
 
 #[derive(Debug, SerdeSerialize)]
@@ -91,6 +104,10 @@ struct PersistedMlsState {
     storage: Vec<PersistedStorageEntry>,
     available_key_packages: Vec<PersistedKeyPackage>,
     groups: Vec<PersistedGroup>,
+    #[serde(default)]
+    pending_invitations: Vec<PersistedPendingInvitation>,
+    #[serde(default)]
+    transport_cursors: Vec<PersistedTransportCursor>,
 }
 
 #[derive(SerdeSerialize, SerdeDeserialize)]
@@ -114,6 +131,50 @@ struct PersistedGroup {
     group_id: String,
 }
 
+#[derive(SerdeSerialize, SerdeDeserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedPendingInvitation {
+    conversation_id: String,
+    group_id: String,
+    epoch: u64,
+    key_package_reference: String,
+    recipient_device_id: String,
+    commit: String,
+    welcome: String,
+}
+
+#[derive(SerdeSerialize, SerdeDeserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedTransportCursor {
+    conversation_id: String,
+    sequence: u64,
+}
+
+#[derive(Clone)]
+struct PendingMemberInvitation {
+    group_id: String,
+    epoch: u64,
+    key_package_reference: String,
+    recipient_device_id: String,
+    commit: String,
+    welcome: String,
+}
+
+impl PendingMemberInvitation {
+    fn export(&self, conversation_id: &str) -> ExportedMemberAdd {
+        ExportedMemberAdd {
+            protocol: PROTOCOL,
+            conversation_id: conversation_id.to_string(),
+            group_id: self.group_id.clone(),
+            epoch: self.epoch,
+            key_package_reference: self.key_package_reference.clone(),
+            recipient_device_id: self.recipient_device_id.clone(),
+            commit: self.commit.clone(),
+            welcome: self.welcome.clone(),
+        }
+    }
+}
+
 struct DeviceIdentity {
     scope: String,
     credential_with_key: CredentialWithKey,
@@ -123,15 +184,17 @@ struct DeviceIdentity {
 /// Process-local OpenMLS kernel. Public RPC results never contain signature
 /// private keys, HPKE init private keys, or provider storage contents.
 ///
-/// Persistent encrypted group state is deliberately not enabled by this
-/// foundation. Callers must treat process exit as MLS state loss until the OS
-/// protected storage adapter lands; there is no plaintext fallback.
+/// Persistent state is exported only as an authenticated encrypted snapshot.
+/// The caller must keep its separate state-encryption key in OS secure storage;
+/// there is no plaintext persistence fallback.
 #[derive(Default)]
 pub struct MlsKernel {
     provider: OpenMlsRustCrypto,
     identity: Option<DeviceIdentity>,
     available_key_packages: HashMap<String, KeyPackage>,
     groups: HashMap<String, MlsGroup>,
+    pending_invitations: HashMap<String, PendingMemberInvitation>,
+    transport_cursors: HashMap<String, u64>,
     persistence_scope: Option<String>,
     persistence_key: Option<Zeroizing<Vec<u8>>>,
 }
@@ -207,6 +270,27 @@ impl MlsKernel {
                 group_id: BASE64.encode(group.group_id().as_slice()),
             })
             .collect();
+        let pending_invitations = self
+            .pending_invitations
+            .iter()
+            .map(|(conversation_id, invitation)| PersistedPendingInvitation {
+                conversation_id: conversation_id.clone(),
+                group_id: invitation.group_id.clone(),
+                epoch: invitation.epoch,
+                key_package_reference: invitation.key_package_reference.clone(),
+                recipient_device_id: invitation.recipient_device_id.clone(),
+                commit: invitation.commit.clone(),
+                welcome: invitation.welcome.clone(),
+            })
+            .collect();
+        let transport_cursors = self
+            .transport_cursors
+            .iter()
+            .map(|(conversation_id, sequence)| PersistedTransportCursor {
+                conversation_id: conversation_id.clone(),
+                sequence: *sequence,
+            })
+            .collect();
         let snapshot = PersistedMlsState {
             format: 1,
             device_scope: scope.clone(),
@@ -214,6 +298,8 @@ impl MlsKernel {
             storage,
             available_key_packages,
             groups,
+            pending_invitations,
+            transport_cursors,
         };
         let plaintext = Zeroizing::new(
             serde_json::to_vec(&snapshot)
@@ -253,6 +339,8 @@ impl MlsKernel {
         if self.identity.is_some()
             || !self.groups.is_empty()
             || !self.available_key_packages.is_empty()
+            || !self.pending_invitations.is_empty()
+            || !self.transport_cursors.is_empty()
         {
             return Err("MLS state restore requires a pristine kernel".into());
         }
@@ -381,6 +469,67 @@ impl MlsKernel {
             }
         }
 
+        let mut pending_invitations = HashMap::new();
+        for pending in snapshot.pending_invitations {
+            let conversation_id = validate_conversation_id(&pending.conversation_id)?;
+            if !is_sha256(&pending.key_package_reference)
+                || validate_device_id(&pending.recipient_device_id).is_err()
+                || decode_base64("MLS restored pending group id", &pending.group_id, 128)?
+                    .is_empty()
+                || decode_base64(
+                    "MLS restored pending commit",
+                    &pending.commit,
+                    MAX_WELCOME_BASE64,
+                )?
+                .is_empty()
+                || decode_base64(
+                    "MLS restored pending Welcome",
+                    &pending.welcome,
+                    MAX_WELCOME_BASE64,
+                )?
+                .is_empty()
+            {
+                return Err("MLS restored pending invitation is invalid".into());
+            }
+            let group = groups
+                .get(&conversation_id)
+                .ok_or_else(|| "MLS restored pending invitation group is missing".to_string())?;
+            if group.pending_commit().is_none()
+                || BASE64.encode(group.group_id().as_slice()) != pending.group_id
+                || group.epoch().as_u64() != pending.epoch
+            {
+                return Err("MLS restored pending invitation state is inconsistent".into());
+            }
+            if pending_invitations
+                .insert(
+                    conversation_id,
+                    PendingMemberInvitation {
+                        group_id: pending.group_id,
+                        epoch: pending.epoch,
+                        key_package_reference: pending.key_package_reference,
+                        recipient_device_id: pending.recipient_device_id,
+                        commit: pending.commit,
+                        welcome: pending.welcome,
+                    },
+                )
+                .is_some()
+            {
+                return Err("MLS restored state contains duplicate pending invitations".into());
+            }
+        }
+
+        let mut transport_cursors = HashMap::new();
+        for cursor in snapshot.transport_cursors {
+            let conversation_id = validate_conversation_id(&cursor.conversation_id)?;
+            if cursor.sequence == 0
+                || transport_cursors
+                    .insert(conversation_id, cursor.sequence)
+                    .is_some()
+            {
+                return Err("MLS restored transport cursor is invalid".into());
+            }
+        }
+
         let persistence_key = self
             .persistence_key
             .take()
@@ -398,6 +547,8 @@ impl MlsKernel {
             }),
             available_key_packages,
             groups,
+            pending_invitations,
+            transport_cursors,
             persistence_scope: Some(persistence_scope),
             persistence_key: Some(persistence_key),
         };
@@ -475,6 +626,31 @@ impl MlsKernel {
         })
     }
 
+    pub fn list_key_packages(
+        &self,
+        raw_scope: &str,
+    ) -> Result<Vec<ExportedKeyPackage>, String> {
+        let scope = validate_scope(raw_scope)?;
+        self.require_identity(&scope)?;
+        let mut packages = self
+            .available_key_packages
+            .iter()
+            .map(|(reference, key_package)| {
+                let serialized = key_package.tls_serialize_detached().map_err(|error| {
+                    format!("MLS key package serialization failed: {error}")
+                })?;
+                Ok(ExportedKeyPackage {
+                    protocol: PROTOCOL,
+                    ciphersuite: "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+                    reference: reference.clone(),
+                    key_package: BASE64.encode(serialized),
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        packages.sort_by(|left, right| left.reference.cmp(&right.reference));
+        Ok(packages)
+    }
+
     pub fn consume_key_package(&mut self, reference: &str) -> Result<(), String> {
         if self.identity.is_none() {
             return Err("MLS kernel is not initialized".into());
@@ -537,9 +713,25 @@ impl MlsKernel {
         if key_package.ciphersuite() != CIPHERSUITE {
             return Err("MLS key package ciphersuite is incompatible".into());
         }
-        validate_member_credential(key_package.leaf_node().credential(), &scope)?;
+        let member_scope =
+            validate_member_credential(key_package.leaf_node().credential(), &scope)?;
+        let recipient_device_id = validate_device_id(
+            member_scope
+                .rsplit('/')
+                .next()
+                .ok_or_else(|| "MLS member device identity is missing".to_string())?,
+        )?;
+        let key_package_reference = hex::encode(
+            key_package
+                .hash_ref(self.provider.crypto())
+                .map_err(|error| format!("MLS key package reference failed: {error}"))?
+                .as_slice(),
+        );
 
         let identity = self.identity.as_ref().expect("identity checked above");
+        if self.pending_invitations.contains_key(&conversation_id) {
+            return Err("MLS pending invitation state already exists".into());
+        }
         let group = self
             .groups
             .get_mut(&conversation_id)
@@ -552,11 +744,11 @@ impl MlsKernel {
         let (commit, welcome, _) = group
             .add_members(&self.provider, &identity.signer, &[key_package])
             .map_err(|error| format!("MLS member add failed: {error}"))?;
-        Ok(ExportedMemberAdd {
-            protocol: PROTOCOL,
-            conversation_id,
+        let pending = PendingMemberInvitation {
             group_id,
             epoch,
+            key_package_reference,
+            recipient_device_id,
             commit: BASE64.encode(
                 commit
                     .to_bytes()
@@ -567,7 +759,16 @@ impl MlsKernel {
                     .to_bytes()
                     .map_err(|error| format!("MLS Welcome serialization failed: {error}"))?,
             ),
-        })
+        };
+        let exported = pending.export(&conversation_id);
+        if self
+            .pending_invitations
+            .insert(conversation_id, pending)
+            .is_some()
+        {
+            return Err("MLS pending invitation state already exists".into());
+        }
+        Ok(exported)
     }
 
     pub fn merge_pending_commit(
@@ -588,7 +789,84 @@ impl MlsKernel {
         group
             .merge_pending_commit(&self.provider)
             .map_err(|error| format!("MLS pending commit merge failed: {error}"))?;
-        Ok(export_group_state(&conversation_id, group))
+        let state = export_group_state(&conversation_id, group);
+        self.pending_invitations.remove(&conversation_id);
+        Ok(state)
+    }
+
+    pub fn inspect_group(
+        &self,
+        raw_scope: &str,
+        raw_conversation_id: &str,
+    ) -> Result<Option<ExportedGroupInspection>, String> {
+        let scope = validate_scope(raw_scope)?;
+        let conversation_id = validate_conversation_id(raw_conversation_id)?;
+        self.require_identity(&scope)?;
+        let Some(group) = self.groups.get(&conversation_id) else {
+            return Ok(None);
+        };
+        Ok(Some(ExportedGroupInspection {
+            protocol: PROTOCOL,
+            conversation_id: conversation_id.clone(),
+            group_id: BASE64.encode(group.group_id().as_slice()),
+            epoch: group.epoch().as_u64(),
+            member_count: group.members().count(),
+            pending_commit: group.pending_commit().is_some(),
+            pending_invitation: self
+                .pending_invitations
+                .get(&conversation_id)
+                .map(|invitation| invitation.export(&conversation_id)),
+        }))
+    }
+
+    pub fn transport_cursor(
+        &self,
+        raw_scope: &str,
+        raw_conversation_id: &str,
+    ) -> Result<u64, String> {
+        let scope = validate_scope(raw_scope)?;
+        let conversation_id = validate_conversation_id(raw_conversation_id)?;
+        self.require_identity(&scope)?;
+        Ok(*self.transport_cursors.get(&conversation_id).unwrap_or(&0))
+    }
+
+    pub fn acknowledge_transport_event(
+        &mut self,
+        raw_scope: &str,
+        raw_conversation_id: &str,
+        sequence: u64,
+    ) -> Result<u64, String> {
+        let scope = validate_scope(raw_scope)?;
+        let conversation_id = validate_conversation_id(raw_conversation_id)?;
+        self.require_identity(&scope)?;
+        if sequence == 0 {
+            return Err("MLS transport cursor is invalid".into());
+        }
+        let current = self.transport_cursors.get(&conversation_id).copied().unwrap_or(0);
+        if sequence <= current {
+            return Err("MLS transport cursor must move forwards".into());
+        }
+        self.transport_cursors.insert(conversation_id, sequence);
+        Ok(sequence)
+    }
+
+    pub fn decrypt_transport_application(
+        &mut self,
+        raw_scope: &str,
+        raw_conversation_id: &str,
+        encoded_ciphertext: &str,
+        sequence: u64,
+    ) -> Result<DecryptedApplicationMessage, String> {
+        let scope = validate_scope(raw_scope)?;
+        let conversation_id = validate_conversation_id(raw_conversation_id)?;
+        self.require_identity(&scope)?;
+        let current = self.transport_cursors.get(&conversation_id).copied().unwrap_or(0);
+        if sequence == 0 || sequence <= current {
+            return Err("MLS transport application event was already processed".into());
+        }
+        let decrypted = self.decrypt_application(&scope, &conversation_id, encoded_ciphertext)?;
+        self.transport_cursors.insert(conversation_id, sequence);
+        Ok(decrypted)
     }
 
     pub fn join_group(
@@ -813,6 +1091,19 @@ fn validate_conversation_id(raw: &str) -> Result<String, String> {
     Ok(conversation_id.to_string())
 }
 
+fn validate_device_id(raw: &str) -> Result<String, String> {
+    let device_id = raw.trim();
+    if device_id.is_empty()
+        || device_id.len() > 200
+        || !device_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
+    {
+        return Err("MLS device id is invalid".into());
+    }
+    Ok(device_id.to_string())
+}
+
 fn decode_base64(label: &str, encoded: &str, max_encoded_len: usize) -> Result<Vec<u8>, String> {
     if encoded.is_empty() || encoded.len() > max_encoded_len {
         return Err(format!("{label} size is invalid"));
@@ -930,6 +1221,7 @@ mod tests {
         let invitation = alice
             .add_member(alice_scope, conversation, &bob_key_package.key_package)
             .unwrap();
+        assert_eq!(invitation.key_package_reference, bob_key_package.reference);
         assert_eq!(invitation.epoch, 0);
         assert!(!invitation.commit.is_empty());
         assert!(alice
@@ -1087,8 +1379,14 @@ mod tests {
         let before_restart = alice
             .encrypt_application(alice_scope, conversation, b"before restart")
             .unwrap();
-        bob.decrypt_application(bob_scope, conversation, &before_restart.ciphertext)
-            .unwrap();
+        bob.decrypt_transport_application(
+            bob_scope,
+            conversation,
+            &before_restart.ciphertext,
+            7,
+        )
+        .unwrap();
+        assert_eq!(bob.transport_cursor(bob_scope, conversation).unwrap(), 7);
 
         let alice_snapshot = alice.export_encrypted_state(alice_scope).unwrap();
         let bob_snapshot = bob.export_encrypted_state(bob_scope).unwrap();
@@ -1109,14 +1407,35 @@ mod tests {
         restored_bob
             .restore_encrypted_state(bob_scope, &bob_snapshot)
             .unwrap();
+        assert_eq!(
+            restored_bob
+                .transport_cursor(bob_scope, conversation)
+                .unwrap(),
+            7
+        );
 
         let after_restart = restored_alice
             .encrypt_application(alice_scope, conversation, b"after restart")
             .unwrap();
         let decrypted = restored_bob
-            .decrypt_application(bob_scope, conversation, &after_restart.ciphertext)
+            .decrypt_transport_application(
+                bob_scope,
+                conversation,
+                &after_restart.ciphertext,
+                8,
+            )
             .unwrap();
         assert_eq!(decrypted.plaintext, b"after restart");
+        assert_eq!(
+            restored_bob
+                .transport_cursor(bob_scope, conversation)
+                .unwrap(),
+            8
+        );
+        assert!(restored_bob
+            .acknowledge_transport_event(bob_scope, conversation, 7)
+            .unwrap_err()
+            .contains("forwards"));
 
         let mut wrong_key = MlsKernel::default();
         wrong_key
@@ -1156,9 +1475,27 @@ mod tests {
         restored_alice
             .restore_encrypted_state(alice_scope, &snapshot)
             .unwrap();
+        let inspection = restored_alice
+            .inspect_group(alice_scope, conversation)
+            .unwrap()
+            .unwrap();
+        assert!(inspection.pending_commit);
+        let restored_invitation = inspection.pending_invitation.unwrap();
+        assert_eq!(restored_invitation.commit, invitation.commit);
+        assert_eq!(restored_invitation.welcome, invitation.welcome);
+        assert_eq!(
+            restored_invitation.key_package_reference,
+            bob_key_package.reference
+        );
         let committed = restored_alice
             .merge_pending_commit(alice_scope, conversation)
             .unwrap();
+        let inspection = restored_alice
+            .inspect_group(alice_scope, conversation)
+            .unwrap()
+            .unwrap();
+        assert!(!inspection.pending_commit);
+        assert!(inspection.pending_invitation.is_none());
         bob.join_group(
             bob_scope,
             conversation,

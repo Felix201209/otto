@@ -501,6 +501,12 @@ fn handle_request(
             serde_json::to_value(mls_kernel.create_key_package(scope)?)
                 .map_err(|error| format!("MLS response serialization failed: {error}"))
         }
+        "mls.key_package.list" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            serde_json::to_value(mls_kernel.list_key_packages(scope)?)
+                .map_err(|error| format!("MLS response serialization failed: {error}"))
+        }
         "mls.key_package.consume" => {
             let p = params.ok_or("Missing params")?;
             let reference = p["reference"].as_str().ok_or("Missing reference")?;
@@ -536,6 +542,40 @@ fn handle_request(
                 .ok_or("Missing conversation_id")?;
             serde_json::to_value(mls_kernel.merge_pending_commit(scope, conversation)?)
                 .map_err(|error| format!("MLS response serialization failed: {error}"))
+        }
+        "mls.group.inspect" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            let conversation = p["conversation_id"]
+                .as_str()
+                .ok_or("Missing conversation_id")?;
+            serde_json::to_value(mls_kernel.inspect_group(scope, conversation)?)
+                .map_err(|error| format!("MLS response serialization failed: {error}"))
+        }
+        "mls.transport.cursor" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            let conversation = p["conversation_id"]
+                .as_str()
+                .ok_or("Missing conversation_id")?;
+            Ok(serde_json::json!({
+                "sequence": mls_kernel.transport_cursor(scope, conversation)?
+            }))
+        }
+        "mls.transport.ack" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            let conversation = p["conversation_id"]
+                .as_str()
+                .ok_or("Missing conversation_id")?;
+            let sequence = p["sequence"].as_u64().ok_or("Missing sequence")?;
+            Ok(serde_json::json!({
+                "sequence": mls_kernel.acknowledge_transport_event(
+                    scope,
+                    conversation,
+                    sequence,
+                )?
+            }))
         }
         "mls.group.join" => {
             let p = params.ok_or("Missing params")?;
@@ -587,6 +627,29 @@ fn handle_request(
                 .ok_or("Missing conversation_id")?;
             let ciphertext = p["ciphertext"].as_str().ok_or("Missing ciphertext")?;
             let decrypted = mls_kernel.decrypt_application(scope, conversation, ciphertext)?;
+            Ok(serde_json::json!({
+                "protocol": decrypted.protocol,
+                "conversation_id": decrypted.conversation_id,
+                "group_id": decrypted.group_id,
+                "epoch": decrypted.epoch,
+                "sender_device_scope": decrypted.sender_device_scope,
+                "plaintext": BASE64.encode(decrypted.plaintext)
+            }))
+        }
+        "mls.application.decrypt_transport" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            let conversation = p["conversation_id"]
+                .as_str()
+                .ok_or("Missing conversation_id")?;
+            let ciphertext = p["ciphertext"].as_str().ok_or("Missing ciphertext")?;
+            let sequence = p["sequence"].as_u64().ok_or("Missing sequence")?;
+            let decrypted = mls_kernel.decrypt_transport_application(
+                scope,
+                conversation,
+                ciphertext,
+                sequence,
+            )?;
             Ok(serde_json::json!({
                 "protocol": decrypted.protocol,
                 "conversation_id": decrypted.conversation_id,

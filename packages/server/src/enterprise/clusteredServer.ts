@@ -1234,6 +1234,10 @@ export function createClusteredEnterpriseServer(
               : ('' as Parameters<
                   typeof repository.publishMlsKeyPackage
                 >[0]['ciphersuite']),
+          reference:
+            typeof body.keyPackageReference === 'string'
+              ? body.keyPackageReference
+              : undefined,
           keyPackage:
             typeof body.keyPackage === 'string' ? body.keyPackage : '',
         });
