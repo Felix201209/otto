@@ -14,6 +14,8 @@ function readyStatus() {
       id: 'audited-ratchet-v1',
       implementation: 'approved-provider',
       serverCiphertextTransport: true,
+      desktopCiphertextTransportClient: true,
+      desktopTransportSessionOrchestration: true,
       externalAuditCompleted: true,
       prekeyHandshake: true,
       doubleRatchet: true,
@@ -46,6 +48,8 @@ describe('E2EE production release readiness gate', () => {
 
     expect(current.protocol).toMatchObject({
       serverCiphertextTransport: true,
+      desktopCiphertextTransportClient: true,
+      desktopTransportSessionOrchestration: false,
       transportSessionHistory: true,
       transportSessionReset: true,
       safetyStateReset: false,
@@ -57,6 +61,7 @@ describe('E2EE production release readiness gate', () => {
         'prekey handshake is not implemented',
         'Double Ratchet is not implemented',
         'multi-device sessions are not implemented',
+        'desktop MLS session orchestration is not implemented',
         'safety state reset is not implemented',
         'forward secrecy is not established',
         'post-compromise security is not established',

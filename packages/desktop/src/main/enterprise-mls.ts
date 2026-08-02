@@ -12,14 +12,88 @@ import path from 'node:path';
 import {
   FileMlsStatePersistence,
   OpenMlsNativeKernel,
+  type MlsApplicationCiphertext,
+  type MlsDecryptedApplication,
   type MlsDeviceScope,
+  type MlsGroupState,
   type MlsKeyPackage,
+  type MlsMemberInvitation,
   type MlsStatePersistence,
 } from '@otto/native';
+
+export const ENTERPRISE_MLS_CIPHERSUITE =
+  'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519' as const;
+
+export type EnterpriseMlsTransportEventType =
+  | 'welcome'
+  | 'commit'
+  | 'application';
+
+export interface EnterpriseMlsPublishedKeyPackage {
+  reference: string;
+  accountId: string;
+  deviceId: string;
+  ciphersuite: typeof ENTERPRISE_MLS_CIPHERSUITE;
+  keyPackage: string;
+  createdAt: string;
+  claimedAt: string | null;
+  expiresAt: string;
+}
+
+export interface EnterpriseMlsAppendTransportEventInput {
+  senderDeviceId: string;
+  eventId: string;
+  eventType: EnterpriseMlsTransportEventType;
+  epoch: number;
+  groupId: string;
+  payload: string;
+  recipientDeviceId?: string | null;
+  keyPackageReference?: string | null;
+  resetFromGroupId?: string | null;
+}
+
+export interface EnterpriseMlsTransportEvent {
+  sequence: number;
+  eventId: string;
+  conversationId: string;
+  sessionGeneration: number;
+  senderAccountId: string;
+  senderDeviceId: string;
+  recipientAccountId: string | null;
+  recipientDeviceId: string | null;
+  eventType: EnterpriseMlsTransportEventType;
+  epoch: number;
+  groupId: string;
+  payload: string;
+  keyPackageReference: string | null;
+  createdAt: string;
+  expiresAt: string;
+}
 
 export interface EnterpriseMlsKernel {
   init(): Promise<void>;
   createKeyPackage(): Promise<MlsKeyPackage>;
+  consumeKeyPackage(reference: string): Promise<void>;
+  createGroup(conversationId: string): Promise<MlsGroupState>;
+  addMember(
+    conversationId: string,
+    keyPackage: MlsKeyPackage,
+  ): Promise<MlsMemberInvitation>;
+  mergePendingCommit(conversationId: string): Promise<MlsGroupState>;
+  joinGroup(
+    conversationId: string,
+    keyPackageReference: string,
+    expectedGroupId: string,
+    welcome: string,
+  ): Promise<MlsGroupState>;
+  encryptApplication(
+    conversationId: string,
+    plaintext: Uint8Array,
+  ): Promise<MlsApplicationCiphertext>;
+  decryptApplication(
+    conversationId: string,
+    ciphertext: string,
+  ): Promise<MlsDecryptedApplication>;
   reset(): Promise<void>;
   close(): Promise<void>;
 }
@@ -58,7 +132,8 @@ export type EnterpriseMlsStatus =
       reason:
         | 'device-not-approved'
         | 'secure-storage-unavailable'
-        | 'native-initialization-failed';
+        | 'native-initialization-failed'
+        | 'security-state-reset-failed';
     };
 
 export interface EnterpriseMlsSessionManagerOptions {
@@ -70,6 +145,7 @@ export interface EnterpriseMlsSessionManagerOptions {
 
 interface ActiveEnterpriseMlsKernel {
   identityHash: string;
+  scope: MlsDeviceScope;
   kernel: EnterpriseMlsKernel;
 }
 
@@ -120,6 +196,136 @@ function identityHash(scope: MlsDeviceScope): string {
       'utf8',
     )
     .digest('hex');
+}
+
+export function enterpriseMlsDirectConversationId(input: {
+  organizationId: string;
+  accountId: string;
+  peerAccountId: string;
+}): string {
+  const identifiers = [
+    input.organizationId,
+    input.accountId,
+    input.peerAccountId,
+  ].map((value) => value.trim());
+  if (identifiers.some((value) => !IDENTIFIER.test(value))) {
+    throw new Error('MLS conversation identity is invalid');
+  }
+  if (identifiers[1] === identifiers[2]) {
+    throw new Error('MLS participants must be different');
+  }
+  const [participantAAccountId, participantBAccountId] = [
+    identifiers[1]!,
+    identifiers[2]!,
+  ].sort() as [string, string];
+  return createHash('sha256')
+    .update('otto:mls-direct-conversation:v1\n')
+    .update(identifiers[0]!)
+    .update('\n')
+    .update(participantAAccountId)
+    .update('\n')
+    .update(participantBAccountId)
+    .digest('hex');
+}
+
+export function enterpriseMlsKeyPackageReference(keyPackage: string): string {
+  if (!isMlsBase64(keyPackage, 64 * 1024)) {
+    throw new Error('MLS KeyPackage is invalid');
+  }
+  return createHash('sha256')
+    .update('otto:mls-key-package:v1\n')
+    .update(Buffer.from(keyPackage, 'base64'))
+    .digest('hex');
+}
+
+export function parseEnterpriseMlsPublishedKeyPackage(
+  value: unknown,
+): EnterpriseMlsPublishedKeyPackage {
+  const keyPackage = value as Partial<EnterpriseMlsPublishedKeyPackage>;
+  if (
+    !keyPackage ||
+    !IDENTIFIER.test(keyPackage.accountId ?? '') ||
+    !IDENTIFIER.test(keyPackage.deviceId ?? '') ||
+    keyPackage.ciphersuite !== ENTERPRISE_MLS_CIPHERSUITE ||
+    !isMlsReference(keyPackage.reference) ||
+    !isMlsBase64(keyPackage.keyPackage, 64 * 1024) ||
+    keyPackage.reference !==
+      enterpriseMlsKeyPackageReference(keyPackage.keyPackage) ||
+    !isIsoTime(keyPackage.createdAt) ||
+    (keyPackage.claimedAt !== null && !isIsoTime(keyPackage.claimedAt)) ||
+    !isIsoTime(keyPackage.expiresAt)
+  ) {
+    throw new Error('enterprise MLS KeyPackage response is invalid');
+  }
+  return { ...keyPackage } as EnterpriseMlsPublishedKeyPackage;
+}
+
+export function parseEnterpriseMlsTransportEvent(
+  value: unknown,
+): EnterpriseMlsTransportEvent {
+  const event = value as Partial<EnterpriseMlsTransportEvent>;
+  if (
+    !event ||
+    !Number.isSafeInteger(event.sequence) ||
+    (event.sequence ?? 0) < 1 ||
+    !IDENTIFIER.test(event.eventId ?? '') ||
+    !/^[0-9a-f]{64}$/.test(event.conversationId ?? '') ||
+    !Number.isSafeInteger(event.sessionGeneration) ||
+    (event.sessionGeneration ?? 0) < 1 ||
+    !IDENTIFIER.test(event.senderAccountId ?? '') ||
+    !IDENTIFIER.test(event.senderDeviceId ?? '') ||
+    (event.recipientAccountId !== null &&
+      !IDENTIFIER.test(event.recipientAccountId ?? '')) ||
+    (event.recipientDeviceId !== null &&
+      !IDENTIFIER.test(event.recipientDeviceId ?? '')) ||
+    !['welcome', 'commit', 'application'].includes(event.eventType ?? '') ||
+    !Number.isSafeInteger(event.epoch) ||
+    (event.epoch ?? -1) < 0 ||
+    !isMlsBase64(event.groupId, 255) ||
+    !isMlsBase64(event.payload, 1024 * 1024) ||
+    (event.keyPackageReference !== null &&
+      !isMlsReference(event.keyPackageReference)) ||
+    !isIsoTime(event.createdAt) ||
+    !isIsoTime(event.expiresAt)
+  ) {
+    throw new Error('enterprise MLS transport event response is invalid');
+  }
+  if (
+    event.eventType === 'welcome'
+      ? !event.recipientAccountId ||
+        !event.recipientDeviceId ||
+        !event.keyPackageReference
+      : event.recipientAccountId !== null ||
+        event.recipientDeviceId !== null ||
+        event.keyPackageReference !== null
+  ) {
+    throw new Error('enterprise MLS transport event binding is invalid');
+  }
+  return { ...event } as EnterpriseMlsTransportEvent;
+}
+
+function isMlsReference(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+}
+
+function isMlsBase64(value: unknown, maxBytes: number): value is string {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length % 4 !== 0 ||
+    !/^[A-Za-z0-9+/]*={0,2}$/.test(value)
+  ) {
+    return false;
+  }
+  return Buffer.byteLength(Buffer.from(value, 'base64')) <= maxBytes;
+}
+
+function isIsoTime(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    Number.isFinite(Date.parse(value))
+  );
 }
 
 function defaultKernelFactory(
@@ -209,7 +415,7 @@ export class EnterpriseMlsSessionManager {
         };
         throw error;
       }
-      this.active = { identityHash: hash, kernel };
+      this.active = { identityHash: hash, scope, kernel };
       this.currentStatus = {
         state: 'ready',
         protocol: PROTOCOL,
@@ -220,11 +426,95 @@ export class EnterpriseMlsSessionManager {
   }
 
   createKeyPackage(): Promise<MlsKeyPackage> {
+    return this.withReadyKernel((active) => active.kernel.createKeyPackage());
+  }
+
+  consumeKeyPackage(reference: string): Promise<void> {
+    return this.withReadyKernel((active) =>
+      active.kernel.consumeKeyPackage(reference),
+    );
+  }
+
+  createGroup(peerAccountId: string): Promise<MlsGroupState> {
+    return this.withReadyKernel((active) =>
+      active.kernel.createGroup(this.conversationId(active, peerAccountId)),
+    );
+  }
+
+  addMember(
+    peerAccountId: string,
+    keyPackage: MlsKeyPackage,
+  ): Promise<MlsMemberInvitation> {
+    return this.withReadyKernel((active) =>
+      active.kernel.addMember(
+        this.conversationId(active, peerAccountId),
+        keyPackage,
+      ),
+    );
+  }
+
+  mergePendingCommit(peerAccountId: string): Promise<MlsGroupState> {
+    return this.withReadyKernel((active) =>
+      active.kernel.mergePendingCommit(
+        this.conversationId(active, peerAccountId),
+      ),
+    );
+  }
+
+  joinGroup(
+    peerAccountId: string,
+    keyPackageReference: string,
+    expectedGroupId: string,
+    welcome: string,
+  ): Promise<MlsGroupState> {
+    return this.withReadyKernel((active) =>
+      active.kernel.joinGroup(
+        this.conversationId(active, peerAccountId),
+        keyPackageReference,
+        expectedGroupId,
+        welcome,
+      ),
+    );
+  }
+
+  encryptApplication(
+    peerAccountId: string,
+    plaintext: Uint8Array,
+  ): Promise<MlsApplicationCiphertext> {
+    return this.withReadyKernel((active) =>
+      active.kernel.encryptApplication(
+        this.conversationId(active, peerAccountId),
+        plaintext,
+      ),
+    );
+  }
+
+  decryptApplication(
+    peerAccountId: string,
+    ciphertext: string,
+  ): Promise<MlsDecryptedApplication> {
+    return this.withReadyKernel((active) =>
+      active.kernel.decryptApplication(
+        this.conversationId(active, peerAccountId),
+        ciphertext,
+      ),
+    );
+  }
+
+  resetSecurityState(): Promise<void> {
     return this.exclusive(async () => {
-      if (!this.active || this.currentStatus.state !== 'ready') {
-        throw new Error('MLS desktop session is not ready');
+      const active = this.requireReadyKernel();
+      try {
+        await active.kernel.reset();
+      } catch (error) {
+        await this.closeActive().catch(() => undefined);
+        this.currentStatus = {
+          state: 'blocked',
+          protocol: PROTOCOL,
+          reason: 'security-state-reset-failed',
+        };
+        throw error;
       }
-      return this.active.kernel.createKeyPackage();
     });
   }
 
@@ -239,6 +529,30 @@ export class EnterpriseMlsSessionManager {
     const active = this.active;
     this.active = null;
     if (active) await active.kernel.close();
+  }
+
+  private conversationId(
+    active: ActiveEnterpriseMlsKernel,
+    peerAccountId: string,
+  ): string {
+    return enterpriseMlsDirectConversationId({
+      organizationId: active.scope.organizationId,
+      accountId: active.scope.accountId,
+      peerAccountId,
+    });
+  }
+
+  private requireReadyKernel(): ActiveEnterpriseMlsKernel {
+    if (!this.active || this.currentStatus.state !== 'ready') {
+      throw new Error('MLS desktop session is not ready');
+    }
+    return this.active;
+  }
+
+  private withReadyKernel<T>(
+    operation: (active: ActiveEnterpriseMlsKernel) => Promise<T>,
+  ): Promise<T> {
+    return this.exclusive(() => operation(this.requireReadyKernel()));
   }
 
   private exclusive<T>(operation: () => Promise<T>): Promise<T> {

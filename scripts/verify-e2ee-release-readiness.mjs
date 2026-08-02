@@ -12,6 +12,14 @@ const REQUIRED_PROTOCOL_CONTROLS = [
     'serverCiphertextTransport',
     'server MLS ciphertext transport is not implemented',
   ],
+  [
+    'desktopCiphertextTransportClient',
+    'desktop MLS ciphertext transport client is not implemented',
+  ],
+  [
+    'desktopTransportSessionOrchestration',
+    'desktop MLS session orchestration is not implemented',
+  ],
   ['externalAuditCompleted', 'external audit is not complete'],
   ['prekeyHandshake', 'prekey handshake is not implemented'],
   ['doubleRatchet', 'Double Ratchet is not implemented'],

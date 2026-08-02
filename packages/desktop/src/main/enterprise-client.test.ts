@@ -9,6 +9,11 @@ import {
   EnterpriseJoinStateUncertainError,
   logoutAndPersistEnterpriseSession,
 } from './enterprise-client.js';
+import {
+  ENTERPRISE_MLS_CIPHERSUITE,
+  enterpriseMlsDirectConversationId,
+  enterpriseMlsKeyPackageReference,
+} from './enterprise-mls.js';
 import type {
   EnterpriseE2eeCrypto,
   EnterpriseE2eeDeviceBundle,
@@ -179,6 +184,208 @@ describe('EnterpriseClient', () => {
       client.sendDirectMessage('acc_peer', 'must not downgrade'),
     ).rejects.toThrow('MLS private-message transport is not active');
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('wires the inactive MLS ciphertext transport without enabling MLS chat', async () => {
+    const keyPackageBytes = Buffer.from('local-key-package').toString('base64');
+    const keyPackageReference =
+      enterpriseMlsKeyPackageReference(keyPackageBytes);
+    const peerKeyPackageBytes =
+      Buffer.from('peer-key-package').toString('base64');
+    const peerKeyPackageReference =
+      enterpriseMlsKeyPackageReference(peerKeyPackageBytes);
+    const conversationId = enterpriseMlsDirectConversationId({
+      organizationId: ACCOUNT.organizationId,
+      accountId: ACCOUNT.id,
+      peerAccountId: 'acc_peer',
+    });
+    const published = {
+      reference: keyPackageReference,
+      accountId: ACCOUNT.id,
+      deviceId: 'device-1',
+      ciphersuite: ENTERPRISE_MLS_CIPHERSUITE,
+      keyPackage: keyPackageBytes,
+      createdAt: '2026-08-02T00:00:00.000Z',
+      claimedAt: null,
+      expiresAt: '2026-08-09T00:00:00.000Z',
+    };
+    const claimed = {
+      ...published,
+      reference: peerKeyPackageReference,
+      accountId: 'acc_peer',
+      deviceId: 'peer-device',
+      keyPackage: peerKeyPackageBytes,
+      claimedAt: '2026-08-02T00:01:00.000Z',
+    };
+    const event = {
+      sequence: 1,
+      eventId: 'event-1',
+      conversationId,
+      sessionGeneration: 1,
+      senderAccountId: ACCOUNT.id,
+      senderDeviceId: 'device-1',
+      recipientAccountId: null,
+      recipientDeviceId: null,
+      eventType: 'commit' as const,
+      epoch: 1,
+      groupId: Buffer.from('group-1').toString('base64'),
+      payload: Buffer.from('commit-1').toString('base64'),
+      keyPackageReference: null,
+      createdAt: '2026-08-02T00:02:00.000Z',
+      expiresAt: '2026-10-31T00:02:00.000Z',
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          ...API_V2_HEALTH,
+          capabilities: [
+            ...API_V2_HEALTH.capabilities,
+            'e2ee_mls_transport_v1',
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          account: ACCOUNT,
+          token: 'session-token',
+          expiresAt: '2099-01-01',
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(201, { keyPackage: published }))
+      .mockResolvedValueOnce(jsonResponse(200, { keyPackage: claimed }))
+      .mockResolvedValueOnce(jsonResponse(201, { event }))
+      .mockResolvedValueOnce(jsonResponse(200, { events: [event] }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    expect(client.supportsMlsTransportFoundation()).toBe(true);
+    expect(client.supportsMlsPrivateMessages()).toBe(false);
+    await expect(
+      client.publishMlsKeyPackage('device-1', {
+        protocol: 'mls10-openmls-0.8',
+        ciphersuite: ENTERPRISE_MLS_CIPHERSUITE,
+        reference: keyPackageReference,
+        key_package: keyPackageBytes,
+      }),
+    ).resolves.toEqual(published);
+    await expect(
+      client.claimMlsKeyPackage('device-1', 'acc_peer'),
+    ).resolves.toEqual(claimed);
+    await expect(
+      client.appendMlsTransportEvent('acc_peer', {
+        senderDeviceId: 'device-1',
+        eventId: event.eventId,
+        eventType: event.eventType,
+        epoch: event.epoch,
+        groupId: event.groupId,
+        payload: event.payload,
+      }),
+    ).resolves.toEqual(event);
+    await expect(
+      client.listMlsTransportEvents('acc_peer', 0, 25),
+    ).resolves.toEqual([event]);
+
+    expect(fetchMock.mock.calls.slice(2).map(([url]) => url)).toEqual([
+      'https://enterprise.otto.test/enterprise/e2ee/mls/key-packages',
+      'https://enterprise.otto.test/enterprise/e2ee/mls/key-packages/claim',
+      'https://enterprise.otto.test/enterprise/e2ee/mls/conversations/acc_peer/events',
+      'https://enterprise.otto.test/enterprise/e2ee/mls/conversations/acc_peer/events?afterSequence=0&limit=25',
+    ]);
+  });
+
+  it('rejects MLS transport responses whose cursor or account-pair binding is invalid', async () => {
+    const conversationId = enterpriseMlsDirectConversationId({
+      organizationId: ACCOUNT.organizationId,
+      accountId: ACCOUNT.id,
+      peerAccountId: 'acc_peer',
+    });
+    const event = {
+      sequence: 4,
+      eventId: 'event-4',
+      conversationId,
+      sessionGeneration: 1,
+      senderAccountId: 'unrelated-account',
+      senderDeviceId: 'unrelated-device',
+      recipientAccountId: null,
+      recipientDeviceId: null,
+      eventType: 'application',
+      epoch: 1,
+      groupId: Buffer.from('group-1').toString('base64'),
+      payload: Buffer.from('ciphertext').toString('base64'),
+      keyPackageReference: null,
+      createdAt: '2026-08-02T00:02:00.000Z',
+      expiresAt: '2026-10-31T00:02:00.000Z',
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          ...API_V2_HEALTH,
+          capabilities: [
+            ...API_V2_HEALTH.capabilities,
+            'e2ee_mls_transport_v1',
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          account: ACCOUNT,
+          token: 'session-token',
+          expiresAt: '2099-01-01',
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(200, { events: [event] }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(
+      client.listMlsTransportEvents('acc_peer', 3, 100),
+    ).rejects.toThrow('binding is invalid');
+  });
+
+  it('treats an empty peer KeyPackage inventory as a recoverable transport state', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          ...API_V2_HEALTH,
+          capabilities: [
+            ...API_V2_HEALTH.capabilities,
+            'e2ee_mls_transport_v1',
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          account: ACCOUNT,
+          token: 'session-token',
+          expiresAt: '2099-01-01',
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(404, {
+          error: 'no unclaimed MLS KeyPackage is available',
+        }),
+      );
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(
+      client.claimMlsKeyPackage('device-1', 'acc_peer'),
+    ).resolves.toBeNull();
   });
   it('密码登录规范化服务器地址并保存会话，后续请求自动携带 Bearer token', async () => {
     const fetchMock = vi.fn()

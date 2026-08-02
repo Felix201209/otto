@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   EnterpriseMlsSessionManager,
+  enterpriseMlsDirectConversationId,
   type EnterpriseMlsKernel,
   type EnterpriseMlsKernelFactoryInput,
 } from './enterprise-mls.js';
@@ -41,6 +42,13 @@ function identity(
 }
 
 function fakeKernel() {
+  const groupState = {
+    protocol: 'mls10-openmls-0.8' as const,
+    conversation_id: 'conversation-placeholder',
+    group_id: 'Z3JvdXA=',
+    epoch: 1,
+    member_count: 2,
+  };
   return {
     init: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
@@ -51,6 +59,44 @@ function fakeKernel() {
         'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519' as const,
       reference: 'a'.repeat(64),
       key_package: 'S2V5UGFja2FnZQ==',
+    })),
+    consumeKeyPackage: vi.fn(async () => undefined),
+    createGroup: vi.fn(async (conversationId: string) => ({
+      ...groupState,
+      conversation_id: conversationId,
+      epoch: 0,
+      member_count: 1,
+    })),
+    addMember: vi.fn(async (conversationId: string) => ({
+      protocol: 'mls10-openmls-0.8' as const,
+      conversation_id: conversationId,
+      group_id: 'Z3JvdXA=',
+      epoch: 1,
+      commit: 'Y29tbWl0',
+      welcome: 'd2VsY29tZQ==',
+    })),
+    mergePendingCommit: vi.fn(async (conversationId: string) => ({
+      ...groupState,
+      conversation_id: conversationId,
+    })),
+    joinGroup: vi.fn(async (conversationId: string) => ({
+      ...groupState,
+      conversation_id: conversationId,
+    })),
+    encryptApplication: vi.fn(async (conversationId: string) => ({
+      protocol: 'mls10-openmls-0.8' as const,
+      conversation_id: conversationId,
+      group_id: 'Z3JvdXA=',
+      epoch: 1,
+      ciphertext: 'Y2lwaGVydGV4dA==',
+    })),
+    decryptApplication: vi.fn(async (conversationId: string) => ({
+      protocol: 'mls10-openmls-0.8' as const,
+      conversationId,
+      groupId: 'Z3JvdXA=',
+      epoch: 1,
+      senderDeviceScope: 'server/org-a/account-b/device-b',
+      plaintext: new Uint8Array([1, 2, 3]),
     })),
   } satisfies EnterpriseMlsKernel;
 }
@@ -199,6 +245,68 @@ describe('EnterpriseMlsSessionManager', () => {
     expect(manager.status()).toMatchObject({
       state: 'blocked',
       reason: 'native-initialization-failed',
+    });
+  });
+
+  it('binds every native group operation to the deterministic account pair', async () => {
+    const kernel = fakeKernel();
+    const manager = new EnterpriseMlsSessionManager({
+      stateDirectory: await temporaryDirectory(),
+      secureStorage: {
+        assertAvailable: vi.fn(),
+        protect: vi.fn((value) => value),
+        unprotect: vi.fn((value) => value),
+      },
+      kernelFactory: vi.fn(() => kernel),
+    });
+    await manager.activate(identity());
+    const conversationId = enterpriseMlsDirectConversationId({
+      organizationId: 'org-a',
+      accountId: 'account-a',
+      peerAccountId: 'account-b',
+    });
+
+    await manager.createGroup('account-b');
+    await manager.encryptApplication('account-b', new Uint8Array([1]));
+    await manager.decryptApplication('account-b', 'Y2lwaGVydGV4dA==');
+
+    expect(kernel.createGroup).toHaveBeenCalledWith(conversationId);
+    expect(kernel.encryptApplication).toHaveBeenCalledWith(
+      conversationId,
+      new Uint8Array([1]),
+    );
+    expect(kernel.decryptApplication).toHaveBeenCalledWith(
+      conversationId,
+      'Y2lwaGVydGV4dA==',
+    );
+  });
+
+  it('resets only an active MLS security state and fails closed on reset errors', async () => {
+    const kernel = fakeKernel();
+    const manager = new EnterpriseMlsSessionManager({
+      stateDirectory: await temporaryDirectory(),
+      secureStorage: {
+        assertAvailable: vi.fn(),
+        protect: vi.fn((value) => value),
+        unprotect: vi.fn((value) => value),
+      },
+      kernelFactory: vi.fn(() => kernel),
+    });
+
+    await expect(manager.resetSecurityState()).rejects.toThrow('not ready');
+    await manager.activate(identity());
+    await expect(manager.resetSecurityState()).resolves.toBeUndefined();
+    expect(kernel.reset).toHaveBeenCalledOnce();
+    expect(manager.status().state).toBe('ready');
+
+    kernel.reset.mockRejectedValueOnce(new Error('state clear failed'));
+    await expect(manager.resetSecurityState()).rejects.toThrow(
+      'state clear failed',
+    );
+    expect(kernel.close).toHaveBeenCalledOnce();
+    expect(manager.status()).toMatchObject({
+      state: 'blocked',
+      reason: 'security-state-reset-failed',
     });
   });
 });

@@ -4,6 +4,8 @@
     "id": "device-envelope-v1",
     "implementation": "otto-legacy-envelope",
     "serverCiphertextTransport": true,
+    "desktopCiphertextTransportClient": true,
+    "desktopTransportSessionOrchestration": false,
     "transportSessionHistory": true,
     "transportSessionReset": true,
     "externalAuditCompleted": false,

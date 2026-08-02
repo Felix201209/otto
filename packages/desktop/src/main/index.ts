@@ -653,7 +653,7 @@ async function synchronizeAuthenticatedEnterpriseAccount(
     console.warn('[otto-desktop] E2EE device registration failed:', error);
   }
   if (e2eeDevice) {
-    if (enterpriseClient.supportsMlsPrivateMessages()) {
+    if (enterpriseClient.supportsMlsTransportFoundation()) {
       try {
         await enterpriseMls.activate({
           serverUrl: enterpriseClient.snapshot().serverUrl,

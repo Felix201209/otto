@@ -173,6 +173,17 @@ other unavailable secure-storage states fail closed. The desktop build treats
 `@otto/native` as a workspace package and reserves its native executable for
 ASAR unpacking.
 
+The desktop now also recognizes the inactive `e2ee_mls_transport_v1`
+capability independently from the production `e2ee_mls_v1` gate. An approved
+device initializes its protected native state when that transport foundation
+is available, and the enterprise client exposes typed KeyPackage publication
+and claim plus Commit, Welcome, and application-event append/list operations.
+Every response is checked for ciphersuite, payload bounds, deterministic
+organization/account-pair conversation binding, device binding, and monotonic
+cursor order before it can reach the native boundary. Local OpenMLS group and
+application operations derive the same deterministic conversation ID instead
+of accepting an arbitrary caller-supplied group namespace.
+
 The server now exposes an inactive `e2ee_mls_transport_v1` foundation in both
 SQLite development mode and the PostgreSQL clustered authority. It publishes
 approved-device KeyPackages, claims each package once, binds Welcome messages
@@ -213,10 +224,11 @@ whose cursor falls behind that floor receives an explicit secure-session-reset
 error instead of silently processing an incomplete Commit history.
 
 This is still not the active chat protocol. No production server advertises
-`e2ee_mls_v1`. If a server does advertise that capability, the desktop
-initializes MLS only for an approved device and refuses to read or send through
-the legacy envelope instead of silently downgrading. Desktop transport wiring,
-processing commits on existing remote members, state migration/recovery policy,
-multi-platform native packaging, and external review are still required. Until
-those controls and an external audit pass the release gate, the production
-status remains `device-envelope-v1`.
+`e2ee_mls_v1`. If a server does advertise that capability, the desktop refuses
+to read or send through the legacy envelope instead of silently downgrading.
+The typed desktop transport primitives are not yet a background event loop or
+an atomic client session orchestrator: processing commits on existing remote
+members, crash-safe handshake recovery, user-visible safety-state reset, state
+migration/recovery policy, multi-platform native packaging, and external review
+are still required. Until those controls and an external audit pass the release
+gate, the production status remains `device-envelope-v1`.

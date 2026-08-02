@@ -7,6 +7,8 @@
 
 import { createHash } from 'node:crypto';
 
+import type { MlsKeyPackage } from '@otto/native';
+
 import {
   enterpriseE2eeDeviceVerification,
   type EnterpriseE2eeDeviceVerification,
@@ -15,6 +17,16 @@ import {
   type EnterpriseE2eeKeyTransparencyView,
   type EnterpriseE2eeWireMessage,
 } from './enterprise-e2ee.js';
+import {
+  ENTERPRISE_MLS_CIPHERSUITE,
+  enterpriseMlsDirectConversationId,
+  enterpriseMlsKeyPackageReference,
+  parseEnterpriseMlsPublishedKeyPackage,
+  parseEnterpriseMlsTransportEvent,
+  type EnterpriseMlsAppendTransportEventInput,
+  type EnterpriseMlsPublishedKeyPackage,
+  type EnterpriseMlsTransportEvent,
+} from './enterprise-mls.js';
 
 export type {
   EnterpriseE2eeKeyTransparencyEntry,
@@ -1026,12 +1038,192 @@ export class EnterpriseClient {
     );
   }
 
+  supportsMlsTransportFoundation(): boolean {
+    return (
+      this.token !== null &&
+      this.compatibleServerUrl === this.serverUrl &&
+      this.compatibleCapabilities.has('e2ee_mls_transport_v1')
+    );
+  }
+
   private refuseMlsProtocolDowngrade(): void {
     if (this.supportsMlsPrivateMessages()) {
       throw new Error(
         'MLS private-message transport is not active; refusing protocol downgrade',
       );
     }
+  }
+
+  async publishMlsKeyPackage(
+    deviceId: string,
+    keyPackage: MlsKeyPackage,
+  ): Promise<EnterpriseMlsPublishedKeyPackage> {
+    const account = await this.requireMlsTransportAccount();
+    if (
+      keyPackage.protocol !== 'mls10-openmls-0.8' ||
+      keyPackage.ciphersuite !== ENTERPRISE_MLS_CIPHERSUITE ||
+      keyPackage.reference !==
+        enterpriseMlsKeyPackageReference(keyPackage.key_package)
+    ) {
+      throw new Error('local MLS KeyPackage is invalid');
+    }
+    const published = parseEnterpriseMlsPublishedKeyPackage(
+      (
+        await this.request<{ keyPackage: unknown }>(
+          '/enterprise/e2ee/mls/key-packages',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              deviceId,
+              ciphersuite: keyPackage.ciphersuite,
+              keyPackage: keyPackage.key_package,
+            }),
+          },
+        )
+      ).keyPackage,
+    );
+    if (
+      published.accountId !== account.id ||
+      published.deviceId !== deviceId ||
+      published.reference !== keyPackage.reference ||
+      published.keyPackage !== keyPackage.key_package
+    ) {
+      throw new Error('enterprise MLS KeyPackage publication binding is invalid');
+    }
+    return published;
+  }
+
+  async claimMlsKeyPackage(
+    requesterDeviceId: string,
+    recipientAccountId: string,
+  ): Promise<EnterpriseMlsPublishedKeyPackage | null> {
+    const account = await this.requireMlsTransportAccount();
+    enterpriseMlsDirectConversationId({
+      organizationId: account.organizationId,
+      accountId: account.id,
+      peerAccountId: recipientAccountId,
+    });
+    try {
+      const claimed = parseEnterpriseMlsPublishedKeyPackage(
+        (
+          await this.request<{ keyPackage: unknown }>(
+            '/enterprise/e2ee/mls/key-packages/claim',
+            {
+              method: 'POST',
+              body: JSON.stringify({
+                requesterDeviceId,
+                recipientAccountId,
+              }),
+            },
+          )
+        ).keyPackage,
+      );
+      if (claimed.accountId !== recipientAccountId || !claimed.claimedAt) {
+        throw new Error('enterprise MLS KeyPackage claim binding is invalid');
+      }
+      return claimed;
+    } catch (error) {
+      if (error instanceof EnterpriseRequestError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async appendMlsTransportEvent(
+    peerAccountId: string,
+    input: EnterpriseMlsAppendTransportEventInput,
+  ): Promise<EnterpriseMlsTransportEvent> {
+    const account = await this.requireMlsTransportAccount();
+    const conversationId = enterpriseMlsDirectConversationId({
+      organizationId: account.organizationId,
+      accountId: account.id,
+      peerAccountId,
+    });
+    const event = parseEnterpriseMlsTransportEvent(
+      (
+        await this.request<{ event: unknown }>(
+          `/enterprise/e2ee/mls/conversations/${encodeURIComponent(peerAccountId)}/events`,
+          { method: 'POST', body: JSON.stringify(input) },
+          { timeoutMs: 30_000 },
+        )
+      ).event,
+    );
+    if (
+      event.conversationId !== conversationId ||
+      event.senderAccountId !== account.id ||
+      event.senderDeviceId !== input.senderDeviceId ||
+      event.eventId !== input.eventId ||
+      event.eventType !== input.eventType ||
+      event.epoch !== input.epoch ||
+      event.groupId !== input.groupId ||
+      event.payload !== input.payload ||
+      event.recipientAccountId !==
+        (input.eventType === 'welcome' ? peerAccountId : null) ||
+      event.recipientDeviceId !== (input.recipientDeviceId ?? null) ||
+      event.keyPackageReference !== (input.keyPackageReference ?? null)
+    ) {
+      throw new Error('enterprise MLS transport event binding is invalid');
+    }
+    return event;
+  }
+
+  async listMlsTransportEvents(
+    peerAccountId: string,
+    afterSequence = 0,
+    limit = 100,
+  ): Promise<EnterpriseMlsTransportEvent[]> {
+    const account = await this.requireMlsTransportAccount();
+    if (
+      !Number.isSafeInteger(afterSequence) ||
+      afterSequence < 0 ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 500
+    ) {
+      throw new Error('MLS event cursor or limit is invalid');
+    }
+    const conversationId = enterpriseMlsDirectConversationId({
+      organizationId: account.organizationId,
+      accountId: account.id,
+      peerAccountId,
+    });
+    const response = await this.request<{ events: unknown }>(
+      `/enterprise/e2ee/mls/conversations/${encodeURIComponent(peerAccountId)}/events?afterSequence=${afterSequence}&limit=${limit}`,
+    );
+    if (!Array.isArray(response.events)) {
+      throw new Error('enterprise MLS transport event list is invalid');
+    }
+    let previousSequence = afterSequence;
+    return response.events.map((value) => {
+      const event = parseEnterpriseMlsTransportEvent(value);
+      const expectedRecipient =
+        event.senderAccountId === account.id ? peerAccountId : account.id;
+      if (
+        event.conversationId !== conversationId ||
+        ![account.id, peerAccountId].includes(event.senderAccountId) ||
+        event.sequence <= previousSequence ||
+        (event.eventType === 'welcome' &&
+          event.recipientAccountId !== expectedRecipient)
+      ) {
+        throw new Error('enterprise MLS transport event list binding is invalid');
+      }
+      previousSequence = event.sequence;
+      return event;
+    });
+  }
+
+  private async requireMlsTransportAccount(): Promise<EnterpriseAccount> {
+    if (!this.token) {
+      throw new Error('enterprise session has expired; please sign in again');
+    }
+    await this.assertCompatibleServer(this.serverUrl, [
+      'e2ee_mls_transport_v1',
+    ]);
+    if (!this.currentAccount) {
+      throw new Error('enterprise account identity is unavailable');
+    }
+    return this.currentAccount;
   }
 
   /**
