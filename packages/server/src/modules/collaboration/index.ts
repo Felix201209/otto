@@ -9,3 +9,4 @@ export * from './directMessageRepository.js';
 export * from './collaborationSchema.js';
 export * from './collaborationComposition.js';
 export * from './e2eeRepository.js';
+export * from './mlsTransportRepository.js';

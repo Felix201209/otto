@@ -774,7 +774,7 @@ describe('受保护 vs 公开路由边界', () => {
     await expect(backup.json()).resolves.toMatchObject({
       lastError: null,
       backupCount: 1,
-      latestSchemaVersion: 20,
+      latestSchemaVersion: 21,
     });
 
     const telemetry = await fetch(`${base}/enterprise/deployment/telemetry`, {
@@ -2212,6 +2212,191 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       ]),
     );
   });
+
+  it('relays one-time MLS KeyPackages and opaque epoch-bound events without activating MLS chat', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const db = await import('./db.js');
+    const alice = db.createAccount({
+      username: 'mls-route-alice',
+      password: 'alice-password',
+      name: 'Alice',
+    });
+    const bob = db.createAccount({
+      username: 'mls-route-bob',
+      password: 'bob-password',
+      name: 'Bob',
+    });
+    const login = async (identifier: string, password: string) => {
+      const response = await fetch(`${base}/enterprise/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ identifier, password }),
+      });
+      expect(response.status).toBe(200);
+      return ((await response.json()) as { token: string }).token;
+    };
+    const aliceToken = await login('mls-route-alice', 'alice-password');
+    const bobToken = await login('mls-route-bob', 'bob-password');
+    const aliceDevice = await registerRouteE2eeDevice({
+      base,
+      token: aliceToken,
+      accountId: alice.id,
+      deviceId: 'alice-mls-device',
+    });
+    const bobDevice = await registerRouteE2eeDevice({
+      base,
+      token: bobToken,
+      accountId: bob.id,
+      deviceId: 'bob-mls-device',
+    });
+    const opaque = (value: string) =>
+      Buffer.from(value.repeat(24), 'utf8').toString('base64');
+    const headers = (token: string) => ({
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    });
+
+    const published = await fetch(`${base}/enterprise/e2ee/mls/key-packages`, {
+      method: 'POST',
+      headers: headers(bobToken),
+      body: JSON.stringify({
+        deviceId: bobDevice.deviceId,
+        ciphersuite: 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519',
+        keyPackage: opaque('key-package'),
+      }),
+    });
+    expect(published.status).toBe(201);
+    const keyPackage = (await published.json()) as {
+      keyPackage: { reference: string };
+    };
+    const claimed = await fetch(
+      `${base}/enterprise/e2ee/mls/key-packages/claim`,
+      {
+        method: 'POST',
+        headers: headers(aliceToken),
+        body: JSON.stringify({
+          requesterDeviceId: aliceDevice.deviceId,
+          recipientAccountId: bob.id,
+        }),
+      },
+    );
+    expect(claimed.status).toBe(200);
+    await expect(claimed.json()).resolves.toMatchObject({
+      keyPackage: { reference: keyPackage.keyPackage.reference },
+    });
+    const claimedAgain = await fetch(
+      `${base}/enterprise/e2ee/mls/key-packages/claim`,
+      {
+        method: 'POST',
+        headers: headers(aliceToken),
+        body: JSON.stringify({
+          requesterDeviceId: aliceDevice.deviceId,
+          recipientAccountId: bob.id,
+        }),
+      },
+    );
+    expect(claimedAgain.status).toBe(404);
+
+    const eventsUrl = `${base}/enterprise/e2ee/mls/conversations/${encodeURIComponent(bob.id)}/events`;
+    const groupId = opaque('group');
+    const append = (body: Record<string, unknown>) =>
+      fetch(eventsUrl, {
+        method: 'POST',
+        headers: headers(aliceToken),
+        body: JSON.stringify({
+          senderDeviceId: aliceDevice.deviceId,
+          groupId,
+          ...body,
+        }),
+      });
+    expect(
+      (
+        await append({
+          eventId: 'commit-1',
+          eventType: 'commit',
+          epoch: 1,
+          payload: opaque('commit'),
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await append({
+          eventId: 'welcome-1',
+          eventType: 'welcome',
+          epoch: 1,
+          recipientDeviceId: bobDevice.deviceId,
+          keyPackageReference: keyPackage.keyPackage.reference,
+          payload: opaque('welcome'),
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await append({
+          eventId: 'application-1',
+          eventType: 'application',
+          epoch: 1,
+          payload: opaque('application'),
+        })
+      ).status,
+    ).toBe(201);
+    const nextGroupId = opaque('next');
+    expect(
+      (
+        await append({
+          eventId: 'implicit-reset-1',
+          eventType: 'commit',
+          epoch: 1,
+          groupId: nextGroupId,
+          payload: opaque('implicit-reset'),
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await append({
+          eventId: 'reset-commit-1',
+          eventType: 'commit',
+          epoch: 1,
+          groupId: nextGroupId,
+          resetFromGroupId: groupId,
+          payload: opaque('reset-commit'),
+        })
+      ).status,
+    ).toBe(201);
+
+    const events = await fetch(
+      `${base}/enterprise/e2ee/mls/conversations/${encodeURIComponent(alice.id)}/events`,
+      { headers: { authorization: `Bearer ${bobToken}` } },
+    );
+    expect(events.status).toBe(200);
+    await expect(events.json()).resolves.toMatchObject({
+      events: [
+        { eventId: 'commit-1', eventType: 'commit', epoch: 1 },
+        { eventId: 'welcome-1', eventType: 'welcome', epoch: 1 },
+        { eventId: 'application-1', eventType: 'application', epoch: 1 },
+        {
+          eventId: 'reset-commit-1',
+          eventType: 'commit',
+          epoch: 1,
+          sessionGeneration: 2,
+        },
+      ],
+    });
+
+    const health = (await (
+      await fetch(`${base}/enterprise/health`)
+    ).json()) as { capabilities: string[] };
+    expect(health.capabilities).toContain('e2ee_mls_transport_v1');
+    expect(health.capabilities).toContain(
+      'e2ee_mls_resource_governance_v1',
+    );
+    expect(health.capabilities).toContain(
+      'e2ee_mls_transport_session_reset_v1',
+    );
+    expect(health.capabilities).not.toContain('e2ee_mls_v1');
+  }, 60_000);
 
   it('企业私聊可发送并鉴权下载 Word、PDF 或图片附件', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);

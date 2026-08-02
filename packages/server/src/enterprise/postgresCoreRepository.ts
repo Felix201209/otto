@@ -19,9 +19,18 @@ import {
   E2EE_ATTACHMENT_MAX_COUNT,
   E2EE_MESSAGE_MAX_CIPHERTEXT_BYTES,
   E2EE_PROTOCOL_VERSION,
+  MLS_CIPHERSUITE,
+  MLS_KEY_PACKAGE_MAX_BYTES,
+  MLS_TRANSPORT_PAYLOAD_MAX_BYTES,
+  resolveMlsResourceGovernancePolicy,
   e2eeDeviceApprovalSignaturePayload,
   e2eeDeviceKeyFingerprint,
   e2eeMessageSignaturePayload,
+  mlsDirectConversation,
+  mlsKeyPackageReference,
+  requireMlsBase64,
+  requireMlsEpoch,
+  requireMlsKeyPackageReference,
   type E2eeDeviceApprovalInput,
   type E2eeDeviceRegistrationInput,
   type E2eeDeviceView,
@@ -31,6 +40,15 @@ import {
   type E2eeKeyTransparencyView,
   type E2eeMessageEnvelope,
   type SendE2eeDirectMessageInput,
+  type AppendMlsTransportEventInput,
+  type ClaimMlsKeyPackageInput,
+  type MlsKeyPackageView,
+  type MlsResourceCleanupResult,
+  type MlsResourceGovernancePolicy,
+  type MlsResourceRateAction,
+  type MlsTransportEventType,
+  type MlsTransportEventView,
+  type PublishMlsKeyPackageInput,
 } from '../modules/collaboration/index.js';
 import {
   hashIdentitySecret,
@@ -258,6 +276,62 @@ interface MessageRow extends Record<string, unknown> {
   attachment_refs:
     | Array<{ id: string; ciphertextSize: number | string; nonce: string }>
     | string;
+}
+
+interface MlsKeyPackageRow extends Record<string, unknown> {
+  key_package_reference: string;
+  account_id: string;
+  device_id: string;
+  ciphersuite: typeof MLS_CIPHERSUITE;
+  key_package: string;
+  created_at: Date | string;
+  claimed_at: Date | string | null;
+  claimed_by_account_id: string | null;
+  claimed_by_device_id: string | null;
+  welcome_event_id: string | null;
+  expires_at: Date | string;
+}
+
+interface MlsConversationRow extends Record<string, unknown> {
+  conversation_id: string;
+  participant_a_account_id: string;
+  participant_b_account_id: string;
+  group_id: string;
+  current_epoch: number | string;
+  active_generation: number | string;
+  retention_floor_sequence: number | string;
+}
+
+interface MlsGroupSessionRow extends Record<string, unknown> {
+  organization_id: string;
+  conversation_id: string;
+  generation: number | string;
+  group_id: string;
+  current_epoch: number | string;
+  status: 'active' | 'retired';
+  created_at: Date | string;
+  retired_at: Date | string | null;
+  reset_by_account_id: string | null;
+  reset_by_device_id: string | null;
+  reset_event_id: string | null;
+}
+
+interface MlsEventRow extends Record<string, unknown> {
+  sequence: number | string;
+  id: string;
+  conversation_id: string;
+  session_generation: number | string;
+  sender_account_id: string;
+  sender_device_id: string;
+  recipient_account_id: string | null;
+  recipient_device_id: string | null;
+  event_type: MlsTransportEventType;
+  epoch: number | string;
+  group_id: string;
+  payload: string;
+  key_package_reference: string | null;
+  created_at: Date | string;
+  expires_at: Date | string;
 }
 
 type Queryable = Pick<PostgresPoolLike, 'query'> | Pick<PostgresClientLike, 'query'>;
@@ -502,6 +576,68 @@ function messageView(row: MessageRow): E2eeDirectMessageView {
   };
 }
 
+function mlsKeyPackageView(row: MlsKeyPackageRow): MlsKeyPackageView {
+  return {
+    reference: row.key_package_reference,
+    accountId: row.account_id,
+    deviceId: row.device_id,
+    ciphersuite: row.ciphersuite,
+    keyPackage: row.key_package,
+    createdAt: iso(row.created_at)!,
+    claimedAt: iso(row.claimed_at),
+    expiresAt: iso(row.expires_at)!,
+  };
+}
+
+function mlsEventView(row: MlsEventRow): MlsTransportEventView {
+  return {
+    sequence: Number(row.sequence),
+    eventId: row.id,
+    conversationId: row.conversation_id,
+    sessionGeneration: Number(row.session_generation),
+    senderAccountId: row.sender_account_id,
+    senderDeviceId: row.sender_device_id,
+    recipientAccountId: row.recipient_account_id,
+    recipientDeviceId: row.recipient_device_id,
+    eventType: row.event_type,
+    epoch: Number(row.epoch),
+    groupId: row.group_id,
+    payload: row.payload,
+    keyPackageReference: row.key_package_reference,
+    createdAt: iso(row.created_at)!,
+    expiresAt: iso(row.expires_at)!,
+  };
+}
+
+function postgresMlsEventMatches(
+  row: MlsEventRow,
+  input: {
+    conversationId: string;
+    senderAccountId: string;
+    senderDeviceId: string;
+    recipientAccountId: string | null;
+    recipientDeviceId: string | null;
+    eventType: MlsTransportEventType;
+    epoch: number;
+    groupId: string;
+    payload: string;
+    keyPackageReference: string | null;
+  },
+): boolean {
+  return (
+    row.conversation_id === input.conversationId &&
+    row.sender_account_id === input.senderAccountId &&
+    row.sender_device_id === input.senderDeviceId &&
+    row.recipient_account_id === input.recipientAccountId &&
+    row.recipient_device_id === input.recipientDeviceId &&
+    row.event_type === input.eventType &&
+    Number(row.epoch) === input.epoch &&
+    row.group_id === input.groupId &&
+    row.payload === input.payload &&
+    row.key_package_reference === input.keyPackageReference
+  );
+}
+
 async function transaction<T>(pool: PostgresPoolLike, operation: (client: PostgresClientLike) => Promise<T>): Promise<T> {
   const client = await pool.connect();
   let active = false;
@@ -642,11 +778,24 @@ export function createPostgresEnterpriseCoreRepository(input: {
   pool: PostgresPoolLike;
   defaultOrganizationId?: string;
   sessionTtlMs?: number;
+  now?: () => number;
+  mlsResourcePolicy?: Partial<MlsResourceGovernancePolicy>;
 }) {
   const defaultOrganizationId = input.defaultOrganizationId?.trim() || 'org_default';
   const sessionTtlMs = input.sessionTtlMs ?? SESSION_TTL_MS;
   if (!Number.isSafeInteger(sessionTtlMs) || sessionTtlMs < 60_000) {
     throw new Error('PostgreSQL enterprise session TTL is invalid');
+  }
+  const mlsResourcePolicy = resolveMlsResourceGovernancePolicy(
+    input.mlsResourcePolicy,
+  );
+
+  function mlsNow(): { milliseconds: number; iso: string } {
+    const milliseconds = (input.now ?? Date.now)();
+    if (!Number.isSafeInteger(milliseconds) || milliseconds < 0) {
+      throw new Error('MLS resource clock is invalid');
+    }
+    return { milliseconds, iso: new Date(milliseconds).toISOString() };
   }
 
   async function getOrganization(id: string): Promise<PostgresEnterpriseOrganizationView | null> {
@@ -1593,6 +1742,907 @@ export function createPostgresEnterpriseCoreRepository(input: {
     };
   }
 
+  async function consumePostgresMlsRateLimit(input: {
+    client: PostgresClientLike;
+    organizationId: string;
+    accountId: string;
+    deviceId: string;
+    action: MlsResourceRateAction;
+    nowMs: number;
+    limit: number;
+  }): Promise<void> {
+    const bucketStartedAt = new Date(
+      Math.floor(input.nowMs / (60 * 1_000)) * 60 * 1_000,
+    ).toISOString();
+    const consumed = await input.client.query(
+      `INSERT INTO mls_resource_rate_buckets
+        (organization_id, account_id, device_id, action,
+         bucket_started_at, request_count)
+       VALUES ($1, $2, $3, $4, $5::timestamptz, 1)
+       ON CONFLICT (
+         organization_id, account_id, device_id, action, bucket_started_at
+       ) DO UPDATE SET request_count =
+         mls_resource_rate_buckets.request_count + 1
+       WHERE mls_resource_rate_buckets.request_count < $6
+       RETURNING request_count`,
+      [
+        input.organizationId,
+        input.accountId,
+        input.deviceId,
+        input.action,
+        bucketStartedAt,
+        input.limit,
+      ],
+    );
+    if (!consumed.rows[0]) {
+      throw new Error(`MLS ${input.action} rate limit exceeded`);
+    }
+  }
+
+  async function enforcePostgresMlsKeyPackageInventory(input: {
+    client: PostgresClientLike;
+    organizationId: string;
+    deviceId: string;
+    now: string;
+  }): Promise<void> {
+    await input.client.query(
+      `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+      [`${input.organizationId}:mls-key-package-inventory`],
+    );
+    const inventory = await input.client.query<
+      {
+        device_count: number | string;
+        organization_count: number | string;
+      } & Record<string, unknown>
+    >(
+      `SELECT
+         count(*) FILTER (WHERE device_id = $2)::integer AS device_count,
+         count(*)::integer AS organization_count
+       FROM mls_key_packages
+       WHERE organization_id = $1 AND claimed_at IS NULL
+         AND expires_at > $3::timestamptz`,
+      [input.organizationId, input.deviceId, input.now],
+    );
+    const row = inventory.rows[0];
+    if (
+      !row ||
+      Number(row.device_count) >=
+        mlsResourcePolicy.maxUnclaimedKeyPackagesPerDevice
+    ) {
+      throw new Error('MLS KeyPackage device inventory quota exceeded');
+    }
+    if (
+      Number(row.organization_count) >=
+      mlsResourcePolicy.maxUnclaimedKeyPackagesPerOrganization
+    ) {
+      throw new Error('MLS KeyPackage organization inventory quota exceeded');
+    }
+  }
+
+  async function enforcePostgresMlsTransportEventInventory(input: {
+    client: PostgresClientLike;
+    organizationId: string;
+    conversationId: string;
+    payloadStorageBytes: number;
+    now: string;
+  }): Promise<void> {
+    await input.client.query(
+      `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+      [`${input.organizationId}:mls-event-inventory`],
+    );
+    const usage = await input.client.query<
+      {
+        organization_count: number | string;
+        organization_bytes: number | string;
+        conversation_count: number | string;
+        conversation_bytes: number | string;
+      } & Record<string, unknown>
+    >(
+      `SELECT
+         count(*)::integer AS organization_count,
+         COALESCE(sum(octet_length(payload)), 0)::bigint AS organization_bytes,
+         count(*) FILTER (WHERE conversation_id = $2)::integer
+           AS conversation_count,
+         COALESCE(sum(octet_length(payload)) FILTER (
+           WHERE conversation_id = $2
+         ), 0)::bigint AS conversation_bytes
+       FROM mls_transport_events
+       WHERE organization_id = $1 AND expires_at > $3::timestamptz`,
+      [input.organizationId, input.conversationId, input.now],
+    );
+    const row = usage.rows[0];
+    if (
+      !row ||
+      Number(row.conversation_count) >=
+        mlsResourcePolicy.maxTransportEventsPerConversation ||
+      Number(row.conversation_bytes) + input.payloadStorageBytes >
+        mlsResourcePolicy.maxTransportEventBytesPerConversation
+    ) {
+      throw new Error('MLS conversation event inventory quota exceeded');
+    }
+    if (
+      Number(row.organization_count) >=
+        mlsResourcePolicy.maxTransportEventsPerOrganization ||
+      Number(row.organization_bytes) + input.payloadStorageBytes >
+        mlsResourcePolicy.maxTransportEventBytesPerOrganization
+    ) {
+      throw new Error('MLS organization event inventory quota exceeded');
+    }
+  }
+
+  async function requirePostgresMlsParticipants(
+    queryable: Queryable,
+    organizationId: string,
+    accountId: string,
+    peerAccountId: string,
+  ): Promise<void> {
+    const participants = await queryable.query<
+      { id: string } & Record<string, unknown>
+    >(
+      `SELECT account.id FROM accounts AS account
+       JOIN organizations AS organization ON organization.id = account.organization_id
+       WHERE account.organization_id = $1 AND account.id = ANY($2::text[])
+         AND account.status = 'active' AND account.deleted_at IS NULL
+         AND organization.status = 'active'`,
+      [organizationId, [accountId, peerAccountId]],
+    );
+    if (new Set(participants.rows.map((row) => row.id)).size !== 2) {
+      throw new Error('MLS participant is not active in organization');
+    }
+  }
+
+  async function requirePostgresMlsDevice(
+    queryable: Queryable,
+    organizationId: string,
+    accountId: string,
+    deviceId: string,
+  ): Promise<void> {
+    const device = await queryable.query(
+      `SELECT 1 FROM e2ee_devices
+       WHERE organization_id = $1 AND account_id = $2 AND device_id = $3
+         AND approval_state = 'approved' AND revoked_at IS NULL`,
+      [organizationId, accountId, deviceId],
+    );
+    if (!device.rows[0])
+      throw new Error('MLS device is not active and approved');
+  }
+
+  async function publishMlsKeyPackage(
+    raw: PublishMlsKeyPackageInput,
+  ): Promise<MlsKeyPackageView> {
+    const organizationId = requiredIdentifier(
+      raw.organizationId,
+      'organization id',
+    );
+    const accountId = requiredIdentifier(raw.accountId, 'account id');
+    const deviceId = requiredIdentifier(raw.deviceId, 'device id');
+    if (raw.ciphersuite !== MLS_CIPHERSUITE) {
+      throw new Error('MLS ciphersuite is unsupported');
+    }
+    const keyPackage = requireMlsBase64(
+      raw.keyPackage,
+      'MLS KeyPackage',
+      MLS_KEY_PACKAGE_MAX_BYTES,
+    );
+    const reference = mlsKeyPackageReference(keyPackage);
+    const now = mlsNow();
+    return transaction(input.pool, async (client) => {
+      await client.query(
+        `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+        [`${organizationId}:mls-key-package:${reference}`],
+      );
+      const account = await client.query(
+        `SELECT account.id FROM accounts AS account
+         JOIN organizations AS organization ON organization.id = account.organization_id
+         WHERE account.organization_id = $1 AND account.id = $2
+           AND account.status = 'active' AND account.deleted_at IS NULL
+           AND organization.status = 'active'`,
+        [organizationId, accountId],
+      );
+      if (!account.rows[0]) {
+        throw new Error('MLS participant is not active in organization');
+      }
+      await requirePostgresMlsDevice(
+        client,
+        organizationId,
+        accountId,
+        deviceId,
+      );
+      const existing = await client.query<MlsKeyPackageRow>(
+        `SELECT * FROM mls_key_packages
+         WHERE organization_id = $1 AND key_package_reference = $2
+         FOR UPDATE`,
+        [organizationId, reference],
+      );
+      const row = existing.rows[0];
+      if (row) {
+        if (
+          row.account_id !== accountId ||
+          row.device_id !== deviceId ||
+          row.ciphersuite !== raw.ciphersuite ||
+          row.key_package !== keyPackage ||
+          row.claimed_at !== null ||
+          iso(row.expires_at)! <= now.iso
+        ) {
+          throw new Error('MLS KeyPackage reference conflict or reuse');
+        }
+        return mlsKeyPackageView(row);
+      }
+      await consumePostgresMlsRateLimit({
+        client,
+        organizationId,
+        accountId,
+        deviceId,
+        action: 'key_package_publish',
+        nowMs: now.milliseconds,
+        limit: mlsResourcePolicy.keyPackagePublishesPerMinute,
+      });
+      await enforcePostgresMlsKeyPackageInventory({
+        client,
+        organizationId,
+        deviceId,
+        now: now.iso,
+      });
+      const inserted = await client.query<MlsKeyPackageRow>(
+        `INSERT INTO mls_key_packages
+          (organization_id, key_package_reference, account_id, device_id,
+           ciphersuite, key_package, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz)
+         RETURNING *`,
+        [
+          organizationId,
+          reference,
+          accountId,
+          deviceId,
+          raw.ciphersuite,
+          keyPackage,
+          new Date(
+            now.milliseconds + mlsResourcePolicy.keyPackageTtlMs,
+          ).toISOString(),
+        ],
+      );
+      return mlsKeyPackageView(inserted.rows[0]!);
+    });
+  }
+
+  async function claimMlsKeyPackage(
+    raw: ClaimMlsKeyPackageInput,
+  ): Promise<MlsKeyPackageView | null> {
+    const organizationId = requiredIdentifier(
+      raw.organizationId,
+      'organization id',
+    );
+    const requesterAccountId = requiredIdentifier(
+      raw.requesterAccountId,
+      'requester account id',
+    );
+    const requesterDeviceId = requiredIdentifier(
+      raw.requesterDeviceId,
+      'requester device id',
+    );
+    const recipientAccountId = requiredIdentifier(
+      raw.recipientAccountId,
+      'recipient account id',
+    );
+    mlsDirectConversation({
+      organizationId,
+      accountId: requesterAccountId,
+      peerAccountId: recipientAccountId,
+    });
+    const now = mlsNow();
+    return transaction(input.pool, async (client) => {
+      await requirePostgresMlsParticipants(
+        client,
+        organizationId,
+        requesterAccountId,
+        recipientAccountId,
+      );
+      await requirePostgresMlsDevice(
+        client,
+        organizationId,
+        requesterAccountId,
+        requesterDeviceId,
+      );
+      const available = await client.query<MlsKeyPackageRow>(
+        `SELECT package.* FROM mls_key_packages AS package
+         JOIN e2ee_devices AS device
+           ON device.organization_id = package.organization_id
+          AND device.account_id = package.account_id
+          AND device.device_id = package.device_id
+         WHERE package.organization_id = $1 AND package.account_id = $2
+           AND package.claimed_at IS NULL
+           AND package.expires_at > $3::timestamptz
+           AND device.approval_state = 'approved' AND device.revoked_at IS NULL
+         ORDER BY package.created_at, package.key_package_reference
+         LIMIT 1 FOR UPDATE OF package SKIP LOCKED`,
+        [organizationId, recipientAccountId, now.iso],
+      );
+      const row = available.rows[0];
+      if (!row) return null;
+      const claimed = await client.query<MlsKeyPackageRow>(
+        `UPDATE mls_key_packages
+         SET claimed_at = CURRENT_TIMESTAMP, claimed_by_account_id = $3,
+             claimed_by_device_id = $4, expires_at = $5::timestamptz
+         WHERE organization_id = $1 AND key_package_reference = $2
+           AND claimed_at IS NULL
+         RETURNING *`,
+        [
+          organizationId,
+          row.key_package_reference,
+          requesterAccountId,
+          requesterDeviceId,
+          new Date(
+            now.milliseconds + mlsResourcePolicy.claimedKeyPackageTtlMs,
+          ).toISOString(),
+        ],
+      );
+      return claimed.rows[0] ? mlsKeyPackageView(claimed.rows[0]) : null;
+    });
+  }
+
+  async function appendMlsTransportEvent(
+    raw: AppendMlsTransportEventInput,
+  ): Promise<MlsTransportEventView> {
+    const organizationId = requiredIdentifier(
+      raw.organizationId,
+      'organization id',
+    );
+    const senderAccountId = requiredIdentifier(
+      raw.senderAccountId,
+      'sender account id',
+    );
+    const peerAccountId = requiredIdentifier(
+      raw.peerAccountId,
+      'peer account id',
+    );
+    const senderDeviceId = requiredIdentifier(
+      raw.senderDeviceId,
+      'sender device id',
+    );
+    const eventId = requiredIdentifier(raw.eventId, 'MLS event id');
+    if (!['welcome', 'commit', 'application'].includes(raw.eventType)) {
+      throw new Error('MLS event type is invalid');
+    }
+    const epoch = requireMlsEpoch(raw.epoch);
+    const groupId = requireMlsBase64(raw.groupId, 'MLS group id', 255);
+    const payload = requireMlsBase64(
+      raw.payload,
+      'MLS transport payload',
+      MLS_TRANSPORT_PAYLOAD_MAX_BYTES,
+    );
+    const recipientDeviceId =
+      raw.eventType === 'welcome'
+        ? requiredIdentifier(raw.recipientDeviceId ?? '', 'recipient device id')
+        : null;
+    const keyPackageReference =
+      raw.eventType === 'welcome'
+        ? requireMlsKeyPackageReference(raw.keyPackageReference ?? '')
+        : null;
+    const resetFromGroupId = raw.resetFromGroupId
+      ? requireMlsBase64(
+          raw.resetFromGroupId,
+          'MLS reset source group id',
+          255,
+        )
+      : null;
+    if (
+      raw.eventType !== 'welcome' &&
+      (raw.recipientDeviceId || raw.keyPackageReference)
+    ) {
+      throw new Error('only MLS Welcome may target a KeyPackage device');
+    }
+    if (
+      resetFromGroupId &&
+      (raw.eventType !== 'commit' ||
+        epoch !== 1 ||
+        resetFromGroupId === groupId)
+    ) {
+      throw new Error(
+        'explicit MLS session reset requires an epoch 1 Commit for a new group',
+      );
+    }
+    const direct = mlsDirectConversation({
+      organizationId,
+      accountId: senderAccountId,
+      peerAccountId,
+    });
+    const normalized = {
+      conversationId: direct.conversationId,
+      senderAccountId,
+      senderDeviceId,
+      recipientAccountId: raw.eventType === 'welcome' ? peerAccountId : null,
+      recipientDeviceId,
+      eventType: raw.eventType,
+      epoch,
+      groupId,
+      payload,
+      keyPackageReference,
+    };
+    const now = mlsNow();
+    return transaction(input.pool, async (client) => {
+      await client.query(
+        `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+        [`${organizationId}:mls-event:${eventId}`],
+      );
+      await requirePostgresMlsParticipants(
+        client,
+        organizationId,
+        senderAccountId,
+        peerAccountId,
+      );
+      await requirePostgresMlsDevice(
+        client,
+        organizationId,
+        senderAccountId,
+        senderDeviceId,
+      );
+      const existing = await client.query<MlsEventRow>(
+        `SELECT * FROM mls_transport_events
+         WHERE organization_id = $1 AND id = $2 FOR UPDATE`,
+        [organizationId, eventId],
+      );
+      if (existing.rows[0]) {
+        if (!postgresMlsEventMatches(existing.rows[0], normalized)) {
+          throw new Error('MLS event idempotency conflict');
+        }
+        if (iso(existing.rows[0].expires_at)! <= now.iso) {
+          throw new Error(
+            'MLS event cursor expired; secure session reset required',
+          );
+        }
+        return mlsEventView(existing.rows[0]);
+      }
+
+      await client.query(
+        `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+        [`${organizationId}:mls-conversation:${direct.conversationId}`],
+      );
+      await consumePostgresMlsRateLimit({
+        client,
+        organizationId,
+        accountId: senderAccountId,
+        deviceId: senderDeviceId,
+        action: 'transport_event_append',
+        nowMs: now.milliseconds,
+        limit: mlsResourcePolicy.transportEventsPerMinute,
+      });
+      await enforcePostgresMlsTransportEventInventory({
+        client,
+        organizationId,
+        conversationId: direct.conversationId,
+        payloadStorageBytes: Buffer.byteLength(payload, 'utf8'),
+        now: now.iso,
+      });
+
+      const conversationResult = await client.query<MlsConversationRow>(
+        `SELECT * FROM mls_conversations
+         WHERE organization_id = $1 AND conversation_id = $2 FOR UPDATE`,
+        [organizationId, direct.conversationId],
+      );
+      const conversation = conversationResult.rows[0];
+      let sessionGeneration = 1;
+      if (!conversation) {
+        if (raw.eventType !== 'commit' || epoch !== 1 || resetFromGroupId) {
+          throw new Error(
+            'first MLS transport event must be the epoch 1 commit',
+          );
+        }
+        await client.query(
+          `INSERT INTO mls_conversations
+            (organization_id, conversation_id, participant_a_account_id,
+             participant_b_account_id, group_id, current_epoch,
+             active_generation)
+           VALUES ($1, $2, $3, $4, $5, 1, 1)`,
+          [
+            organizationId,
+            direct.conversationId,
+            direct.participantAAccountId,
+            direct.participantBAccountId,
+            groupId,
+          ],
+        );
+        await client.query(
+          `INSERT INTO mls_group_sessions
+            (organization_id, conversation_id, generation, group_id,
+             current_epoch, status, created_at)
+           VALUES ($1, $2, 1, $3, 1, 'active', $4::timestamptz)`,
+          [organizationId, direct.conversationId, groupId, now.iso],
+        );
+      } else {
+        sessionGeneration = Number(conversation.active_generation);
+        if (conversation.group_id !== groupId) {
+          if (
+            raw.eventType !== 'commit' ||
+            epoch !== 1 ||
+            !resetFromGroupId
+          ) {
+            throw new Error(
+              'a new MLS group requires an explicit MLS session reset',
+            );
+          }
+          if (resetFromGroupId !== conversation.group_id) {
+            throw new Error('MLS reset source group is no longer active');
+          }
+          const reused = await client.query(
+            `SELECT 1 FROM mls_group_sessions
+             WHERE organization_id = $1 AND conversation_id = $2
+               AND group_id = $3`,
+            [organizationId, direct.conversationId, groupId],
+          );
+          if (reused.rows[0]) {
+            throw new Error('MLS reset group id was already used');
+          }
+          const retired = await client.query<MlsGroupSessionRow>(
+            `UPDATE mls_group_sessions
+             SET status = 'retired', retired_at = $4::timestamptz
+             WHERE organization_id = $1 AND conversation_id = $2
+               AND generation = $3 AND status = 'active'
+             RETURNING *`,
+            [
+              organizationId,
+              direct.conversationId,
+              sessionGeneration,
+              now.iso,
+            ],
+          );
+          if (!retired.rows[0]) {
+            throw new Error('MLS active group session state is inconsistent');
+          }
+          sessionGeneration += 1;
+          await client.query(
+            `UPDATE mls_conversations
+             SET group_id = $3, current_epoch = 1,
+                 active_generation = $4, updated_at = $5::timestamptz
+             WHERE organization_id = $1 AND conversation_id = $2`,
+            [
+              organizationId,
+              direct.conversationId,
+              groupId,
+              sessionGeneration,
+              now.iso,
+            ],
+          );
+          await client.query(
+            `INSERT INTO mls_group_sessions
+              (organization_id, conversation_id, generation, group_id,
+               current_epoch, status, created_at, reset_by_account_id,
+               reset_by_device_id, reset_event_id)
+             VALUES ($1, $2, $3, $4, 1, 'active', $5::timestamptz,
+                     $6, $7, $8)`,
+            [
+              organizationId,
+              direct.conversationId,
+              sessionGeneration,
+              groupId,
+              now.iso,
+              senderAccountId,
+              senderDeviceId,
+              eventId,
+            ],
+          );
+        } else {
+          if (resetFromGroupId) {
+            throw new Error('MLS reset target group must be new');
+          }
+          if (raw.eventType === 'commit') {
+            if (epoch !== Number(conversation.current_epoch) + 1) {
+              throw new Error('MLS commit must advance to the next epoch');
+            }
+            await client.query(
+              `UPDATE mls_conversations
+               SET current_epoch = $3, updated_at = $4::timestamptz
+               WHERE organization_id = $1 AND conversation_id = $2`,
+              [organizationId, direct.conversationId, epoch, now.iso],
+            );
+            const sessionUpdated = await client.query<MlsGroupSessionRow>(
+              `UPDATE mls_group_sessions SET current_epoch = $4
+               WHERE organization_id = $1 AND conversation_id = $2
+                 AND generation = $3 AND status = 'active'
+               RETURNING *`,
+              [
+                organizationId,
+                direct.conversationId,
+                sessionGeneration,
+                epoch,
+              ],
+            );
+            if (!sessionUpdated.rows[0]) {
+              throw new Error(
+                'MLS active group session state is inconsistent',
+              );
+            }
+          } else if (epoch !== Number(conversation.current_epoch)) {
+            throw new Error('MLS event must use the current epoch');
+          }
+        }
+      }
+
+      if (raw.eventType === 'welcome') {
+        await requirePostgresMlsDevice(
+          client,
+          organizationId,
+          peerAccountId,
+          recipientDeviceId!,
+        );
+        const claimed = await client.query<MlsKeyPackageRow>(
+          `SELECT * FROM mls_key_packages
+           WHERE organization_id = $1 AND key_package_reference = $2
+           FOR UPDATE`,
+          [organizationId, keyPackageReference],
+        );
+        const packageRow = claimed.rows[0];
+        if (
+          !packageRow ||
+          packageRow.account_id !== peerAccountId ||
+          packageRow.device_id !== recipientDeviceId ||
+          packageRow.claimed_by_account_id !== senderAccountId ||
+          packageRow.claimed_by_device_id !== senderDeviceId ||
+          !packageRow.claimed_at ||
+          packageRow.welcome_event_id ||
+          iso(packageRow.expires_at)! <= now.iso
+        ) {
+          throw new Error(
+            'MLS Welcome does not match an unused KeyPackage claim for this device',
+          );
+        }
+      }
+
+      const inserted = await client.query<MlsEventRow>(
+        `INSERT INTO mls_transport_events
+          (id, organization_id, conversation_id, session_generation,
+           sender_account_id,
+           sender_device_id, recipient_account_id, recipient_device_id,
+           event_type, epoch, group_id, payload, key_package_reference,
+           expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+                 $13, $14::timestamptz)
+         RETURNING *`,
+        [
+          eventId,
+          organizationId,
+          direct.conversationId,
+          sessionGeneration,
+          senderAccountId,
+          senderDeviceId,
+          normalized.recipientAccountId,
+          recipientDeviceId,
+          raw.eventType,
+          epoch,
+          groupId,
+          payload,
+          keyPackageReference,
+          new Date(
+            now.milliseconds + mlsResourcePolicy.transportEventTtlMs,
+          ).toISOString(),
+        ],
+      );
+      if (raw.eventType === 'welcome') {
+        await client.query(
+          `UPDATE mls_key_packages SET welcome_event_id = $3
+           WHERE organization_id = $1 AND key_package_reference = $2`,
+          [organizationId, keyPackageReference, eventId],
+        );
+      }
+      return mlsEventView(inserted.rows[0]!);
+    });
+  }
+
+  async function listMlsTransportEvents(raw: {
+    organizationId: string;
+    accountId: string;
+    peerAccountId: string;
+    afterSequence?: number;
+    limit?: number;
+  }): Promise<MlsTransportEventView[]> {
+    const organizationId = requiredIdentifier(
+      raw.organizationId,
+      'organization id',
+    );
+    const accountId = requiredIdentifier(raw.accountId, 'account id');
+    const peerAccountId = requiredIdentifier(
+      raw.peerAccountId,
+      'peer account id',
+    );
+    const afterSequence = Math.max(0, Math.floor(raw.afterSequence ?? 0));
+    if (!Number.isSafeInteger(afterSequence)) {
+      throw new Error('MLS event sequence is invalid');
+    }
+    const limit = Math.max(1, Math.min(500, Math.floor(raw.limit ?? 100)));
+    const direct = mlsDirectConversation({
+      organizationId,
+      accountId,
+      peerAccountId,
+    });
+    await requirePostgresMlsParticipants(
+      input.pool,
+      organizationId,
+      accountId,
+      peerAccountId,
+    );
+    const now = mlsNow();
+    const retention = await input.pool.query<
+      {
+        retention_floor_sequence: number | string;
+        expired_floor_sequence: number | string;
+      } & Record<string, unknown>
+    >(
+      `SELECT conversation.retention_floor_sequence,
+              COALESCE(MAX(event.sequence) FILTER (
+                WHERE event.expires_at <= $3::timestamptz
+              ), 0)::bigint AS expired_floor_sequence
+       FROM mls_conversations AS conversation
+       LEFT JOIN mls_transport_events AS event
+         ON event.organization_id = conversation.organization_id
+        AND event.conversation_id = conversation.conversation_id
+       WHERE conversation.organization_id = $1
+         AND conversation.conversation_id = $2
+       GROUP BY conversation.retention_floor_sequence`,
+      [organizationId, direct.conversationId, now.iso],
+    );
+    const retentionFloor = Math.max(
+      Number(retention.rows[0]?.retention_floor_sequence ?? 0),
+      Number(retention.rows[0]?.expired_floor_sequence ?? 0),
+    );
+    if (afterSequence < retentionFloor) {
+      throw new Error('MLS event cursor expired; secure session reset required');
+    }
+    const events = await input.pool.query<MlsEventRow>(
+      `SELECT event.* FROM mls_transport_events AS event
+       JOIN mls_conversations AS conversation
+         ON conversation.organization_id = event.organization_id
+        AND conversation.conversation_id = event.conversation_id
+       WHERE event.organization_id = $1 AND event.conversation_id = $2
+         AND event.sequence > $3
+         AND event.expires_at > $4::timestamptz
+         AND $5 IN (
+           conversation.participant_a_account_id,
+           conversation.participant_b_account_id
+         )
+       ORDER BY event.sequence LIMIT $6`,
+      [
+        organizationId,
+        direct.conversationId,
+        afterSequence,
+        now.iso,
+        accountId,
+        limit,
+      ],
+    );
+    return events.rows.map(mlsEventView);
+  }
+
+  async function cleanupExpiredMlsResources(
+    raw: { before?: string; limit?: number } = {},
+  ): Promise<MlsResourceCleanupResult> {
+    const parsedBefore = raw.before ? new Date(raw.before) : new Date(mlsNow().iso);
+    if (Number.isNaN(parsedBefore.getTime())) {
+      throw new Error('MLS cleanup timestamp is invalid');
+    }
+    const before = parsedBefore.toISOString();
+    const limit = raw.limit ?? 500;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 5_000) {
+      throw new Error('MLS cleanup limit is invalid');
+    }
+    return transaction(input.pool, async (client) => {
+      const lease = await client.query<
+        { locked: boolean } & Record<string, unknown>
+      >(
+        `SELECT pg_try_advisory_xact_lock(
+           hashtextextended('otto:mls-resource-cleanup:v1', 0)
+         ) AS locked`,
+      );
+      if (lease.rows[0]?.locked !== true) {
+        return {
+          eventsDeleted: 0,
+          keyPackagesDeleted: 0,
+          groupSessionsDeleted: 0,
+          rateBucketsDeleted: 0,
+          conversationsAdvanced: 0,
+        };
+      }
+      const expiredEvents = await client.query<
+        {
+          sequence: number | string;
+          organization_id: string;
+          conversation_id: string;
+        } & Record<string, unknown>
+      >(
+        `SELECT sequence, organization_id, conversation_id
+         FROM mls_transport_events
+         WHERE expires_at <= $1::timestamptz
+         ORDER BY sequence LIMIT $2 FOR UPDATE SKIP LOCKED`,
+        [before, limit],
+      );
+      const floors = new Map<string, (typeof expiredEvents.rows)[number]>();
+      for (const event of expiredEvents.rows) {
+        const key = `${event.organization_id}\n${event.conversation_id}`;
+        const current = floors.get(key);
+        if (!current || Number(event.sequence) > Number(current.sequence)) {
+          floors.set(key, event);
+        }
+      }
+      for (const floor of floors.values()) {
+        await client.query(
+          `UPDATE mls_conversations
+           SET retention_floor_sequence = GREATEST(
+             retention_floor_sequence, $3::bigint
+           )
+           WHERE organization_id = $1 AND conversation_id = $2`,
+          [floor.organization_id, floor.conversation_id, floor.sequence],
+        );
+      }
+      let eventsDeleted = 0;
+      if (expiredEvents.rows.length > 0) {
+        const deleted = await client.query(
+          `DELETE FROM mls_transport_events
+           WHERE sequence = ANY($1::bigint[]) RETURNING sequence`,
+          [expiredEvents.rows.map((event) => String(event.sequence))],
+        );
+        eventsDeleted = deleted.rows.length;
+      }
+      const deletedGroupSessions = await client.query(
+        `WITH candidates AS (
+           SELECT session.organization_id, session.conversation_id,
+                  session.generation
+           FROM mls_group_sessions AS session
+           WHERE session.status = 'retired'
+             AND session.retired_at <= $1::timestamptz
+             AND NOT EXISTS (
+               SELECT 1 FROM mls_transport_events AS event
+               WHERE event.organization_id = session.organization_id
+                 AND event.conversation_id = session.conversation_id
+                 AND event.session_generation = session.generation
+             )
+           ORDER BY session.retired_at, session.generation
+           LIMIT $2 FOR UPDATE SKIP LOCKED
+         )
+         DELETE FROM mls_group_sessions AS session USING candidates
+         WHERE session.organization_id = candidates.organization_id
+           AND session.conversation_id = candidates.conversation_id
+           AND session.generation = candidates.generation
+           AND session.status = 'retired'
+         RETURNING session.generation`,
+        [before, limit],
+      );
+      const deletedPackages = await client.query(
+        `WITH candidates AS (
+           SELECT package.organization_id, package.key_package_reference
+           FROM mls_key_packages AS package
+           WHERE package.expires_at <= $1::timestamptz
+             AND NOT EXISTS (
+               SELECT 1 FROM mls_transport_events AS event
+               WHERE event.organization_id = package.organization_id
+                 AND event.key_package_reference = package.key_package_reference
+             )
+           ORDER BY package.expires_at, package.key_package_reference
+           LIMIT $2 FOR UPDATE SKIP LOCKED
+         )
+         DELETE FROM mls_key_packages AS package USING candidates
+         WHERE package.organization_id = candidates.organization_id
+           AND package.key_package_reference = candidates.key_package_reference
+         RETURNING package.key_package_reference`,
+        [before, limit],
+      );
+      const deletedRateBuckets = await client.query(
+        `WITH candidates AS (
+           SELECT ctid FROM mls_resource_rate_buckets
+           WHERE bucket_started_at < $1::timestamptz - INTERVAL '2 minutes'
+           ORDER BY bucket_started_at LIMIT $2 FOR UPDATE SKIP LOCKED
+         )
+         DELETE FROM mls_resource_rate_buckets AS bucket USING candidates
+         WHERE bucket.ctid = candidates.ctid RETURNING bucket.ctid`,
+        [before, limit],
+      );
+      return {
+        eventsDeleted,
+        keyPackagesDeleted: deletedPackages.rows.length,
+        groupSessionsDeleted: deletedGroupSessions.rows.length,
+        rateBucketsDeleted: deletedRateBuckets.rows.length,
+        conversationsAdvanced: floors.size,
+      };
+    });
+  }
+
   async function sendE2eeDirectMessage(
     raw: SendPostgresE2eeDirectMessageInput,
   ): Promise<E2eeDirectMessageView> {
@@ -2108,6 +3158,11 @@ export function createPostgresEnterpriseCoreRepository(input: {
     approveE2eeDevice,
     revokeE2eeDevice,
     listE2eeKeyTransparency,
+    publishMlsKeyPackage,
+    claimMlsKeyPackage,
+    appendMlsTransportEvent,
+    listMlsTransportEvents,
+    cleanupExpiredMlsResources,
     sendE2eeDirectMessage,
     listE2eeDirectMessages,
     getE2eeAttachmentAuthority,

@@ -3,6 +3,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 
 import { verifyE2eeReleaseReadiness } from '../verify-e2ee-release-readiness.mjs';
 
@@ -12,6 +13,7 @@ function readyStatus() {
     protocol: {
       id: 'audited-ratchet-v1',
       implementation: 'approved-provider',
+      serverCiphertextTransport: true,
       externalAuditCompleted: true,
       prekeyHandshake: true,
       doubleRatchet: true,
@@ -33,6 +35,37 @@ function readyStatus() {
 }
 
 describe('E2EE production release readiness gate', () => {
+  it('keeps the checked-in transport foundation blocked from production claims', () => {
+    const current = JSON.parse(
+      readFileSync(
+        new URL('../../security/e2ee-release-status.json', import.meta.url),
+        'utf8',
+      ),
+    );
+    const result = verifyE2eeReleaseReadiness(current);
+
+    expect(current.protocol).toMatchObject({
+      serverCiphertextTransport: true,
+      transportSessionHistory: true,
+      transportSessionReset: true,
+      safetyStateReset: false,
+    });
+    expect(result.ready).toBe(false);
+    expect(result.blockers).toEqual(
+      expect.arrayContaining([
+        'external audit is not complete',
+        'prekey handshake is not implemented',
+        'Double Ratchet is not implemented',
+        'multi-device sessions are not implemented',
+        'safety state reset is not implemented',
+        'forward secrecy is not established',
+        'post-compromise security is not established',
+        'external audit report is not recorded',
+        'explicit E2EE production release approval is missing',
+      ]),
+    );
+  });
+
   it('rejects the current envelope protocol without Signal-level claims', () => {
     const result = verifyE2eeReleaseReadiness({
       ...readyStatus(),
@@ -40,6 +73,7 @@ describe('E2EE production release readiness gate', () => {
         ...readyStatus().protocol,
         id: 'device-envelope-v1',
         implementation: 'otto-legacy-envelope',
+        serverCiphertextTransport: false,
         externalAuditCompleted: false,
         prekeyHandshake: false,
         doubleRatchet: false,

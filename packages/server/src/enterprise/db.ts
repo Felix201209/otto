@@ -231,7 +231,7 @@ const PRIVACY_DELETION_LEDGER_KEY_PATH = path.join(
 );
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
-export const ENTERPRISE_SCHEMA_VERSION = 20;
+export const ENTERPRISE_SCHEMA_VERSION = 21;
 export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
@@ -866,6 +866,11 @@ export const {
   approveE2eeDevice,
   listE2eeDevices,
   listE2eeKeyTransparency,
+  publishMlsKeyPackage,
+  claimMlsKeyPackage,
+  appendMlsTransportEvent,
+  listMlsTransportEvents,
+  cleanupExpiredMlsResources,
   listE2eeDirectMessages,
   listPendingE2eeAtoaRequests,
   listUnreadE2eeNotifications,

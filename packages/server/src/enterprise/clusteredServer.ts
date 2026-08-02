@@ -38,6 +38,7 @@ import {
   type PostgresDatabaseReadiness,
 } from '../modules/data_platform/index.js';
 import { createClusteredAttachmentMaintenance } from './clusteredAttachmentMaintenance.js';
+import { createClusteredMlsMaintenance } from './clusteredMlsMaintenance.js';
 import {
   createClusteredEnterpriseInfrastructure,
   type ClusteredEnterpriseInfrastructure,
@@ -153,6 +154,14 @@ function constantTimeTokenEqual(left: string, right: string): boolean {
 
 function routeErrorStatus(error: unknown): number {
   const message = error instanceof Error ? error.message : String(error);
+  if (/MLS .*rate limit|MLS .*inventory quota/i.test(message)) return 429;
+  if (
+    /MLS event cursor expired|MLS reset source group is no longer active/i.test(
+      message,
+    )
+  ) {
+    return 409;
+  }
   if (
     /redis|s3|shared infrastructure|database operation failed|econn|socket|timeout|timed out|connection closed/i.test(
       message,
@@ -382,6 +391,9 @@ export function createClusteredEnterpriseServer(
             'unread_message_notifications_v1',
             'e2ee_private_messages_v1',
             'e2ee_device_trust_v1',
+            'e2ee_mls_transport_v1',
+            'e2ee_mls_resource_governance_v1',
+            'e2ee_mls_transport_session_reset_v1',
             'postgresql_authority_v1',
             'postgresql_registration_v1',
             'organization_invites_v1',
@@ -1208,6 +1220,108 @@ export function createClusteredEnterpriseServer(
         return;
       }
 
+      if (path === '/enterprise/e2ee/mls/key-packages' && method === 'POST') {
+        const body = await readJsonBody(req, 96 * 1024);
+        const keyPackage = await repository.publishMlsKeyPackage({
+          organizationId: member.organizationId,
+          accountId: member.id,
+          deviceId: typeof body.deviceId === 'string' ? body.deviceId : '',
+          ciphersuite:
+            typeof body.ciphersuite === 'string'
+              ? (body.ciphersuite as Parameters<
+                  typeof repository.publishMlsKeyPackage
+                >[0]['ciphersuite'])
+              : ('' as Parameters<
+                  typeof repository.publishMlsKeyPackage
+                >[0]['ciphersuite']),
+          keyPackage:
+            typeof body.keyPackage === 'string' ? body.keyPackage : '',
+        });
+        sendJson(res, 201, { keyPackage });
+        return;
+      }
+
+      if (
+        path === '/enterprise/e2ee/mls/key-packages/claim' &&
+        method === 'POST'
+      ) {
+        const body = await readJsonBody(req, 16 * 1024);
+        const keyPackage = await repository.claimMlsKeyPackage({
+          organizationId: member.organizationId,
+          requesterAccountId: member.id,
+          requesterDeviceId:
+            typeof body.requesterDeviceId === 'string'
+              ? body.requesterDeviceId
+              : '',
+          recipientAccountId:
+            typeof body.recipientAccountId === 'string'
+              ? body.recipientAccountId
+              : '',
+        });
+        sendJson(
+          res,
+          keyPackage ? 200 : 404,
+          keyPackage
+            ? { keyPackage }
+            : { error: 'no unclaimed MLS KeyPackage is available' },
+        );
+        return;
+      }
+
+      const mlsEventsRoute =
+        /^\/enterprise\/e2ee\/mls\/conversations\/([^/]+)\/events$/.exec(path);
+      if (mlsEventsRoute && (method === 'GET' || method === 'POST')) {
+        const peerAccountId = decodeURIComponent(mlsEventsRoute[1]!);
+        if (method === 'GET') {
+          const events = await repository.listMlsTransportEvents({
+            organizationId: member.organizationId,
+            accountId: member.id,
+            peerAccountId,
+            afterSequence: Number(url.searchParams.get('afterSequence') || 0),
+            limit: Number(url.searchParams.get('limit') || 100),
+          });
+          res.setHeader('Cache-Control', 'no-store');
+          sendJson(res, 200, { events });
+        } else {
+          const body = await readJsonBody(req, 1400 * 1024);
+          const event = await repository.appendMlsTransportEvent({
+            organizationId: member.organizationId,
+            senderAccountId: member.id,
+            peerAccountId,
+            senderDeviceId:
+              typeof body.senderDeviceId === 'string'
+                ? body.senderDeviceId
+                : '',
+            eventId: typeof body.eventId === 'string' ? body.eventId : '',
+            eventType:
+              typeof body.eventType === 'string'
+                ? (body.eventType as Parameters<
+                    typeof repository.appendMlsTransportEvent
+                  >[0]['eventType'])
+                : ('invalid' as Parameters<
+                    typeof repository.appendMlsTransportEvent
+                  >[0]['eventType']),
+            epoch: Number(body.epoch),
+            groupId: typeof body.groupId === 'string' ? body.groupId : '',
+            payload: typeof body.payload === 'string' ? body.payload : '',
+            recipientDeviceId:
+              typeof body.recipientDeviceId === 'string'
+                ? body.recipientDeviceId
+                : null,
+            keyPackageReference:
+              typeof body.keyPackageReference === 'string'
+                ? body.keyPackageReference
+                : null,
+            resetFromGroupId:
+              typeof body.resetFromGroupId === 'string'
+                ? body.resetFromGroupId
+                : null,
+          });
+          sendJson(res, 201, { event });
+        }
+        return;
+      }
+
       const approveDevice = /^\/enterprise\/e2ee\/devices\/([^/]+)\/approve$/.exec(path);
       if (approveDevice && method === 'POST') {
         const body = await readJsonBody(req, 16 * 1024);
@@ -1431,8 +1545,18 @@ export async function startClusteredEnterpriseServer(
         );
       },
     });
+    const mlsMaintenance = createClusteredMlsMaintenance({
+      cache: infrastructure.cache,
+      authority: infrastructure.repository,
+      onError(error) {
+        console.error(
+          `[Otto Enterprise] MLS resource maintenance failed: ${safeRouteError(error)}`,
+        );
+      },
+    });
     created.server.once('close', () => {
       maintenance.close();
+      mlsMaintenance.close();
       void infrastructure.close();
     });
     await new Promise<void>((resolve, reject) => {
@@ -1444,6 +1568,7 @@ export async function startClusteredEnterpriseServer(
       });
     });
     maintenance.start();
+    mlsMaintenance.start();
     console.log(
       `[Otto Enterprise] PostgreSQL authority ready at http://${created.host}:${created.port}`,
     );

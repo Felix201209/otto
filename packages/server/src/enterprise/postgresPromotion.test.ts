@@ -25,9 +25,13 @@ function result<Row extends Record<string, unknown>>(
 function dryRunPool(
   input: {
     targetAccounts?: number;
+    targetMlsEvents?: number;
     withAttachments?: boolean;
     preparedAttachments?: boolean;
     withInvites?: boolean;
+    withMls?: boolean;
+    legacyMlsSchema?: boolean;
+    invalidMlsEventType?: boolean;
   } = {},
 ) {
   const statements: string[] = [];
@@ -43,6 +47,10 @@ function dryRunPool(
           {
             accounts: input.targetAccounts ?? 0,
             messages: 0,
+            mls_key_packages: 0,
+            mls_conversations: 0,
+            mls_group_sessions: 0,
+            mls_transport_events: input.targetMlsEvents ?? 0,
             non_default_organizations: 0,
           },
         ]);
@@ -55,7 +63,16 @@ function dryRunPool(
           !(input.withAttachments &&
             ['direct_messages', 'direct_message_attachments'].includes(
               tableName,
-            ))
+            )) &&
+          !(input.withMls &&
+            [
+              'mls_key_packages',
+              'mls_conversations',
+              'mls_group_sessions',
+              'mls_transport_events',
+              'mls_resource_rate_buckets',
+            ].includes(tableName) &&
+            !(input.legacyMlsSchema && tableName === 'mls_group_sessions'))
         ) {
           return result();
         }
@@ -104,6 +121,76 @@ function dryRunPool(
                   'in_reply_to_message_id',
                   'created_at',
                   'read_at',
+                ]
+            : tableName === 'mls_key_packages'
+              ? [
+                  'organization_id',
+                  'key_package_reference',
+                  'account_id',
+                  'device_id',
+                  'ciphersuite',
+                  'key_package',
+                  'created_at',
+                  'claimed_at',
+                  'claimed_by_account_id',
+                  'claimed_by_device_id',
+                  'welcome_event_id',
+                  'expires_at',
+                ]
+            : tableName === 'mls_conversations'
+              ? [
+                  'organization_id',
+                  'conversation_id',
+                  'participant_a_account_id',
+                  'participant_b_account_id',
+                  'group_id',
+                  'current_epoch',
+                  'created_at',
+                  'updated_at',
+                  'retention_floor_sequence',
+                  ...(input.legacyMlsSchema ? [] : ['active_generation']),
+                ]
+            : tableName === 'mls_group_sessions'
+              ? [
+                  'organization_id',
+                  'conversation_id',
+                  'generation',
+                  'group_id',
+                  'current_epoch',
+                  'status',
+                  'created_at',
+                  'retired_at',
+                  'reset_by_account_id',
+                  'reset_by_device_id',
+                  'reset_event_id',
+                ]
+            : tableName === 'mls_transport_events'
+              ? [
+                  'sequence',
+                  'id',
+                  'organization_id',
+                  'conversation_id',
+                  ...(input.legacyMlsSchema ? [] : ['session_generation']),
+                  'sender_account_id',
+                  'sender_device_id',
+                  'recipient_account_id',
+                  'recipient_device_id',
+                  'event_type',
+                  'epoch',
+                  'group_id',
+                  'payload',
+                  'key_package_reference',
+                  'created_at',
+                  'expires_at',
+                ]
+            : tableName === 'mls_resource_rate_buckets'
+              ? [
+                  'organization_id',
+                  'account_id',
+                  'device_id',
+                  'action',
+                  'bucket_started_at_ms',
+                  'request_count',
                 ]
               : [
                   'id',
@@ -166,6 +253,91 @@ function dryRunPool(
               ],
             },
           ]);
+        }
+        if (tableName === 'mls_key_packages') {
+          return result([{
+            row_data: [
+              'org_default',
+              'a'.repeat(64),
+              'account-b',
+              'device-b',
+              'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519',
+              Buffer.alloc(64, 5).toString('base64'),
+              '2026-08-01 00:00:00',
+              '2026-08-01 00:01:00',
+              'account-a',
+              'device-a',
+              'mls-event-welcome-1',
+              '2026-08-02 00:01:00',
+            ],
+          }]);
+        }
+        if (tableName === 'mls_conversations') {
+          return result([{
+            row_data: [
+              'org_default',
+              'b'.repeat(64),
+              'account-a',
+              'account-b',
+              Buffer.alloc(32, 6).toString('base64'),
+              1,
+              '2026-08-01 00:02:00',
+              '2026-08-01 00:03:00',
+              17,
+              ...(input.legacyMlsSchema ? [] : [1]),
+            ],
+          }]);
+        }
+        if (tableName === 'mls_group_sessions') {
+          return result([{
+            row_data: [
+              'org_default',
+              'b'.repeat(64),
+              ...(input.legacyMlsSchema ? [] : [1]),
+              Buffer.alloc(32, 6).toString('base64'),
+              1,
+              'active',
+              '2026-08-01 00:02:00',
+              null,
+              null,
+              null,
+              null,
+            ],
+          }]);
+        }
+        if (tableName === 'mls_transport_events') {
+          return result([{
+            row_data: [
+              41,
+              'mls-event-welcome-1',
+              'org_default',
+              'b'.repeat(64),
+              ...(input.legacyMlsSchema ? [] : [1]),
+              'account-a',
+              'device-a',
+              'account-b',
+              'device-b',
+              input.invalidMlsEventType ? 'plaintext' : 'welcome',
+              1,
+              Buffer.alloc(32, 6).toString('base64'),
+              Buffer.alloc(96, 7).toString('base64'),
+              'a'.repeat(64),
+              '2026-08-01 00:04:00',
+              '2026-11-01 00:04:00',
+            ],
+          }]);
+        }
+        if (tableName === 'mls_resource_rate_buckets') {
+          return result([{
+            row_data: [
+              'org_default',
+              'account-a',
+              'device-a',
+              'transport_event_append',
+              Date.parse('2026-08-01T00:04:00.000Z'),
+              7,
+            ],
+          }]);
         }
         if (tableName === 'organization_invites') {
           return result([{
@@ -241,6 +413,12 @@ function dryRunPool(
               organizations: 1,
               direct_messages: input.withAttachments ? 1 : 0,
               direct_message_attachments: input.withAttachments ? 1 : 0,
+              mls_key_packages: input.withMls ? 1 : 0,
+              mls_conversations: input.withMls ? 1 : 0,
+              mls_group_sessions:
+                input.withMls && !input.legacyMlsSchema ? 1 : 0,
+              mls_transport_events: input.withMls ? 1 : 0,
+              mls_resource_rate_buckets: input.withMls ? 1 : 0,
             },
             promoted_at: new Date('2026-08-01T00:05:00.000Z'),
           },
@@ -304,6 +482,130 @@ describe('verified SQLite PostgreSQL promotion', () => {
     ).rejects.toThrow('target is not empty');
     expect(statements.at(-1)).toBe('ROLLBACK');
     expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it('refuses to overwrite a PostgreSQL authority that already has MLS state', async () => {
+    const { pool, client, statements } = dryRunPool({ targetMlsEvents: 1 });
+    await expect(
+      promoteVerifiedSqliteImport({ pool, runId: 'import_1' }),
+    ).rejects.toThrow('target is not empty');
+    expect(statements.at(-1)).toBe('ROLLBACK');
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it('atomically promotes MLS packages, epochs and exact transport cursors', async () => {
+    const { pool, client, statements } = dryRunPool({ withMls: true });
+
+    await expect(
+      promoteVerifiedSqliteImport({
+        pool,
+        runId: 'import_1',
+        dryRun: false,
+      }),
+    ).resolves.toMatchObject({
+      state: 'promoted',
+      promotedCounts: {
+        mls_key_packages: 1,
+        mls_conversations: 1,
+        mls_group_sessions: 1,
+        mls_transport_events: 1,
+        mls_resource_rate_buckets: 1,
+      },
+    });
+
+    const calls = vi.mocked(client.query).mock.calls;
+    const packageInsert = calls.find(([sql]) =>
+      sql.includes('INSERT INTO mls_key_packages'),
+    );
+    const conversationInsert = calls.find(([sql]) =>
+      sql.includes('INSERT INTO mls_conversations'),
+    );
+    const eventInsert = calls.find(([sql]) =>
+      sql.includes('INSERT INTO mls_transport_events'),
+    );
+    const groupSessionInsert = calls.find(([sql]) =>
+      sql.includes('INSERT INTO mls_group_sessions'),
+    );
+    expect(packageInsert?.[1]).toMatchObject({
+      1: 'a'.repeat(64),
+      7: '2026-08-01T00:01:00.000Z',
+      10: 'mls-event-welcome-1',
+      11: '2026-08-02T00:01:00.000Z',
+    });
+    expect(conversationInsert?.[1]?.[5]).toBe(1);
+    expect(conversationInsert?.[1]?.[8]).toBe(17);
+    expect(conversationInsert?.[1]?.[9]).toBe(1);
+    expect(groupSessionInsert?.[1]).toEqual(
+      expect.arrayContaining([1, 'active']),
+    );
+    expect(eventInsert?.[0]).toContain('OVERRIDING SYSTEM VALUE');
+    expect(eventInsert?.[1]?.[0]).toBe(41);
+    expect(eventInsert?.[1]?.[4]).toBe(1);
+    expect(eventInsert?.[1]?.[9]).toBe('welcome');
+    expect(eventInsert?.[1]?.[15]).toBe('2026-11-01T00:04:00.000Z');
+    expect(
+      statements.some((sql) =>
+        sql.includes("pg_get_serial_sequence('mls_transport_events', 'sequence')"),
+      ),
+    ).toBe(true);
+    expect(
+      statements.some((sql) =>
+        sql.includes('INSERT INTO mls_resource_rate_buckets'),
+      ),
+    ).toBe(true);
+    expect(statements.at(-1)).toBe('COMMIT');
+  });
+
+  it('synthesizes generation one for verified legacy MLS imports', async () => {
+    const { pool, client } = dryRunPool({
+      withMls: true,
+      legacyMlsSchema: true,
+    });
+
+    await expect(
+      promoteVerifiedSqliteImport({
+        pool,
+        runId: 'import_1',
+        dryRun: false,
+      }),
+    ).resolves.toMatchObject({
+      state: 'promoted',
+      promotedCounts: { mls_group_sessions: 0 },
+    });
+
+    const calls = vi.mocked(client.query).mock.calls;
+    const synthesizedSession = calls.find(([sql]) =>
+      sql.includes('INSERT INTO mls_group_sessions'),
+    );
+    const eventInsert = calls.find(([sql]) =>
+      sql.includes('INSERT INTO mls_transport_events'),
+    );
+    expect(synthesizedSession?.[0]).toContain("1, $3, $4, 'active'");
+    expect(synthesizedSession?.[1]).toEqual(expect.arrayContaining([1]));
+    expect(eventInsert?.[1]?.[4]).toBe(1);
+  });
+
+  it('rolls back every MLS row when a staged event is invalid', async () => {
+    const { pool, statements } = dryRunPool({
+      withMls: true,
+      invalidMlsEventType: true,
+    });
+
+    await expect(
+      promoteVerifiedSqliteImport({
+        pool,
+        runId: 'import_1',
+        dryRun: false,
+      }),
+    ).rejects.toThrow('MLS event type is invalid');
+
+    expect(statements.at(-1)).toBe('ROLLBACK');
+    expect(
+      statements.some((sql) =>
+        sql.includes('INSERT INTO otto_sqlite_import_promotions'),
+      ),
+    ).toBe(false);
+    expect(statements).not.toContain('COMMIT');
   });
 
   it('requires every staged attachment to have a verified S3 preparation', async () => {

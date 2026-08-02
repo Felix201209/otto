@@ -173,12 +173,50 @@ other unavailable secure-storage states fail closed. The desktop build treats
 `@otto/native` as a workspace package and reserves its native executable for
 ASAR unpacking.
 
+The server now exposes an inactive `e2ee_mls_transport_v1` foundation in both
+SQLite development mode and the PostgreSQL clustered authority. It publishes
+approved-device KeyPackages, claims each package once, binds Welcome messages
+to the claimed device, relays opaque Commit/Welcome/application bytes, and
+enforces conversation-scoped epoch and idempotency rules. PostgreSQL claims use
+row locks with `SKIP LOCKED`; neither implementation stores plaintext or client
+private keys.
+
+An account pair is a stable conversation root, not a permanent binding to one
+MLS `group_id`. `mls_group_sessions` records numbered generations and retains
+retired group metadata alongside generation-tagged ciphertext events. A new
+group can become active only through an epoch-1 Commit carrying the currently
+active group as `resetFromGroupId`; retirement, generation creation, active
+pointer update, and Commit insertion are one transaction. Concurrent or stale
+resets fail with a conflict, implicit group replacement is rejected, and a
+previously used group cannot be reactivated while its retained session record
+exists. Retired session rows are removed only after their events have passed
+retention and been safely deleted.
+
+This server-side transport reset is recovery plumbing, not the complete
+client-visible safety-state reset required by the E2EE production gate. It does
+not establish a prekey handshake, Double Ratchet, multi-device session
+coordination, forward secrecy, post-compromise security, or external audit.
+`security/e2ee-release-status.json` therefore records transport session history
+and reset separately while `safetyStateReset` remains false.
+
+MLS transport resource governance is enforced by both authorities. The default
+policy allows at most 100 unclaimed KeyPackages per device and 10,000 per
+organization, 60 new KeyPackage publications per device per minute, and 300
+new transport events per device per minute. Active event inventory is also
+capped at 25,000 events/256 MiB per conversation and 100,000 events/1 GiB per
+organization. Unclaimed KeyPackages expire after
+7 days, claimed-but-unbound packages after 24 hours, and transport events after
+90 days. Cleanup is bounded to 500 rows per pass and runs every 15 minutes; the
+clustered job uses a shared lease and an additional PostgreSQL advisory lock.
+Before deleting events it advances a per-conversation retention floor. A client
+whose cursor falls behind that floor receives an explicit secure-session-reset
+error instead of silently processing an incomplete Commit history.
+
 This is still not the active chat protocol. No production server advertises
-`e2ee_mls_v1`, and the server ciphertext transport is not implemented. If a
-server does advertise that capability, the desktop initializes MLS only for an
-approved device and refuses to read or send through the legacy envelope instead
-of silently downgrading. Processing commits on existing remote members, MLS
-server transport, state migration/recovery policy, multi-platform native
-packaging, and external review are still required. Until those controls and an
-external audit pass the release gate, the production status remains
-`device-envelope-v1`.
+`e2ee_mls_v1`. If a server does advertise that capability, the desktop
+initializes MLS only for an approved device and refuses to read or send through
+the legacy envelope instead of silently downgrading. Desktop transport wiring,
+processing commits on existing remote members, state migration/recovery policy,
+multi-platform native packaging, and external review are still required. Until
+those controls and an external audit pass the release gate, the production
+status remains `device-envelope-v1`.

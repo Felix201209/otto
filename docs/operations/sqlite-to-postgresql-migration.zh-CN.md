@@ -102,9 +102,20 @@ npm run enterprise:postgres:promote --workspace=packages/server -- --run <run-id
 ```
 
 正式提升使用 advisory lock，在单个事务内写入组织、账号、会话、组织架构、
-功能开关、审计、E2EE 设备、密钥透明日志和消息密文，并记录幂等 promotion
-receipt。目标已经存在账号或消息时拒绝覆盖；旧消息仍是明文时拒绝提升；存在
-消息附件时也会拒绝切换，必须先通过后续 S3 附件迁移完成复制和校验。
+功能开关、审计、E2EE 设备、密钥透明日志、消息密文、MLS KeyPackage、MLS
+会话 epoch 和 MLS 传输密文事件，并记录幂等 promotion receipt。MLS 事件会
+保留 SQLite 中的原始 `sequence`，随后校准 PostgreSQL identity，避免切换后
+已有设备的同步游标跳过或重复事件；KeyPackage/事件到期时间和会话 retention
+floor 也会原样迁移。仍在窗口内的分钟级速率桶同步转换为 PostgreSQL 时间戳，
+避免设备利用切换窗口重置写入限速。目标已经存在账号、消息或任意 MLS 状态时
+拒绝覆盖；旧消息仍是明文时拒绝提升；存在消息附件时也会拒绝切换，必须先通过
+后续 S3 附件迁移完成复制和校验。
+
+MLS 提升还会按 `mls_conversations`、`mls_group_sessions`、
+`mls_transport_events` 的顺序迁移稳定账号对、历史 group 代次和代次绑定事件，
+同时保留 `active_generation` 与每条事件的 `session_generation`。来自旧版本且
+尚无 group 代次表的导入会安全合成为第一代会话；已有多代历史的数据不得降级为
+单个 `group_id`。
 
 ## 停机切换
 
@@ -117,8 +128,8 @@ receipt。目标已经存在账号或消息时拒绝覆盖；旧消息仍是明�
 5. 对 verified run 先执行领域提升演练，再执行正式提升并保存 receipt。
 6. 将异步 PostgreSQL 核心服务部署为单个金丝雀实例；
    配置 PostgreSQL、Redis 和 S3，不挂载 SQLite 或本地附件目录。
-7. 验证登录、设备注册、E2EE 密文消息、多设备同步、附件、审计、备份和
-   恢复，再逐步增加无状态实例。
+7. 验证登录、设备注册、E2EE 密文消息、MLS KeyPackage 领取、会话 epoch、
+   多设备增量同步游标、附件、审计、备份和恢复，再逐步增加无状态实例。
 8. 在回滚宽限期内保留只读 SQLite 快照及密钥，禁止删除或覆盖。
 
 当前只有账号、组织、审计和 E2EE 核心路由完成异步 PostgreSQL Repository。

@@ -536,6 +536,229 @@ CREATE TABLE legal_consents (
 CREATE INDEX legal_consents_account
   ON legal_consents (account_id, accepted_at DESC);`,
   },
+  {
+    version: 8,
+    name: 'mls-ciphertext-transport',
+    sql: `
+CREATE TABLE mls_key_packages (
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  key_package_reference TEXT NOT NULL CHECK (key_package_reference ~ '^[0-9a-f]{64}$'),
+  account_id TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  ciphersuite TEXT NOT NULL
+    CHECK (ciphersuite = 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519'),
+  key_package TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  claimed_at TIMESTAMPTZ,
+  claimed_by_account_id TEXT,
+  claimed_by_device_id TEXT,
+  welcome_event_id TEXT,
+  PRIMARY KEY (organization_id, key_package_reference),
+  FOREIGN KEY (organization_id, account_id, device_id)
+    REFERENCES e2ee_devices(organization_id, account_id, device_id)
+    ON DELETE CASCADE,
+  FOREIGN KEY (organization_id, claimed_by_account_id, claimed_by_device_id)
+    REFERENCES e2ee_devices(organization_id, account_id, device_id)
+    ON DELETE RESTRICT,
+  CHECK (
+    (claimed_at IS NULL AND claimed_by_account_id IS NULL AND claimed_by_device_id IS NULL)
+    OR
+    (claimed_at IS NOT NULL AND claimed_by_account_id IS NOT NULL AND claimed_by_device_id IS NOT NULL)
+  )
+);
+CREATE INDEX mls_key_packages_unclaimed
+  ON mls_key_packages (organization_id, account_id, created_at, key_package_reference)
+  WHERE claimed_at IS NULL;
+CREATE UNIQUE INDEX mls_key_packages_welcome
+  ON mls_key_packages (organization_id, welcome_event_id)
+  WHERE welcome_event_id IS NOT NULL;
+
+CREATE TABLE mls_conversations (
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  conversation_id TEXT NOT NULL CHECK (conversation_id ~ '^[0-9a-f]{64}$'),
+  participant_a_account_id TEXT NOT NULL,
+  participant_b_account_id TEXT NOT NULL,
+  group_id TEXT NOT NULL,
+  current_epoch BIGINT NOT NULL CHECK (current_epoch > 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (organization_id, conversation_id),
+  UNIQUE (organization_id, participant_a_account_id, participant_b_account_id),
+  CHECK (participant_a_account_id < participant_b_account_id),
+  FOREIGN KEY (participant_a_account_id, organization_id)
+    REFERENCES accounts(id, organization_id) ON DELETE CASCADE,
+  FOREIGN KEY (participant_b_account_id, organization_id)
+    REFERENCES accounts(id, organization_id) ON DELETE CASCADE
+);
+
+CREATE TABLE mls_transport_events (
+  sequence BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  id TEXT NOT NULL,
+  organization_id TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  sender_account_id TEXT NOT NULL,
+  sender_device_id TEXT NOT NULL,
+  recipient_account_id TEXT,
+  recipient_device_id TEXT,
+  event_type TEXT NOT NULL CHECK (event_type IN ('welcome', 'commit', 'application')),
+  epoch BIGINT NOT NULL CHECK (epoch > 0),
+  group_id TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  key_package_reference TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (organization_id, id),
+  FOREIGN KEY (organization_id, conversation_id)
+    REFERENCES mls_conversations(organization_id, conversation_id)
+    ON DELETE CASCADE,
+  FOREIGN KEY (organization_id, sender_account_id, sender_device_id)
+    REFERENCES e2ee_devices(organization_id, account_id, device_id)
+    ON DELETE RESTRICT,
+  FOREIGN KEY (organization_id, recipient_account_id, recipient_device_id)
+    REFERENCES e2ee_devices(organization_id, account_id, device_id)
+    ON DELETE RESTRICT,
+  FOREIGN KEY (organization_id, key_package_reference)
+    REFERENCES mls_key_packages(organization_id, key_package_reference)
+    ON DELETE RESTRICT,
+  CHECK (
+    (event_type = 'welcome'
+      AND recipient_account_id IS NOT NULL
+      AND recipient_device_id IS NOT NULL
+      AND key_package_reference IS NOT NULL)
+    OR
+    (event_type <> 'welcome'
+      AND recipient_account_id IS NULL
+      AND recipient_device_id IS NULL
+      AND key_package_reference IS NULL)
+  )
+);
+CREATE INDEX mls_transport_events_conversation
+  ON mls_transport_events (organization_id, conversation_id, sequence);
+CREATE UNIQUE INDEX mls_transport_events_welcome_package
+  ON mls_transport_events (organization_id, key_package_reference)
+  WHERE key_package_reference IS NOT NULL;
+
+-- One-time claims are selected with SELECT ... FOR UPDATE SKIP LOCKED by the repository.
+`,
+  },
+  {
+    version: 9,
+    name: 'mls-resource-governance',
+    sql: `
+ALTER TABLE mls_key_packages ADD COLUMN expires_at TIMESTAMPTZ;
+UPDATE mls_key_packages
+SET expires_at = created_at + INTERVAL '7 days'
+WHERE expires_at IS NULL;
+ALTER TABLE mls_key_packages ALTER COLUMN expires_at SET NOT NULL;
+ALTER TABLE mls_key_packages
+  ALTER COLUMN expires_at SET DEFAULT (CURRENT_TIMESTAMP + INTERVAL '7 days');
+
+ALTER TABLE mls_conversations
+  ADD COLUMN retention_floor_sequence BIGINT NOT NULL DEFAULT 0
+  CHECK (retention_floor_sequence >= 0);
+
+ALTER TABLE mls_transport_events ADD COLUMN expires_at TIMESTAMPTZ;
+UPDATE mls_transport_events
+SET expires_at = created_at + INTERVAL '90 days'
+WHERE expires_at IS NULL;
+ALTER TABLE mls_transport_events ALTER COLUMN expires_at SET NOT NULL;
+ALTER TABLE mls_transport_events
+  ALTER COLUMN expires_at SET DEFAULT (CURRENT_TIMESTAMP + INTERVAL '90 days');
+
+CREATE TABLE mls_resource_rate_buckets (
+  organization_id TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  action TEXT NOT NULL
+    CHECK (action IN ('key_package_publish', 'transport_event_append')),
+  bucket_started_at TIMESTAMPTZ NOT NULL,
+  request_count INTEGER NOT NULL CHECK (request_count > 0),
+  PRIMARY KEY (
+    organization_id, account_id, device_id, action, bucket_started_at
+  ),
+  FOREIGN KEY (organization_id, account_id, device_id)
+    REFERENCES e2ee_devices(organization_id, account_id, device_id)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX mls_key_packages_expiry
+  ON mls_key_packages (expires_at, organization_id);
+CREATE INDEX mls_transport_events_expiry
+  ON mls_transport_events (expires_at, sequence);
+CREATE INDEX mls_transport_events_inventory
+  ON mls_transport_events (organization_id, conversation_id, expires_at);
+CREATE INDEX mls_resource_rate_buckets_expiry
+  ON mls_resource_rate_buckets (bucket_started_at);
+`,
+  },
+  {
+    version: 10,
+    name: 'mls-group-session-history',
+    sql: `
+ALTER TABLE mls_conversations
+  ADD COLUMN active_generation BIGINT NOT NULL DEFAULT 1
+  CHECK (active_generation > 0);
+
+CREATE TABLE mls_group_sessions (
+  organization_id TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  generation BIGINT NOT NULL CHECK (generation > 0),
+  group_id TEXT NOT NULL,
+  current_epoch BIGINT NOT NULL CHECK (current_epoch > 0),
+  status TEXT NOT NULL CHECK (status IN ('active', 'retired')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  retired_at TIMESTAMPTZ,
+  reset_by_account_id TEXT,
+  reset_by_device_id TEXT,
+  reset_event_id TEXT,
+  PRIMARY KEY (organization_id, conversation_id, generation),
+  UNIQUE (organization_id, conversation_id, group_id),
+  UNIQUE (organization_id, reset_event_id),
+  FOREIGN KEY (organization_id, conversation_id)
+    REFERENCES mls_conversations(organization_id, conversation_id)
+    ON DELETE CASCADE,
+  FOREIGN KEY (organization_id, reset_by_account_id, reset_by_device_id)
+    REFERENCES e2ee_devices(organization_id, account_id, device_id)
+    ON DELETE RESTRICT,
+  CHECK (
+    (status = 'active' AND retired_at IS NULL)
+    OR (status = 'retired' AND retired_at IS NOT NULL)
+  ),
+  CHECK (
+    (generation = 1
+      AND reset_by_account_id IS NULL
+      AND reset_by_device_id IS NULL
+      AND reset_event_id IS NULL)
+    OR (generation > 1
+      AND reset_by_account_id IS NOT NULL
+      AND reset_by_device_id IS NOT NULL
+      AND reset_event_id IS NOT NULL)
+  )
+);
+
+INSERT INTO mls_group_sessions
+  (organization_id, conversation_id, generation, group_id,
+   current_epoch, status, created_at)
+SELECT organization_id, conversation_id, 1, group_id,
+       current_epoch, 'active', created_at
+FROM mls_conversations;
+
+ALTER TABLE mls_transport_events
+  ADD COLUMN session_generation BIGINT NOT NULL DEFAULT 1
+  CHECK (session_generation > 0);
+ALTER TABLE mls_transport_events
+  ADD CONSTRAINT mls_transport_events_group_session_fk
+  FOREIGN KEY (organization_id, conversation_id, session_generation)
+  REFERENCES mls_group_sessions(organization_id, conversation_id, generation)
+  ON DELETE RESTRICT;
+
+CREATE UNIQUE INDEX mls_group_sessions_active
+  ON mls_group_sessions (organization_id, conversation_id)
+  WHERE status = 'active';
+CREATE INDEX mls_group_sessions_retired
+  ON mls_group_sessions (retired_at, organization_id, conversation_id)
+  WHERE status = 'retired';
+`,
+  },
 ];
 
 export const ENTERPRISE_POSTGRES_SCHEMA_VERSION =

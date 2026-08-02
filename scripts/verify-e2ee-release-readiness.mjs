@@ -8,6 +8,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REQUIRED_PROTOCOL_CONTROLS = [
+  [
+    'serverCiphertextTransport',
+    'server MLS ciphertext transport is not implemented',
+  ],
   ['externalAuditCompleted', 'external audit is not complete'],
   ['prekeyHandshake', 'prekey handshake is not implemented'],
   ['doubleRatchet', 'Double Ratchet is not implemented'],

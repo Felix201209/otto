@@ -3,6 +3,9 @@
   "protocol": {
     "id": "device-envelope-v1",
     "implementation": "otto-legacy-envelope",
+    "serverCiphertextTransport": true,
+    "transportSessionHistory": true,
+    "transportSessionReset": true,
     "externalAuditCompleted": false,
     "prekeyHandshake": false,
     "doubleRatchet": false,

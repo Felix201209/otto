@@ -5,9 +5,7 @@
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  createClusteredEnterpriseServer,
-} from './clusteredServer.js';
+import { createClusteredEnterpriseServer } from './clusteredServer.js';
 import type {
   PostgresEnterpriseAccountView,
   PostgresEnterpriseCoreRepository,
@@ -54,7 +52,9 @@ function repository(): PostgresEnterpriseCoreRepository {
       accounts: 1,
     })),
     authenticateAccount: vi.fn(async (identifier: string, password: string) =>
-      identifier === 'admin' && password === 'correct-password' ? account : null,
+      identifier === 'admin' && password === 'correct-password'
+        ? account
+        : null,
     ),
     getLoginRetryAfter: vi.fn(async () => 0),
     recordLoginFailure: vi.fn(async () => 0),
@@ -79,10 +79,12 @@ const servers: Array<
 
 afterEach(async () => {
   await Promise.all(
-    servers.splice(0).map(
-      (server) =>
-        new Promise<void>((resolve) => server.close(() => resolve())),
-    ),
+    servers
+      .splice(0)
+      .map(
+        (server) =>
+          new Promise<void>((resolve) => server.close(() => resolve())),
+      ),
   );
 });
 
@@ -101,7 +103,9 @@ async function listen(
     ...options,
   });
   servers.push(created.server);
-  await new Promise<void>((resolve) => created.server.listen(0, '127.0.0.1', resolve));
+  await new Promise<void>((resolve) =>
+    created.server.listen(0, '127.0.0.1', resolve),
+  );
   const address = created.server.address() as AddressInfo;
   return {
     repo,
@@ -127,7 +131,10 @@ describe('clustered PostgreSQL enterprise server', () => {
     const login = await fetch(`${baseUrl}/enterprise/auth/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ identifier: 'admin', password: 'correct-password' }),
+      body: JSON.stringify({
+        identifier: 'admin',
+        password: 'correct-password',
+      }),
     });
     expect(login.status).toBe(200);
     expect(await login.json()).toMatchObject({
@@ -145,6 +152,114 @@ describe('clustered PostgreSQL enterprise server', () => {
       'correct-password',
     );
     expect(repo.clearLoginFailures).toHaveBeenCalledWith('admin');
+  });
+
+  it('relays MLS KeyPackages and opaque events through the PostgreSQL authority', async () => {
+    const keyPackage = {
+      reference: 'a'.repeat(64),
+      accountId: 'acc_peer',
+      deviceId: 'peer-device',
+      ciphersuite: 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519',
+      keyPackage: Buffer.from('key-package').toString('base64'),
+      createdAt: '2026-08-01T00:00:00.000Z',
+      claimedAt: null,
+    };
+    const publishMlsKeyPackage = vi.fn(async () => keyPackage);
+    const claimMlsKeyPackage = vi.fn(async () => keyPackage);
+    const appendMlsTransportEvent = vi.fn(async () => ({
+      sequence: 1,
+      eventId: 'commit-1',
+      conversationId: 'b'.repeat(64),
+      senderAccountId: 'acc_admin',
+      senderDeviceId: 'admin-device',
+      recipientAccountId: null,
+      recipientDeviceId: null,
+      eventType: 'commit',
+      epoch: 1,
+      groupId: Buffer.from('group').toString('base64'),
+      payload: Buffer.from('commit').toString('base64'),
+      keyPackageReference: null,
+      createdAt: '2026-08-01T00:00:01.000Z',
+    }));
+    const listMlsTransportEvents = vi.fn(async () => []);
+    const repo = {
+      ...repository(),
+      publishMlsKeyPackage,
+      claimMlsKeyPackage,
+      appendMlsTransportEvent,
+      listMlsTransportEvents,
+    } as unknown as PostgresEnterpriseCoreRepository;
+    const { baseUrl } = await listen(repo);
+    const headers = {
+      authorization: 'Bearer clustered-session-token',
+      'content-type': 'application/json',
+    };
+
+    const publish = await fetch(`${baseUrl}/enterprise/e2ee/mls/key-packages`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        deviceId: 'admin-device',
+        ciphersuite: keyPackage.ciphersuite,
+        keyPackage: keyPackage.keyPackage,
+      }),
+    });
+    expect(publish.status).toBe(201);
+    const claim = await fetch(
+      `${baseUrl}/enterprise/e2ee/mls/key-packages/claim`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          requesterDeviceId: 'admin-device',
+          recipientAccountId: 'acc_peer',
+        }),
+      },
+    );
+    expect(claim.status).toBe(200);
+    const eventsUrl = `${baseUrl}/enterprise/e2ee/mls/conversations/acc_peer/events`;
+    const appended = await fetch(eventsUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        senderDeviceId: 'admin-device',
+        eventId: 'commit-1',
+        eventType: 'commit',
+        epoch: 1,
+        groupId: Buffer.from('group').toString('base64'),
+        payload: Buffer.from('commit').toString('base64'),
+      }),
+    });
+    expect(appended.status).toBe(201);
+    const listed = await fetch(eventsUrl, { headers });
+    expect(listed.status).toBe(200);
+
+    expect(publishMlsKeyPackage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organizationId: 'org_default',
+        accountId: 'acc_admin',
+        deviceId: 'admin-device',
+      }),
+    );
+    expect(claimMlsKeyPackage).toHaveBeenCalledWith(
+      expect.objectContaining({ recipientAccountId: 'acc_peer' }),
+    );
+    expect(appendMlsTransportEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: 'commit', epoch: 1 }),
+    );
+    expect(listMlsTransportEvents).toHaveBeenCalled();
+
+    const health = (await (
+      await fetch(`${baseUrl}/enterprise/health`)
+    ).json()) as { capabilities: string[] };
+    expect(health.capabilities).toContain('e2ee_mls_transport_v1');
+    expect(health.capabilities).toContain(
+      'e2ee_mls_resource_governance_v1',
+    );
+    expect(health.capabilities).toContain(
+      'e2ee_mls_transport_session_reset_v1',
+    );
+    expect(health.capabilities).not.toContain('e2ee_mls_v1');
   });
 
   it('enforces a PostgreSQL-shared login block before checking credentials', async () => {
@@ -241,9 +356,7 @@ describe('clustered PostgreSQL enterprise server', () => {
       publicUrl: 'https://join.otto.example',
     });
 
-    const response = await fetch(
-      `${baseUrl}/enterprise/join/ABCD-EFGH-JKLM`,
-    );
+    const response = await fetch(`${baseUrl}/enterprise/join/ABCD-EFGH-JKLM`);
 
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toContain('text/html');
@@ -380,7 +493,9 @@ describe('clustered PostgreSQL enterprise server', () => {
       adminToken: '',
     });
     servers.push(created.server);
-    await new Promise<void>((resolve) => created.server.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) =>
+      created.server.listen(0, '127.0.0.1', resolve),
+    );
     const address = created.server.address() as AddressInfo;
     const response = await fetch(
       `http://127.0.0.1:${address.port}/enterprise/accounts`,

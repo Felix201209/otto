@@ -22,6 +22,15 @@ interface CommunicationRouteDeps {
   sendJSON(res: ServerResponse, status: number, data: unknown): void;
 }
 
+function mlsErrorStatus(error: unknown): number {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/rate limit|inventory quota/i.test(message)) return 429;
+  if (/cursor expired|reset source group is no longer active/i.test(message)) {
+    return 409;
+  }
+  return 400;
+}
+
 function organizationViewPayload(organizationId: string) {
   const organization = db.getOrganization(organizationId);
   const accounts = db.listAccounts(organizationId);
@@ -244,6 +253,133 @@ export async function handleCommunicationRoute({
           error instanceof Error
             ? error.message
             : 'E2EE transparency lookup failed',
+      });
+    }
+    return true;
+  }
+
+  if (path === '/enterprise/e2ee/mls/key-packages' && method === 'POST') {
+    const body = await readBody(req, 96 * 1024);
+    try {
+      const keyPackage = db.publishMlsKeyPackage({
+        organizationId: memberAccount.organizationId,
+        accountId: memberAccount.id,
+        deviceId: typeof body.deviceId === 'string' ? body.deviceId : '',
+        ciphersuite:
+          typeof body.ciphersuite === 'string'
+            ? (body.ciphersuite as Parameters<
+                typeof db.publishMlsKeyPackage
+              >[0]['ciphersuite'])
+            : ('' as Parameters<
+                typeof db.publishMlsKeyPackage
+              >[0]['ciphersuite']),
+        keyPackage: typeof body.keyPackage === 'string' ? body.keyPackage : '',
+      });
+      sendJSON(res, 201, { keyPackage });
+    } catch (error) {
+      sendJSON(res, mlsErrorStatus(error), {
+        error:
+          error instanceof Error
+            ? error.message
+            : 'MLS KeyPackage publication failed',
+      });
+    }
+    return true;
+  }
+
+  if (path === '/enterprise/e2ee/mls/key-packages/claim' && method === 'POST') {
+    const body = await readBody(req, 16 * 1024);
+    try {
+      const keyPackage = db.claimMlsKeyPackage({
+        organizationId: memberAccount.organizationId,
+        requesterAccountId: memberAccount.id,
+        requesterDeviceId:
+          typeof body.requesterDeviceId === 'string'
+            ? body.requesterDeviceId
+            : '',
+        recipientAccountId:
+          typeof body.recipientAccountId === 'string'
+            ? body.recipientAccountId
+            : '',
+      });
+      sendJSON(
+        res,
+        keyPackage ? 200 : 404,
+        keyPackage
+          ? { keyPackage }
+          : { error: 'no unclaimed MLS KeyPackage is available' },
+      );
+    } catch (error) {
+      sendJSON(res, mlsErrorStatus(error), {
+        error:
+          error instanceof Error
+            ? error.message
+            : 'MLS KeyPackage claim failed',
+      });
+    }
+    return true;
+  }
+
+  const mlsEventsMatch = path.match(
+    /^\/enterprise\/e2ee\/mls\/conversations\/([^/]+)\/events$/,
+  );
+  if (mlsEventsMatch && (method === 'GET' || method === 'POST')) {
+    let peerAccountId = '';
+    try {
+      peerAccountId = decodeURIComponent(mlsEventsMatch[1] ?? '');
+    } catch {
+      // Invalid identifiers are rejected by the repository.
+    }
+    try {
+      if (method === 'GET') {
+        const events = db.listMlsTransportEvents({
+          organizationId: memberAccount.organizationId,
+          accountId: memberAccount.id,
+          peerAccountId,
+          afterSequence: Number(url.searchParams.get('afterSequence') || 0),
+          limit: Number(url.searchParams.get('limit') || 100),
+        });
+        res.setHeader('Cache-Control', 'no-store');
+        sendJSON(res, 200, { events });
+      } else {
+        const body = await readBody(req, 1400 * 1024);
+        const event = db.appendMlsTransportEvent({
+          organizationId: memberAccount.organizationId,
+          senderAccountId: memberAccount.id,
+          peerAccountId,
+          senderDeviceId:
+            typeof body.senderDeviceId === 'string' ? body.senderDeviceId : '',
+          eventId: typeof body.eventId === 'string' ? body.eventId : '',
+          eventType:
+            typeof body.eventType === 'string'
+              ? (body.eventType as Parameters<
+                  typeof db.appendMlsTransportEvent
+                >[0]['eventType'])
+              : ('invalid' as Parameters<
+                  typeof db.appendMlsTransportEvent
+                >[0]['eventType']),
+          epoch: Number(body.epoch),
+          groupId: typeof body.groupId === 'string' ? body.groupId : '',
+          payload: typeof body.payload === 'string' ? body.payload : '',
+          recipientDeviceId:
+            typeof body.recipientDeviceId === 'string'
+              ? body.recipientDeviceId
+              : null,
+          keyPackageReference:
+            typeof body.keyPackageReference === 'string'
+              ? body.keyPackageReference
+              : null,
+          resetFromGroupId:
+            typeof body.resetFromGroupId === 'string'
+              ? body.resetFromGroupId
+              : null,
+        });
+        sendJSON(res, 201, { event });
+      }
+    } catch (error) {
+      sendJSON(res, mlsErrorStatus(error), {
+        error:
+          error instanceof Error ? error.message : 'MLS event relay failed',
       });
     }
     return true;

@@ -127,6 +127,9 @@ const ENTERPRISE_CAPABILITIES = [
   'direct_messages',
   'e2ee_private_messages_v1',
   'e2ee_device_trust_v1',
+  'e2ee_mls_transport_v1',
+  'e2ee_mls_resource_governance_v1',
+  'e2ee_mls_transport_session_reset_v1',
   'direct_message_attachments_v1',
   'encrypted_attachment_storage_v1',
   'encrypted_message_storage_v1',
@@ -612,7 +615,10 @@ export function startEnterpriseServer(
   });
   const stopPrivateDeploymentRuntime = startPrivateDeploymentRuntime(db, {
     onError: (error) =>
-      console.error('[Otto Enterprise] private deployment runtime failed', error),
+      console.error(
+        '[Otto Enterprise] private deployment runtime failed',
+        error,
+      ),
   });
   let stopDataProtectionRuntime: () => void;
   try {
@@ -622,7 +628,25 @@ export function startEnterpriseServer(
     server.close();
     throw error;
   }
+  let mlsCleanupRunning = false;
+  const runMlsCleanup = () => {
+    if (mlsCleanupRunning) return;
+    mlsCleanupRunning = true;
+    try {
+      db.cleanupExpiredMlsResources({ limit: 500 });
+    } catch (error) {
+      console.error('[Otto Enterprise] MLS resource cleanup failed', error);
+    } finally {
+      mlsCleanupRunning = false;
+    }
+  };
+  const mlsCleanupTimer = setInterval(runMlsCleanup, 15 * 60 * 1_000);
+  mlsCleanupTimer.unref();
+  const initialMlsCleanup = setImmediate(runMlsCleanup);
+  initialMlsCleanup.unref();
   server.once('close', () => {
+    clearImmediate(initialMlsCleanup);
+    clearInterval(mlsCleanupTimer);
     stopPrivateDeploymentRuntime();
     stopDataProtectionRuntime();
   });

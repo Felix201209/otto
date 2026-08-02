@@ -18,6 +18,10 @@ import {
 } from './postgresImportStaging.js';
 
 const PROMOTION_LOCK_KEY = 0x4f545450;
+const MLS_CIPHERSUITE =
+  'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519';
+const MLS_KEY_PACKAGE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
+const MLS_TRANSPORT_EVENT_TTL_MS = 90 * 24 * 60 * 60 * 1_000;
 const INVITE_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
 
@@ -87,6 +91,11 @@ const PROMOTION_ORDER = [
   'e2ee_devices',
   'e2ee_key_transparency_log',
   'direct_messages',
+  'mls_key_packages',
+  'mls_conversations',
+  'mls_group_sessions',
+  'mls_transport_events',
+  'mls_resource_rate_buckets',
 ] as const;
 
 function stringValue(value: unknown, label: string): string {
@@ -119,6 +128,19 @@ function optionalTimestamp(value: unknown, label: string): string | null {
     : timestamp(value, label);
 }
 
+function expirationTimestamp(
+  value: unknown,
+  createdAt: unknown,
+  ttlMs: number,
+  label: string,
+): string {
+  if (value !== null && value !== undefined && value !== '') {
+    return timestamp(value, label);
+  }
+  const created = new Date(timestamp(createdAt, `${label} source created_at`));
+  return new Date(created.getTime() + ttlMs).toISOString();
+}
+
 function millisecondTimestamp(value: unknown, label: string): string {
   const milliseconds = integerValue(value, label);
   const date = new Date(milliseconds);
@@ -141,6 +163,26 @@ function booleanValue(value: unknown): boolean {
 function integerValue(value: unknown, label: string): number {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed)) throw new Error(`SQLite promotion ${label} is invalid`);
+  return parsed;
+}
+
+function positiveIntegerValue(value: unknown, label: string): number {
+  const parsed = integerValue(value, label);
+  if (parsed <= 0) throw new Error(`SQLite promotion ${label} is invalid`);
+  return parsed;
+}
+
+function nonNegativeIntegerValue(value: unknown, label: string): number {
+  const parsed = integerValue(value, label);
+  if (parsed < 0) throw new Error(`SQLite promotion ${label} is invalid`);
+  return parsed;
+}
+
+function sha256Value(value: unknown, label: string): string {
+  const parsed = stringValue(value, label);
+  if (!/^[0-9a-f]{64}$/u.test(parsed)) {
+    throw new Error(`SQLite promotion ${label} is invalid`);
+  }
   return parsed;
 }
 
@@ -178,12 +220,20 @@ async function assertUnusedTarget(client: PostgresClientLike): Promise<void> {
     {
       accounts: number | string;
       messages: number | string;
+      mls_key_packages: number | string;
+      mls_conversations: number | string;
+      mls_group_sessions: number | string;
+      mls_transport_events: number | string;
       non_default_organizations: number | string;
     } & Record<string, unknown>
   >(
     `SELECT
        (SELECT count(*) FROM accounts)::integer AS accounts,
        (SELECT count(*) FROM direct_messages)::integer AS messages,
+       (SELECT count(*) FROM mls_key_packages)::integer AS mls_key_packages,
+       (SELECT count(*) FROM mls_conversations)::integer AS mls_conversations,
+       (SELECT count(*) FROM mls_group_sessions)::integer AS mls_group_sessions,
+       (SELECT count(*) FROM mls_transport_events)::integer AS mls_transport_events,
        (SELECT count(*) FROM organizations WHERE id <> 'org_default')::integer
          AS non_default_organizations`,
   );
@@ -192,6 +242,10 @@ async function assertUnusedTarget(client: PostgresClientLike): Promise<void> {
     !row ||
     Number(row.accounts) !== 0 ||
     Number(row.messages) !== 0 ||
+    Number(row.mls_key_packages) !== 0 ||
+    Number(row.mls_conversations) !== 0 ||
+    Number(row.mls_group_sessions) !== 0 ||
+    Number(row.mls_transport_events) !== 0 ||
     Number(row.non_default_organizations) !== 0
   ) {
     throw new Error(
@@ -571,6 +625,240 @@ async function insertMessages(client: PostgresClientLike, rows: DecodedRow[]) {
   }
 }
 
+async function insertMlsKeyPackages(
+  client: PostgresClientLike,
+  rows: DecodedRow[],
+): Promise<void> {
+  for (const row of rows) {
+    const ciphersuite = stringValue(
+      row.ciphersuite,
+      'MLS KeyPackage ciphersuite',
+    );
+    if (ciphersuite !== MLS_CIPHERSUITE) {
+      throw new Error('SQLite promotion MLS KeyPackage ciphersuite is invalid');
+    }
+    await client.query(
+      `INSERT INTO mls_key_packages
+        (organization_id, key_package_reference, account_id, device_id,
+         ciphersuite, key_package, created_at, claimed_at,
+         claimed_by_account_id, claimed_by_device_id, welcome_event_id,
+         expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz, $8::timestamptz,
+               $9, $10, $11, $12::timestamptz)`,
+      [
+        stringValue(row.organization_id, 'MLS KeyPackage organization id'),
+        sha256Value(row.key_package_reference, 'MLS KeyPackage reference'),
+        stringValue(row.account_id, 'MLS KeyPackage account id'),
+        stringValue(row.device_id, 'MLS KeyPackage device id'),
+        ciphersuite,
+        stringValue(row.key_package, 'MLS KeyPackage payload'),
+        timestamp(row.created_at, 'MLS KeyPackage created_at'),
+        optionalTimestamp(row.claimed_at, 'MLS KeyPackage claimed_at'),
+        optionalString(row.claimed_by_account_id),
+        optionalString(row.claimed_by_device_id),
+        optionalString(row.welcome_event_id),
+        expirationTimestamp(
+          row.expires_at,
+          row.created_at,
+          MLS_KEY_PACKAGE_TTL_MS,
+          'MLS KeyPackage expires_at',
+        ),
+      ],
+    );
+  }
+}
+
+async function insertMlsConversations(
+  client: PostgresClientLike,
+  rows: DecodedRow[],
+): Promise<void> {
+  for (const row of rows) {
+    await client.query(
+      `INSERT INTO mls_conversations
+        (organization_id, conversation_id, participant_a_account_id,
+         participant_b_account_id, group_id, current_epoch, created_at,
+         updated_at, retention_floor_sequence, active_generation)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz, $8::timestamptz,
+               $9, $10)`,
+      [
+        stringValue(row.organization_id, 'MLS conversation organization id'),
+        sha256Value(row.conversation_id, 'MLS conversation id'),
+        stringValue(
+          row.participant_a_account_id,
+          'MLS conversation participant A',
+        ),
+        stringValue(
+          row.participant_b_account_id,
+          'MLS conversation participant B',
+        ),
+        stringValue(row.group_id, 'MLS conversation group id'),
+        positiveIntegerValue(row.current_epoch, 'MLS conversation epoch'),
+        timestamp(row.created_at, 'MLS conversation created_at'),
+        timestamp(row.updated_at, 'MLS conversation updated_at'),
+        row.retention_floor_sequence == null
+          ? 0
+          : nonNegativeIntegerValue(
+              row.retention_floor_sequence,
+              'MLS conversation retention floor',
+            ),
+        row.active_generation == null
+          ? 1
+          : positiveIntegerValue(
+              row.active_generation,
+              'MLS conversation active generation',
+            ),
+      ],
+    );
+    if (row.active_generation == null) {
+      await client.query(
+        `INSERT INTO mls_group_sessions
+          (organization_id, conversation_id, generation, group_id,
+           current_epoch, status, created_at)
+         VALUES ($1, $2, 1, $3, $4, 'active', $5::timestamptz)`,
+        [
+          stringValue(row.organization_id, 'MLS conversation organization id'),
+          sha256Value(row.conversation_id, 'MLS conversation id'),
+          stringValue(row.group_id, 'MLS conversation group id'),
+          positiveIntegerValue(row.current_epoch, 'MLS conversation epoch'),
+          timestamp(row.created_at, 'MLS conversation created_at'),
+        ],
+      );
+    }
+  }
+}
+
+async function insertMlsGroupSessions(
+  client: PostgresClientLike,
+  rows: DecodedRow[],
+): Promise<void> {
+  for (const row of rows) {
+    const status = stringValue(row.status, 'MLS group session status');
+    if (!['active', 'retired'].includes(status)) {
+      throw new Error('SQLite promotion MLS group session status is invalid');
+    }
+    const generation = positiveIntegerValue(
+      row.generation,
+      'MLS group session generation',
+    );
+    await client.query(
+      `INSERT INTO mls_group_sessions
+        (organization_id, conversation_id, generation, group_id,
+         current_epoch, status, created_at, retired_at, reset_by_account_id,
+         reset_by_device_id, reset_event_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz, $8::timestamptz,
+               $9, $10, $11)`,
+      [
+        stringValue(row.organization_id, 'MLS group session organization id'),
+        sha256Value(row.conversation_id, 'MLS group session conversation id'),
+        generation,
+        stringValue(row.group_id, 'MLS group session group id'),
+        positiveIntegerValue(row.current_epoch, 'MLS group session epoch'),
+        status,
+        timestamp(row.created_at, 'MLS group session created_at'),
+        optionalTimestamp(row.retired_at, 'MLS group session retired_at'),
+        optionalString(row.reset_by_account_id),
+        optionalString(row.reset_by_device_id),
+        optionalString(row.reset_event_id),
+      ],
+    );
+  }
+}
+
+async function insertMlsTransportEvents(
+  client: PostgresClientLike,
+  rows: DecodedRow[],
+): Promise<void> {
+  for (const row of rows) {
+    const eventType = stringValue(row.event_type, 'MLS event type');
+    if (!['welcome', 'commit', 'application'].includes(eventType)) {
+      throw new Error('SQLite promotion MLS event type is invalid');
+    }
+    await client.query(
+      `INSERT INTO mls_transport_events
+        (sequence, id, organization_id, conversation_id, session_generation,
+         sender_account_id,
+         sender_device_id, recipient_account_id, recipient_device_id,
+         event_type, epoch, group_id, payload, key_package_reference, created_at,
+         expires_at)
+       OVERRIDING SYSTEM VALUE
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+               $14, $15::timestamptz, $16::timestamptz)`,
+      [
+        positiveIntegerValue(row.sequence, 'MLS event sequence'),
+        stringValue(row.id, 'MLS event id'),
+        stringValue(row.organization_id, 'MLS event organization id'),
+        sha256Value(row.conversation_id, 'MLS event conversation id'),
+        row.session_generation == null
+          ? 1
+          : positiveIntegerValue(
+              row.session_generation,
+              'MLS event session generation',
+            ),
+        stringValue(row.sender_account_id, 'MLS event sender account id'),
+        stringValue(row.sender_device_id, 'MLS event sender device id'),
+        optionalString(row.recipient_account_id),
+        optionalString(row.recipient_device_id),
+        eventType,
+        positiveIntegerValue(row.epoch, 'MLS event epoch'),
+        stringValue(row.group_id, 'MLS event group id'),
+        stringValue(row.payload, 'MLS event payload'),
+        row.key_package_reference == null
+          ? null
+          : sha256Value(
+              row.key_package_reference,
+              'MLS event KeyPackage reference',
+            ),
+        timestamp(row.created_at, 'MLS event created_at'),
+        expirationTimestamp(
+          row.expires_at,
+          row.created_at,
+          MLS_TRANSPORT_EVENT_TTL_MS,
+          'MLS event expires_at',
+        ),
+      ],
+    );
+  }
+  await client.query(
+    `SELECT setval(
+       pg_get_serial_sequence('mls_transport_events', 'sequence'),
+       COALESCE((SELECT max(sequence) FROM mls_transport_events), 1),
+       EXISTS (SELECT 1 FROM mls_transport_events)
+     )`,
+  );
+}
+
+async function insertMlsResourceRateBuckets(
+  client: PostgresClientLike,
+  rows: DecodedRow[],
+): Promise<void> {
+  for (const row of rows) {
+    const action = stringValue(row.action, 'MLS rate bucket action');
+    if (!['key_package_publish', 'transport_event_append'].includes(action)) {
+      throw new Error('SQLite promotion MLS rate bucket action is invalid');
+    }
+    await client.query(
+      `INSERT INTO mls_resource_rate_buckets
+        (organization_id, account_id, device_id, action, bucket_started_at,
+         request_count)
+       VALUES ($1, $2, $3, $4, $5::timestamptz, $6)`,
+      [
+        stringValue(row.organization_id, 'MLS rate bucket organization id'),
+        stringValue(row.account_id, 'MLS rate bucket account id'),
+        stringValue(row.device_id, 'MLS rate bucket device id'),
+        action,
+        millisecondTimestamp(
+          row.bucket_started_at_ms,
+          'MLS rate bucket started_at_ms',
+        ),
+        positiveIntegerValue(
+          row.request_count,
+          'MLS rate bucket request count',
+        ),
+      ],
+    );
+  }
+}
+
 async function verifiedPreparedAttachments(input: {
   client: PostgresClientLike;
   runId: string;
@@ -789,6 +1077,11 @@ const INSERTS: Record<
   e2ee_devices: insertDevices,
   e2ee_key_transparency_log: insertTransparency,
   direct_messages: insertMessages,
+  mls_key_packages: insertMlsKeyPackages,
+  mls_conversations: insertMlsConversations,
+  mls_group_sessions: insertMlsGroupSessions,
+  mls_transport_events: insertMlsTransportEvents,
+  mls_resource_rate_buckets: insertMlsResourceRateBuckets,
 };
 
 export async function promoteVerifiedSqliteImport(input: {
