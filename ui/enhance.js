@@ -805,6 +805,15 @@
           setTimeout(syncNavigationState, 80);
         }
       }
+      // 0.5) 左下角用户卡 → 账号菜单（设置/宠物/退出登录 统一收口到左下角）
+      var accountCard = e.target.closest ? e.target.closest('.otto-sidebar-account') : null;
+      if (accountCard) {
+        if (e.target.closest && e.target.closest('.otto-sidebar-account__logout')) return;
+        e.stopPropagation();
+        e.preventDefault();
+        if (accountMenuEl) closeAccountMenu(); else openAccountMenu();
+        return;
+      }
       var conversationRow = e.target.closest ? e.target.closest('.otto-session') : null;
       if (conversationRow && !conversationRow.classList.contains('otto-uiux-session')) {
         $$('.otto-uiux-session').forEach(function (session) {
@@ -881,10 +890,21 @@
 
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
+    if (accountMenuEl) { closeAccountMenu(); e.stopPropagation(); return; }
     if (parkEl) { closeParkServices(); e.stopPropagation(); return; }
     if (allconvEl) { closeAllconvMock(); e.stopPropagation(); return; }
     if (tourState.active) { finishTour(); return; }
     closePreviewOverlay();
+  });
+
+  // ⌘, / Ctrl+, 打开设置（对齐桌面端快捷键习惯；已打开时不重复触发）
+  document.addEventListener('keydown', function (e) {
+    if (!(e.metaKey || e.ctrlKey) || e.key !== ',') return;
+    if (!$('.otto-sidebar')) return;
+    e.preventDefault();
+    if ($('.otto-hubfloat-overlay')) return;
+    var hub = $('.otto-sidebar__footer .otto-viewall--hub');
+    if (hub) hub.click();
   });
 
   document.addEventListener('click', function (e) {
@@ -1938,6 +1958,7 @@
         petDefaultPosition();
       }
       attachPetDrag();
+      if (isPetHidden()) petFloatEl.style.display = 'none';
     }
     petSpriteSource = sprite;
     syncPetClone();
@@ -1949,6 +1970,152 @@
     }
     document.body.classList.add('otto-uiux-pet-float');
     return true;
+  }
+
+  /* ──────────────────────── 头像账号菜单：设置入口收口到左下角 ────────────────────────
+   * 用户卡整卡可点，弹出菜单：用量剩余（mock 展开）、显示宠物（真实开关）、
+   * 设置（复用设置中心，CSS 全页化）、退出登录（转触发原有退出钮，逻辑不动）。 */
+  var PET_HIDDEN_KEY = 'otto.uiux.pet.hidden.v1';
+  var accountMenuEl = null;
+  var accountBackdropEl = null;
+
+  var ACCOUNT_ICONS = {
+    usage: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2.7 10.5a5.3 5.3 0 1 1 10.6 0"/><path d="M8 10.2l2.4-3"/></svg>',
+    pet: '<svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="10.2" r="3.1"/><circle cx="4.6" cy="6.4" r="1.5"/><circle cx="8" cy="5" r="1.5"/><circle cx="11.4" cy="6.4" r="1.5"/></svg>',
+    settings: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="2.1"/><path d="M8 2v1.7M8 12.3V14M2 8h1.7M12.3 8H14M3.8 3.8l1.2 1.2M11 11l1.2 1.2M12.2 3.8L11 5M5 11l-1.2 1.2"/></svg>',
+    logout: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.2 2.8H4a1.2 1.2 0 0 0-1.2 1.2v8a1.2 1.2 0 0 0 1.2 1.2h2.2"/><path d="M10.4 5.2L13.2 8l-2.8 2.8M13 8H6.4"/></svg>',
+  };
+
+  function isPetHidden() {
+    try { return localStorage.getItem(PET_HIDDEN_KEY) === '1'; } catch (err) { return false; }
+  }
+
+  function applyPetVisibility(hidden) {
+    try { localStorage.setItem(PET_HIDDEN_KEY, hidden ? '1' : '0'); } catch (err) { /* ignore */ }
+    if (petFloatEl) petFloatEl.style.display = hidden ? 'none' : '';
+  }
+
+  function closeAccountMenu() {
+    if (accountMenuEl) { accountMenuEl.remove(); accountMenuEl = null; }
+    if (accountBackdropEl) { accountBackdropEl.remove(); accountBackdropEl = null; }
+  }
+
+  function onAccountMenuClick(e) {
+    var item = e.target && e.target.closest ? e.target.closest('[data-am]') : null;
+    if (!item || !accountMenuEl) return;
+    var kind = item.getAttribute('data-am');
+    if (kind === 'usage') {
+      var panel = $('.otto-uiux-account-menu__usage', accountMenuEl);
+      if (!panel) return;
+      var open = panel.hasAttribute('hidden');
+      if (open) panel.removeAttribute('hidden'); else panel.setAttribute('hidden', '');
+      item.classList.toggle('is-open', open);
+      return;
+    }
+    if (kind === 'pet') {
+      var hidden = !isPetHidden();
+      applyPetVisibility(hidden);
+      var sw = $('.otto-uiux-account-menu__switch', item);
+      if (sw) {
+        sw.classList.toggle('is-on', !hidden);
+        sw.setAttribute('aria-checked', String(!hidden));
+      }
+      return;
+    }
+    if (kind === 'settings') {
+      closeAccountMenu();
+      var hub = $('.otto-sidebar__footer .otto-viewall--hub');
+      if (hub) hub.click();
+      setTimeout(syncNavigationState, 80);
+      return;
+    }
+    if (kind === 'logout') {
+      closeAccountMenu();
+      var logout = $('.otto-sidebar-account__logout');
+      if (logout) logout.click();
+    }
+  }
+
+  function openAccountMenu() {
+    closeAccountMenu();
+    var card = $('.otto-sidebar-account');
+    if (!card) return;
+    var rect = card.getBoundingClientRect();
+    var avatarEl = $('.otto-sidebar-account__avatar', card);
+    var nameEl = $('.otto-sidebar-account__copy strong', card);
+    var orgEl = $('.otto-sidebar-account__copy small', card);
+    var avatarText = avatarEl ? avatarEl.textContent.trim() : '用';
+    var nameText = nameEl ? nameEl.textContent.trim() : '本地用户';
+    var orgText = orgEl ? orgEl.textContent.trim() : '';
+    var petHidden = isPetHidden();
+
+    accountBackdropEl = document.createElement('div');
+    accountBackdropEl.className = 'otto-uiux-account-backdrop';
+    accountBackdropEl.addEventListener('click', closeAccountMenu);
+    document.body.appendChild(accountBackdropEl);
+
+    accountMenuEl = document.createElement('div');
+    accountMenuEl.className = 'otto-uiux-account-menu';
+    accountMenuEl.setAttribute('role', 'menu');
+    accountMenuEl.setAttribute('aria-label', '账号与设置');
+    accountMenuEl.innerHTML =
+      '<div class="otto-uiux-account-menu__head">' +
+        '<span class="otto-uiux-account-menu__avatar"></span>' +
+        '<span class="otto-uiux-account-menu__who">' +
+          '<strong></strong>' +
+          (orgText ? '<small></small>' : '') +
+        '</span>' +
+      '</div>' +
+      '<div class="otto-uiux-account-menu__sep"></div>' +
+      '<button type="button" class="otto-uiux-account-menu__item" data-am="usage">' +
+        ACCOUNT_ICONS.usage +
+        '<span class="otto-uiux-account-menu__label">用量剩余</span>' +
+        '<span class="otto-uiux-account-menu__chev">›</span>' +
+      '</button>' +
+      '<div class="otto-uiux-account-menu__usage" hidden>' +
+        '<div class="otto-uiux-account-menu__usage-row">' +
+          '<span>对话消息</span><em>本月已用 128 条</em>' +
+          '<div class="otto-uiux-account-menu__usage-bar"><i style="width:34%"></i></div>' +
+        '</div>' +
+        '<div class="otto-uiux-account-menu__usage-row">' +
+          '<span>深度任务</span><em>3 / 10 次</em>' +
+          '<div class="otto-uiux-account-menu__usage-bar"><i style="width:30%"></i></div>' +
+        '</div>' +
+        '<div class="otto-uiux-account-menu__usage-row">' +
+          '<span>模型 Tokens</span><em>剩余 58%</em>' +
+          '<div class="otto-uiux-account-menu__usage-bar"><i style="width:58%"></i></div>' +
+        '</div>' +
+        '<p class="otto-uiux-account-menu__usage-note">预览环境模拟数据，正式版读取真实用量。</p>' +
+      '</div>' +
+      '<button type="button" class="otto-uiux-account-menu__item" data-am="pet">' +
+        ACCOUNT_ICONS.pet +
+        '<span class="otto-uiux-account-menu__label">显示宠物</span>' +
+        '<span class="otto-uiux-account-menu__switch' + (petHidden ? '' : ' is-on') +
+          '" role="switch" aria-checked="' + String(!petHidden) + '"></span>' +
+      '</button>' +
+      '<button type="button" class="otto-uiux-account-menu__item" data-am="settings">' +
+        ACCOUNT_ICONS.settings +
+        '<span class="otto-uiux-account-menu__label">设置</span>' +
+        '<span class="otto-uiux-account-menu__hint">⌘,</span>' +
+      '</button>' +
+      '<button type="button" class="otto-uiux-account-menu__item" data-am="logout">' +
+        ACCOUNT_ICONS.logout +
+        '<span class="otto-uiux-account-menu__label">退出登录</span>' +
+      '</button>';
+    $('.otto-uiux-account-menu__avatar', accountMenuEl).textContent = avatarText;
+    $('.otto-uiux-account-menu__who strong', accountMenuEl).textContent = nameText;
+    var orgSmall = $('.otto-uiux-account-menu__who small', accountMenuEl);
+    if (orgSmall) orgSmall.textContent = orgText;
+
+    document.body.appendChild(accountMenuEl);
+    accountMenuEl.addEventListener('click', onAccountMenuClick);
+
+    // 定位在用户卡正上方；窗口过矮时向上收，避免顶出屏幕
+    var menuH = accountMenuEl.offsetHeight;
+    var bottom = window.innerHeight - rect.top + 8;
+    if (window.innerHeight - bottom - menuH < 8) bottom = window.innerHeight - menuH - 8;
+    accountMenuEl.style.left = Math.max(8, rect.left - 4) + 'px';
+    accountMenuEl.style.bottom = Math.max(8, bottom) + 'px';
   }
 
   /* ──────────────────────── 启动与重渲染守护 ──────────────────────── */

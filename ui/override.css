@@ -2087,3 +2087,113 @@ body.otto-uiux-pet-float #root .otto-pet-stage {
 .otto-uiux-projectbar__menu small { margin-left: auto; color: var(--ui-text-ter); font-size: 10.5px; }
 /* 项目条占位：空态建议列表下移，避免遮挡（条与卡一体化后有效露出高度变小） */
 body.otto-uiux-has-projectbar #root .otto-main:has(.otto-empty) .otto-empty__prompts { margin-top: 62px; }
+
+/* ═══════════ 设置入口收口到左下角：头像账号菜单 + 设置全页化 ═══════════
+ * 导航第 5 项「设置」与底部「设置与诊断」按钮隐藏（功能保留，由菜单程序化触发）；
+ * 左下角用户卡整卡可点，弹出账号菜单；退出钮收进菜单，原有退出逻辑不动。 */
+#root .otto-sidebar__navitem[data-uiux-nav="settings"],
+#root .otto-sidebar__footer .otto-viewall--hub { display: none; }
+#root .otto-sidebar-account {
+  cursor: pointer;
+  border-radius: 12px;
+  transition: background 140ms ease;
+}
+#root .otto-sidebar-account:hover { background: rgba(23, 43, 77, 0.05); }
+#root .otto-sidebar-account__logout { display: none; }
+
+/* 账号菜单（body 级，定位在用户卡上方；z-index 压过 300 的悬浮宠物） */
+.otto-uiux-account-backdrop { position: fixed; inset: 0; z-index: 398; }
+.otto-uiux-account-menu {
+  position: fixed;
+  z-index: 400;
+  width: 248px;
+  padding: 6px;
+  border: 1px solid var(--otto-border, #ececec);
+  border-radius: 16px;
+  background: var(--otto-surface, #ffffff);
+  box-shadow: 0 16px 48px rgba(23, 43, 77, 0.16), 0 3px 10px rgba(23, 43, 77, 0.08);
+  color: var(--otto-text, #1d1d1f);
+  font-family: var(--otto-font, -apple-system, 'PingFang SC', sans-serif);
+  animation: otto-uiux-menu-pop 150ms ease;
+}
+@keyframes otto-uiux-menu-pop {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+}
+.otto-uiux-account-menu__head { display: flex; align-items: center; gap: 10px; padding: 8px 10px 10px; }
+.otto-uiux-account-menu__avatar {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #a8ffcf;
+  color: #07110f;
+  font-size: 11px;
+  font-weight: 850;
+}
+.otto-uiux-account-menu__who { min-width: 0; display: grid; gap: 1px; }
+.otto-uiux-account-menu__who strong { font-size: 13px; font-weight: 700; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.otto-uiux-account-menu__who small { font-size: 11px; color: var(--otto-text-tertiary, #aeaeb2); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.otto-uiux-account-menu__sep { height: 1px; margin: 2px 6px 4px; background: var(--otto-border, #ececec); }
+.otto-uiux-account-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font: 500 13px/1.2 var(--otto-font, -apple-system, 'PingFang SC', sans-serif);
+  cursor: pointer;
+  text-align: left;
+}
+.otto-uiux-account-menu__item:hover { background: rgba(23, 43, 77, 0.05); }
+.otto-uiux-account-menu__item svg { width: 16px; height: 16px; flex: none; opacity: 0.75; }
+.otto-uiux-account-menu__label { flex: 1; min-width: 0; }
+.otto-uiux-account-menu__chev { color: var(--otto-text-tertiary, #aeaeb2); font-size: 15px; transition: transform 140ms ease; }
+.otto-uiux-account-menu__item.is-open .otto-uiux-account-menu__chev { transform: rotate(90deg); }
+.otto-uiux-account-menu__hint { color: var(--otto-text-tertiary, #aeaeb2); font-size: 12px; }
+.otto-uiux-account-menu__switch {
+  position: relative;
+  flex: none;
+  width: 30px;
+  height: 18px;
+  border-radius: 999px;
+  background: #d9d9de;
+  transition: background 160ms ease;
+}
+.otto-uiux-account-menu__switch::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  transition: transform 160ms ease;
+}
+.otto-uiux-account-menu__switch.is-on { background: var(--otto-accent-hover, #0ea5e9); }
+.otto-uiux-account-menu__switch.is-on::after { transform: translateX(12px); }
+.otto-uiux-account-menu__usage { display: grid; gap: 10px; padding: 4px 12px 10px 36px; }
+.otto-uiux-account-menu__usage[hidden] { display: none; }
+.otto-uiux-account-menu__usage-row { display: grid; grid-template-columns: 1fr auto; gap: 3px 8px; align-items: baseline; font-size: 11px; }
+.otto-uiux-account-menu__usage-row span { color: var(--otto-text-secondary, #8a8a8e); }
+.otto-uiux-account-menu__usage-row em { font-style: normal; color: var(--otto-text-tertiary, #aeaeb2); }
+.otto-uiux-account-menu__usage-bar { grid-column: 1 / -1; height: 4px; border-radius: 999px; background: var(--otto-border, #ececec); overflow: hidden; }
+.otto-uiux-account-menu__usage-bar i { display: block; height: 100%; border-radius: 999px; background: var(--otto-accent, #38bdf8); }
+.otto-uiux-account-menu__usage-note { margin: 0; font-size: 10px; color: var(--otto-text-tertiary, #aeaeb2); }
+
+/* 设置中心：浮层卡片 → 独立全页（账号菜单「设置」进入，页内左上角返回）。
+ * 双类选择器提权：覆盖层由 React 渲染，位置不定，不能依赖 #root 前缀。 */
+.otto-hubfloat-overlay.otto-hubfloat-overlay { background: var(--otto-bg, #ffffff); }
+.otto-hubfloat.otto-hubfloat {
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+  box-shadow: none;
+}
