@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "license": {
+    "billingEnforcementField": "billingEnforcement",
+    "billingEnforcementValues": ["disabled", "enforce"],
+    "onlineOnly": true,
+    "holdEndpointField": "billingHoldEndpoint"
+  },
+  "request": {
+    "idempotencyHeader": "x-otto-idempotency-key",
+    "admissionHeader": "x-otto-billing-admission"
+  },
+  "errors": {
+    "commercialModuleNotEntitled": {
+      "status": 402,
+      "code": "commercial_module_not_entitled"
+    },
+    "organizationFeatureDisabled": {
+      "status": 403,
+      "code": "organization_feature_disabled"
+    },
+    "billingIdempotencyKeyRequired": {
+      "status": 400,
+      "code": "billing_idempotency_key_required"
+    },
+    "insufficientCredits": {
+      "status": 402,
+      "code": "insufficient_credits"
+    },
+    "billingPolicyUnavailable": {
+      "status": 503,
+      "code": "billing_policy_unavailable"
+    },
+    "commercialControlUnavailable": {
+      "status": 503,
+      "code": "commercial_control_unavailable"
+    }
+  },
+  "settlement": {
+    "holdTtlSeconds": 900,
+    "successOutcome": "capture",
+    "failureOutcome": "release",
+    "durableOutbox": "billing_admission_outbox"
+  },
+  "evidenceTrust": "customer_server_reported"
+}

@@ -111,6 +111,26 @@ export const PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor =
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
 
+      CREATE TABLE IF NOT EXISTS billing_admission_outbox (
+        id TEXT PRIMARY KEY,
+        deployment_id TEXT NOT NULL,
+        organization_id TEXT NOT NULL,
+        hold_id TEXT NOT NULL,
+        module TEXT NOT NULL,
+        units INTEGER NOT NULL CHECK(units > 0),
+        reference_id TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        desired_outcome TEXT CHECK(desired_outcome IN ('capture', 'release')),
+        status TEXT NOT NULL DEFAULT 'authorized'
+          CHECK(status IN ('authorized', 'pending', 'failed', 'finalized', 'discarded')),
+        attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+        created_at_ms INTEGER NOT NULL,
+        finalized_at_ms INTEGER,
+        next_attempt_at_ms INTEGER,
+        last_error TEXT,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
       CREATE INDEX IF NOT EXISTS idx_telemetry_events_status_created
         ON telemetry_events(status, created_at_ms);
       CREATE INDEX IF NOT EXISTS idx_telemetry_events_deployment_created
@@ -121,6 +141,8 @@ export const PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor =
         ON telemetry_ingest_nonces(received_at_ms);
       CREATE INDEX IF NOT EXISTS idx_billing_usage_outbox_delivery
         ON billing_usage_outbox(status, next_attempt_at_ms, created_at_ms);
+      CREATE INDEX IF NOT EXISTS idx_billing_admission_outbox_delivery
+        ON billing_admission_outbox(status, next_attempt_at_ms, created_at_ms);
     `);
 
       const licenseColumns = new Set(

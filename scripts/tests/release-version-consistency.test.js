@@ -52,4 +52,37 @@ describe('release version displays', () => {
       }
     },
   );
+
+  it('builds package references before release type checking', () => {
+    const workflow = readFileSync(
+      path.resolve('.github/workflows/release.yml'),
+      'utf8',
+    );
+    const qualityGateStart = workflow.indexOf(
+      '      - name: Release quality gates',
+    );
+    const focusedTestsStart = workflow.indexOf(
+      '      - name: Focused regression tests',
+      qualityGateStart,
+    );
+    const qualityGate = workflow.slice(qualityGateStart, focusedTestsStart);
+
+    expect(qualityGateStart).toBeGreaterThanOrEqual(0);
+    expect(focusedTestsStart).toBeGreaterThan(qualityGateStart);
+    expect(qualityGate.indexOf('npm run build')).toBeGreaterThanOrEqual(0);
+    expect(qualityGate.indexOf('npm run build')).toBeLessThan(
+      qualityGate.indexOf('npm run typecheck'),
+    );
+    expect(workflow).toContain('      - name: Install dependencies\n        run: npm ci');
+    expect(workflow).not.toContain(
+      '      - name: Install dependencies\n        run: npm install',
+    );
+
+    const ciWorkflow = readFileSync(
+      path.resolve('.github/workflows/ci.yml'),
+      'utf8',
+    );
+    expect(ciWorkflow).toMatch(/Install dependencies\n\s+run: npm ci/);
+    expect(ciWorkflow).not.toMatch(/Install dependencies\n\s+run: npm install/);
+  });
 });

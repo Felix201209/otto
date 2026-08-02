@@ -22,6 +22,7 @@ import {
   serviceFormFields,
 } from './ParkServicesPlugin.js';
 import type { EnterpriseAccount, EnterpriseParkPublication, EnterpriseRepairTicket } from '../../preload/index.js';
+import { parkISODate } from '../parkBusinessTime.js';
 
 afterEach(() => {
   cleanup();
@@ -572,13 +573,7 @@ describe('ParkServicesPlugin', () => {
 
   it('会议室同日可选，22:00–23:00 完整显示两个 30 分钟时段，黄色时段可再次点击取消', async () => {
     installRepairBridge('reporter');
-    const tomorrowDate = new Date();
-    tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-    const tomorrow = [
-      tomorrowDate.getFullYear(),
-      String(tomorrowDate.getMonth() + 1).padStart(2, '0'),
-      String(tomorrowDate.getDate()).padStart(2, '0'),
-    ].join('-');
+    const tomorrow = parkISODate(new Date(), 1);
     const keys = ['22:00', '22:30'];
     Object.assign(window.otto, {
       enterpriseParkResources: vi.fn(async () => ({
@@ -599,12 +594,7 @@ describe('ParkServicesPlugin', () => {
     openDialog();
     fireEvent.click(await screen.findByText('会议室预约'));
     fireEvent.change(await screen.findByLabelText('会议室名称'), { target: { value: 'room-1' } });
-    const todayDate = new Date();
-    const today = [
-      todayDate.getFullYear(),
-      String(todayDate.getMonth() + 1).padStart(2, '0'),
-      String(todayDate.getDate()).padStart(2, '0'),
-    ].join('-');
+    const today = parkISODate(new Date());
     expect((screen.getByLabelText('使用日期') as HTMLInputElement).min).toBe(today);
     fireEvent.change(screen.getByLabelText('使用日期'), { target: { value: tomorrow } });
 
@@ -622,13 +612,7 @@ describe('ParkServicesPlugin', () => {
 
   it('会议预约冲突后立即刷新资源，避免继续显示已失效的绿色时段', async () => {
     installRepairBridge('reporter');
-    const date = new Date();
-    date.setDate(date.getDate() + 1);
-    const tomorrow = [
-      date.getFullYear(),
-      String(date.getMonth() + 1).padStart(2, '0'),
-      String(date.getDate()).padStart(2, '0'),
-    ].join('-');
+    const tomorrow = parkISODate(new Date(), 1);
     const resources = vi.fn(async () => ({
       settings: { parkingTotal: 10, parkingNote: null, updatedAt: tomorrow },
       meetingRooms: [{

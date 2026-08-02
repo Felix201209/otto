@@ -14,9 +14,6 @@ interface HealthRouteDeps {
   apiVersion: number;
   capabilities: readonly string[];
   deploymentInfo: DeploymentInfo;
-  smsConfigured: boolean;
-  repairSmsConfigured: boolean;
-  repairFeishuConfigured: boolean;
   sendJSON(res: ServerResponse, status: number, data: unknown): void;
 }
 
@@ -27,9 +24,6 @@ export function handleHealthRoute({
   apiVersion,
   capabilities,
   deploymentInfo,
-  smsConfigured,
-  repairSmsConfigured,
-  repairFeishuConfigured,
   sendJSON,
 }: HealthRouteDeps): boolean {
   if (path !== '/enterprise/health' || method !== 'GET') {
@@ -48,25 +42,7 @@ export function handleHealthRoute({
       buildCommit: deploymentInfo.buildCommit,
       schemaVersion: readiness.schemaVersion,
       capabilities: [...capabilities],
-      uptime: process.uptime(),
-      startedAt: deploymentInfo.startedAt,
-      runtimeVersion: process.version,
       db: 'connected',
-      storageTopology: db.getEnterpriseServiceTopology(),
-      sms: { configured: smsConfigured },
-      repairNotifications: {
-        sms: repairSmsConfigured,
-        feishu: repairFeishuConfigured,
-      },
-      dataProtection: db.getDataProtectionStatus(),
-      dataGovernance: db.getDataGovernanceProfile(null),
-      deployment: {
-        ...db.getPrivateDeploymentStatus(),
-        moduleUpdates: db.getModuleUpdateManifest(),
-        version: deploymentInfo.version,
-        buildCommit: deploymentInfo.buildCommit,
-        startedAt: deploymentInfo.startedAt,
-      },
     });
   } catch {
     sendJSON(res, 503, {
@@ -79,7 +55,6 @@ export function handleHealthRoute({
       schemaVersion: null,
       capabilities: [...capabilities],
       db: 'unavailable',
-      storageTopology: db.getEnterpriseServiceTopology(),
       error: 'enterprise database unavailable',
     });
   }

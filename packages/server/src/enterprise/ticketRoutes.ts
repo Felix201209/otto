@@ -128,6 +128,17 @@ export async function handleTicketRoute({
       return true;
     }
     const isParkRequest = isParkRequestServiceId(serviceId);
+    if (
+      isParkRequest &&
+      !db.isLicenseUsableForOrganizationFeature('park_service')
+    ) {
+      sendJSON(res, 402, {
+        error: 'commercial module is not entitled',
+        code: 'commercial_module_not_entitled',
+        feature: 'park_service',
+      });
+      return true;
+    }
     const ticketPark = isParkRequest
       ? db.getParkForOrganization(account.organizationId)
       : null;
@@ -307,6 +318,7 @@ export async function handleTicketRoute({
     }
     sendJSON(res, 200, {
       tickets: db.listTicketsForAccount(account.id)
+        .filter((ticket) => !ticket.parkId || db.isLicenseUsableForOrganizationFeature('park_service'))
         .filter((ticket) => db.isTicketFeatureEnabledForAccount(ticket.id, account.id)),
     });
     return true;
@@ -320,6 +332,7 @@ export async function handleTicketRoute({
     }
     sendJSON(res, 200, {
       tickets: db.listTicketInbox(account.id)
+        .filter((ticket) => !ticket.parkId || db.isLicenseUsableForOrganizationFeature('park_service'))
         .filter((ticket) => db.isTicketFeatureEnabledForAccount(ticket.id, account.id)),
     });
     return true;
@@ -337,6 +350,17 @@ export async function handleTicketRoute({
     const currentTicket = ticketId ? db.getTicketForAccount(ticketId, account.id) : null;
     if (!currentTicket) {
       sendJSON(res, 404, { error: '工单不存在或无权查看' });
+      return true;
+    }
+    if (
+      currentTicket.parkId &&
+      !db.isLicenseUsableForOrganizationFeature('park_service')
+    ) {
+      sendJSON(res, 402, {
+        error: 'commercial module is not entitled',
+        code: 'commercial_module_not_entitled',
+        feature: 'park_service',
+      });
       return true;
     }
     if (currentTicket.parkId && !db.isTicketFeatureEnabledForAccount(ticketId, account.id)) {

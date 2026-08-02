@@ -31,6 +31,11 @@ import {
   flushBillingUsageQueue as flushBillingUsageQueueInRepository,
   queueBillingUsage as queueBillingUsageInRepository,
 } from './billingUsageRepository.js';
+import {
+  authorizeBillingOperation as authorizeBillingOperationInRepository,
+  finalizeBillingOperation as finalizeBillingOperationInRepository,
+  flushBillingAdmissionQueue as flushBillingAdmissionQueueInRepository,
+} from './billingAdmissionRepository.js';
 import { resolveDeploymentUpdatePolicy } from './updatePolicyClient.js';
 import { createDeploymentSettingsRepository } from './deploymentSettingsRepository.js';
 import {
@@ -158,6 +163,23 @@ export function createCommercialControlComposition(
     flushBillingUsageQueue: (
       fetchImpl?: Parameters<typeof flushBillingUsageQueueInRepository>[1],
     ) => flushBillingUsageQueueInRepository(billingUsageStore, fetchImpl),
+    authorizeBillingOperation: (
+      input: Parameters<typeof authorizeBillingOperationInRepository>[1],
+      fetchImpl?: typeof fetch,
+    ) => authorizeBillingOperationInRepository(billingUsageStore, input, fetchImpl),
+    finalizeBillingOperation: (
+      admission: Parameters<typeof finalizeBillingOperationInRepository>[1],
+      outcome: Parameters<typeof finalizeBillingOperationInRepository>[2],
+      fetchImpl?: typeof fetch,
+    ) => finalizeBillingOperationInRepository(
+      billingUsageStore,
+      admission,
+      outcome,
+      fetchImpl,
+    ),
+    flushBillingAdmissionQueue: (
+      fetchImpl?: Parameters<typeof flushBillingAdmissionQueueInRepository>[1],
+    ) => flushBillingAdmissionQueueInRepository(billingUsageStore, fetchImpl),
     ingestTelemetryBatch: (
       raw: unknown,
       authorization: string | undefined,

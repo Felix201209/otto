@@ -186,7 +186,7 @@ curl --fail --show-error \
 
 - `status: ok`
 - `apiVersion: 4`
-- `schemaVersion: 19`（必须与本次 release manifest 的 `schemaTo` 一致）
+- `schemaVersion` 必须与本次 release manifest 的 `database.schemaTo` 一致
 - `db: connected`
 - `sms.configured: true`
 - `capabilities` 同时包含 `personal_enterprise_upgrade`、`direct_messages`、`atoa`、`position_invites`、`park_service_push`、`park_repair_v1`、`data_protection_v1`、`encrypted_attachment_storage_v1`、`encrypted_message_storage_v1`、`signed_telemetry_transport_v1`

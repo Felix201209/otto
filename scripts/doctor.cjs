@@ -86,9 +86,15 @@ function commandVersion(command, args = ['--version']) {
   }
 }
 
-function parseMajor(version) {
-  const match = String(version).match(/v?(\d+)/);
-  return match ? Number(match[1]) : NaN;
+function versionAtLeast(version, minimum) {
+  const parsed = String(version).match(/v?(\d+)\.(\d+)\.(\d+)/);
+  if (!parsed) return false;
+  const actual = parsed.slice(1).map(Number);
+  for (let index = 0; index < minimum.length; index += 1) {
+    if (actual[index] > minimum[index]) return true;
+    if (actual[index] < minimum[index]) return false;
+  }
+  return true;
 }
 
 function directorySizeBytes(dir, topLevelStats = new Map(), topLevelName = '') {
@@ -169,7 +175,6 @@ function findMojibakeMarkers() {
 
 const rootPackage = readJson('package.json');
 const nodeVersion = process.version;
-const nodeMajor = parseMajor(nodeVersion);
 function detectNpmVersion() {
   const userAgent = process.env.npm_config_user_agent || '';
   const match = userAgent.match(/\bnpm\/([^\s]+)/);
@@ -203,9 +208,9 @@ const distributionDetails = distributionArtifacts.length === 0
 
 addCheck(
   'Node.js version',
-  Number.isFinite(nodeMajor) && nodeMajor >= 20,
-  `${nodeVersion} (required: ${rootPackage.engines?.node ?? '>=20.0.0'})`,
-  'Install Node.js 20 or newer.',
+  versionAtLeast(nodeVersion, [22, 16, 0]),
+  `${nodeVersion} (required: ${rootPackage.engines?.node ?? '>=22.16.0'})`,
+  'Install Node.js 22.16.0 or newer.',
 );
 
 addCheck(

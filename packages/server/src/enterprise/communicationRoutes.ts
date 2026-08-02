@@ -620,6 +620,34 @@ export async function handleCommunicationRoute({
       sendJSON(res, 400, { error: '消息内容不能为空' });
       return true;
     }
+    const contentType =
+      body.contentType === 'atoa_request' ||
+      body.contentType === 'atoa_response'
+        ? body.contentType
+        : 'message';
+    const isAtoaProtocolMessage = contentType !== 'message';
+    if (
+      isAtoaProtocolMessage &&
+      !db.isLicenseUsableForOrganizationFeature('atoa')
+    ) {
+      sendJSON(res, 402, {
+        error: 'commercial module is not entitled',
+        code: 'commercial_module_not_entitled',
+        feature: 'atoa',
+      });
+      return true;
+    }
+    if (
+      isAtoaProtocolMessage &&
+      !db.isOrganizationFeatureEnabled(memberAccount.organizationId, 'atoa')
+    ) {
+      sendJSON(res, 403, {
+        error: 'organization feature is disabled',
+        code: 'organization_feature_disabled',
+        feature: 'atoa',
+      });
+      return true;
+    }
     try {
       const message = db.sendE2eeDirectMessage({
         organizationId: memberAccount.organizationId,
@@ -628,11 +656,7 @@ export async function handleCommunicationRoute({
         messageId: body.messageId as string,
         senderDeviceId: body.senderDeviceId as string,
         protocolVersion: 1,
-        contentType:
-          body.contentType === 'atoa_request' ||
-          body.contentType === 'atoa_response'
-            ? body.contentType
-            : 'message',
+        contentType,
         inReplyToMessageId:
           typeof body.inReplyToMessageId === 'string'
             ? body.inReplyToMessageId
