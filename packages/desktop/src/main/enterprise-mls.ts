@@ -12,13 +12,13 @@ import path from 'node:path';
 import {
   FileMlsStatePersistence,
   OpenMlsNativeKernel,
-  type MlsDecryptedApplication,
   type MlsDeviceScope,
   type MlsGroupInspection,
   type MlsGroupState,
   type MlsKeyPackage,
   type MlsMemberInvitation,
   type MlsPendingApplication,
+  type MlsPendingReceivedApplication,
   type MlsStatePersistence,
 } from '@otto/native';
 
@@ -129,10 +129,14 @@ export interface EnterpriseMlsKernel {
     conversationId: string,
     keyPackage: MlsKeyPackage,
   ): Promise<MlsMemberInvitation>;
-  mergePendingCommit(conversationId: string): Promise<MlsGroupState>;
+  mergePendingCommit(
+    conversationId: string,
+    peerAccountId: string,
+  ): Promise<MlsGroupState>;
   inspectGroup(conversationId: string): Promise<MlsGroupInspection | null>;
   joinGroup(
     conversationId: string,
+    peerAccountId: string,
     keyPackageReference: string,
     expectedGroupId: string,
     welcome: string,
@@ -147,7 +151,32 @@ export interface EnterpriseMlsKernel {
     peerAccountId: string,
   ): Promise<MlsPendingApplication[]>;
   listPendingApplicationPeers(): Promise<string[]>;
+  listConversationPeers(): Promise<string[]>;
+  bindConversationPeer(
+    conversationId: string,
+    peerAccountId: string,
+  ): Promise<boolean>;
   acknowledgePendingApplication(
+    conversationId: string,
+    peerAccountId: string,
+    eventId: string,
+  ): Promise<void>;
+  receiveTransportApplication(
+    conversationId: string,
+    peerAccountId: string,
+    eventId: string,
+    ciphertext: string,
+    sequence: number,
+    expectedGroupId: string,
+    expectedEpoch: number,
+    senderDeviceId: string,
+    createdAt: string,
+  ): Promise<MlsPendingReceivedApplication>;
+  listPendingReceivedApplications(
+    conversationId: string,
+    peerAccountId: string,
+  ): Promise<MlsPendingReceivedApplication[]>;
+  acknowledgeReceivedApplication(
     conversationId: string,
     peerAccountId: string,
     eventId: string,
@@ -157,11 +186,6 @@ export interface EnterpriseMlsKernel {
     conversationId: string,
     sequence: number,
   ): Promise<void>;
-  decryptTransportApplication(
-    conversationId: string,
-    ciphertext: string,
-    sequence: number,
-  ): Promise<MlsDecryptedApplication>;
   reset(): Promise<void>;
   close(): Promise<void>;
 }
@@ -542,14 +566,24 @@ export class EnterpriseMlsSessionManager {
     return this.withReadyKernel((active) =>
       active.kernel.mergePendingCommit(
         this.conversationId(active, peerAccountId),
+        peerAccountId,
       ),
     );
   }
 
   inspectGroup(peerAccountId: string): Promise<MlsGroupInspection | null> {
-    return this.withReadyKernel((active) =>
-      active.kernel.inspectGroup(this.conversationId(active, peerAccountId)),
-    );
+    return this.withReadyKernel(async (active) => {
+      const conversationId = this.conversationId(active, peerAccountId);
+      const inspection = await active.kernel.inspectGroup(conversationId);
+      if (
+        inspection &&
+        !inspection.pending_commit &&
+        inspection.member_count >= 2
+      ) {
+        await active.kernel.bindConversationPeer(conversationId, peerAccountId);
+      }
+      return inspection;
+    });
   }
 
   joinGroup(
@@ -561,6 +595,7 @@ export class EnterpriseMlsSessionManager {
     return this.withReadyKernel((active) =>
       active.kernel.joinGroup(
         this.conversationId(active, peerAccountId),
+        peerAccountId,
         keyPackageReference,
         expectedGroupId,
         welcome,
@@ -595,6 +630,12 @@ export class EnterpriseMlsSessionManager {
   listPendingApplicationPeers(): Promise<string[]> {
     return this.withReadyKernel((active) =>
       active.kernel.listPendingApplicationPeers(),
+    );
+  }
+
+  listConversationPeers(): Promise<string[]> {
+    return this.withReadyKernel((active) =>
+      active.kernel.listConversationPeers(),
     );
   }
 
@@ -651,16 +692,51 @@ export class EnterpriseMlsSessionManager {
     );
   }
 
-  decryptTransportApplication(
+  receiveTransportApplication(
     peerAccountId: string,
+    eventId: string,
     ciphertext: string,
     sequence: number,
-  ): Promise<MlsDecryptedApplication> {
+    expectedGroupId: string,
+    expectedEpoch: number,
+    senderDeviceId: string,
+    createdAt: string,
+  ): Promise<MlsPendingReceivedApplication> {
     return this.withReadyKernel((active) =>
-      active.kernel.decryptTransportApplication(
+      active.kernel.receiveTransportApplication(
         this.conversationId(active, peerAccountId),
+        peerAccountId,
+        eventId,
         ciphertext,
         sequence,
+        expectedGroupId,
+        expectedEpoch,
+        senderDeviceId,
+        createdAt,
+      ),
+    );
+  }
+
+  listPendingReceivedApplications(
+    peerAccountId: string,
+  ): Promise<MlsPendingReceivedApplication[]> {
+    return this.withReadyKernel((active) =>
+      active.kernel.listPendingReceivedApplications(
+        this.conversationId(active, peerAccountId),
+        peerAccountId,
+      ),
+    );
+  }
+
+  acknowledgeReceivedApplication(
+    peerAccountId: string,
+    eventId: string,
+  ): Promise<void> {
+    return this.withReadyKernel((active) =>
+      active.kernel.acknowledgeReceivedApplication(
+        this.conversationId(active, peerAccountId),
+        peerAccountId,
+        eventId,
       ),
     );
   }
@@ -737,6 +813,7 @@ export interface EnterpriseMlsSessionOperations {
     peerAccountId: string,
   ): Promise<MlsPendingApplication[]>;
   listPendingApplicationPeers(): Promise<string[]>;
+  listConversationPeers(): Promise<string[]>;
   acknowledgePendingApplication(
     peerAccountId: string,
     eventId: string,
@@ -746,11 +823,23 @@ export interface EnterpriseMlsSessionOperations {
     peerAccountId: string,
     sequence: number,
   ): Promise<void>;
-  decryptTransportApplication(
+  receiveTransportApplication(
     peerAccountId: string,
+    eventId: string,
     ciphertext: string,
     sequence: number,
-  ): Promise<MlsDecryptedApplication>;
+    expectedGroupId: string,
+    expectedEpoch: number,
+    senderDeviceId: string,
+    createdAt: string,
+  ): Promise<MlsPendingReceivedApplication>;
+  listPendingReceivedApplications(
+    peerAccountId: string,
+  ): Promise<MlsPendingReceivedApplication[]>;
+  acknowledgeReceivedApplication(
+    peerAccountId: string,
+    eventId: string,
+  ): Promise<void>;
 }
 
 /**
@@ -857,6 +946,7 @@ export class EnterpriseMlsSessionCoordinator {
         });
         if (
           invitation.key_package_reference !== claimed.reference ||
+          invitation.recipient_account_id !== claimed.accountId ||
           invitation.recipient_device_id !== claimed.deviceId ||
           claimed.accountId !== peerAccountId
         ) {
@@ -976,7 +1066,11 @@ export class EnterpriseMlsSessionCoordinator {
       const previousSequence =
         await this.sessions.transportCursor(peerAccountId);
       let nextSequence = previousSequence;
-      const messages: EnterpriseMlsDecryptedTransportMessage[] = [];
+      const messages = (
+        await this.sessions.listPendingReceivedApplications(peerAccountId)
+      ).map((pending) =>
+        this.receivedApplicationMessage(peerAccountId, pending),
+      );
       const events = await this.transport.listMlsTransportEvents(
         peerAccountId,
         previousSequence,
@@ -1034,29 +1128,30 @@ export class EnterpriseMlsSessionCoordinator {
               'MLS application event does not match active group state',
             );
           }
-          const decrypted = await this.sessions.decryptTransportApplication(
+          const received = await this.sessions.receiveTransportApplication(
             peerAccountId,
+            event.eventId,
             event.payload,
             event.sequence,
+            event.groupId,
+            event.epoch,
+            event.senderDeviceId,
+            event.createdAt,
           );
-          const sender = decrypted.senderDeviceScope.split('/');
+          const message = this.receivedApplicationMessage(
+            peerAccountId,
+            received,
+          );
           if (
-            decrypted.groupId !== event.groupId ||
-            decrypted.epoch !== event.epoch ||
-            sender.length !== 4 ||
-            sender[2] !== event.senderAccountId ||
-            sender[3] !== event.senderDeviceId
+            received.groupId !== event.groupId ||
+            received.epoch !== event.epoch ||
+            message.senderAccountId !== event.senderAccountId ||
+            message.senderDeviceId !== event.senderDeviceId ||
+            message.createdAt !== event.createdAt
           ) {
             throw new Error('MLS application sender binding is invalid');
           }
-          messages.push({
-            sequence: event.sequence,
-            eventId: event.eventId,
-            senderAccountId: event.senderAccountId,
-            senderDeviceId: event.senderDeviceId,
-            plaintext: decrypted.plaintext,
-            createdAt: event.createdAt,
-          });
+          messages.push(message);
         }
         nextSequence = event.sequence;
       }
@@ -1067,6 +1162,36 @@ export class EnterpriseMlsSessionCoordinator {
         messages,
       };
     });
+  }
+
+  acknowledgeReceivedApplication(
+    peerAccountId: string,
+    eventId: string,
+  ): Promise<void> {
+    return this.exclusive(this.peerOperations, peerAccountId, () =>
+      this.sessions.acknowledgeReceivedApplication(peerAccountId, eventId),
+    );
+  }
+
+  async pollAllActiveSessions(limit = 100): Promise<number> {
+    const peers = await this.sessions.listConversationPeers();
+    let processedEvents = 0;
+    const failures: unknown[] = [];
+    for (const peerAccountId of peers) {
+      try {
+        processedEvents += (await this.poll(peerAccountId, limit))
+          .processedEvents;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures,
+        `MLS inbound polling failed for ${failures.length} peer session(s)`,
+      );
+    }
+    return processedEvents;
   }
 
   private async processWelcome(
@@ -1122,6 +1247,28 @@ export class EnterpriseMlsSessionCoordinator {
     if (joined.group_id !== event.groupId || joined.epoch !== event.epoch) {
       throw new Error('MLS joined group does not match Welcome event');
     }
+  }
+
+  private receivedApplicationMessage(
+    peerAccountId: string,
+    received: MlsPendingReceivedApplication,
+  ): EnterpriseMlsDecryptedTransportMessage {
+    const sender = received.senderDeviceScope.split('/');
+    if (
+      received.peerAccountId !== peerAccountId ||
+      sender.length !== 4 ||
+      sender[2] !== peerAccountId
+    ) {
+      throw new Error('MLS application sender binding is invalid');
+    }
+    return {
+      sequence: received.sequence,
+      eventId: received.eventId,
+      senderAccountId: sender[2],
+      senderDeviceId: sender[3]!,
+      plaintext: received.plaintext,
+      createdAt: received.createdAt,
+    };
   }
 
   private async flushPendingApplicationsUnlocked(
@@ -1345,6 +1492,138 @@ export class EnterpriseMlsOutboxRetryScheduler {
     const operation = (async () => {
       try {
         await this.operations.flushAllPendingApplications();
+        this.failures = 0;
+      } catch (error) {
+        failed = true;
+        this.failures += 1;
+        try {
+          this.options.onError?.(error);
+        } catch {
+          // Observability callbacks must not terminate the security retry loop.
+        }
+      }
+    })();
+    this.inFlight = operation;
+    await operation;
+    if (this.inFlight === operation) this.inFlight = null;
+    if (!this.running || generation !== this.generation) return;
+    if (this.wakeRequested) {
+      this.wakeRequested = false;
+      this.schedule(0, generation);
+      return;
+    }
+    this.schedule(failed ? this.retryDelay() : this.idleDelayMs, generation);
+  }
+
+  private retryDelay(): number {
+    const exponent = Math.min(Math.max(this.failures - 1, 0), 30);
+    const raw = Math.min(this.baseDelayMs * 2 ** exponent, this.maxDelayMs);
+    const sample = this.random();
+    const normalized = Number.isFinite(sample)
+      ? Math.min(Math.max(sample, 0), 1)
+      : 0.5;
+    const jitter = raw * this.jitterRatio * (normalized * 2 - 1);
+    return Math.min(this.maxDelayMs, Math.max(1, Math.round(raw + jitter)));
+  }
+}
+
+export interface EnterpriseMlsInboundPollOperations {
+  pollAllActiveSessions(limit?: number): Promise<number>;
+}
+
+export type EnterpriseMlsInboundPollSchedulerOptions =
+  EnterpriseMlsOutboxRetrySchedulerOptions;
+
+/**
+ * Background receive loop for active, persistently peer-bound conversations.
+ * Application plaintext is never acknowledged here: poll() places it in the
+ * encrypted native inbox first, and the eventual consumer must explicitly
+ * acknowledge each event after durable delivery to the chat layer.
+ */
+export class EnterpriseMlsInboundPollScheduler {
+  private readonly baseDelayMs: number;
+  private readonly maxDelayMs: number;
+  private readonly idleDelayMs: number;
+  private readonly jitterRatio: number;
+  private readonly random: () => number;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private inFlight: Promise<void> | null = null;
+  private running = false;
+  private generation = 0;
+  private failures = 0;
+  private wakeRequested = false;
+
+  constructor(
+    private readonly operations: EnterpriseMlsInboundPollOperations,
+    private readonly options: EnterpriseMlsInboundPollSchedulerOptions = {},
+  ) {
+    this.baseDelayMs = options.baseDelayMs ?? 1_000;
+    this.maxDelayMs = options.maxDelayMs ?? 60_000;
+    this.idleDelayMs = options.idleDelayMs ?? 5_000;
+    this.jitterRatio = options.jitterRatio ?? 0.2;
+    this.random = options.random ?? Math.random;
+    if (
+      !Number.isSafeInteger(this.baseDelayMs) ||
+      this.baseDelayMs < 1 ||
+      !Number.isSafeInteger(this.maxDelayMs) ||
+      this.maxDelayMs < this.baseDelayMs ||
+      !Number.isSafeInteger(this.idleDelayMs) ||
+      this.idleDelayMs < 1 ||
+      !Number.isFinite(this.jitterRatio) ||
+      this.jitterRatio < 0 ||
+      this.jitterRatio > 0.5
+    ) {
+      throw new Error('MLS inbound polling policy is invalid');
+    }
+  }
+
+  start(): void {
+    if (this.running) return;
+    this.running = true;
+    this.generation += 1;
+    this.failures = 0;
+    this.wakeRequested = false;
+    this.schedule(0, this.generation);
+  }
+
+  wake(): void {
+    if (!this.running) return;
+    this.failures = 0;
+    if (this.inFlight) {
+      this.wakeRequested = true;
+      return;
+    }
+    this.schedule(0, this.generation);
+  }
+
+  async stop(): Promise<void> {
+    this.running = false;
+    this.generation += 1;
+    this.wakeRequested = false;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = undefined;
+    }
+    await this.inFlight;
+  }
+
+  private schedule(delayMs: number, generation: number): void {
+    if (!this.running || generation !== this.generation) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      void this.run(generation);
+    }, delayMs);
+    this.timer.unref?.();
+  }
+
+  private async run(generation: number): Promise<void> {
+    if (!this.running || generation !== this.generation || this.inFlight)
+      return;
+    let failed = false;
+    const operation = (async () => {
+      try {
+        await this.operations.pollAllActiveSessions();
         this.failures = 0;
       } catch (error) {
         failed = true;

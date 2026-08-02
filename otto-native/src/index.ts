@@ -352,6 +352,7 @@ export interface MlsMemberInvitation {
   group_id: string;
   epoch: number;
   key_package_reference: string;
+  recipient_account_id: string;
   recipient_device_id: string;
   commit: string;
   welcome: string;
@@ -382,6 +383,13 @@ export interface MlsDecryptedApplication {
   epoch: number;
   senderDeviceScope: string;
   plaintext: Uint8Array;
+}
+
+export interface MlsPendingReceivedApplication extends MlsDecryptedApplication {
+  eventId: string;
+  peerAccountId: string;
+  sequence: number;
+  createdAt: string;
 }
 
 export interface MlsStatePersistence {
@@ -636,6 +644,63 @@ function validatePendingApplication(
   return pending as MlsPendingApplication;
 }
 
+function validatePendingReceivedApplication(
+  result: unknown,
+  conversationId: string,
+  peerAccountId: string,
+): MlsPendingReceivedApplication {
+  const received = result as {
+    protocol?: unknown;
+    event_id?: unknown;
+    conversation_id?: unknown;
+    peer_account_id?: unknown;
+    sequence?: unknown;
+    group_id?: unknown;
+    epoch?: unknown;
+    sender_device_scope?: unknown;
+    plaintext?: unknown;
+    created_at?: unknown;
+  };
+  if (
+    received.protocol !== 'mls10-openmls-0.8' ||
+    received.conversation_id !== conversationId ||
+    received.peer_account_id !== peerAccountId ||
+    typeof received.event_id !== 'string' ||
+    !/^mls-[0-9a-f]{64}$/.test(received.event_id) ||
+    !Number.isSafeInteger(received.sequence) ||
+    (received.sequence as number) < 1 ||
+    !isBase64(received.group_id) ||
+    !Number.isSafeInteger(received.epoch) ||
+    (received.epoch as number) < 0 ||
+    typeof received.sender_device_scope !== 'string' ||
+    !/^[^/\s]+\/[^/\s]+\/[^/\s]+\/[^/\s]+$/.test(
+      received.sender_device_scope,
+    ) ||
+    !isBase64(received.plaintext) ||
+    typeof received.created_at !== 'string' ||
+    received.created_at.length < 1 ||
+    received.created_at.length > 100
+  ) {
+    throw new Error('native MLS application inbox response is invalid');
+  }
+  const plaintext = Buffer.from(received.plaintext, 'base64');
+  if (plaintext.byteLength < 1 || plaintext.byteLength > 1024 * 1024) {
+    throw new Error('native MLS application inbox plaintext is invalid');
+  }
+  return {
+    protocol: 'mls10-openmls-0.8',
+    eventId: received.event_id,
+    conversationId,
+    peerAccountId,
+    sequence: received.sequence as number,
+    groupId: received.group_id as string,
+    epoch: received.epoch as number,
+    senderDeviceScope: received.sender_device_scope,
+    plaintext: new Uint8Array(plaintext),
+    createdAt: received.created_at,
+  };
+}
+
 /**
  * Thin typed client for the native OpenMLS process. Signature keys, HPKE init
  * private keys and epoch secrets remain inside Rust. When persistence is
@@ -768,6 +833,11 @@ export class OpenMlsNativeKernel {
       typeof result.key_package_reference !== 'string' ||
       !/^[0-9a-f]{64}$/.test(result.key_package_reference) ||
       result.key_package_reference !== keyPackage.reference ||
+      typeof result.recipient_account_id !== 'string' ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(
+        result.recipient_account_id,
+      ) ||
+      result.recipient_account_id === this.scope.split('/')[2] ||
       typeof result.recipient_device_id !== 'string' ||
       !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(result.recipient_device_id) ||
       !isBase64(result.commit) ||
@@ -801,6 +871,11 @@ export class OpenMlsNativeKernel {
             result.pending_invitation.key_package_reference,
           ) ||
           !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(
+            result.pending_invitation.recipient_account_id,
+          ) ||
+          result.pending_invitation.recipient_account_id ===
+            this.scope.split('/')[2] ||
+          !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(
             result.pending_invitation.recipient_device_id,
           ) ||
           !isBase64(result.pending_invitation.commit) ||
@@ -816,12 +891,23 @@ export class OpenMlsNativeKernel {
     };
   }
 
-  async mergePendingCommit(conversationId: string): Promise<MlsGroupState> {
+  async mergePendingCommit(
+    conversationId: string,
+    peerAccountId: string,
+  ): Promise<MlsGroupState> {
     await this.init();
     const conversation = mlsConversationId(conversationId);
+    const peer = peerAccountId.trim();
+    if (
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(peer) ||
+      peer === this.scope.split('/')[2]
+    ) {
+      throw new Error('MLS peer account id is invalid');
+    }
     const result = await this.native.call('mls.group.merge_pending_commit', {
       device_scope: this.scope,
       conversation_id: conversation,
+      peer_account_id: peer,
     });
     await this.persistState();
     return validateGroupState(result, conversation);
@@ -829,13 +915,17 @@ export class OpenMlsNativeKernel {
 
   async joinGroup(
     conversationId: string,
+    peerAccountId: string,
     keyPackageReference: string,
     expectedGroupId: string,
     welcome: string,
   ): Promise<MlsGroupState> {
     await this.init();
     const conversation = mlsConversationId(conversationId);
+    const peer = peerAccountId.trim();
     if (
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(peer) ||
+      peer === this.scope.split('/')[2] ||
       !/^[0-9a-f]{64}$/.test(keyPackageReference) ||
       !isBase64(expectedGroupId) ||
       !isBase64(welcome)
@@ -845,6 +935,7 @@ export class OpenMlsNativeKernel {
     const result = await this.native.call('mls.group.join', {
       device_scope: this.scope,
       conversation_id: conversation,
+      peer_account_id: peer,
       key_package_reference: keyPackageReference,
       expected_group_id: expectedGroupId,
       welcome,
@@ -996,60 +1087,165 @@ export class OpenMlsNativeKernel {
     await this.persistState();
   }
 
-  async decryptTransportApplication(
+  async listConversationPeers(): Promise<string[]> {
+    await this.init();
+    const result = await this.native.call('mls.conversation.list_peers', {
+      device_scope: this.scope,
+    });
+    if (!Array.isArray(result) || result.length > 1_000) {
+      throw new Error('native MLS conversation peer response is invalid');
+    }
+    const peers = result.map((value) => {
+      if (
+        typeof value !== 'string' ||
+        !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value) ||
+        value === this.scope.split('/')[2]
+      ) {
+        throw new Error('native MLS conversation peer response is invalid');
+      }
+      return value;
+    });
+    if (
+      new Set(peers).size !== peers.length ||
+      peers.some((peer, index) => index > 0 && peers[index - 1]! >= peer)
+    ) {
+      throw new Error('native MLS conversation peer response is invalid');
+    }
+    return peers;
+  }
+
+  async bindConversationPeer(
     conversationId: string,
-    ciphertext: string,
-    sequence: number,
-  ): Promise<MlsDecryptedApplication> {
+    peerAccountId: string,
+  ): Promise<boolean> {
     await this.init();
     const conversation = mlsConversationId(conversationId);
+    const peer = peerAccountId.trim();
     if (
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(peer) ||
+      peer === this.scope.split('/')[2]
+    ) {
+      throw new Error('MLS peer account id is invalid');
+    }
+    const result = (await this.native.call('mls.conversation.bind_peer', {
+      device_scope: this.scope,
+      conversation_id: conversation,
+      peer_account_id: peer,
+    })) as { changed?: unknown };
+    if (typeof result.changed !== 'boolean') {
+      throw new Error('native MLS conversation binding response is invalid');
+    }
+    if (result.changed) await this.persistState();
+    return result.changed;
+  }
+
+  async receiveTransportApplication(
+    conversationId: string,
+    peerAccountId: string,
+    eventId: string,
+    ciphertext: string,
+    sequence: number,
+    expectedGroupId: string,
+    expectedEpoch: number,
+    senderDeviceId: string,
+    createdAt: string,
+  ): Promise<MlsPendingReceivedApplication> {
+    await this.init();
+    const conversation = mlsConversationId(conversationId);
+    const peer = peerAccountId.trim();
+    if (
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(peer) ||
+      peer === this.scope.split('/')[2] ||
+      !/^mls-[0-9a-f]{64}$/.test(eventId) ||
       !isBase64(ciphertext) ||
       ciphertext.length > 2 * 1024 * 1024 ||
       !Number.isSafeInteger(sequence) ||
-      sequence < 1
+      sequence < 1 ||
+      !isBase64(expectedGroupId) ||
+      !Number.isSafeInteger(expectedEpoch) ||
+      expectedEpoch < 0 ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(senderDeviceId) ||
+      typeof createdAt !== 'string' ||
+      createdAt.length < 1 ||
+      createdAt.length > 100
     ) {
       throw new Error('MLS transport application parameters are invalid');
     }
-    const result = (await this.native.call(
-      'mls.application.decrypt_transport',
-      {
-        device_scope: this.scope,
-        conversation_id: conversation,
-        ciphertext,
-        sequence,
-      },
-    )) as {
-      protocol?: unknown;
-      conversation_id?: unknown;
-      group_id?: unknown;
-      epoch?: unknown;
-      sender_device_scope?: unknown;
-      plaintext?: unknown;
-    };
+    const result = await this.native.call('mls.application.inbox.receive', {
+      device_scope: this.scope,
+      conversation_id: conversation,
+      peer_account_id: peer,
+      event_id: eventId,
+      ciphertext,
+      sequence,
+      expected_group_id: expectedGroupId,
+      expected_epoch: expectedEpoch,
+      sender_device_id: senderDeviceId,
+      created_at: createdAt,
+    });
     await this.persistState();
-    if (
-      result.protocol !== 'mls10-openmls-0.8' ||
-      result.conversation_id !== conversation ||
-      !isBase64(result.group_id) ||
-      !Number.isSafeInteger(result.epoch) ||
-      (result.epoch as number) < 0 ||
-      typeof result.sender_device_scope !== 'string' ||
-      !/^[^/\s]+\/[^/\s]+\/[^/\s]+\/[^/\s]+$/.test(
-        result.sender_device_scope,
-      ) ||
-      !isBase64(result.plaintext)
-    ) {
-      throw new Error('native MLS transport plaintext response is invalid');
+    return validatePendingReceivedApplication(result, conversation, peer);
+  }
+
+  async listPendingReceivedApplications(
+    conversationId: string,
+    peerAccountId: string,
+  ): Promise<MlsPendingReceivedApplication[]> {
+    await this.init();
+    const conversation = mlsConversationId(conversationId);
+    const peer = peerAccountId.trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(peer)) {
+      throw new Error('MLS peer account id is invalid');
     }
-    return {
-      protocol: 'mls10-openmls-0.8',
-      conversationId: conversation,
-      groupId: result.group_id,
-      epoch: result.epoch as number,
-      senderDeviceScope: result.sender_device_scope,
-      plaintext: new Uint8Array(Buffer.from(result.plaintext, 'base64')),
-    };
+    const result = await this.native.call('mls.application.inbox.list', {
+      device_scope: this.scope,
+      conversation_id: conversation,
+      peer_account_id: peer,
+    });
+    if (!Array.isArray(result) || result.length > 1_000) {
+      throw new Error('native MLS application inbox response is invalid');
+    }
+    const pending = result.map((item) =>
+      validatePendingReceivedApplication(item, conversation, peer),
+    );
+    if (
+      new Set(pending.map((item) => item.eventId)).size !== pending.length ||
+      pending.some(
+        (item, index) =>
+          index > 0 && pending[index - 1]!.sequence >= item.sequence,
+      )
+    ) {
+      throw new Error('native MLS application inbox response is invalid');
+    }
+    return pending;
+  }
+
+  async acknowledgeReceivedApplication(
+    conversationId: string,
+    peerAccountId: string,
+    eventId: string,
+  ): Promise<void> {
+    await this.init();
+    const conversation = mlsConversationId(conversationId);
+    const peer = peerAccountId.trim();
+    if (
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(peer) ||
+      !/^mls-[0-9a-f]{64}$/.test(eventId)
+    ) {
+      throw new Error('MLS application inbox acknowledgement is invalid');
+    }
+    const result = (await this.native.call('mls.application.inbox.ack', {
+      device_scope: this.scope,
+      conversation_id: conversation,
+      peer_account_id: peer,
+      event_id: eventId,
+    })) as { event_id?: unknown };
+    if (result.event_id !== eventId) {
+      throw new Error(
+        'native MLS application inbox acknowledgement is invalid',
+      );
+    }
+    await this.persistState();
   }
 
   async reset(): Promise<void> {

@@ -15,11 +15,13 @@ use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
 use openmls_traits::OpenMlsProvider;
 use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 const CIPHERSUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
 const PROTOCOL: &str = "mls10-openmls-0.8";
 const MAX_KEY_PACKAGE_BASE64: usize = 128 * 1024;
+const MAX_AVAILABLE_KEY_PACKAGES: usize = 100;
+const MAX_CONVERSATIONS: usize = 1_000;
 const MAX_WELCOME_BASE64: usize = 2 * 1024 * 1024;
 const MAX_APPLICATION_BYTES: usize = 1024 * 1024;
 const MAX_CIPHERTEXT_BASE64: usize = 2 * 1024 * 1024;
@@ -27,6 +29,9 @@ const MAX_STATE_PLAINTEXT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_STATE_ENVELOPE_BYTES: usize = 96 * 1024 * 1024;
 const MAX_PENDING_APPLICATIONS: usize = 1_000;
 const MAX_PENDING_APPLICATION_BYTES: usize = 32 * 1024 * 1024;
+const MAX_PENDING_RECEIVED_APPLICATIONS: usize = 1_000;
+const MAX_PENDING_RECEIVED_APPLICATION_BYTES: usize = 32 * 1024 * 1024;
+const MAX_PENDING_APPLICATION_STORAGE_BYTES: usize = 48 * 1024 * 1024;
 const STATE_CIPHER: &str = "aes-256-gcm";
 
 #[derive(Debug, SerdeSerialize)]
@@ -53,6 +58,7 @@ pub struct ExportedMemberAdd {
     pub group_id: String,
     pub epoch: u64,
     pub key_package_reference: String,
+    pub recipient_account_id: String,
     pub recipient_device_id: String,
     pub commit: String,
     pub welcome: String,
@@ -89,10 +95,22 @@ pub struct ExportedPendingApplication {
     pub ciphertext: String,
 }
 
+#[derive(Clone, Debug, SerdeSerialize)]
+pub struct ExportedPendingReceivedApplication {
+    pub protocol: &'static str,
+    pub event_id: String,
+    pub conversation_id: String,
+    pub peer_account_id: String,
+    pub sequence: u64,
+    pub group_id: String,
+    pub epoch: u64,
+    pub sender_device_scope: String,
+    pub plaintext: String,
+    pub created_at: String,
+}
+
 #[derive(Debug)]
 pub struct DecryptedApplicationMessage {
-    pub protocol: &'static str,
-    pub conversation_id: String,
     pub group_id: String,
     pub epoch: u64,
     pub sender_device_scope: String,
@@ -123,6 +141,10 @@ struct PersistedMlsState {
     transport_cursors: Vec<PersistedTransportCursor>,
     #[serde(default)]
     pending_applications: Vec<PersistedPendingApplication>,
+    #[serde(default)]
+    conversation_routes: Vec<PersistedConversationRoute>,
+    #[serde(default)]
+    pending_received_applications: Vec<PersistedPendingReceivedApplication>,
 }
 
 #[derive(SerdeSerialize, SerdeDeserialize)]
@@ -153,6 +175,8 @@ struct PersistedPendingInvitation {
     group_id: String,
     epoch: u64,
     key_package_reference: String,
+    #[serde(default)]
+    recipient_account_id: Option<String>,
     recipient_device_id: String,
     commit: String,
     welcome: String,
@@ -175,6 +199,27 @@ struct PersistedPendingApplication {
     epoch: u64,
     ciphertext: String,
     created_order: u64,
+}
+
+#[derive(SerdeSerialize, SerdeDeserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedConversationRoute {
+    conversation_id: String,
+    peer_account_id: String,
+}
+
+#[derive(SerdeSerialize, SerdeDeserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedPendingReceivedApplication {
+    event_id: String,
+    conversation_id: String,
+    peer_account_id: String,
+    sequence: u64,
+    group_id: String,
+    epoch: u64,
+    sender_device_scope: String,
+    plaintext: String,
+    created_at: String,
 }
 
 #[derive(Clone)]
@@ -206,6 +251,7 @@ struct PendingMemberInvitation {
     group_id: String,
     epoch: u64,
     key_package_reference: String,
+    recipient_account_id: Option<String>,
     recipient_device_id: String,
     commit: String,
     welcome: String,
@@ -219,9 +265,39 @@ impl PendingMemberInvitation {
             group_id: self.group_id.clone(),
             epoch: self.epoch,
             key_package_reference: self.key_package_reference.clone(),
+            recipient_account_id: self.recipient_account_id.clone().unwrap_or_default(),
             recipient_device_id: self.recipient_device_id.clone(),
             commit: self.commit.clone(),
             welcome: self.welcome.clone(),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct PendingReceivedApplication {
+    conversation_id: String,
+    peer_account_id: String,
+    sequence: u64,
+    group_id: String,
+    epoch: u64,
+    sender_device_scope: String,
+    plaintext: Zeroizing<String>,
+    created_at: String,
+}
+
+impl PendingReceivedApplication {
+    fn export(&self, event_id: &str) -> ExportedPendingReceivedApplication {
+        ExportedPendingReceivedApplication {
+            protocol: PROTOCOL,
+            event_id: event_id.to_string(),
+            conversation_id: self.conversation_id.clone(),
+            peer_account_id: self.peer_account_id.clone(),
+            sequence: self.sequence,
+            group_id: self.group_id.clone(),
+            epoch: self.epoch,
+            sender_device_scope: self.sender_device_scope.clone(),
+            plaintext: self.plaintext.to_string(),
+            created_at: self.created_at.clone(),
         }
     }
 }
@@ -247,6 +323,8 @@ pub struct MlsKernel {
     pending_invitations: HashMap<String, PendingMemberInvitation>,
     transport_cursors: HashMap<String, u64>,
     pending_applications: HashMap<String, PendingApplication>,
+    conversation_routes: HashMap<String, String>,
+    pending_received_applications: HashMap<String, PendingReceivedApplication>,
     persistence_scope: Option<String>,
     persistence_key: Option<Zeroizing<Vec<u8>>>,
 }
@@ -330,6 +408,7 @@ impl MlsKernel {
                 group_id: invitation.group_id.clone(),
                 epoch: invitation.epoch,
                 key_package_reference: invitation.key_package_reference.clone(),
+                recipient_account_id: invitation.recipient_account_id.clone(),
                 recipient_device_id: invitation.recipient_device_id.clone(),
                 commit: invitation.commit.clone(),
                 welcome: invitation.welcome.clone(),
@@ -356,6 +435,33 @@ impl MlsKernel {
                 created_order: application.created_order,
             })
             .collect();
+        let conversation_routes = self
+            .conversation_routes
+            .iter()
+            .map(
+                |(conversation_id, peer_account_id)| PersistedConversationRoute {
+                    conversation_id: conversation_id.clone(),
+                    peer_account_id: peer_account_id.clone(),
+                },
+            )
+            .collect();
+        let pending_received_applications = self
+            .pending_received_applications
+            .iter()
+            .map(
+                |(event_id, application)| PersistedPendingReceivedApplication {
+                    event_id: event_id.clone(),
+                    conversation_id: application.conversation_id.clone(),
+                    peer_account_id: application.peer_account_id.clone(),
+                    sequence: application.sequence,
+                    group_id: application.group_id.clone(),
+                    epoch: application.epoch,
+                    sender_device_scope: application.sender_device_scope.clone(),
+                    plaintext: application.plaintext.to_string(),
+                    created_at: application.created_at.clone(),
+                },
+            )
+            .collect();
         let snapshot = PersistedMlsState {
             format: 1,
             device_scope: scope.clone(),
@@ -366,6 +472,8 @@ impl MlsKernel {
             pending_invitations,
             transport_cursors,
             pending_applications,
+            conversation_routes,
+            pending_received_applications,
         };
         let plaintext = Zeroizing::new(
             serde_json::to_vec(&snapshot)
@@ -408,6 +516,8 @@ impl MlsKernel {
             || !self.pending_invitations.is_empty()
             || !self.transport_cursors.is_empty()
             || !self.pending_applications.is_empty()
+            || !self.conversation_routes.is_empty()
+            || !self.pending_received_applications.is_empty()
         {
             return Err("MLS state restore requires a pristine kernel".into());
         }
@@ -483,6 +593,9 @@ impl MlsKernel {
             signature_key: signer.public().into(),
         };
 
+        if snapshot.available_key_packages.len() > MAX_AVAILABLE_KEY_PACKAGES {
+            return Err("MLS restored KeyPackage inventory exceeds its limit".into());
+        }
         let mut available_key_packages = HashMap::new();
         for persisted in snapshot.available_key_packages {
             if !is_sha256(&persisted.reference) {
@@ -516,6 +629,9 @@ impl MlsKernel {
             }
         }
 
+        if snapshot.groups.len() > MAX_CONVERSATIONS {
+            return Err("MLS restored conversation inventory exceeds its limit".into());
+        }
         let mut groups = HashMap::new();
         for persisted in snapshot.groups {
             let conversation_id = validate_conversation_id(&persisted.conversation_id)?;
@@ -539,7 +655,13 @@ impl MlsKernel {
         let mut pending_invitations = HashMap::new();
         for pending in snapshot.pending_invitations {
             let conversation_id = validate_conversation_id(&pending.conversation_id)?;
+            let recipient_account_id = pending
+                .recipient_account_id
+                .as_deref()
+                .map(validate_account_id)
+                .transpose()?;
             if !is_sha256(&pending.key_package_reference)
+                || recipient_account_id.as_deref() == scope.split('/').nth(2)
                 || validate_device_id(&pending.recipient_device_id).is_err()
                 || decode_base64("MLS restored pending group id", &pending.group_id, 128)?
                     .is_empty()
@@ -574,6 +696,7 @@ impl MlsKernel {
                         group_id: pending.group_id,
                         epoch: pending.epoch,
                         key_package_reference: pending.key_package_reference,
+                        recipient_account_id,
                         recipient_device_id: pending.recipient_device_id,
                         commit: pending.commit,
                         welcome: pending.welcome,
@@ -582,6 +705,28 @@ impl MlsKernel {
                 .is_some()
             {
                 return Err("MLS restored state contains duplicate pending invitations".into());
+            }
+        }
+
+        if snapshot.conversation_routes.len() > groups.len() {
+            return Err("MLS restored conversation route limit is invalid".into());
+        }
+        let mut conversation_routes = HashMap::new();
+        for route in snapshot.conversation_routes {
+            let conversation_id = validate_conversation_id(&route.conversation_id)?;
+            let peer_account_id = validate_account_id(&route.peer_account_id)?;
+            if scope.split('/').nth(2) == Some(peer_account_id.as_str()) {
+                return Err("MLS restored conversation route peer is invalid".into());
+            }
+            let group = groups
+                .get(&conversation_id)
+                .ok_or_else(|| "MLS restored conversation route group is missing".to_string())?;
+            require_direct_peer_binding(group, &scope, &peer_account_id)?;
+            if conversation_routes
+                .insert(conversation_id, peer_account_id)
+                .is_some()
+            {
+                return Err("MLS restored state contains duplicate conversation routes".into());
             }
         }
 
@@ -636,6 +781,16 @@ impl MlsKernel {
             if !group_contains_account(group, &scope, &peer_account_id)? {
                 return Err("MLS restored application outbox peer binding is invalid".into());
             }
+            match conversation_routes.get(&conversation_id) {
+                Some(bound_peer) if bound_peer != &peer_account_id => {
+                    return Err("MLS restored application outbox route is inconsistent".into())
+                }
+                None => {
+                    require_direct_peer_binding(group, &scope, &peer_account_id)?;
+                    conversation_routes.insert(conversation_id.clone(), peer_account_id.clone());
+                }
+                _ => {}
+            }
             if BASE64.encode(group.group_id().as_slice()) != pending.group_id
                 || group.epoch().as_u64() != pending.epoch
             {
@@ -660,6 +815,80 @@ impl MlsKernel {
             }
         }
 
+        if snapshot.pending_received_applications.len() > MAX_PENDING_RECEIVED_APPLICATIONS {
+            return Err("MLS restored application inbox exceeds its item limit".into());
+        }
+        let mut pending_received_application_bytes = 0usize;
+        let mut pending_received_sequences = HashSet::new();
+        let mut pending_received_applications = HashMap::new();
+        for pending in snapshot.pending_received_applications {
+            let event_id = validate_application_event_id(&pending.event_id)?;
+            let conversation_id = validate_conversation_id(&pending.conversation_id)?;
+            let peer_account_id = validate_account_id(&pending.peer_account_id)?;
+            let sender_device_scope = validate_scope(&pending.sender_device_scope)?;
+            validate_created_at(&pending.created_at)?;
+            if pending.sequence == 0
+                || transport_cursors
+                    .get(&conversation_id)
+                    .copied()
+                    .unwrap_or(0)
+                    < pending.sequence
+                || sender_device_scope.split('/').nth(2) != Some(peer_account_id.as_str())
+                || !pending_received_sequences.insert((conversation_id.clone(), pending.sequence))
+            {
+                return Err("MLS restored application inbox binding is invalid".into());
+            }
+            validate_member_scope(&sender_device_scope, &scope)?;
+            let plaintext = Zeroizing::new(decode_base64(
+                "MLS restored received application",
+                &pending.plaintext,
+                1_398_104,
+            )?);
+            if plaintext.is_empty() || plaintext.len() > MAX_APPLICATION_BYTES {
+                return Err("MLS restored application inbox plaintext size is invalid".into());
+            }
+            pending_received_application_bytes = pending_received_application_bytes
+                .checked_add(pending.plaintext.len())
+                .ok_or_else(|| "MLS restored application inbox size overflow".to_string())?;
+            if pending_received_application_bytes > MAX_PENDING_RECEIVED_APPLICATION_BYTES {
+                return Err("MLS restored application inbox exceeds its size limit".into());
+            }
+            let group = groups
+                .get(&conversation_id)
+                .ok_or_else(|| "MLS restored application inbox group is missing".to_string())?;
+            if conversation_routes.get(&conversation_id) != Some(&peer_account_id)
+                || BASE64.encode(group.group_id().as_slice()) != pending.group_id
+                || group.epoch().as_u64() < pending.epoch
+            {
+                return Err("MLS restored application inbox state is inconsistent".into());
+            }
+            if pending_received_applications
+                .insert(
+                    event_id,
+                    PendingReceivedApplication {
+                        conversation_id,
+                        peer_account_id,
+                        sequence: pending.sequence,
+                        group_id: pending.group_id,
+                        epoch: pending.epoch,
+                        sender_device_scope,
+                        plaintext: Zeroizing::new(pending.plaintext),
+                        created_at: pending.created_at,
+                    },
+                )
+                .is_some()
+            {
+                return Err("MLS restored application inbox identity is invalid".into());
+            }
+        }
+        if pending_application_bytes
+            .checked_add(pending_received_application_bytes)
+            .ok_or_else(|| "MLS restored pending application size overflow".to_string())?
+            > MAX_PENDING_APPLICATION_STORAGE_BYTES
+        {
+            return Err("MLS restored pending applications exceed the combined size limit".into());
+        }
+
         let persistence_key = self
             .persistence_key
             .take()
@@ -680,6 +909,8 @@ impl MlsKernel {
             pending_invitations,
             transport_cursors,
             pending_applications,
+            conversation_routes,
+            pending_received_applications,
             persistence_scope: Some(persistence_scope),
             persistence_key: Some(persistence_key),
         };
@@ -723,6 +954,9 @@ impl MlsKernel {
         if identity.scope != scope {
             return Err("MLS device scope does not match initialized identity".into());
         }
+        if self.available_key_packages.len() >= MAX_AVAILABLE_KEY_PACKAGES {
+            return Err("MLS KeyPackage inventory limit reached".into());
+        }
 
         let bundle = KeyPackage::builder()
             .build(
@@ -757,19 +991,16 @@ impl MlsKernel {
         })
     }
 
-    pub fn list_key_packages(
-        &self,
-        raw_scope: &str,
-    ) -> Result<Vec<ExportedKeyPackage>, String> {
+    pub fn list_key_packages(&self, raw_scope: &str) -> Result<Vec<ExportedKeyPackage>, String> {
         let scope = validate_scope(raw_scope)?;
         self.require_identity(&scope)?;
         let mut packages = self
             .available_key_packages
             .iter()
             .map(|(reference, key_package)| {
-                let serialized = key_package.tls_serialize_detached().map_err(|error| {
-                    format!("MLS key package serialization failed: {error}")
-                })?;
+                let serialized = key_package
+                    .tls_serialize_detached()
+                    .map_err(|error| format!("MLS key package serialization failed: {error}"))?;
                 Ok(ExportedKeyPackage {
                     protocol: PROTOCOL,
                     ciphersuite: "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
@@ -805,6 +1036,9 @@ impl MlsKernel {
         self.require_identity(&scope)?;
         if self.groups.contains_key(&conversation_id) {
             return Err("MLS conversation group already exists".into());
+        }
+        if self.groups.len() >= MAX_CONVERSATIONS {
+            return Err("MLS conversation inventory limit reached".into());
         }
         let identity = self.identity.as_ref().expect("identity checked above");
         let config = MlsGroupCreateConfig::builder()
@@ -852,6 +1086,15 @@ impl MlsKernel {
                 .next()
                 .ok_or_else(|| "MLS member device identity is missing".to_string())?,
         )?;
+        let recipient_account_id = validate_account_id(
+            member_scope
+                .split('/')
+                .nth(2)
+                .ok_or_else(|| "MLS member account identity is missing".to_string())?,
+        )?;
+        if scope.split('/').nth(2) == Some(recipient_account_id.as_str()) {
+            return Err("MLS direct-session recipient account is invalid".into());
+        }
         let key_package_reference = hex::encode(
             key_package
                 .hash_ref(self.provider.crypto())
@@ -879,6 +1122,7 @@ impl MlsKernel {
             group_id,
             epoch,
             key_package_reference,
+            recipient_account_id: Some(recipient_account_id),
             recipient_device_id,
             commit: BASE64.encode(
                 commit
@@ -906,10 +1150,32 @@ impl MlsKernel {
         &mut self,
         raw_scope: &str,
         raw_conversation_id: &str,
+        raw_peer_account_id: &str,
     ) -> Result<ExportedGroupState, String> {
         let scope = validate_scope(raw_scope)?;
         let conversation_id = validate_conversation_id(raw_conversation_id)?;
+        let peer_account_id = validate_account_id(raw_peer_account_id)?;
         self.require_identity(&scope)?;
+        if scope.split('/').nth(2) == Some(peer_account_id.as_str()) {
+            return Err("MLS conversation route peer is invalid".into());
+        }
+        let invitation = self
+            .pending_invitations
+            .get(&conversation_id)
+            .ok_or_else(|| "MLS pending invitation state is missing".to_string())?;
+        if invitation.recipient_account_id.as_deref() != Some(peer_account_id.as_str()) {
+            return Err(
+                "MLS pending invitation lacks a verified peer binding; security state reset is required"
+                    .into(),
+            );
+        }
+        if self
+            .conversation_routes
+            .get(&conversation_id)
+            .is_some_and(|bound_peer| bound_peer != &peer_account_id)
+        {
+            return Err("MLS conversation route conflicts with the pending invitation".into());
+        }
         let group = self
             .groups
             .get_mut(&conversation_id)
@@ -922,6 +1188,8 @@ impl MlsKernel {
             .map_err(|error| format!("MLS pending commit merge failed: {error}"))?;
         let state = export_group_state(&conversation_id, group);
         self.pending_invitations.remove(&conversation_id);
+        self.conversation_routes
+            .insert(conversation_id, peer_account_id);
         Ok(state)
     }
 
@@ -973,7 +1241,11 @@ impl MlsKernel {
         if sequence == 0 {
             return Err("MLS transport cursor is invalid".into());
         }
-        let current = self.transport_cursors.get(&conversation_id).copied().unwrap_or(0);
+        let current = self
+            .transport_cursors
+            .get(&conversation_id)
+            .copied()
+            .unwrap_or(0);
         if sequence <= current {
             return Err("MLS transport cursor must move forwards".into());
         }
@@ -981,36 +1253,255 @@ impl MlsKernel {
         Ok(sequence)
     }
 
-    pub fn decrypt_transport_application(
+    pub fn receive_transport_application(
         &mut self,
         raw_scope: &str,
         raw_conversation_id: &str,
+        raw_peer_account_id: &str,
+        raw_event_id: &str,
         encoded_ciphertext: &str,
         sequence: u64,
-    ) -> Result<DecryptedApplicationMessage, String> {
+        raw_expected_group_id: &str,
+        expected_epoch: u64,
+        raw_sender_device_id: &str,
+        raw_created_at: &str,
+    ) -> Result<ExportedPendingReceivedApplication, String> {
         let scope = validate_scope(raw_scope)?;
         let conversation_id = validate_conversation_id(raw_conversation_id)?;
+        let peer_account_id = validate_account_id(raw_peer_account_id)?;
+        let event_id = validate_application_event_id(raw_event_id)?;
+        let expected_group_id = decode_base64("MLS group id", raw_expected_group_id, 128)?;
+        let sender_device_id = validate_device_id(raw_sender_device_id)?;
+        let created_at = validate_created_at(raw_created_at)?;
         self.require_identity(&scope)?;
-        let current = self.transport_cursors.get(&conversation_id).copied().unwrap_or(0);
+        if self.conversation_routes.get(&conversation_id) != Some(&peer_account_id) {
+            return Err("MLS application inbox peer binding is invalid".into());
+        }
+        if let Some(pending) = self.pending_received_applications.get(&event_id) {
+            if pending.conversation_id == conversation_id
+                && pending.peer_account_id == peer_account_id
+                && pending.sequence == sequence
+            {
+                return Ok(pending.export(&event_id));
+            }
+            return Err("MLS application inbox event identity conflicts".into());
+        }
+        let current = self
+            .transport_cursors
+            .get(&conversation_id)
+            .copied()
+            .unwrap_or(0);
         if sequence == 0 || sequence <= current {
             return Err("MLS transport application event was already processed".into());
         }
-        let decrypted = self.decrypt_application(&scope, &conversation_id, encoded_ciphertext)?;
+        if self.pending_received_applications.len() >= MAX_PENDING_RECEIVED_APPLICATIONS {
+            return Err("MLS application inbox item limit reached".into());
+        }
+        if self
+            .pending_received_applications
+            .values()
+            .any(|application| {
+                application.conversation_id == conversation_id && application.sequence == sequence
+            })
+        {
+            return Err("MLS application inbox sequence conflicts".into());
+        }
+        let pending_bytes = self.pending_received_applications.values().try_fold(
+            0usize,
+            |total, application| {
+                total
+                    .checked_add(application.plaintext.len())
+                    .ok_or_else(|| "MLS application inbox size overflow".to_string())
+            },
+        )?;
+        let outbox_bytes =
+            self.pending_applications
+                .values()
+                .try_fold(0usize, |total, application| {
+                    total
+                        .checked_add(application.ciphertext.len())
+                        .ok_or_else(|| "MLS pending application size overflow".to_string())
+                })?;
+        if pending_bytes
+            .checked_add(encoded_ciphertext.len())
+            .ok_or_else(|| "MLS application inbox size overflow".to_string())?
+            > MAX_PENDING_RECEIVED_APPLICATION_BYTES
+        {
+            return Err("MLS application inbox size limit reached".into());
+        }
+        if pending_bytes
+            .checked_add(outbox_bytes)
+            .and_then(|total| total.checked_add(encoded_ciphertext.len()))
+            .ok_or_else(|| "MLS pending application size overflow".to_string())?
+            > MAX_PENDING_APPLICATION_STORAGE_BYTES
+        {
+            return Err("MLS pending application combined size limit reached".into());
+        }
+        let group = self
+            .groups
+            .get(&conversation_id)
+            .ok_or_else(|| "MLS conversation group is missing".to_string())?;
+        require_direct_peer_binding(group, &scope, &peer_account_id)?;
+        if group.group_id().as_slice() != expected_group_id.as_slice()
+            || group.epoch().as_u64() != expected_epoch
+        {
+            return Err("MLS application event does not match active group state".into());
+        }
+        let mut decrypted =
+            self.decrypt_application(&scope, &conversation_id, encoded_ciphertext)?;
+        if decrypted.group_id != raw_expected_group_id
+            || decrypted.epoch != expected_epoch
+            || decrypted.sender_device_scope.split('/').nth(2) != Some(peer_account_id.as_str())
+            || decrypted.sender_device_scope.rsplit('/').next() != Some(sender_device_id.as_str())
+        {
+            self.groups.remove(&conversation_id);
+            self.conversation_routes.remove(&conversation_id);
+            return Err(
+                "MLS application sender conflicts with the direct-session peer; conversation state quarantined"
+                    .into(),
+            );
+        }
+        let plaintext = BASE64.encode(&decrypted.plaintext);
+        decrypted.plaintext.zeroize();
+        let pending = PendingReceivedApplication {
+            conversation_id: conversation_id.clone(),
+            peer_account_id,
+            sequence,
+            group_id: decrypted.group_id,
+            epoch: decrypted.epoch,
+            sender_device_scope: decrypted.sender_device_scope,
+            plaintext: Zeroizing::new(plaintext),
+            created_at,
+        };
+        let exported = pending.export(&event_id);
+        if self
+            .pending_received_applications
+            .insert(event_id, pending)
+            .is_some()
+        {
+            return Err("MLS application inbox identity collision".into());
+        }
         self.transport_cursors.insert(conversation_id, sequence);
-        Ok(decrypted)
+        Ok(exported)
+    }
+
+    pub fn list_pending_received_applications(
+        &self,
+        raw_scope: &str,
+        raw_conversation_id: &str,
+        raw_peer_account_id: &str,
+    ) -> Result<Vec<ExportedPendingReceivedApplication>, String> {
+        let scope = validate_scope(raw_scope)?;
+        let conversation_id = validate_conversation_id(raw_conversation_id)?;
+        let peer_account_id = validate_account_id(raw_peer_account_id)?;
+        self.require_identity(&scope)?;
+        if self.conversation_routes.get(&conversation_id) != Some(&peer_account_id) {
+            return Err("MLS application inbox peer binding is invalid".into());
+        }
+        let mut pending = self
+            .pending_received_applications
+            .iter()
+            .filter(|(_, application)| {
+                application.conversation_id == conversation_id
+                    && application.peer_account_id == peer_account_id
+            })
+            .map(|(event_id, application)| application.export(event_id))
+            .collect::<Vec<_>>();
+        pending.sort_by(|left, right| {
+            left.sequence
+                .cmp(&right.sequence)
+                .then_with(|| left.event_id.cmp(&right.event_id))
+        });
+        Ok(pending)
+    }
+
+    pub fn acknowledge_received_application(
+        &mut self,
+        raw_scope: &str,
+        raw_conversation_id: &str,
+        raw_peer_account_id: &str,
+        raw_event_id: &str,
+    ) -> Result<(), String> {
+        let scope = validate_scope(raw_scope)?;
+        let conversation_id = validate_conversation_id(raw_conversation_id)?;
+        let peer_account_id = validate_account_id(raw_peer_account_id)?;
+        let event_id = validate_application_event_id(raw_event_id)?;
+        self.require_identity(&scope)?;
+        let pending = self
+            .pending_received_applications
+            .get(&event_id)
+            .ok_or_else(|| "MLS received application is missing".to_string())?;
+        if pending.conversation_id != conversation_id || pending.peer_account_id != peer_account_id
+        {
+            return Err("MLS received application conversation binding is invalid".into());
+        }
+        self.pending_received_applications.remove(&event_id);
+        Ok(())
+    }
+
+    pub fn list_conversation_peers(&self, raw_scope: &str) -> Result<Vec<String>, String> {
+        let scope = validate_scope(raw_scope)?;
+        self.require_identity(&scope)?;
+        let mut peers = self
+            .conversation_routes
+            .values()
+            .cloned()
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        peers.sort();
+        Ok(peers)
+    }
+
+    pub fn bind_conversation_peer(
+        &mut self,
+        raw_scope: &str,
+        raw_conversation_id: &str,
+        raw_peer_account_id: &str,
+    ) -> Result<bool, String> {
+        let scope = validate_scope(raw_scope)?;
+        let conversation_id = validate_conversation_id(raw_conversation_id)?;
+        let peer_account_id = validate_account_id(raw_peer_account_id)?;
+        self.require_identity(&scope)?;
+        if scope.split('/').nth(2) == Some(peer_account_id.as_str()) {
+            return Err("MLS conversation route peer is invalid".into());
+        }
+        if let Some(bound_peer) = self.conversation_routes.get(&conversation_id) {
+            return if bound_peer == &peer_account_id {
+                Ok(false)
+            } else {
+                Err("MLS conversation route conflicts with the requested peer".into())
+            };
+        }
+        let group = self
+            .groups
+            .get(&conversation_id)
+            .ok_or_else(|| "MLS conversation group is missing".to_string())?;
+        if group.pending_commit().is_some() {
+            return Err("MLS conversation route cannot bind a pending group".into());
+        }
+        require_direct_peer_binding(group, &scope, &peer_account_id)?;
+        self.conversation_routes
+            .insert(conversation_id, peer_account_id);
+        Ok(true)
     }
 
     pub fn join_group(
         &mut self,
         raw_scope: &str,
         raw_conversation_id: &str,
+        raw_peer_account_id: &str,
         key_package_reference: &str,
         expected_group_id: &str,
         encoded_welcome: &str,
     ) -> Result<ExportedGroupState, String> {
         let scope = validate_scope(raw_scope)?;
         let conversation_id = validate_conversation_id(raw_conversation_id)?;
+        let peer_account_id = validate_account_id(raw_peer_account_id)?;
         self.require_identity(&scope)?;
+        if scope.split('/').nth(2) == Some(peer_account_id.as_str()) {
+            return Err("MLS conversation route peer is invalid".into());
+        }
         if self.groups.contains_key(&conversation_id) {
             return Err("MLS conversation group already exists".into());
         }
@@ -1048,13 +1539,33 @@ impl MlsKernel {
             return Err("MLS Welcome group id does not match conversation".into());
         }
         for member in staged.members() {
-            validate_member_credential(&member.credential, &scope)?;
+            let member_scope = validate_member_credential(&member.credential, &scope)?;
+            let member_account_id = member_scope
+                .split('/')
+                .nth(2)
+                .ok_or_else(|| "MLS member account identity is missing".to_string())?;
+            if member_account_id != scope.split('/').nth(2).unwrap_or_default()
+                && member_account_id != peer_account_id
+            {
+                return Err("MLS direct group contains an unexpected account".into());
+            }
+        }
+        if !staged.members().any(|member| {
+            validate_member_credential(&member.credential, &scope)
+                .ok()
+                .and_then(|member_scope| member_scope.split('/').nth(2).map(str::to_string))
+                .as_deref()
+                == Some(peer_account_id.as_str())
+        }) {
+            return Err("MLS Welcome does not contain the expected peer account".into());
         }
         let group = staged
             .into_group(&self.provider)
             .map_err(|error| format!("MLS Welcome join failed: {error}"))?;
         let state = export_group_state(&conversation_id, &group);
-        self.groups.insert(conversation_id, group);
+        self.groups.insert(conversation_id.clone(), group);
+        self.conversation_routes
+            .insert(conversation_id, peer_account_id);
         Ok(state)
     }
 
@@ -1115,26 +1626,46 @@ impl MlsKernel {
             .groups
             .get(&conversation_id)
             .ok_or_else(|| "MLS group is missing".to_string())?;
+        if self.conversation_routes.get(&conversation_id) != Some(&peer_account_id) {
+            return Err("MLS application outbox conversation route is invalid".into());
+        }
         if !group_contains_account(group, &scope, &peer_account_id)? {
             return Err("MLS application outbox peer binding is invalid".into());
         }
+        require_direct_peer_binding(group, &scope, &peer_account_id)?;
         if self.pending_applications.len() >= MAX_PENDING_APPLICATIONS {
             return Err("MLS application outbox item limit reached".into());
         }
-        let pending_bytes = self
-            .pending_applications
-            .values()
-            .try_fold(0usize, |total, application| {
+        let pending_bytes =
+            self.pending_applications
+                .values()
+                .try_fold(0usize, |total, application| {
+                    total
+                        .checked_add(application.ciphertext.len())
+                        .ok_or_else(|| "MLS application outbox size overflow".to_string())
+                })?;
+        let inbox_bytes = self.pending_received_applications.values().try_fold(
+            0usize,
+            |total, application| {
                 total
-                    .checked_add(application.ciphertext.len())
-                    .ok_or_else(|| "MLS application outbox size overflow".to_string())
-            })?;
+                    .checked_add(application.plaintext.len())
+                    .ok_or_else(|| "MLS pending application size overflow".to_string())
+            },
+        )?;
         if pending_bytes
             .checked_add(MAX_CIPHERTEXT_BASE64)
             .ok_or_else(|| "MLS application outbox size overflow".to_string())?
             > MAX_PENDING_APPLICATION_BYTES
         {
             return Err("MLS application outbox size limit reached".into());
+        }
+        if pending_bytes
+            .checked_add(inbox_bytes)
+            .and_then(|total| total.checked_add(MAX_CIPHERTEXT_BASE64))
+            .ok_or_else(|| "MLS pending application size overflow".to_string())?
+            > MAX_PENDING_APPLICATION_STORAGE_BYTES
+        {
+            return Err("MLS pending application combined size limit reached".into());
         }
         let event_id = loop {
             let mut random = [0u8; 32];
@@ -1163,7 +1694,11 @@ impl MlsKernel {
             created_order,
         };
         let exported = pending.export(&event_id);
-        if self.pending_applications.insert(event_id, pending).is_some() {
+        if self
+            .pending_applications
+            .insert(event_id, pending)
+            .is_some()
+        {
             return Err("MLS application outbox identity collision".into());
         }
         Ok(exported)
@@ -1204,10 +1739,7 @@ impl MlsKernel {
         Ok(pending)
     }
 
-    pub fn list_pending_application_peers(
-        &self,
-        raw_scope: &str,
-    ) -> Result<Vec<String>, String> {
+    pub fn list_pending_application_peers(&self, raw_scope: &str) -> Result<Vec<String>, String> {
         let scope = validate_scope(raw_scope)?;
         self.require_identity(&scope)?;
         let mut peers = self
@@ -1237,8 +1769,7 @@ impl MlsKernel {
             .pending_applications
             .get(&event_id)
             .ok_or_else(|| "MLS pending application is missing".to_string())?;
-        if pending.conversation_id != conversation_id
-            || pending.peer_account_id != peer_account_id
+        if pending.conversation_id != conversation_id || pending.peer_account_id != peer_account_id
         {
             return Err("MLS pending application conversation binding is invalid".into());
         }
@@ -1299,8 +1830,6 @@ impl MlsKernel {
         match processed.into_content() {
             ProcessedMessageContent::ApplicationMessage(application) => {
                 Ok(DecryptedApplicationMessage {
-                    protocol: PROTOCOL,
-                    conversation_id,
                     group_id,
                     epoch,
                     sender_device_scope,
@@ -1372,6 +1901,31 @@ fn group_contains_account(
     Ok(false)
 }
 
+fn require_direct_peer_binding(
+    group: &MlsGroup,
+    local_scope: &str,
+    peer_account_id: &str,
+) -> Result<(), String> {
+    let local_account_id = local_scope
+        .split('/')
+        .nth(2)
+        .ok_or_else(|| "MLS local account identity is missing".to_string())?;
+    let mut contains_local = false;
+    let mut contains_peer = false;
+    for member in group.members() {
+        let member_scope = validate_member_credential(&member.credential, local_scope)?;
+        match member_scope.split('/').nth(2) {
+            Some(account_id) if account_id == local_account_id => contains_local = true,
+            Some(account_id) if account_id == peer_account_id => contains_peer = true,
+            _ => return Err("MLS direct group contains an unexpected account".into()),
+        }
+    }
+    if !contains_local || !contains_peer {
+        return Err("MLS direct group peer binding is invalid".into());
+    }
+    Ok(())
+}
+
 fn validate_conversation_id(raw: &str) -> Result<String, String> {
     let conversation_id = raw.trim();
     if conversation_id.is_empty()
@@ -1437,6 +1991,10 @@ fn validate_member_credential(
     }
     let member_scope = std::str::from_utf8(credential.serialized_content())
         .map_err(|_| "MLS member credential is not valid UTF-8")?;
+    validate_member_scope(member_scope, local_scope)
+}
+
+fn validate_member_scope(member_scope: &str, local_scope: &str) -> Result<String, String> {
     let member_scope = validate_scope(member_scope)?;
     let mut local_parts = local_scope.split('/');
     let mut member_parts = member_scope.split('/');
@@ -1444,6 +2002,18 @@ fn validate_member_credential(
         return Err("MLS member credential is outside the local trust domain".into());
     }
     Ok(member_scope)
+}
+
+fn validate_created_at(raw: &str) -> Result<String, String> {
+    let created_at = raw.trim();
+    if created_at.is_empty()
+        || created_at.len() > 100
+        || !created_at.is_ascii()
+        || created_at.bytes().any(|byte| byte.is_ascii_control())
+    {
+        return Err("MLS application creation time is invalid".into());
+    }
+    Ok(created_at.to_string())
 }
 
 fn validate_scope(raw: &str) -> Result<String, String> {
@@ -1547,7 +2117,7 @@ mod tests {
             .unwrap_err()
             .contains("pending commit"));
         let committed = alice
-            .merge_pending_commit(alice_scope, conversation)
+            .merge_pending_commit(alice_scope, conversation, "bob")
             .unwrap();
         assert_eq!(committed.epoch, 1);
 
@@ -1555,6 +2125,7 @@ mod tests {
             .join_group(
                 bob_scope,
                 conversation,
+                "alice",
                 &bob_key_package.reference,
                 &committed.group_id,
                 &invitation.welcome,
@@ -1562,6 +2133,20 @@ mod tests {
             .unwrap();
         assert_eq!(joined.group_id, committed.group_id);
         assert_eq!(joined.epoch, committed.epoch);
+        alice.conversation_routes.remove(conversation);
+        assert!(alice
+            .list_conversation_peers(alice_scope)
+            .unwrap()
+            .is_empty());
+        assert!(alice
+            .bind_conversation_peer(alice_scope, conversation, "bob")
+            .unwrap());
+        assert!(!alice
+            .bind_conversation_peer(alice_scope, conversation, "bob")
+            .unwrap());
+        assert!(alice
+            .bind_conversation_peer(alice_scope, conversation, "mallory")
+            .is_err());
         assert!(bob
             .consume_key_package(&bob_key_package.reference)
             .unwrap_err()
@@ -1616,7 +2201,7 @@ mod tests {
             .add_member(alice_scope, conversation, &bob_key_package.key_package)
             .unwrap();
         let committed = alice
-            .merge_pending_commit(alice_scope, conversation)
+            .merge_pending_commit(alice_scope, conversation, "bob")
             .unwrap();
 
         let wrong_group_id = BASE64.encode([0u8; 16]);
@@ -1624,6 +2209,7 @@ mod tests {
             .join_group(
                 bob_scope,
                 conversation,
+                "alice",
                 &bob_key_package.reference,
                 &wrong_group_id,
                 &invitation.welcome,
@@ -1634,6 +2220,7 @@ mod tests {
             .join_group(
                 bob_scope,
                 conversation,
+                "alice",
                 &bob_key_package.reference,
                 &committed.group_id,
                 &invitation.welcome,
@@ -1684,11 +2271,12 @@ mod tests {
             .add_member(alice_scope, conversation, &bob_key_package.key_package)
             .unwrap();
         let committed = alice
-            .merge_pending_commit(alice_scope, conversation)
+            .merge_pending_commit(alice_scope, conversation, "bob")
             .unwrap();
         bob.join_group(
             bob_scope,
             conversation,
+            "alice",
             &bob_key_package.reference,
             &committed.group_id,
             &invitation.welcome,
@@ -1697,19 +2285,31 @@ mod tests {
         let before_restart = alice
             .encrypt_application(alice_scope, conversation, b"before restart")
             .unwrap();
-        bob.decrypt_transport_application(
-            bob_scope,
-            conversation,
-            &before_restart.ciphertext,
-            7,
-        )
-        .unwrap();
+        let received_before_restart = bob
+            .receive_transport_application(
+                bob_scope,
+                conversation,
+                "alice",
+                &format!("mls-{}", "1".repeat(64)),
+                &before_restart.ciphertext,
+                7,
+                &committed.group_id,
+                committed.epoch,
+                "alice-device",
+                "2026-08-02T00:00:00.000Z",
+            )
+            .unwrap();
+        assert_eq!(
+            BASE64.decode(received_before_restart.plaintext).unwrap(),
+            b"before restart"
+        );
         assert_eq!(bob.transport_cursor(bob_scope, conversation).unwrap(), 7);
 
         let alice_snapshot = alice.export_encrypted_state(alice_scope).unwrap();
         let bob_snapshot = bob.export_encrypted_state(bob_scope).unwrap();
         assert!(!alice_snapshot.contains(alice_scope));
         assert!(!alice_snapshot.contains("before restart"));
+        assert!(!bob_snapshot.contains("before restart"));
 
         let mut restored_alice = MlsKernel::default();
         let mut restored_bob = MlsKernel::default();
@@ -1735,15 +2335,42 @@ mod tests {
         let after_restart = restored_alice
             .encrypt_application(alice_scope, conversation, b"after restart")
             .unwrap();
-        let decrypted = restored_bob
-            .decrypt_transport_application(
+        let received = restored_bob
+            .receive_transport_application(
                 bob_scope,
                 conversation,
+                "alice",
+                &format!("mls-{}", "2".repeat(64)),
                 &after_restart.ciphertext,
                 8,
+                &committed.group_id,
+                committed.epoch,
+                "alice-device",
+                "2026-08-02T00:01:00.000Z",
             )
             .unwrap();
-        assert_eq!(decrypted.plaintext, b"after restart");
+        assert_eq!(BASE64.decode(received.plaintext).unwrap(), b"after restart");
+        let pending_received = restored_bob
+            .list_pending_received_applications(bob_scope, conversation, "alice")
+            .unwrap();
+        assert_eq!(pending_received.len(), 2);
+        assert_eq!(pending_received[0].sequence, 7);
+        assert_eq!(pending_received[1].sequence, 8);
+        restored_bob
+            .acknowledge_received_application(
+                bob_scope,
+                conversation,
+                "alice",
+                &pending_received[0].event_id,
+            )
+            .unwrap();
+        assert_eq!(
+            restored_bob
+                .list_pending_received_applications(bob_scope, conversation, "alice")
+                .unwrap()
+                .len(),
+            1
+        );
         assert_eq!(
             restored_bob
                 .transport_cursor(bob_scope, conversation)
@@ -1806,7 +2433,7 @@ mod tests {
             bob_key_package.reference
         );
         let committed = restored_alice
-            .merge_pending_commit(alice_scope, conversation)
+            .merge_pending_commit(alice_scope, conversation, "bob")
             .unwrap();
         let inspection = restored_alice
             .inspect_group(alice_scope, conversation)
@@ -1817,6 +2444,7 @@ mod tests {
         bob.join_group(
             bob_scope,
             conversation,
+            "alice",
             &bob_key_package.reference,
             &committed.group_id,
             &invitation.welcome,
@@ -1843,11 +2471,12 @@ mod tests {
             .add_member(alice_scope, conversation, &bob_key_package.key_package)
             .unwrap();
         let committed = alice
-            .merge_pending_commit(alice_scope, conversation)
+            .merge_pending_commit(alice_scope, conversation, "bob")
             .unwrap();
         bob.join_group(
             bob_scope,
             conversation,
+            "alice",
             &bob_key_package.reference,
             &committed.group_id,
             &invitation.welcome,
@@ -1861,15 +2490,10 @@ mod tests {
         assert!(alice
             .encrypt_transport_application(alice_scope, conversation, "mallory", b"invalid route")
             .unwrap_err()
-            .contains("peer binding"));
+            .contains("conversation route"));
 
         let queued = alice
-            .encrypt_transport_application(
-                alice_scope,
-                conversation,
-                "bob",
-                b"survive restart",
-            )
+            .encrypt_transport_application(alice_scope, conversation, "bob", b"survive restart")
             .unwrap();
         let queued_second = alice
             .encrypt_transport_application(alice_scope, conversation, "bob", b"second message")
@@ -1883,9 +2507,7 @@ mod tests {
         assert_eq!(before_restart[0].event_id, queued.event_id);
         assert_eq!(before_restart[1].event_id, queued_second.event_id);
         assert_eq!(
-            alice
-                .list_pending_application_peers(alice_scope)
-                .unwrap(),
+            alice.list_pending_application_peers(alice_scope).unwrap(),
             vec!["bob".to_string()]
         );
         assert!(alice
@@ -1932,12 +2554,7 @@ mod tests {
         assert_eq!(decrypted.plaintext, b"second message");
 
         restored
-            .acknowledge_pending_application(
-                alice_scope,
-                conversation,
-                "bob",
-                &queued.event_id,
-            )
+            .acknowledge_pending_application(alice_scope, conversation, "bob", &queued.event_id)
             .unwrap();
         restored
             .acknowledge_pending_application(

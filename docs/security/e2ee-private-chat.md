@@ -199,9 +199,15 @@ recoverable KeyPackage after approved-device activation.
 Each device keeps its per-conversation transport cursor inside the same
 authenticated native snapshot as the OpenMLS ratchet. Initial Commit and
 Welcome events can therefore resume after restart, and application-message
-decryption advances the native cursor before that combined state is atomically
-persisted. A cursor never moves backwards. Events for another local device are
-skipped without attempting to consume that device's Welcome material.
+decryption now creates a durable pending-delivery record in that encrypted
+snapshot in the same native mutation that advances the cursor. A crash after
+the snapshot replacement therefore re-delivers the queued plaintext instead
+of losing a message whose receive ratchet has already advanced. The chat-layer
+consumer must explicitly acknowledge an event after its own durable delivery;
+an acknowledgement persistence failure safely causes at-least-once
+re-delivery. Inbox item and byte limits fail closed before decryption. A cursor
+never moves backwards. Events for another local device are skipped without
+attempting to consume that device's Welcome material.
 
 The server now exposes an inactive `e2ee_mls_transport_v1` foundation in both
 SQLite development mode and the PostgreSQL clustered authority. It publishes
@@ -253,9 +259,17 @@ item and byte limits prevent unbounded local growth. Plaintext is never written
 to the outbox. The external native IPC exposes no direct application
 encrypt/decrypt bypass around the durable outbox and receive cursor.
 
-The encrypted outbox also retains the validated peer-account route so a restart
-can discover every pending direct session without a plaintext side index. The
-desktop retry scheduler attempts delivery immediately after MLS activation,
+The encrypted native state also retains a verified conversation-to-peer route.
+The route is activated only while merging the matching initial member Commit
+or joining a Welcome that contains the expected peer credential. Snapshot
+restore revalidates the trust domain, active group and account membership;
+outbox records from the preceding snapshot format can supply the route only
+after the same checks. A legacy ready group without an outbox is bound on its
+first deterministic peer inspection only after the native kernel verifies that
+every member belongs to the local or expected peer account. A restart can
+therefore enumerate active direct sessions without a plaintext side index. The
+desktop retry scheduler attempts
+outbox delivery immediately after MLS activation,
 uses jittered exponential backoff with a 1-second base and 60-second cap after
 failures, and uses a 30-second idle scan after success. A successful identity
 refresh or system resume wakes it immediately. Peer sessions are flushed
@@ -263,14 +277,22 @@ independently so one blocked session does not starve the others. Logout,
 identity replacement and application shutdown stop the scheduler and wait for
 an active acknowledgement before closing or replacing the native MLS identity.
 
+A separate background receive scheduler polls every persistently bound peer at
+a five-second idle interval and uses the same bounded, jittered failure
+backoff. It may prefetch application plaintext only into the authenticated
+encrypted native inbox; it never acknowledges or discards those records. The
+future production chat integration must durably insert each returned message
+and then call the explicit inbox acknowledgement. Polling a later unsupported
+remote member Commit still fails closed and requires a security-state reset.
+
 This is still not the active chat protocol. No production server advertises
 `e2ee_mls_v1`. If a server does advertise that capability, the desktop refuses
 to read or send through the legacy envelope instead of silently downgrading.
-The initial handshake, polling and outbox coordinator is not yet a production
-background event loop or connected to the production chat composer. Processing
-later remote member Commits, background inbound polling, multi-device fan-out,
-user-visible safety-state reset, state migration/recovery policy, multi-platform
-native packaging, and external review are still required. The release gate
-therefore keeps `desktopTransportSessionOrchestration` false. Until those
-controls and an external audit pass the release gate, the production status
-remains `device-envelope-v1`.
+The initial handshake, polling, durable inbox and outbox coordinator are not yet
+connected to the production chat composer or history writer. Processing later
+remote member Commits, wiring durable inbox delivery/acknowledgement into chat,
+multi-device fan-out, user-visible safety-state reset, state recovery policy,
+multi-platform native packaging, and external review are still required. The
+release gate therefore keeps `desktopTransportSessionOrchestration` false.
+Until those controls and an external audit pass the release gate, the
+production status remains `device-envelope-v1`.

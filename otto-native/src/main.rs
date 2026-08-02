@@ -157,7 +157,8 @@ mod tests {
                 method: "mls.group.merge_pending_commit".into(),
                 params: Some(serde_json::json!({
                     "device_scope": alice_scope,
-                    "conversation_id": conversation
+                    "conversation_id": conversation,
+                    "peer_account_id": "bob"
                 })),
             },
             &mut alice,
@@ -169,6 +170,7 @@ mod tests {
                 params: Some(serde_json::json!({
                     "device_scope": bob_scope,
                     "conversation_id": conversation,
+                    "peer_account_id": "alice",
                     "key_package_reference": bob_key_package["reference"],
                     "expected_group_id": committed["group_id"],
                     "welcome": invitation["welcome"]
@@ -206,12 +208,18 @@ mod tests {
         let decrypted = call_mls(
             Request {
                 id: None,
-                method: "mls.application.decrypt_transport".into(),
+                method: "mls.application.inbox.receive".into(),
                 params: Some(serde_json::json!({
                     "device_scope": bob_scope,
                     "conversation_id": conversation,
+                    "peer_account_id": "alice",
+                    "event_id": encrypted["event_id"],
                     "ciphertext": encrypted["ciphertext"],
-                    "sequence": 1
+                    "sequence": 1,
+                    "expected_group_id": committed["group_id"],
+                    "expected_epoch": committed["epoch"],
+                    "sender_device_id": "alice-device",
+                    "created_at": "2026-08-02T00:00:00.000Z"
                 })),
             },
             &mut bob,
@@ -582,7 +590,14 @@ fn handle_request(
             let conversation = p["conversation_id"]
                 .as_str()
                 .ok_or("Missing conversation_id")?;
-            serde_json::to_value(mls_kernel.merge_pending_commit(scope, conversation)?)
+            let peer_account_id = p["peer_account_id"]
+                .as_str()
+                .ok_or("Missing peer_account_id")?;
+            serde_json::to_value(mls_kernel.merge_pending_commit(
+                scope,
+                conversation,
+                peer_account_id,
+            )?)
                 .map_err(|error| format!("MLS response serialization failed: {error}"))
         }
         "mls.group.inspect" => {
@@ -625,6 +640,9 @@ fn handle_request(
             let conversation = p["conversation_id"]
                 .as_str()
                 .ok_or("Missing conversation_id")?;
+            let peer_account_id = p["peer_account_id"]
+                .as_str()
+                .ok_or("Missing peer_account_id")?;
             let reference = p["key_package_reference"]
                 .as_str()
                 .ok_or("Missing key_package_reference")?;
@@ -635,6 +653,7 @@ fn handle_request(
             serde_json::to_value(mls_kernel.join_group(
                 scope,
                 conversation,
+                peer_account_id,
                 reference,
                 group_id,
                 welcome,
@@ -703,28 +722,96 @@ fn handle_request(
             )?;
             Ok(serde_json::json!({"event_id": event_id}))
         }
-        "mls.application.decrypt_transport" => {
+        "mls.conversation.list_peers" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            serde_json::to_value(mls_kernel.list_conversation_peers(scope)?)
+                .map_err(|error| format!("MLS response serialization failed: {error}"))
+        }
+        "mls.conversation.bind_peer" => {
             let p = params.ok_or("Missing params")?;
             let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
             let conversation = p["conversation_id"]
                 .as_str()
                 .ok_or("Missing conversation_id")?;
+            let peer_account_id = p["peer_account_id"]
+                .as_str()
+                .ok_or("Missing peer_account_id")?;
+            Ok(serde_json::json!({
+                "changed": mls_kernel.bind_conversation_peer(
+                    scope,
+                    conversation,
+                    peer_account_id,
+                )?
+            }))
+        }
+        "mls.application.inbox.receive" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            let conversation = p["conversation_id"]
+                .as_str()
+                .ok_or("Missing conversation_id")?;
+            let peer_account_id = p["peer_account_id"]
+                .as_str()
+                .ok_or("Missing peer_account_id")?;
+            let event_id = p["event_id"].as_str().ok_or("Missing event_id")?;
             let ciphertext = p["ciphertext"].as_str().ok_or("Missing ciphertext")?;
             let sequence = p["sequence"].as_u64().ok_or("Missing sequence")?;
-            let decrypted = mls_kernel.decrypt_transport_application(
+            let group_id = p["expected_group_id"]
+                .as_str()
+                .ok_or("Missing expected_group_id")?;
+            let epoch = p["expected_epoch"].as_u64().ok_or("Missing expected_epoch")?;
+            let sender_device_id = p["sender_device_id"]
+                .as_str()
+                .ok_or("Missing sender_device_id")?;
+            let created_at = p["created_at"].as_str().ok_or("Missing created_at")?;
+            serde_json::to_value(mls_kernel.receive_transport_application(
                 scope,
                 conversation,
+                peer_account_id,
+                event_id,
                 ciphertext,
                 sequence,
+                group_id,
+                epoch,
+                sender_device_id,
+                created_at,
+            )?)
+            .map_err(|error| format!("MLS response serialization failed: {error}"))
+        }
+        "mls.application.inbox.list" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            let conversation = p["conversation_id"]
+                .as_str()
+                .ok_or("Missing conversation_id")?;
+            let peer_account_id = p["peer_account_id"]
+                .as_str()
+                .ok_or("Missing peer_account_id")?;
+            serde_json::to_value(mls_kernel.list_pending_received_applications(
+                scope,
+                conversation,
+                peer_account_id,
+            )?)
+            .map_err(|error| format!("MLS response serialization failed: {error}"))
+        }
+        "mls.application.inbox.ack" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            let conversation = p["conversation_id"]
+                .as_str()
+                .ok_or("Missing conversation_id")?;
+            let peer_account_id = p["peer_account_id"]
+                .as_str()
+                .ok_or("Missing peer_account_id")?;
+            let event_id = p["event_id"].as_str().ok_or("Missing event_id")?;
+            mls_kernel.acknowledge_received_application(
+                scope,
+                conversation,
+                peer_account_id,
+                event_id,
             )?;
-            Ok(serde_json::json!({
-                "protocol": decrypted.protocol,
-                "conversation_id": decrypted.conversation_id,
-                "group_id": decrypted.group_id,
-                "epoch": decrypted.epoch,
-                "sender_device_scope": decrypted.sender_device_scope,
-                "plaintext": BASE64.encode(decrypted.plaintext)
-            }))
+            Ok(serde_json::json!({"event_id": event_id}))
         }
         "mls.reset" => {
             let p = params.ok_or("Missing params")?;
