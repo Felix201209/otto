@@ -387,6 +387,7 @@ if (!previewWindow.otto) {
           revokedAt: null,
         },
       ]),
+    enterpriseMessageSecurityReset: () => Promise.resolve(),
     enterpriseE2eeKeyTransparency: () =>
       Promise.resolve({
         accountId: previewAccount.id,

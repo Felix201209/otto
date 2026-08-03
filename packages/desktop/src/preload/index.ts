@@ -784,6 +784,7 @@ export interface EnterpriseDirectMessage {
   readAt: string | null;
   attachments?: EnterpriseDirectMessageAttachment[];
   e2ee?: true;
+  e2eeProtocol?: 'device-envelope-v1' | 'mls10-openmls-0.8';
   contentType?: 'message' | 'atoa_request' | 'atoa_response';
   inReplyToMessageId?: string | null;
 }
@@ -811,10 +812,7 @@ export interface EnterpriseE2eeDeviceVerification {
 }
 
 export type EnterpriseE2eeKeyTransparencyEvent =
-  | 'bootstrap_approved'
-  | 'registered_pending'
-  | 'approved'
-  | 'revoked';
+  'bootstrap_approved' | 'registered_pending' | 'approved' | 'revoked';
 
 export interface EnterpriseE2eeKeyTransparencyEntry {
   sequence: number;
@@ -1075,6 +1073,7 @@ const IPC = {
   enterpriseMessagesList: 'otto:enterprise-messages-list',
   enterpriseMessagesUnread: 'otto:enterprise-messages-unread',
   enterpriseMessageSend: 'otto:enterprise-message-send',
+  enterpriseMessageSecurityReset: 'otto:enterprise-message-security-reset',
   enterpriseMessageAttachmentRead: 'otto:enterprise-message-attachment-read',
   enterpriseE2eeDevicesList: 'otto:enterprise-e2ee-devices-list',
   enterpriseE2eeKeyTransparency: 'otto:enterprise-e2ee-key-transparency',
@@ -1520,7 +1519,9 @@ export interface OttoBridge {
   enterpriseKnowledgeRevisions(
     id: string,
   ): Promise<EnterpriseKnowledgeRevision[]>;
-  enterpriseOrganizationView(organizationId?: string): Promise<EnterpriseOrganizationView>;
+  enterpriseOrganizationView(
+    organizationId?: string,
+  ): Promise<EnterpriseOrganizationView>;
   enterprisePresenceHeartbeat(): Promise<void>;
   enterpriseOrganizationFeaturesGet(): Promise<EnterpriseOrganizationFeatures>;
   enterpriseOrganizationFeaturesUpdate(
@@ -1562,6 +1563,7 @@ export interface OttoBridge {
   enterpriseMessageAttachmentRead(
     attachmentId: string,
   ): Promise<EnterpriseDirectMessageAttachmentDownload>;
+  enterpriseMessageSecurityReset(peerAccountId: string): Promise<void>;
   enterpriseE2eeDevicesList(): Promise<EnterpriseE2eeDevice[]>;
   enterpriseE2eeKeyTransparency(): Promise<EnterpriseE2eeKeyTransparencyView>;
   enterpriseE2eeDeviceApprove(deviceId: string): Promise<EnterpriseE2eeDevice>;
@@ -2211,7 +2213,9 @@ const bridge: OttoBridge = {
     }>;
   },
   runtimeDiagnostic(): Promise<DesktopRuntimeDiagnostic> {
-    return ipcRenderer.invoke(IPC.runtimeDiagnostic) as Promise<DesktopRuntimeDiagnostic>;
+    return ipcRenderer.invoke(
+      IPC.runtimeDiagnostic,
+    ) as Promise<DesktopRuntimeDiagnostic>;
   },
   skillShareList(teamId?: string): Promise<{ text: string }> {
     return ipcRenderer.invoke('otto:skill-share-list', teamId) as Promise<{
@@ -2612,7 +2616,9 @@ const bridge: OttoBridge = {
       id,
     }) as Promise<EnterpriseKnowledgeRevision[]>;
   },
-  enterpriseOrganizationView(organizationId?: string): Promise<EnterpriseOrganizationView> {
+  enterpriseOrganizationView(
+    organizationId?: string,
+  ): Promise<EnterpriseOrganizationView> {
     return ipcRenderer.invoke(
       IPC.enterpriseOrganizationView,
       organizationId ?? null,
@@ -2726,6 +2732,12 @@ const bridge: OttoBridge = {
       IPC.enterpriseMessageAttachmentRead,
       attachmentId,
     ) as Promise<EnterpriseDirectMessageAttachmentDownload>;
+  },
+  enterpriseMessageSecurityReset(peerAccountId: string): Promise<void> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseMessageSecurityReset,
+      peerAccountId,
+    ) as Promise<void>;
   },
   enterpriseE2eeDevicesList(): Promise<EnterpriseE2eeDevice[]> {
     return ipcRenderer.invoke(IPC.enterpriseE2eeDevicesList) as Promise<

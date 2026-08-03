@@ -95,6 +95,18 @@ function fakeKernel() {
       commit: 'Y29tbWl0',
       welcome: 'd2VsY29tZQ==',
     })),
+    createEpochUpdate: vi.fn(async (conversationId: string) => ({
+      protocol: 'mls10-openmls-0.8' as const,
+      conversation_id: conversationId,
+      group_id: 'Z3JvdXA=',
+      epoch: 2,
+      commit: 'ZXBvY2gtdXBkYXRl',
+    })),
+    mergePendingEpochUpdate: vi.fn(async (conversationId: string) => ({
+      ...groupState,
+      conversation_id: conversationId,
+      epoch: 2,
+    })),
     mergePendingCommit: vi.fn(async (conversationId: string) => ({
       ...groupState,
       conversation_id: conversationId,
@@ -384,6 +396,7 @@ describe('EnterpriseMlsSessionManager', () => {
       1,
       'device-b',
       '2026-08-02T00:02:00.000Z',
+      'account-b',
     );
     await manager.stageTransportApplication(
       'account-b',
@@ -394,6 +407,7 @@ describe('EnterpriseMlsSessionManager', () => {
       1,
       'device-b',
       '2026-08-02T00:03:00.000Z',
+      'account-b',
     );
     await manager.listPendingReceivedApplications('account-b');
     await manager.acknowledgeReceivedApplication(
@@ -437,6 +451,7 @@ describe('EnterpriseMlsSessionManager', () => {
       1,
       'device-b',
       '2026-08-02T00:02:00.000Z',
+      'account-b',
     );
     expect(kernel.stageTransportApplication).toHaveBeenCalledWith(
       conversationId,
@@ -448,6 +463,7 @@ describe('EnterpriseMlsSessionManager', () => {
       1,
       'device-b',
       '2026-08-02T00:03:00.000Z',
+      'account-b',
     );
     expect(kernel.listPendingReceivedApplications).toHaveBeenCalledWith(
       conversationId,
@@ -574,6 +590,17 @@ function coordinatorHarness(keyPackages: MlsKeyPackage[] = []) {
       commit: 'Y29tbWl0',
       welcome: 'd2VsY29tZQ==',
     })),
+    createEpochUpdate: vi.fn(async () => ({
+      protocol: 'mls10-openmls-0.8' as const,
+      conversation_id: group.conversation_id,
+      group_id: group.group_id,
+      epoch: group.epoch + 1,
+      commit: 'ZXBvY2gtdXBkYXRl',
+    })),
+    mergePendingEpochUpdate: vi.fn(async () => ({
+      ...group,
+      epoch: group.epoch + 1,
+    })),
     mergePendingCommit: vi.fn(async () => group),
     inspectGroup: vi.fn(async (): Promise<MlsGroupInspection | null> => null),
     joinGroup: vi.fn(async () => group),
@@ -660,6 +687,16 @@ function coordinatorHarness(keyPackages: MlsKeyPackage[] = []) {
       async (): Promise<MlsPendingReceivedApplication[]> => [],
     ),
     acknowledgeReceivedApplication: vi.fn(async () => undefined),
+    resetConversation: vi.fn(async () => ({
+      ...group,
+      epoch: 0,
+      member_count: 1,
+      member_device_scopes: [`${'f'.repeat(64)}/org-a/account-a/device-a`],
+      reset_from_group_id: group.group_id,
+      pending_commit: false,
+      pending_invitation: null,
+    })),
+    abandonConversationForReset: vi.fn(async () => undefined),
   } satisfies EnterpriseMlsSessionOperations;
   let nextSequence = 0;
   const transport = {
@@ -690,7 +727,10 @@ function coordinatorHarness(keyPackages: MlsKeyPackage[] = []) {
       sessionGeneration: 1,
       senderAccountId: 'account-a',
       senderDeviceId: input.senderDeviceId,
-      recipientAccountId: input.eventType === 'welcome' ? peerAccountId : null,
+      recipientAccountId:
+        input.eventType === 'welcome'
+          ? (input.recipientAccountId ?? peerAccountId)
+          : null,
       recipientDeviceId:
         input.eventType === 'welcome'
           ? (input.recipientDeviceId ?? null)
@@ -710,6 +750,9 @@ function coordinatorHarness(keyPackages: MlsKeyPackage[] = []) {
       async (): Promise<EnterpriseMlsTransportEvent[]> => [],
     ),
     listMlsInboundConversationPeers: vi.fn(async (): Promise<string[]> => []),
+    listApprovedMlsDeviceIds: vi.fn(async (accountId: string) =>
+      accountId === 'account-a' ? ['device-a'] : ['device-b'],
+    ),
     listMlsKeyPackageInventory: vi.fn(
       async (deviceId: string): Promise<EnterpriseMlsKeyPackageInventory> => ({
         deviceId,
@@ -901,6 +944,133 @@ describe('EnterpriseMlsSessionCoordinator', () => {
     expect(sessions.mergePendingCommit).toHaveBeenCalledTimes(2);
   });
 
+  it('adds an approved same-account device with an exact KeyPackage target', async () => {
+    const { group, sessions, transport } = coordinatorHarness();
+    const prefix = `${'f'.repeat(64)}/org-a`;
+    const ready: MlsGroupInspection = {
+      ...group,
+      member_device_scopes: [
+        `${prefix}/account-a/device-a`,
+        `${prefix}/account-b/device-b`,
+      ],
+      pending_commit: false,
+      pending_invitation: null,
+    };
+    const updated: MlsGroupInspection = {
+      ...ready,
+      epoch: 2,
+      member_count: 3,
+      member_device_scopes: [
+        `${prefix}/account-a/device-a`,
+        `${prefix}/account-a/device-a-2`,
+        `${prefix}/account-b/device-b`,
+      ],
+    };
+    sessions.inspectGroup
+      .mockResolvedValueOnce(ready)
+      .mockResolvedValueOnce(ready)
+      .mockResolvedValueOnce(updated)
+      .mockResolvedValueOnce(updated);
+    sessions.addMember.mockResolvedValueOnce({
+      protocol: 'mls10-openmls-0.8',
+      conversation_id: group.conversation_id,
+      group_id: group.group_id,
+      epoch: 1,
+      key_package_reference: 'd'.repeat(64),
+      recipient_account_id: 'account-a',
+      recipient_device_id: 'device-a-2',
+      commit: 'Y29tbWl0LWEy',
+      welcome: 'd2VsY29tZS1hMg==',
+    });
+    sessions.mergePendingCommit.mockResolvedValueOnce({
+      ...group,
+      epoch: 2,
+      member_count: 3,
+    });
+    transport.listApprovedMlsDeviceIds.mockImplementation(
+      async (accountId: string) =>
+        accountId === 'account-a' ? ['device-a', 'device-a-2'] : ['device-b'],
+    );
+    transport.claimMlsKeyPackage.mockResolvedValueOnce({
+      reference: 'd'.repeat(64),
+      accountId: 'account-a',
+      deviceId: 'device-a-2',
+      ciphersuite: 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519',
+      keyPackage: 'bG9jYWwtZGV2aWNlLWtleS1wYWNrYWdl',
+      createdAt: '2026-08-02T00:00:00.000Z',
+      claimedAt: '2026-08-02T00:01:00.000Z',
+      expiresAt: '2026-08-03T00:01:00.000Z',
+    });
+    const coordinator = new EnterpriseMlsSessionCoordinator(
+      sessions,
+      transport,
+    );
+
+    await expect(
+      coordinator.ensureApprovedDeviceMembership('account-b'),
+    ).resolves.toMatchObject({ epoch: 2, member_count: 3 });
+    expect(transport.claimMlsKeyPackage).toHaveBeenCalledWith(
+      'device-a',
+      'account-a',
+      'device-a-2',
+      'account-b',
+    );
+    expect(transport.appendMlsTransportEvent).toHaveBeenCalledWith(
+      'account-b',
+      expect.objectContaining({
+        eventType: 'welcome',
+        recipientAccountId: 'account-a',
+        recipientDeviceId: 'device-a-2',
+      }),
+    );
+  });
+
+  it('publishes and merges a crash-resumable MLS epoch refresh', async () => {
+    const { group, sessions, transport } = coordinatorHarness();
+    const pending = {
+      protocol: 'mls10-openmls-0.8' as const,
+      conversation_id: group.conversation_id,
+      group_id: group.group_id,
+      epoch: group.epoch + 1,
+      commit: 'ZXBvY2gtdXBkYXRl',
+    };
+    sessions.inspectGroup.mockResolvedValue({
+      ...group,
+      member_device_scopes: [
+        `${'f'.repeat(64)}/org-a/account-a/device-a`,
+        `${'f'.repeat(64)}/org-a/account-b/device-b`,
+      ],
+      pending_commit: true,
+      pending_invitation: null,
+      pending_epoch_update: pending,
+    });
+    const coordinator = new EnterpriseMlsSessionCoordinator(
+      sessions,
+      transport,
+    );
+
+    await expect(coordinator.refreshEpoch('account-b')).resolves.toMatchObject({
+      group_id: group.group_id,
+      epoch: 2,
+      member_count: 2,
+    });
+
+    expect(sessions.createEpochUpdate).not.toHaveBeenCalled();
+    expect(transport.appendMlsTransportEvent).toHaveBeenCalledWith(
+      'account-b',
+      expect.objectContaining({
+        eventType: 'commit',
+        epoch: 2,
+        groupId: group.group_id,
+        payload: pending.commit,
+      }),
+    );
+    expect(
+      transport.appendMlsTransportEvent.mock.calls[0]![1],
+    ).not.toHaveProperty('keyPackageReference');
+    expect(sessions.mergePendingEpochUpdate).toHaveBeenCalledWith('account-b');
+  });
+
   it('lets only the deterministic account initiate a new direct group', async () => {
     const { sessions, transport } = coordinatorHarness();
     sessions.activeScope.mockReturnValue({
@@ -998,6 +1168,7 @@ describe('EnterpriseMlsSessionCoordinator', () => {
       application.epoch,
       application.senderDeviceId,
       application.createdAt,
+      'account-a',
     );
     expect(sessions.receiveTransportApplication).not.toHaveBeenCalled();
     expect(sessions.listPendingReceivedApplications).not.toHaveBeenCalled();
@@ -1234,6 +1405,7 @@ describe('EnterpriseMlsSessionCoordinator', () => {
       1,
       'device-b',
       '2026-08-02T00:02:00.000Z',
+      'account-b',
     );
     expect(result).toMatchObject({
       previousSequence: 0,
@@ -1285,8 +1457,75 @@ describe('EnterpriseMlsSessionCoordinator', () => {
       commit.senderDeviceId,
       null,
       null,
+      'account-b',
+      null,
     );
     expect(sessions.advanceTransportCursor).not.toHaveBeenCalled();
+  });
+
+  it('retires the old local group before joining a targeted reset Welcome', async () => {
+    const { group, sessions, transport } = coordinatorHarness();
+    const replacementGroupId = 'cmVwbGFjZW1lbnQtZ3JvdXA=';
+    sessions.transportCursor.mockResolvedValue(7);
+    sessions.inspectGroup
+      .mockResolvedValueOnce({
+        ...group,
+        member_device_scopes: [
+          `${'f'.repeat(64)}/org-a/account-a/device-a`,
+          `${'f'.repeat(64)}/org-a/account-b/device-b`,
+        ],
+        pending_commit: false,
+        pending_invitation: null,
+      })
+      .mockResolvedValueOnce(null);
+    sessions.joinGroup.mockResolvedValueOnce({
+      ...group,
+      group_id: replacementGroupId,
+      epoch: 1,
+    });
+    transport.listMlsTransportEvents.mockResolvedValue([
+      transportEvent({
+        sequence: 8,
+        eventId: 'reset-commit',
+        epoch: 1,
+        groupId: replacementGroupId,
+        resetFromGroupId: group.group_id,
+        memberAddAccountId: 'account-a',
+        memberAddDeviceId: 'device-a',
+        memberAddKeyPackageReference: 'e'.repeat(64),
+      }),
+      transportEvent({
+        sequence: 9,
+        eventId: 'reset-welcome',
+        eventType: 'welcome',
+        epoch: 1,
+        groupId: replacementGroupId,
+        payload: 'd2VsY29tZS1yZXNldA==',
+        recipientAccountId: 'account-a',
+        recipientDeviceId: 'device-a',
+        keyPackageReference: 'e'.repeat(64),
+      }),
+    ]);
+    const coordinator = new EnterpriseMlsSessionCoordinator(
+      sessions,
+      transport,
+    );
+
+    await expect(coordinator.poll('account-b')).resolves.toMatchObject({
+      previousSequence: 7,
+      nextSequence: 9,
+      processedEvents: 2,
+    });
+    expect(sessions.abandonConversationForReset).toHaveBeenCalledWith(
+      'account-b',
+      group.group_id,
+    );
+    expect(sessions.joinGroup).toHaveBeenCalledWith(
+      'account-b',
+      'e'.repeat(64),
+      replacementGroupId,
+      'd2VsY29tZS1yZXNldA==',
+    );
   });
 
   it('passes a verified KeyPackage target into a remote membership Commit', async () => {
@@ -1326,6 +1565,8 @@ describe('EnterpriseMlsSessionCoordinator', () => {
       commit.senderDeviceId,
       'device-a-2',
       'c'.repeat(64),
+      'account-b',
+      'account-b',
     );
   });
 
@@ -1419,6 +1660,7 @@ describe('EnterpriseMlsSessionCoordinator', () => {
       application.epoch,
       application.senderDeviceId,
       application.createdAt,
+      'account-b',
     );
     expect(sessions.receiveTransportApplication).not.toHaveBeenCalled();
     expect(sessions.listPendingReceivedApplications).not.toHaveBeenCalled();

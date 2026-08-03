@@ -461,7 +461,8 @@ export interface EnterpriseResolvedUpdatePolicy {
   distributionId: string;
   currentVersion: string;
   decision: 'update' | 'none';
-  reason: 'update_available' | 'up_to_date' | 'outside_rollout' | 'no_active_release';
+  reason:
+    'update_available' | 'up_to_date' | 'outside_rollout' | 'no_active_release';
   release: {
     id: string;
     version: string;
@@ -479,7 +480,11 @@ export interface EnterpriseResolvedUpdatePolicy {
 }
 
 export type EnterpriseUpdatePolicyResult =
-  | { status: 'resolved'; policy: EnterpriseResolvedUpdatePolicy; verifiedKeyId: string }
+  | {
+      status: 'resolved';
+      policy: EnterpriseResolvedUpdatePolicy;
+      verifiedKeyId: string;
+    }
   | {
       status: 'not_configured';
       reason: 'online_license_required' | 'verification_key_missing';
@@ -671,6 +676,7 @@ export interface EnterpriseDirectMessage {
   readAt: string | null;
   attachments?: EnterpriseDirectMessageAttachment[];
   e2ee?: true;
+  e2eeProtocol?: 'device-envelope-v1' | 'mls10-openmls-0.8';
   contentType?: 'message' | 'atoa_request' | 'atoa_response';
   inReplyToMessageId?: string | null;
 }
@@ -1107,7 +1113,9 @@ export class EnterpriseClient {
       published.keyPackage !== keyPackage.key_package ||
       published.claimedAt !== null
     ) {
-      throw new Error('enterprise MLS KeyPackage publication binding is invalid');
+      throw new Error(
+        'enterprise MLS KeyPackage publication binding is invalid',
+      );
     }
     return published;
   }
@@ -1143,19 +1151,23 @@ export class EnterpriseClient {
       response.reference !== reference ||
       response.retired !== true
     ) {
-      throw new Error('enterprise MLS KeyPackage retirement binding is invalid');
+      throw new Error(
+        'enterprise MLS KeyPackage retirement binding is invalid',
+      );
     }
   }
 
   async claimMlsKeyPackage(
     requesterDeviceId: string,
     recipientAccountId: string,
+    recipientDeviceId?: string,
+    conversationPeerAccountId: string = recipientAccountId,
   ): Promise<EnterpriseMlsPublishedKeyPackage | null> {
     const account = await this.requireMlsTransportAccount();
     enterpriseMlsDirectConversationId({
       organizationId: account.organizationId,
       accountId: account.id,
-      peerAccountId: recipientAccountId,
+      peerAccountId: conversationPeerAccountId,
     });
     try {
       const claimed = parseEnterpriseMlsPublishedKeyPackage(
@@ -1167,12 +1179,18 @@ export class EnterpriseClient {
               body: JSON.stringify({
                 requesterDeviceId,
                 recipientAccountId,
+                recipientDeviceId,
+                conversationPeerAccountId,
               }),
             },
           )
         ).keyPackage,
       );
-      if (claimed.accountId !== recipientAccountId || !claimed.claimedAt) {
+      if (
+        claimed.accountId !== recipientAccountId ||
+        (recipientDeviceId && claimed.deviceId !== recipientDeviceId) ||
+        !claimed.claimedAt
+      ) {
         throw new Error('enterprise MLS KeyPackage claim binding is invalid');
       }
       return claimed;
@@ -1182,6 +1200,30 @@ export class EnterpriseClient {
       }
       throw error;
     }
+  }
+
+  async listApprovedMlsDeviceIds(accountId: string): Promise<string[]> {
+    await this.requireMlsTransportAccount();
+    const devices = await this.verifiedE2eeDeviceDirectory([accountId], {
+      includePending: false,
+      includeRevoked: false,
+    });
+    const deviceIds = devices
+      .filter(
+        (device) =>
+          device.accountId === accountId &&
+          device.approvalState === 'approved' &&
+          !device.revokedAt,
+      )
+      .map((device) => device.deviceId)
+      .sort();
+    if (
+      deviceIds.length === 0 ||
+      new Set(deviceIds).size !== deviceIds.length
+    ) {
+      throw new Error('enterprise MLS approved device directory is invalid');
+    }
+    return deviceIds;
   }
 
   async appendMlsTransportEvent(
@@ -1213,9 +1255,12 @@ export class EnterpriseClient {
       event.groupId !== input.groupId ||
       event.payload !== input.payload ||
       event.recipientAccountId !==
-        (input.eventType === 'welcome' ? peerAccountId : null) ||
+        (input.eventType === 'welcome'
+          ? (input.recipientAccountId ?? peerAccountId)
+          : null) ||
       event.recipientDeviceId !== (input.recipientDeviceId ?? null) ||
-      event.keyPackageReference !== (input.keyPackageReference ?? null)
+      event.keyPackageReference !== (input.keyPackageReference ?? null) ||
+      (event.resetFromGroupId ?? null) !== (input.resetFromGroupId ?? null)
     ) {
       throw new Error('enterprise MLS transport event binding is invalid');
     }
@@ -1260,7 +1305,9 @@ export class EnterpriseClient {
         (event.eventType === 'welcome' &&
           event.recipientAccountId !== expectedRecipient)
       ) {
-        throw new Error('enterprise MLS transport event list binding is invalid');
+        throw new Error(
+          'enterprise MLS transport event list binding is invalid',
+        );
       }
       previousSequence = event.sequence;
       return event;
@@ -1289,7 +1336,9 @@ export class EnterpriseClient {
         afterPeerAccountId,
       );
       if (page.some((peerAccountId) => peerAccountId === account.id)) {
-        throw new Error('enterprise MLS inbound conversation binding is invalid');
+        throw new Error(
+          'enterprise MLS inbound conversation binding is invalid',
+        );
       }
       peerAccountIds.push(...page);
       if (page.length < pageLimit) return peerAccountIds;
@@ -2091,9 +2140,13 @@ export class EnterpriseClient {
     );
     return response.snapshot;
   }
-  async getOrganizationView(organizationId?: string): Promise<EnterpriseOrganizationView> {
+  async getOrganizationView(
+    organizationId?: string,
+  ): Promise<EnterpriseOrganizationView> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    const query = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
+    const query = organizationId
+      ? `?organizationId=${encodeURIComponent(organizationId)}`
+      : '';
     return this.request(`/enterprise/organization/view${query}`);
   }
 
@@ -2131,7 +2184,9 @@ export class EnterpriseClient {
     currentVersion: string;
   }): Promise<EnterpriseUpdatePolicyResult> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    await this.assertCompatibleServer(this.serverUrl, ['signed_update_policy_v1']);
+    await this.assertCompatibleServer(this.serverUrl, [
+      'signed_update_policy_v1',
+    ]);
     return this.request('/enterprise/deployment/update-policy', {
       method: 'POST',
       body: JSON.stringify(input),
@@ -2448,7 +2503,8 @@ export class EnterpriseClient {
       ),
     );
     const query = new URLSearchParams();
-    for (const accountId of uniqueAccountIds) query.append('accountId', accountId);
+    for (const accountId of uniqueAccountIds)
+      query.append('accountId', accountId);
     query.set('includeRevoked', String(options.includeRevoked));
     query.set('includePending', String(options.includePending));
     const devices = (
@@ -2501,7 +2557,9 @@ export class EnterpriseClient {
       senderDevice.identitySigningPublicKey !==
         message.senderIdentitySigningPublicKey
     ) {
-      throw new Error('E2EE message sender key is not trusted by the pinned directory');
+      throw new Error(
+        'E2EE message sender key is not trusted by the pinned directory',
+      );
     }
     const decrypted = crypto.decryptMessage({
       serverScope,
@@ -2803,7 +2861,9 @@ export class EnterpriseClient {
         headers: presigned.requiredHeaders,
       });
       if (!response.ok) {
-        throw new Error(`shared attachment download failed: ${response.status}`);
+        throw new Error(
+          `shared attachment download failed: ${response.status}`,
+        );
       }
       const bytes = Buffer.from(await response.arrayBuffer());
       if (
@@ -2838,7 +2898,9 @@ export class EnterpriseClient {
       senderDevice.identitySigningPublicKey !==
         download.attachment.message.senderIdentitySigningPublicKey
     ) {
-      throw new Error('E2EE attachment sender key is not trusted by the pinned directory');
+      throw new Error(
+        'E2EE attachment sender key is not trusted by the pinned directory',
+      );
     }
     return crypto.decryptAttachment({
       serverScope,

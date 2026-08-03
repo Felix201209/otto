@@ -144,6 +144,7 @@ import {
   type AccountUpdateInput,
   type EnterpriseAccount,
   type EnterpriseDirectMessageAttachmentUpload,
+  type EnterpriseUnreadMessageNotification,
   type EnterpriseLegalDocumentReference,
   type EnterprisePrivacyDeletionReceipt,
   type EnterpriseKnowledgeRecordInput,
@@ -161,6 +162,10 @@ import {
   EnterpriseMlsSessionCoordinator,
   EnterpriseMlsSessionManager,
 } from './enterprise-mls.js';
+import {
+  EnterpriseMlsPrivateMessageService,
+  FileEnterpriseMlsMessageHistory,
+} from './enterprise-mls-private-messages.js';
 import {
   ENTERPRISE_TRAY_POPOVER_WIDTH,
   enterpriseTrayPopoverHeight,
@@ -535,6 +540,7 @@ const IPC = {
   enterpriseMessagesList: 'otto:enterprise-messages-list',
   enterpriseMessagesUnread: 'otto:enterprise-messages-unread',
   enterpriseMessageSend: 'otto:enterprise-message-send',
+  enterpriseMessageSecurityReset: 'otto:enterprise-message-security-reset',
   enterpriseMessageAttachmentRead: 'otto:enterprise-message-attachment-read',
   enterpriseE2eeDevicesList: 'otto:enterprise-e2ee-devices-list',
   enterpriseE2eeKeyTransparency: 'otto:enterprise-e2ee-key-transparency',
@@ -809,6 +815,24 @@ const enterpriseMlsCoordinator = new EnterpriseMlsSessionCoordinator(
   enterpriseMls,
   enterpriseClient,
 );
+const enterpriseMlsMessageHistory = new FileEnterpriseMlsMessageHistory({
+  directory: path.join(app.getPath('userData'), 'enterprise-mls-messages'),
+  secureStorage: {
+    assertAvailable: assertEnterpriseE2eeSecureStorage,
+    protect(plaintext) {
+      assertEnterpriseE2eeSecureStorage();
+      return safeStorage.encryptString(plaintext).toString('base64');
+    },
+    unprotect(protectedValue) {
+      assertEnterpriseE2eeSecureStorage();
+      return safeStorage.decryptString(Buffer.from(protectedValue, 'base64'));
+    },
+  },
+});
+const enterpriseMlsPrivateMessages = new EnterpriseMlsPrivateMessageService(
+  enterpriseMlsCoordinator,
+  enterpriseMlsMessageHistory,
+);
 const enterpriseMlsOutboxRetry = new EnterpriseMlsOutboxRetryScheduler(
   enterpriseMlsCoordinator,
   {
@@ -1029,20 +1053,20 @@ async function checkDesktopUpdate() {
     distributionId: desktopDistributionId,
     currentVersion: app.getVersion(),
     hasEnterpriseSession: Boolean(session.token),
-    resolvePolicy: () => enterpriseClient.getDeploymentUpdatePolicy({
-      distributionId: desktopDistributionId,
-      currentVersion: app.getVersion(),
-    }),
+    resolvePolicy: () =>
+      enterpriseClient.getDeploymentUpdatePolicy({
+        distributionId: desktopDistributionId,
+        currentVersion: app.getVersion(),
+      }),
     checkLegacy: () => updateService.checkForUpdate(),
-    checkManagedFull: (reference) => updateService.checkForUpdate({
-      manifestUrl: reference.url,
-      manifestSha256: reference.sha256,
-      releasePageUrl: reference.url,
-    }),
-    checkIncremental: (reference) => incrementalUpdateService.checkForUpdates(
-      reference.url,
-      reference.sha256,
-    ),
+    checkManagedFull: (reference) =>
+      updateService.checkForUpdate({
+        manifestUrl: reference.url,
+        manifestSha256: reference.sha256,
+        releasePageUrl: reference.url,
+      }),
+    checkIncremental: (reference) =>
+      incrementalUpdateService.checkForUpdates(reference.url, reference.sha256),
   });
 }
 
@@ -1421,7 +1445,7 @@ async function refreshEnterpriseTrayContacts(): Promise<void> {
   }
   try {
     enterpriseTrayContacts = summarizeEnterpriseTrayContacts(
-      await enterpriseClient.listUnreadDirectMessageNotifications(),
+      await listEnterpriseUnreadMessageNotifications(),
     );
   } catch {
     updateUnreadIndicators(notificationService.getUnreadSessions());
@@ -1429,6 +1453,30 @@ async function refreshEnterpriseTrayContacts(): Promise<void> {
   }
   updateUnreadIndicators(notificationService.getUnreadSessions());
   syncEnterpriseTrayPopover();
+}
+
+async function listEnterpriseUnreadMessageNotifications(): Promise<
+  EnterpriseUnreadMessageNotification[]
+> {
+  if (!enterpriseClient.supportsMlsPrivateMessages()) {
+    return enterpriseClient.listUnreadDirectMessageNotifications();
+  }
+  const [messages, organization] = await Promise.all([
+    enterpriseMlsPrivateMessages.listUnread(),
+    enterpriseClient.getOrganizationView(),
+  ]);
+  const names = new Map(
+    organization.members.map((member) => [member.id, member.name]),
+  );
+  return messages.map((message) => ({
+    id: message.id,
+    source: 'enterprise',
+    title: '端到端加密私聊',
+    senderAccountId: message.senderAccountId,
+    senderName: names.get(message.senderAccountId) ?? message.senderAccountId,
+    preview: message.content.slice(0, 160),
+    createdAt: message.createdAt,
+  }));
 }
 
 function totalTrayUnreadCount(unread: readonly string[]): number {
@@ -1826,7 +1874,9 @@ function createWindow(): BrowserWindow {
     minWidth: 720,
     minHeight: 480,
     title: 'Otto',
-    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const } : {}),
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const }
+      : {}),
     // 初始底色跟随系统深浅：暗色 #181818 / 浅色 #ffffff。硬编码任一固定色会在
     // 系统主题与之相反时于内容就绪前（及窗口边缘）闪出错误底色。themeSource 已
     // 在 whenReady 里设为 'system'，故 shouldUseDarkColors 反映的即 OS 当前主题。
@@ -2673,12 +2723,15 @@ function registerIpc(): void {
       return enterpriseClient.listKnowledgeRevisions(body.id);
     },
   );
-  ipcMain.handle(IPC.enterpriseOrganizationView, async (_event, organizationId: unknown) => {
-    loadEnterpriseSession();
-    return enterpriseClient.getOrganizationView(
-      typeof organizationId === 'string' ? organizationId : undefined,
-    );
-  });
+  ipcMain.handle(
+    IPC.enterpriseOrganizationView,
+    async (_event, organizationId: unknown) => {
+      loadEnterpriseSession();
+      return enterpriseClient.getOrganizationView(
+        typeof organizationId === 'string' ? organizationId : undefined,
+      );
+    },
+  );
   ipcMain.handle(IPC.enterprisePresenceHeartbeat, async () => {
     loadEnterpriseSession();
     await enterpriseClient.heartbeatPresence('desktop');
@@ -2813,12 +2866,15 @@ function registerIpc(): void {
       loadEnterpriseSession();
       if (typeof peerAccountId !== 'string' || !peerAccountId)
         throw new Error('成员信息不正确');
+      if (enterpriseClient.supportsMlsPrivateMessages()) {
+        return enterpriseMlsPrivateMessages.list(peerAccountId);
+      }
       return enterpriseClient.listDirectMessages(peerAccountId);
     },
   );
   ipcMain.handle(IPC.enterpriseMessagesUnread, async () => {
     loadEnterpriseSession();
-    return enterpriseClient.listUnreadDirectMessageNotifications();
+    return listEnterpriseUnreadMessageNotifications();
   });
   ipcMain.handle(
     IPC.enterpriseMessageSend,
@@ -2841,6 +2897,13 @@ function registerIpc(): void {
       if (!content.trim() && normalizedAttachments.length === 0) {
         throw new Error('请输入消息或添加附件');
       }
+      if (enterpriseClient.supportsMlsPrivateMessages()) {
+        return enterpriseMlsPrivateMessages.send(
+          peerAccountId,
+          content,
+          normalizedAttachments,
+        );
+      }
       return enterpriseClient.sendDirectMessage(
         peerAccountId,
         content,
@@ -2860,6 +2923,23 @@ function registerIpc(): void {
         throw new Error('附件信息不正确');
       }
       return enterpriseClient.getDirectMessageAttachment(attachmentId);
+    },
+  );
+  ipcMain.handle(
+    IPC.enterpriseMessageSecurityReset,
+    async (_event, peerAccountId: unknown) => {
+      loadEnterpriseSession();
+      if (
+        typeof peerAccountId !== 'string' ||
+        !peerAccountId ||
+        peerAccountId.length > 200
+      ) {
+        throw new Error('E2EE reset peer account id is invalid');
+      }
+      if (!enterpriseClient.supportsMlsPrivateMessages()) {
+        throw new Error('MLS private-message protocol is not active');
+      }
+      await enterpriseMlsPrivateMessages.reset(peerAccountId);
     },
   );
   ipcMain.handle(IPC.enterpriseE2eeDevicesList, async () => {
@@ -3355,7 +3435,9 @@ function registerIpc(): void {
     if (!endpoint) void ensureEndpoint();
     return endpoint ?? null;
   });
-  ipcMain.handle(IPC.runtimeDiagnostic, () => serverManager.getDesktopRuntimeDiagnostic());
+  ipcMain.handle(IPC.runtimeDiagnostic, () =>
+    serverManager.getDesktopRuntimeDiagnostic(),
+  );
 
   // host-only 命令（替代 webview 的 vscode host 命令；交付文档 [WEBVIEW] §5）。
   ipcMain.handle(IPC.openExternal, (_e, url: unknown) => {
@@ -4228,8 +4310,12 @@ function registerIpc(): void {
   ipcMain.handle(IPC.selectFolders, async () => {
     const win = mainWindow;
     const result = await (win
-      ? dialog.showOpenDialog(win, { properties: ['openDirectory', 'multiSelections'] })
-      : dialog.showOpenDialog({ properties: ['openDirectory', 'multiSelections'] }));
+      ? dialog.showOpenDialog(win, {
+          properties: ['openDirectory', 'multiSelections'],
+        })
+      : dialog.showOpenDialog({
+          properties: ['openDirectory', 'multiSelections'],
+        }));
     if (result.canceled || result.filePaths.length === 0) return [];
     return fileAccessGrants.grantDirectories(result.filePaths);
   });
@@ -4252,11 +4338,16 @@ function registerIpc(): void {
       !Array.isArray(references) ||
       references.length === 0 ||
       references.length > 6 ||
-      references.some((value) =>
-        !value || typeof value !== 'object' ||
-        typeof (value as { path?: unknown }).path !== 'string' ||
-        !(value as { path: string }).path ||
-        !['file', 'directory'].includes(String((value as { kind?: unknown }).kind)))
+      references.some(
+        (value) =>
+          !value ||
+          typeof value !== 'object' ||
+          typeof (value as { path?: unknown }).path !== 'string' ||
+          !(value as { path: string }).path ||
+          !['file', 'directory'].includes(
+            String((value as { kind?: unknown }).kind),
+          ),
+      )
     ) {
       throw new Error('附件路径格式无效');
     }

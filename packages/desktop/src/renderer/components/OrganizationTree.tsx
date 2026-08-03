@@ -708,6 +708,8 @@ export function DirectMessagePanel({
   const [attaching, setAttaching] = useState(false);
   const [attachmentError, setAttachmentError] = useState('');
   const [error, setError] = useState('');
+  const [securityNotice, setSecurityNotice] = useState('');
+  const [resettingSecurity, setResettingSecurity] = useState(false);
   const [askingOwnOtto, setAskingOwnOtto] = useState(false);
   const [askingPeerOtto, setAskingPeerOtto] = useState(false);
   const [collaborationMenuOpen, setCollaborationMenuOpen] = useState(false);
@@ -947,11 +949,36 @@ export function DirectMessagePanel({
     }
   };
 
+  const resetMessageSecurity = async (): Promise<void> => {
+    if (
+      resettingSecurity ||
+      !window.confirm(
+        '将为当前私聊建立新的加密会话。旧消息仍保留，但新会话需要双方设备重新同步。是否继续？',
+      )
+    ) {
+      return;
+    }
+    setResettingSecurity(true);
+    try {
+      await window.otto.enterpriseMessageSecurityReset(member.id);
+      setSecurityNotice('加密会话已重置，后续消息将使用新的安全状态。');
+      setError('');
+    } catch (reason) {
+      setSecurityNotice('');
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setResettingSecurity(false);
+    }
+  };
+
   const subtitle = [member.department, member.role].filter(Boolean).join(' · ') || member.username;
   const presenceLabel = member.ottoOnline ? '在线' : member.ottoLastSeenAt ? '最近在线' : '离线';
   const canSend = (draft.trim().length > 0 || attachments.length > 0)
     && !sending
     && !attaching;
+  const usesMls = messages.some(
+    (message) => message.e2eeProtocol === 'mls10-openmls-0.8',
+  );
   const panelClassName = [
     'otto-direct-chat',
     minimized ? 'is-minimized' : '',
@@ -1063,6 +1090,16 @@ export function DirectMessagePanel({
       </header>
 
       <div className="otto-direct-chat__actionbar" aria-label="Otto 协作操作">
+        {usesMls ? (
+          <button
+            type="button"
+            className="otto-direct-chat__otto"
+            disabled={resettingSecurity}
+            onClick={() => void resetMessageSecurity()}
+          >
+            {resettingSecurity ? '正在重置加密会话' : '重置加密会话'}
+          </button>
+        ) : null}
         <button
           type="button"
           className="otto-direct-chat__otto"
@@ -1110,6 +1147,12 @@ export function DirectMessagePanel({
           </div>
         ) : null}
       </div>
+
+      {securityNotice ? (
+        <div className="otto-direct-chat__security-notice" role="status">
+          {securityNotice}
+        </div>
+      ) : null}
 
       <div className="otto-direct-chat__messages">
         {messages.length === 0 ? (

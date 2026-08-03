@@ -298,7 +298,7 @@ describe('PostgreSQL enterprise core authority', () => {
         }
         if (
           sql.includes('SELECT package.* FROM mls_key_packages') &&
-          sql.includes('claimed_by_account_id = $3')
+          sql.includes('claimed_by_account_id = $4')
         ) {
           return result();
         }
@@ -669,8 +669,10 @@ describe('PostgreSQL enterprise core authority', () => {
     const storedPayload = inserted?.values[11] as string;
     expect(parseMlsMemberAddCommitEnvelope(storedPayload)).toEqual({
       commit: payload,
+      recipientAccountId: 'acc_bob',
       recipientDeviceId: 'bob-device',
       keyPackageReference,
+      resetFromGroupId: null,
     });
     await expect(
       repository.appendMlsTransportEvent({

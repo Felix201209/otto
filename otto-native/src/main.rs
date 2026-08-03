@@ -1,18 +1,18 @@
-use std::io::{self, BufRead, Write};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use std::io::{self, BufRead, Write};
 
-mod session_store;
-mod encryption;
-mod tokenizer;
 mod agent_pool;
+mod encryption;
 mod mls;
+mod session_store;
+mod tokenizer;
 
-use session_store::SessionStore;
-use encryption::EncryptionStore;
-use tokenizer::Tokenizer;
 use agent_pool::AgentPool;
+use encryption::EncryptionStore;
 use mls::MlsKernel;
+use session_store::SessionStore;
+use tokenizer::Tokenizer;
 
 #[derive(Deserialize)]
 struct Request {
@@ -316,7 +316,11 @@ fn main() {
         let req: Request = match serde_json::from_str(&line) {
             Ok(r) => r,
             Err(e) => {
-                let resp = Response { id: None, result: None, error: Some(format!("Parse error: {}", e)) };
+                let resp = Response {
+                    id: None,
+                    result: None,
+                    error: Some(format!("Parse error: {}", e)),
+                };
                 let _ = writeln!(stdout, "{}", serde_json::to_string(&resp).unwrap());
                 continue;
             }
@@ -330,10 +334,18 @@ fn main() {
             &mut pool,
             &mut mls_kernel,
         ) {
-            Ok(v) => Response { id: req.id, result: Some(v), error: None },
-            Err(e) => Response { id: req.id, result: None, error: Some(e) },
+            Ok(v) => Response {
+                id: req.id,
+                result: Some(v),
+                error: None,
+            },
+            Err(e) => Response {
+                id: req.id,
+                result: None,
+                error: Some(e),
+            },
         };
-        
+
         let _ = writeln!(stdout, "{}", serde_json::to_string(&resp).unwrap());
         let _ = stdout.flush();
     }
@@ -348,11 +360,11 @@ fn handle_request(
     mls_kernel: &mut MlsKernel,
 ) -> Result<serde_json::Value, String> {
     let params = req.params.as_ref();
-    
+
     match req.method.as_str() {
         // === No-params methods ===
         "ping" => Ok(serde_json::json!({"pong": true})),
-        
+
         "session_store.list" => {
             let s = store.as_ref().ok_or("Store not opened")?;
             let sessions = s.list()?;
@@ -362,7 +374,7 @@ fn handle_request(
             let s = store.as_ref().ok_or("Store not opened")?;
             Ok(serde_json::json!({"size": s.size_bytes()}))
         }
-        
+
         "encryption.generate_key" => {
             Ok(serde_json::json!({"key": EncryptionStore::generate_key()}))
         }
@@ -371,11 +383,11 @@ fn handle_request(
             let ids = es.list_ids()?;
             Ok(serde_json::json!({"ids": ids}))
         }
-        
+
         "tokenizer.supported_models" => {
             Ok(serde_json::json!({"models": tokenizer::supported_models()}))
         }
-        
+
         "agent_pool.stats" => {
             let p = pool.as_ref().ok_or("Pool not created")?;
             Ok(serde_json::json!({
@@ -404,9 +416,9 @@ fn handle_request(
             let s = store.as_ref().ok_or("Store not opened")?;
             let id = p["id"].as_str().ok_or("Missing id")?.to_string();
             let title = p["title"].as_str().unwrap_or("").to_string();
-            let messages: Vec<session_store::Message> = serde_json::from_value(
-                p["messages"].clone()
-            ).map_err(|e| format!("Bad messages: {}", e))?;
+            let messages: Vec<session_store::Message> =
+                serde_json::from_value(p["messages"].clone())
+                    .map_err(|e| format!("Bad messages: {}", e))?;
             s.save(id, title, messages)?;
             Ok(serde_json::json!({"status": "ok"}))
         }
@@ -606,11 +618,41 @@ fn handle_request(
             let conversation = p["conversation_id"]
                 .as_str()
                 .ok_or("Missing conversation_id")?;
-            let key_package = p["key_package"]
-                .as_str()
-                .ok_or("Missing key_package")?;
+            let key_package = p["key_package"].as_str().ok_or("Missing key_package")?;
             serde_json::to_value(mls_kernel.add_member(scope, conversation, key_package)?)
                 .map_err(|error| format!("MLS response serialization failed: {error}"))
+        }
+        "mls.group.create_epoch_update" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            let conversation = p["conversation_id"]
+                .as_str()
+                .ok_or("Missing conversation_id")?;
+            let peer_account_id = p["peer_account_id"]
+                .as_str()
+                .ok_or("Missing peer_account_id")?;
+            serde_json::to_value(mls_kernel.create_epoch_update(
+                scope,
+                conversation,
+                peer_account_id,
+            )?)
+            .map_err(|error| format!("MLS response serialization failed: {error}"))
+        }
+        "mls.group.merge_epoch_update" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            let conversation = p["conversation_id"]
+                .as_str()
+                .ok_or("Missing conversation_id")?;
+            let peer_account_id = p["peer_account_id"]
+                .as_str()
+                .ok_or("Missing peer_account_id")?;
+            serde_json::to_value(mls_kernel.merge_pending_epoch_update(
+                scope,
+                conversation,
+                peer_account_id,
+            )?)
+            .map_err(|error| format!("MLS response serialization failed: {error}"))
         }
         "mls.group.merge_pending_commit" => {
             let p = params.ok_or("Missing params")?;
@@ -626,7 +668,7 @@ fn handle_request(
                 conversation,
                 peer_account_id,
             )?)
-                .map_err(|error| format!("MLS response serialization failed: {error}"))
+            .map_err(|error| format!("MLS response serialization failed: {error}"))
         }
         "mls.group.inspect" => {
             let p = params.ok_or("Missing params")?;
@@ -679,21 +721,27 @@ fn handle_request(
             let expected_epoch = p["expected_epoch"]
                 .as_u64()
                 .ok_or("Missing expected_epoch")?;
+            let sender_account_id = p["sender_account_id"]
+                .as_str()
+                .ok_or("Missing sender_account_id")?;
             let sender_device_id = p["sender_device_id"]
                 .as_str()
                 .ok_or("Missing sender_device_id")?;
             let expected_added_device_id = p["expected_added_device_id"].as_str();
+            let expected_added_account_id = p["expected_added_account_id"].as_str();
             let expected_added_key_package_reference =
                 p["expected_added_key_package_reference"].as_str();
-            serde_json::to_value(mls_kernel.receive_transport_commit(
+            serde_json::to_value(mls_kernel.receive_transport_commit_from_account(
                 scope,
                 conversation,
                 peer_account_id,
+                sender_account_id,
                 commit,
                 sequence,
                 expected_group_id,
                 expected_epoch,
                 sender_device_id,
+                expected_added_account_id,
                 expected_added_device_id,
                 expected_added_key_package_reference,
             )?)
@@ -758,9 +806,11 @@ fn handle_request(
             let peer_account_id = p["peer_account_id"]
                 .as_str()
                 .ok_or("Missing peer_account_id")?;
-            serde_json::to_value(
-                mls_kernel.list_pending_applications(scope, conversation, peer_account_id)?,
-            )
+            serde_json::to_value(mls_kernel.list_pending_applications(
+                scope,
+                conversation,
+                peer_account_id,
+            )?)
             .map_err(|error| format!("MLS response serialization failed: {error}"))
         }
         "mls.application.outbox.list_peers" => {
@@ -828,14 +878,18 @@ fn handle_request(
             let epoch = p["expected_epoch"]
                 .as_u64()
                 .ok_or("Missing expected_epoch")?;
+            let sender_account_id = p["sender_account_id"]
+                .as_str()
+                .ok_or("Missing sender_account_id")?;
             let sender_device_id = p["sender_device_id"]
                 .as_str()
                 .ok_or("Missing sender_device_id")?;
             let created_at = p["created_at"].as_str().ok_or("Missing created_at")?;
-            serde_json::to_value(mls_kernel.receive_transport_application(
+            serde_json::to_value(mls_kernel.receive_transport_application_from_account(
                 scope,
                 conversation,
                 peer_account_id,
+                sender_account_id,
                 event_id,
                 ciphertext,
                 sequence,
@@ -861,15 +915,21 @@ fn handle_request(
             let group_id = p["expected_group_id"]
                 .as_str()
                 .ok_or("Missing expected_group_id")?;
-            let epoch = p["expected_epoch"].as_u64().ok_or("Missing expected_epoch")?;
+            let epoch = p["expected_epoch"]
+                .as_u64()
+                .ok_or("Missing expected_epoch")?;
+            let sender_account_id = p["sender_account_id"]
+                .as_str()
+                .ok_or("Missing sender_account_id")?;
             let sender_device_id = p["sender_device_id"]
                 .as_str()
                 .ok_or("Missing sender_device_id")?;
             let created_at = p["created_at"].as_str().ok_or("Missing created_at")?;
-            serde_json::to_value(mls_kernel.stage_transport_application(
+            serde_json::to_value(mls_kernel.stage_transport_application_from_account(
                 scope,
                 conversation,
                 peer_account_id,
+                sender_account_id,
                 event_id,
                 ciphertext,
                 sequence,
@@ -919,6 +979,42 @@ fn handle_request(
             let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
             mls_kernel.reset(scope)?;
             Ok(serde_json::json!({"status": "reset"}))
+        }
+        "mls.conversation.reset" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            let conversation = p["conversation_id"]
+                .as_str()
+                .ok_or("Missing conversation_id")?;
+            let peer_account_id = p["peer_account_id"]
+                .as_str()
+                .ok_or("Missing peer_account_id")?;
+            serde_json::to_value(mls_kernel.reset_conversation(
+                scope,
+                conversation,
+                peer_account_id,
+            )?)
+            .map_err(|error| format!("MLS response serialization failed: {error}"))
+        }
+        "mls.conversation.abandon_for_reset" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            let conversation = p["conversation_id"]
+                .as_str()
+                .ok_or("Missing conversation_id")?;
+            let peer_account_id = p["peer_account_id"]
+                .as_str()
+                .ok_or("Missing peer_account_id")?;
+            let previous_group_id = p["previous_group_id"]
+                .as_str()
+                .ok_or("Missing previous_group_id")?;
+            mls_kernel.abandon_conversation_for_reset(
+                scope,
+                conversation,
+                peer_account_id,
+                previous_group_id,
+            )?;
+            Ok(serde_json::json!({"status": "abandoned"}))
         }
 
         _ => Err(format!("Unknown method: {}", req.method)),

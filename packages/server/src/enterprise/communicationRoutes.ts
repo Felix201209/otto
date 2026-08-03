@@ -134,12 +134,16 @@ export async function handleCommunicationRoute({
 
   if (path === '/enterprise/organization/view' && method === 'GET') {
     const requestedOrganizationId = url.searchParams.get('organizationId');
-    const organizationId = requestedOrganizationId || memberAccount.organizationId;
+    const organizationId =
+      requestedOrganizationId || memberAccount.organizationId;
     if (organizationId !== memberAccount.organizationId) {
       const park = db.getParkForOrganization(memberAccount.organizationId);
       const targetPark = db.getParkForOrganization(organizationId);
-      if (!memberAccount.isAdmin || park?.adminOrganizationId !== memberAccount.organizationId
-        || targetPark?.id !== park.id) {
+      if (
+        !memberAccount.isAdmin ||
+        park?.adminOrganizationId !== memberAccount.organizationId ||
+        targetPark?.id !== park.id
+      ) {
         sendJSON(res, 403, { error: '无权查看该企业组织架构' });
         return true;
       }
@@ -371,6 +375,14 @@ export async function handleCommunicationRoute({
           typeof body.recipientAccountId === 'string'
             ? body.recipientAccountId
             : '',
+        recipientDeviceId:
+          typeof body.recipientDeviceId === 'string'
+            ? body.recipientDeviceId
+            : undefined,
+        conversationPeerAccountId:
+          typeof body.conversationPeerAccountId === 'string'
+            ? body.conversationPeerAccountId
+            : undefined,
       });
       sendJSON(
         res,
@@ -457,6 +469,10 @@ export async function handleCommunicationRoute({
           epoch: Number(body.epoch),
           groupId: typeof body.groupId === 'string' ? body.groupId : '',
           payload: typeof body.payload === 'string' ? body.payload : '',
+          recipientAccountId:
+            typeof body.recipientAccountId === 'string'
+              ? body.recipientAccountId
+              : null,
           recipientDeviceId:
             typeof body.recipientDeviceId === 'string'
               ? body.recipientDeviceId

@@ -123,11 +123,13 @@ until then, protocol-v1 private chat starts a new cryptographic history.
 
 ## Security scope and remaining hardening
 
-Protocol v1 is an authenticated per-message envelope protocol, not the Signal
-Double Ratchet. A fresh content key and ephemeral wrapping key are generated
-for every message, but compromise of a device's long-lived X25519 private key
-can expose recorded messages that contain an envelope for that device. Forward
-secrecy and post-compromise security require a future ratcheting protocol.
+Protocol v1 remains the active compatibility protocol and is an authenticated
+per-message envelope protocol, not the Signal Double Ratchet. A fresh content
+key and ephemeral wrapping key are generated for every message, but compromise
+of a device's long-lived X25519 private key can expose recorded envelopes. The
+candidate replacement described below uses MLS 1.0 epoch and sender ratchets;
+the server does not advertise that candidate for production until its external
+review and explicit release approval are recorded.
 
 Protocol v1 now has immutable device IDs, signed new-device approval, safety
 numbers/QR comparison, a server-hosted key-history chain, and protected local
@@ -138,21 +140,31 @@ server can still create first-use or persistent split views unless clients
 gossip tree heads or verify them through an external witness.
 
 Formal releases run `scripts/verify-e2ee-release-readiness.mjs` and fail closed.
-The checked-in status intentionally reports that prekey handshakes, Double
-Ratchet sessions, safety-state reset, forward secrecy, post-compromise
-security, an external audit, and explicit security release approval are still
-missing. Otto must not claim Signal-grade security until a reviewed,
-license-compatible protocol implementation and audit artifacts satisfy that
-gate.
+The checked-in status records the MLS candidate's implemented controls while
+leaving `externalAuditCompleted`, `productionCapabilityAdvertised`, and
+`releaseApproved` false. The gate therefore has three deliberate blockers: an
+independent audit, its checked-in artifact, and explicit security release
+approval. MLS is an alternative audited session protocol, not a Signal Double
+Ratchet implementation, so Otto must not claim Signal-grade or externally
+audited production E2EE while those blockers remain.
 
-An inactive upgrade foundation now pins OpenMLS 0.8.1 and its official Rust
+The release-gated MLS candidate pins OpenMLS 0.8.1 and its official Rust
 crypto provider in `otto-native`. It creates signed, one-time public MLS 1.0
 KeyPackages and supports an in-memory two-device flow for group creation,
 Welcome joining, pending-commit merge, and authenticated application-message
 encryption/decryption behind a device-and-conversation-scoped JSON-RPC boundary.
-For an established direct session, the native boundary also authenticates and
+For an established direct session, the native boundary authenticates and
 merges a peer's proposal-free self-update Commit for the immediately following
-epoch.
+epoch. It can also create a local self-update, persist its pending Commit in the
+same encrypted snapshot, replay the identical transport event after a crash,
+and merge only the server-bound next epoch. The deterministic first member
+device coordinates these updates to prevent concurrent devices from forking an
+epoch. A candidate-chat send updates the epoch before encrypting the message;
+receiving plaintext also prompts the coordinator device to update before later
+traffic. This is the implemented post-compromise recovery mechanism for a
+snapshot-only compromise after the compromised endpoint is no longer under
+attacker control; revocation remains necessary for a persistently controlled
+device.
 Tests reject replayed and tampered ciphertext, mismatched group bindings, and
 sends attempted while a member commit is pending. Private signature, HPKE, and
 epoch material never enters the TypeScript response.
@@ -212,8 +224,8 @@ still unclaimed; if another participant has already claimed it, retirement
 fails closed because the corresponding Welcome can no longer be proven
 decryptable by the current local state.
 
-The inactive desktop path now has initial-session orchestration without being
-wired into production chat. A deterministic account ordering prevents both
+The desktop candidate path now has initial-session orchestration and a
+capability-gated production message bridge. A deterministic account ordering prevents both
 participants from racing to create different initial groups. KeyPackage claims
 are recoverable only by the same requester account and device until Welcome is
 bound, pending Commit/Welcome bytes survive restart in the encrypted native
@@ -229,8 +241,9 @@ call without a recursive-lock deadlock; any accompanying application remains
 only in the encrypted native inbox. An empty poll remains a waiting state and
 transport or binding failures are not hidden. The background path can now
 discover a never-opened inbound conversation through the device-scoped lookup
-described below, but this remains single-device invitation handling rather
-than multi-device session orchestration.
+described below. After the initial peer joins, the coordinator reads the
+approved device directory for both participant accounts and adds every missing
+device with an exact account, device, and one-time KeyPackage binding.
 
 Each device keeps its per-conversation transport cursor inside the same
 authenticated native snapshot as the OpenMLS ratchet. Initial Commit and
@@ -260,10 +273,12 @@ identity replacement, mixed proposals, and unbound membership changes fail
 closed. Rejected authenticated changes and OpenMLS panic paths quarantine the
 conversation until an explicit security reset. The native client persists
 that quarantined state even though the RPC returns an error, so restart cannot
-resurrect the rejected ratchet or its pending records. This is guarded member
-addition and epoch-update plumbing only; it is not automatic multi-device
-orchestration and is not a claim of message-level forward secrecy, Double
-Ratchet, or post-compromise security.
+resurrect the rejected ratchet or its pending records. Membership orchestration
+is limited to the two direct-session accounts and their currently approved
+devices; removals still require device revocation followed by an explicit
+security-state reset. MLS Secret Tree message keys and epoch transitions supply
+the candidate's forward-secrecy and post-compromise-recovery controls, but these
+properties remain release claims subject to the independent audit gate.
 
 The server now exposes an inactive `e2ee_mls_transport_v1` foundation in both
 SQLite development mode and the PostgreSQL clustered authority. It publishes
@@ -285,12 +300,15 @@ previously used group cannot be reactivated while its retained session record
 exists. Retired session rows are removed only after their events have passed
 retention and been safely deleted.
 
-This server-side transport reset is recovery plumbing, not the complete
-client-visible safety-state reset required by the E2EE production gate. It does
-not establish a prekey handshake, Double Ratchet, multi-device session
-coordination, forward secrecy, post-compromise security, or external audit.
-`security/e2ee-release-status.json` therefore records transport session history
-and reset separately while `safetyStateReset` remains false.
+The desktop now completes that server-side generation reset as a user-visible
+safety-state reset. It replaces only the selected direct session, persists the
+retired group binding, publishes an epoch-1 Commit carrying the exact previous
+group ID, sends exact-device Welcomes, rebuilds the approved multi-device
+roster, and exposes a confirmation-protected “重置加密会话” action for active
+MLS chats. The server atomically retires the old generation before accepting
+the replacement, so reconnect and restart cannot silently return to it.
+`safetyStateReset` is therefore implemented for the candidate; external audit
+and release approval remain separate blockers.
 
 Clearing the desktop's local MLS security state is also deliberately
 fail-closed. A successful clear destroys the native identity, private keys,
@@ -357,26 +375,24 @@ native encrypted route list.
 The scheduler's dedicated staging RPC decrypts and persists applications
 inside the authenticated encrypted native inbox but returns only event,
 sender, group, epoch and cursor bindings. It does not enumerate pending inbox
-records or return their plaintext to the JavaScript scheduler. Only an explicit
-future chat consumer may list those records; it must durably insert each
-returned message and then call the explicit inbox acknowledgement. Polling a
-server-bound, one-at-a-time local-device Add Commit uses the guarded native
-path described above; every other membership-changing Commit still fails
-closed and requires a security-state reset. Proposal-free peer self-update
-Commits advance the epoch through the same atomic path. Device-scoped Welcome
-discovery does not implement invitation fanout, automatic roster expansion, or
-recovery for the user's other devices and does not activate the production MLS
-gate.
+records or return their plaintext to the JavaScript scheduler. The production
+message bridge lists those records only in response to a chat consumer, writes
+each message to its OS-key-protected local history, and then acknowledges the
+native inbox. Polling a server-bound Add Commit uses the guarded native path
+described above; every other membership-changing Commit still fails closed and
+requires a security-state reset. Proposal-free peer self-update Commits advance
+the epoch through the same atomic path. Device-scoped Welcome discovery, exact
+KeyPackage targeting, and approved-roster reconciliation provide automatic
+fan-out and recovery for the user's other devices without exposing client key
+material to the server.
 
-This is still not the active chat protocol. No production server advertises
-`e2ee_mls_v1`. If a server does advertise that capability, the desktop refuses
-to read or send through the legacy envelope instead of silently downgrading.
-The initial handshake, polling, durable inbox and outbox coordinator are not yet
-connected to the production chat composer or history writer. Automatic
-member-add orchestration, wiring durable inbox delivery/acknowledgement into
-chat, multi-device fan-out, user-visible safety-state reset, state recovery
-policy, multi-platform native packaging, and external review are still
-required. The release gate therefore keeps
-`desktopTransportSessionOrchestration` false.
-Until those controls and an external audit pass the release gate, the
-production status remains `device-envelope-v1`.
+This is still not the server-advertised production protocol. When a reviewed
+server advertises `e2ee_mls_v1`, the desktop production chat APIs use the MLS
+bridge for session establishment, approved-device fan-out, encrypted local
+history, durable inbox/outbox processing, unread state, send, receive, and
+session reset. The same APIs refuse to fall back to the legacy envelope while
+that capability is present. MLS attachments remain fail-closed rather than
+silently downgraded. Until an external audit artifact and explicit security
+approval satisfy the release gate, servers continue to omit the capability and
+the checked-in status remains `mls10-openmls-0.8-candidate` with
+`productionCapabilityAdvertised: false`.

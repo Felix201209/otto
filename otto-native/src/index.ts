@@ -358,9 +358,20 @@ export interface MlsMemberInvitation {
   welcome: string;
 }
 
+export interface MlsEpochUpdate {
+  protocol: 'mls10-openmls-0.8';
+  conversation_id: string;
+  group_id: string;
+  epoch: number;
+  commit: string;
+}
+
 export interface MlsGroupInspection extends MlsGroupState {
+  member_device_scopes?: string[];
+  reset_from_group_id?: string | null;
   pending_commit: boolean;
   pending_invitation: MlsMemberInvitation | null;
+  pending_epoch_update?: MlsEpochUpdate | null;
 }
 
 export interface MlsApplicationCiphertext {
@@ -385,16 +396,17 @@ export interface MlsDecryptedApplication {
   plaintext: Uint8Array;
 }
 
-export interface MlsStagedReceivedApplication
-  extends Omit<MlsDecryptedApplication, 'plaintext'> {
+export interface MlsStagedReceivedApplication extends Omit<
+  MlsDecryptedApplication,
+  'plaintext'
+> {
   eventId: string;
   peerAccountId: string;
   sequence: number;
   createdAt: string;
 }
 
-export interface MlsPendingReceivedApplication
-  extends MlsStagedReceivedApplication {
+export interface MlsPendingReceivedApplication extends MlsStagedReceivedApplication {
   plaintext: Uint8Array;
 }
 
@@ -895,7 +907,6 @@ export class OpenMlsNativeKernel {
       !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(
         result.recipient_account_id,
       ) ||
-      result.recipient_account_id === this.scope.split('/')[2] ||
       typeof result.recipient_device_id !== 'string' ||
       !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(result.recipient_device_id) ||
       !isBase64(result.commit) ||
@@ -917,7 +928,23 @@ export class OpenMlsNativeKernel {
     })) as Partial<MlsGroupInspection> | null;
     if (result === null) return null;
     const state = validateGroupState(result, conversation);
+    const memberDeviceScopes = result.member_device_scopes;
     if (
+      !Array.isArray(memberDeviceScopes) ||
+      memberDeviceScopes.length !== state.member_count ||
+      memberDeviceScopes.some(
+        (memberScope) =>
+          typeof memberScope !== 'string' ||
+          !/^[^/\s]+\/[^/\s]+\/[^/\s]+\/[^/\s]+$/.test(memberScope),
+      ) ||
+      (result.reset_from_group_id !== null &&
+        result.reset_from_group_id !== undefined &&
+        !isBase64(result.reset_from_group_id)) ||
+      new Set(memberDeviceScopes).size !== memberDeviceScopes.length ||
+      memberDeviceScopes.some(
+        (memberScope, index) =>
+          index > 0 && memberDeviceScopes[index - 1]! >= memberScope,
+      ) ||
       typeof result.pending_commit !== 'boolean' ||
       (result.pending_invitation !== null &&
         (typeof result.pending_invitation !== 'object' ||
@@ -931,22 +958,87 @@ export class OpenMlsNativeKernel {
           !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(
             result.pending_invitation.recipient_account_id,
           ) ||
-          result.pending_invitation.recipient_account_id ===
-            this.scope.split('/')[2] ||
           !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(
             result.pending_invitation.recipient_device_id,
           ) ||
           !isBase64(result.pending_invitation.commit) ||
           !isBase64(result.pending_invitation.welcome))) ||
-      (result.pending_invitation !== null) !== result.pending_commit
+      (result.pending_epoch_update != null &&
+        (typeof result.pending_epoch_update !== 'object' ||
+          result.pending_epoch_update.protocol !== 'mls10-openmls-0.8' ||
+          result.pending_epoch_update.conversation_id !== conversation ||
+          result.pending_epoch_update.group_id !== state.group_id ||
+          result.pending_epoch_update.epoch !== state.epoch + 1 ||
+          !isBase64(result.pending_epoch_update.commit))) ||
+      (result.pending_invitation !== null &&
+        result.pending_epoch_update != null) ||
+      (result.pending_invitation !== null ||
+        result.pending_epoch_update != null) !== result.pending_commit
     ) {
       throw new Error('native MLS group inspection response is invalid');
     }
     return {
       ...state,
+      member_device_scopes: memberDeviceScopes,
+      reset_from_group_id: result.reset_from_group_id ?? null,
       pending_commit: result.pending_commit,
       pending_invitation: result.pending_invitation ?? null,
+      pending_epoch_update: result.pending_epoch_update ?? null,
     };
+  }
+
+  async createEpochUpdate(
+    conversationId: string,
+    peerAccountId: string,
+  ): Promise<MlsEpochUpdate> {
+    await this.init();
+    const conversation = mlsConversationId(conversationId);
+    const peer = peerAccountId.trim();
+    if (
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(peer) ||
+      peer === this.scope.split('/')[2]
+    ) {
+      throw new Error('MLS epoch-update peer account id is invalid');
+    }
+    const result = (await this.native.call('mls.group.create_epoch_update', {
+      device_scope: this.scope,
+      conversation_id: conversation,
+      peer_account_id: peer,
+    })) as Partial<MlsEpochUpdate>;
+    await this.persistState();
+    if (
+      result.protocol !== 'mls10-openmls-0.8' ||
+      result.conversation_id !== conversation ||
+      !isBase64(result.group_id) ||
+      !Number.isSafeInteger(result.epoch) ||
+      (result.epoch ?? 0) < 1 ||
+      !isBase64(result.commit)
+    ) {
+      throw new Error('native MLS epoch-update response is invalid');
+    }
+    return result as MlsEpochUpdate;
+  }
+
+  async mergePendingEpochUpdate(
+    conversationId: string,
+    peerAccountId: string,
+  ): Promise<MlsGroupState> {
+    await this.init();
+    const conversation = mlsConversationId(conversationId);
+    const peer = peerAccountId.trim();
+    if (
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(peer) ||
+      peer === this.scope.split('/')[2]
+    ) {
+      throw new Error('MLS epoch-update peer account id is invalid');
+    }
+    const result = await this.native.call('mls.group.merge_epoch_update', {
+      device_scope: this.scope,
+      conversation_id: conversation,
+      peer_account_id: peer,
+    });
+    await this.persistState();
+    return validateGroupState(result, conversation);
   }
 
   async mergePendingCommit(
@@ -1070,7 +1162,9 @@ export class OpenMlsNativeKernel {
         !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value) ||
         value === this.scope.split('/')[2]
       ) {
-        throw new Error('native MLS application outbox peer response is invalid');
+        throw new Error(
+          'native MLS application outbox peer response is invalid',
+        );
       }
       return value;
     });
@@ -1155,13 +1249,21 @@ export class OpenMlsNativeKernel {
     senderDeviceId: string,
     expectedAddedDeviceId: string | null = null,
     expectedAddedKeyPackageReference: string | null = null,
+    senderAccountId: string = peerAccountId,
+    expectedAddedAccountId: string | null = expectedAddedDeviceId === null
+      ? null
+      : peerAccountId,
   ): Promise<MlsGroupState> {
     await this.init();
     const conversation = mlsConversationId(conversationId);
     const peer = peerAccountId.trim();
+    const senderAccount = senderAccountId.trim();
+    const localAccount = this.scope.split('/')[2]!;
     if (
       !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(peer) ||
-      peer === this.scope.split('/')[2] ||
+      peer === localAccount ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(senderAccount) ||
+      (senderAccount !== localAccount && senderAccount !== peer) ||
       !isBase64(commit) ||
       commit.length > 2 * 1024 * 1024 ||
       !Number.isSafeInteger(sequence) ||
@@ -1172,6 +1274,12 @@ export class OpenMlsNativeKernel {
       !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(senderDeviceId) ||
       (expectedAddedDeviceId === null) !==
         (expectedAddedKeyPackageReference === null) ||
+      (expectedAddedDeviceId === null) !== (expectedAddedAccountId === null) ||
+      (expectedAddedAccountId !== null &&
+        !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(expectedAddedAccountId)) ||
+      (expectedAddedAccountId !== null &&
+        expectedAddedAccountId !== localAccount &&
+        expectedAddedAccountId !== peer) ||
       (expectedAddedDeviceId !== null &&
         !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(expectedAddedDeviceId)) ||
       (expectedAddedKeyPackageReference !== null &&
@@ -1185,11 +1293,13 @@ export class OpenMlsNativeKernel {
         device_scope: this.scope,
         conversation_id: conversation,
         peer_account_id: peer,
+        sender_account_id: senderAccount,
         commit,
         sequence,
         expected_group_id: expectedGroupId,
         expected_epoch: expectedEpoch,
         sender_device_id: senderDeviceId,
+        expected_added_account_id: expectedAddedAccountId,
         expected_added_device_id: expectedAddedDeviceId,
         expected_added_key_package_reference: expectedAddedKeyPackageReference,
       });
@@ -1269,13 +1379,18 @@ export class OpenMlsNativeKernel {
     expectedEpoch: number,
     senderDeviceId: string,
     createdAt: string,
+    senderAccountId: string = peerAccountId,
   ): Promise<MlsPendingReceivedApplication> {
     await this.init();
     const conversation = mlsConversationId(conversationId);
     const peer = peerAccountId.trim();
+    const senderAccount = senderAccountId.trim();
+    const localAccount = this.scope.split('/')[2]!;
     if (
       !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(peer) ||
-      peer === this.scope.split('/')[2] ||
+      peer === localAccount ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(senderAccount) ||
+      (senderAccount !== localAccount && senderAccount !== peer) ||
       !/^mls-[0-9a-f]{64}$/.test(eventId) ||
       !isBase64(ciphertext) ||
       ciphertext.length > 2 * 1024 * 1024 ||
@@ -1295,6 +1410,7 @@ export class OpenMlsNativeKernel {
       device_scope: this.scope,
       conversation_id: conversation,
       peer_account_id: peer,
+      sender_account_id: senderAccount,
       event_id: eventId,
       ciphertext,
       sequence,
@@ -1318,13 +1434,18 @@ export class OpenMlsNativeKernel {
     expectedEpoch: number,
     senderDeviceId: string,
     createdAt: string,
+    senderAccountId: string = peerAccountId,
   ): Promise<MlsStagedReceivedApplication> {
     await this.init();
     const conversation = mlsConversationId(conversationId);
     const peer = peerAccountId.trim();
+    const senderAccount = senderAccountId.trim();
+    const localAccount = this.scope.split('/')[2]!;
     if (
       !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(peer) ||
-      peer === this.scope.split('/')[2] ||
+      peer === localAccount ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(senderAccount) ||
+      (senderAccount !== localAccount && senderAccount !== peer) ||
       !/^mls-[0-9a-f]{64}$/.test(eventId) ||
       !isBase64(ciphertext) ||
       ciphertext.length > 2 * 1024 * 1024 ||
@@ -1344,6 +1465,7 @@ export class OpenMlsNativeKernel {
       device_scope: this.scope,
       conversation_id: conversation,
       peer_account_id: peer,
+      sender_account_id: senderAccount,
       event_id: eventId,
       ciphertext,
       sequence,
@@ -1414,6 +1536,56 @@ export class OpenMlsNativeKernel {
         'native MLS application inbox acknowledgement is invalid',
       );
     }
+    await this.persistState();
+  }
+
+  async resetConversation(
+    conversationId: string,
+    peerAccountId: string,
+  ): Promise<MlsGroupInspection> {
+    await this.init();
+    const conversation = mlsConversationId(conversationId);
+    const peer = peerAccountId.trim();
+    if (
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(peer) ||
+      peer === this.scope.split('/')[2]
+    ) {
+      throw new Error('MLS reset peer account id is invalid');
+    }
+    await this.native.call('mls.conversation.reset', {
+      device_scope: this.scope,
+      conversation_id: conversation,
+      peer_account_id: peer,
+    });
+    await this.persistState();
+    const inspection = await this.inspectGroup(conversation);
+    if (!inspection?.reset_from_group_id) {
+      throw new Error('native MLS conversation reset response is invalid');
+    }
+    return inspection;
+  }
+
+  async abandonConversationForReset(
+    conversationId: string,
+    peerAccountId: string,
+    previousGroupId: string,
+  ): Promise<void> {
+    await this.init();
+    const conversation = mlsConversationId(conversationId);
+    const peer = peerAccountId.trim();
+    if (
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(peer) ||
+      peer === this.scope.split('/')[2] ||
+      !isBase64(previousGroupId)
+    ) {
+      throw new Error('MLS remote reset parameters are invalid');
+    }
+    await this.native.call('mls.conversation.abandon_for_reset', {
+      device_scope: this.scope,
+      conversation_id: conversation,
+      peer_account_id: peer,
+      previous_group_id: previousGroupId,
+    });
     await this.persistState();
   }
 

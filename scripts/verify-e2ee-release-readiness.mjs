@@ -22,7 +22,6 @@ const REQUIRED_PROTOCOL_CONTROLS = [
   ],
   ['externalAuditCompleted', 'external audit is not complete'],
   ['prekeyHandshake', 'prekey handshake is not implemented'],
-  ['doubleRatchet', 'Double Ratchet is not implemented'],
   ['multiDeviceSessions', 'multi-device sessions are not implemented'],
   ['safetyStateReset', 'safety state reset is not implemented'],
   ['forwardSecrecy', 'forward secrecy is not established'],
@@ -58,6 +57,14 @@ export function verifyE2eeReleaseReadiness(status, options = {}) {
     }
     for (const [field, message] of REQUIRED_PROTOCOL_CONTROLS) {
       if (status.protocol[field] !== true) blockers.push(message);
+    }
+    if (
+      status.protocol.doubleRatchet !== true &&
+      status.protocol.mls10SessionProtocol !== true
+    ) {
+      blockers.push(
+        'Double Ratchet or audited MLS 1.0 session protocol is not implemented',
+      );
     }
   }
   if (!status.deviceTrust || typeof status.deviceTrust !== 'object') {

@@ -46,8 +46,7 @@ export const DEFAULT_MLS_RESOURCE_GOVERNANCE_POLICY: Readonly<MlsResourceGoverna
   });
 
 export type MlsResourceRateAction =
-  | 'key_package_publish'
-  | 'transport_event_append';
+  'key_package_publish' | 'transport_event_append';
 
 export interface MlsResourceCleanupResult {
   eventsDeleted: number;
@@ -83,6 +82,8 @@ export interface ClaimMlsKeyPackageInput {
   requesterAccountId: string;
   requesterDeviceId: string;
   recipientAccountId: string;
+  recipientDeviceId?: string;
+  conversationPeerAccountId?: string;
 }
 
 export interface MlsKeyPackageView {
@@ -111,6 +112,7 @@ export interface AppendMlsTransportEventInput {
   epoch: number;
   groupId: string;
   payload: string;
+  recipientAccountId?: string | null;
   recipientDeviceId?: string | null;
   keyPackageReference?: string | null;
   resetFromGroupId?: string | null;
@@ -186,12 +188,15 @@ interface EventRow {
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
-const MLS_MEMBER_ADD_ENVELOPE_PREFIX = 'otto:mls:member-add:v1:';
+const MLS_MEMBER_ADD_ENVELOPE_V1_PREFIX = 'otto:mls:member-add:v1:';
+const MLS_MEMBER_ADD_ENVELOPE_PREFIX = 'otto:mls:member-add:v2:';
 
 export interface MlsMemberAddCommitEnvelope {
   commit: string;
+  recipientAccountId: string | null;
   recipientDeviceId: string;
   keyPackageReference: string;
+  resetFromGroupId: string | null;
 }
 
 export function encodeMlsMemberAddCommitEnvelope(
@@ -201,8 +206,10 @@ export function encodeMlsMemberAddCommitEnvelope(
     MLS_MEMBER_ADD_ENVELOPE_PREFIX +
       JSON.stringify({
         commit: input.commit,
+        recipientAccountId: input.recipientAccountId,
         recipientDeviceId: input.recipientDeviceId,
         keyPackageReference: input.keyPackageReference,
+        resetFromGroupId: input.resetFromGroupId,
       }),
     'utf8',
   ).toString('base64');
@@ -212,10 +219,15 @@ export function parseMlsMemberAddCommitEnvelope(
   payload: string,
 ): MlsMemberAddCommitEnvelope | null {
   const decoded = Buffer.from(payload, 'base64').toString('utf8');
-  if (!decoded.startsWith(MLS_MEMBER_ADD_ENVELOPE_PREFIX)) return null;
+  const prefix = decoded.startsWith(MLS_MEMBER_ADD_ENVELOPE_PREFIX)
+    ? MLS_MEMBER_ADD_ENVELOPE_PREFIX
+    : decoded.startsWith(MLS_MEMBER_ADD_ENVELOPE_V1_PREFIX)
+      ? MLS_MEMBER_ADD_ENVELOPE_V1_PREFIX
+      : null;
+  if (!prefix) return null;
   let parsed: unknown;
   try {
-    parsed = JSON.parse(decoded.slice(MLS_MEMBER_ADD_ENVELOPE_PREFIX.length));
+    parsed = JSON.parse(decoded.slice(prefix.length));
   } catch {
     throw new Error('MLS member-add Commit envelope is invalid');
   }
@@ -223,6 +235,11 @@ export function parseMlsMemberAddCommitEnvelope(
   if (
     !envelope ||
     typeof envelope.commit !== 'string' ||
+    (prefix === MLS_MEMBER_ADD_ENVELOPE_PREFIX &&
+      !IDENTIFIER.test(envelope.recipientAccountId ?? '')) ||
+    (prefix === MLS_MEMBER_ADD_ENVELOPE_PREFIX &&
+      envelope.resetFromGroupId !== null &&
+      typeof envelope.resetFromGroupId !== 'string') ||
     !IDENTIFIER.test(envelope.recipientDeviceId ?? '') ||
     !SHA256.test(envelope.keyPackageReference ?? '')
   ) {
@@ -234,8 +251,20 @@ export function parseMlsMemberAddCommitEnvelope(
       'MLS member-add Commit',
       MLS_TRANSPORT_PAYLOAD_MAX_BYTES,
     ),
+    recipientAccountId:
+      prefix === MLS_MEMBER_ADD_ENVELOPE_PREFIX
+        ? envelope.recipientAccountId!
+        : null,
     recipientDeviceId: envelope.recipientDeviceId!,
     keyPackageReference: envelope.keyPackageReference!,
+    resetFromGroupId:
+      prefix === MLS_MEMBER_ADD_ENVELOPE_PREFIX && envelope.resetFromGroupId
+        ? requireMlsBase64(
+            envelope.resetFromGroupId,
+            'MLS reset source group id',
+            255,
+          )
+        : null,
   };
 }
 
@@ -443,8 +472,7 @@ function consumeMlsRateLimit(input: {
   nowMs: number;
   limit: number;
 }): void {
-  const bucketStartedAtMs =
-    Math.floor(input.nowMs / (60 * 1_000)) * 60 * 1_000;
+  const bucketStartedAtMs = Math.floor(input.nowMs / (60 * 1_000)) * 60 * 1_000;
   const result = input.database
     .prepare(
       `INSERT INTO mls_resource_rate_buckets
@@ -517,12 +545,10 @@ function enforceMlsTransportEventInventory(input: {
          WHERE organization_id = ? AND expires_at > ?
            AND (? IS NULL OR conversation_id = ?)`,
       )
-      .get(
-        input.organizationId,
-        input.now,
-        conversationId,
-        conversationId,
-      ) as { event_count: number; storage_bytes: number };
+      .get(input.organizationId, input.now, conversationId, conversationId) as {
+      event_count: number;
+      storage_bytes: number;
+    };
   const conversation = usage(input.conversationId);
   if (
     Number(conversation.event_count) >=
@@ -731,8 +757,7 @@ export function retireMlsKeyPackageInRepository(
            AND key_package_reference = ?`,
       )
       .get(organizationId, accountId, deviceId, reference) as
-      | { claimed_at: string | null }
-      | undefined;
+      { claimed_at: string | null } | undefined;
     if (!existing) return true;
     if (existing.claimed_at !== null) return false;
     return (
@@ -767,16 +792,35 @@ export function claimMlsKeyPackageInRepository(
     raw.recipientAccountId,
     'recipient account id',
   );
+  const recipientDeviceId = raw.recipientDeviceId
+    ? requireMlsIdentifier(raw.recipientDeviceId, 'recipient device id')
+    : null;
+  const conversationPeerAccountId = requireMlsIdentifier(
+    raw.conversationPeerAccountId ?? raw.recipientAccountId,
+    'conversation peer account id',
+  );
   mlsDirectConversation({
     organizationId,
     accountId: requesterAccountId,
-    peerAccountId: recipientAccountId,
+    peerAccountId: conversationPeerAccountId,
   });
+  if (
+    recipientAccountId !== requesterAccountId &&
+    recipientAccountId !== conversationPeerAccountId
+  ) {
+    throw new Error('MLS KeyPackage recipient is outside the direct session');
+  }
+  if (
+    recipientAccountId === requesterAccountId &&
+    recipientDeviceId === requesterDeviceId
+  ) {
+    throw new Error('MLS KeyPackage requester cannot claim its own device');
+  }
   requireParticipants(
     store,
     organizationId,
     requesterAccountId,
-    recipientAccountId,
+    conversationPeerAccountId,
   );
   const database = store.db();
   const nowMs = storeNow(store);
@@ -797,6 +841,7 @@ export function claimMlsKeyPackageInRepository(
           AND device.account_id = package.account_id
           AND device.device_id = package.device_id
          WHERE package.organization_id = ? AND package.account_id = ?
+           AND (? IS NULL OR package.device_id = ?)
            AND package.claimed_by_account_id = ?
            AND package.claimed_by_device_id = ?
            AND package.claimed_at IS NOT NULL
@@ -809,6 +854,8 @@ export function claimMlsKeyPackageInRepository(
       .get(
         organizationId,
         recipientAccountId,
+        recipientDeviceId,
+        recipientDeviceId,
         requesterAccountId,
         requesterDeviceId,
         now,
@@ -822,14 +869,20 @@ export function claimMlsKeyPackageInRepository(
           AND device.account_id = package.account_id
           AND device.device_id = package.device_id
          WHERE package.organization_id = ? AND package.account_id = ?
+           AND (? IS NULL OR package.device_id = ?)
            AND package.claimed_at IS NULL
            AND package.expires_at > ?
            AND device.approval_state = 'approved' AND device.revoked_at IS NULL
          ORDER BY package.created_at, package.key_package_reference
          LIMIT 1`,
       )
-      .get(organizationId, recipientAccountId, now) as
-      KeyPackageRow | undefined;
+      .get(
+        organizationId,
+        recipientAccountId,
+        recipientDeviceId,
+        recipientDeviceId,
+        now,
+      ) as KeyPackageRow | undefined;
     if (!row) return null;
     database
       .prepare(
@@ -920,6 +973,7 @@ export function appendMlsTransportEventInRepository(
   const hasSuppliedKeyPackageTarget =
     raw.recipientDeviceId != null || raw.keyPackageReference != null;
   if (
+    (raw.recipientAccountId != null && !hasSuppliedKeyPackageTarget) ||
     (raw.recipientDeviceId == null) !== (raw.keyPackageReference == null) ||
     (raw.eventType === 'welcome' && !hasSuppliedKeyPackageTarget) ||
     (raw.eventType === 'application' && hasSuppliedKeyPackageTarget)
@@ -932,14 +986,35 @@ export function appendMlsTransportEventInRepository(
   const targetKeyPackageReference = hasSuppliedKeyPackageTarget
     ? requireMlsKeyPackageReference(raw.keyPackageReference ?? '')
     : null;
+  const targetAccountId = hasSuppliedKeyPackageTarget
+    ? requireMlsIdentifier(
+        raw.recipientAccountId ?? peerAccountId,
+        'recipient account id',
+      )
+    : null;
+  if (
+    targetAccountId !== null &&
+    targetAccountId !== senderAccountId &&
+    targetAccountId !== peerAccountId
+  ) {
+    throw new Error('MLS KeyPackage target is outside the direct session');
+  }
+  if (
+    targetAccountId === senderAccountId &&
+    targetDeviceId === senderDeviceId
+  ) {
+    throw new Error('MLS member addition cannot target the sender device');
+  }
   const isMemberAddCommit =
     raw.eventType === 'commit' && hasSuppliedKeyPackageTarget;
   const payload = isMemberAddCommit
     ? requireMlsBase64(
         encodeMlsMemberAddCommitEnvelope({
           commit: rawPayload,
+          recipientAccountId: targetAccountId!,
           recipientDeviceId: targetDeviceId!,
           keyPackageReference: targetKeyPackageReference!,
+          resetFromGroupId: raw.resetFromGroupId ?? null,
         }),
         'MLS member-add Commit envelope',
         MLS_TRANSPORT_PAYLOAD_MAX_BYTES,
@@ -979,7 +1054,7 @@ export function appendMlsTransportEventInRepository(
     conversationId: direct.conversationId,
     senderAccountId,
     senderDeviceId,
-    recipientAccountId: raw.eventType === 'welcome' ? peerAccountId : null,
+    recipientAccountId: raw.eventType === 'welcome' ? targetAccountId : null,
     recipientDeviceId,
     eventType: raw.eventType,
     epoch,
@@ -1170,7 +1245,7 @@ export function appendMlsTransportEventInRepository(
       requireActiveApprovedDevice(
         database,
         organizationId,
-        peerAccountId,
+        targetAccountId!,
         targetDeviceId!,
       );
       const claimed = database
@@ -1182,7 +1257,7 @@ export function appendMlsTransportEventInRepository(
         KeyPackageRow | undefined;
       if (
         !claimed ||
-        claimed.account_id !== peerAccountId ||
+        claimed.account_id !== targetAccountId ||
         claimed.device_id !== targetDeviceId ||
         claimed.claimed_by_account_id !== senderAccountId ||
         claimed.claimed_by_device_id !== senderDeviceId ||
@@ -1221,6 +1296,7 @@ export function appendMlsTransportEventInRepository(
         if (
           !envelope ||
           envelope.recipientDeviceId !== targetDeviceId ||
+          envelope.recipientAccountId !== targetAccountId ||
           envelope.keyPackageReference !== targetKeyPackageReference
         ) {
           throw new Error(
@@ -1385,7 +1461,11 @@ export function listMlsInboundConversationPeersInRepository(
   requireActiveApprovedDevice(database, organizationId, accountId, deviceId);
   const rows = database
     .prepare(
-      `SELECT DISTINCT event.sender_account_id AS peer_account_id
+      `SELECT DISTINCT CASE
+         WHEN conversation.participant_a_account_id = ?
+           THEN conversation.participant_b_account_id
+         ELSE conversation.participant_a_account_id
+       END AS peer_account_id
        FROM mls_transport_events AS event
        JOIN mls_conversations AS conversation
          ON conversation.organization_id = event.organization_id
@@ -1393,25 +1473,34 @@ export function listMlsInboundConversationPeersInRepository(
         AND conversation.active_generation = event.session_generation
        JOIN accounts AS peer
          ON peer.organization_id = event.organization_id
-        AND peer.id = event.sender_account_id
+        AND peer.id = CASE
+          WHEN conversation.participant_a_account_id = ?
+            THEN conversation.participant_b_account_id
+          ELSE conversation.participant_a_account_id
+        END
         AND peer.status = 'active'
        WHERE event.organization_id = ?
          AND event.event_type = 'welcome'
          AND event.recipient_account_id = ?
          AND event.recipient_device_id = ?
          AND event.expires_at > ?
-         AND event.sender_account_id > ?
-         AND event.sender_account_id <> ?
+         AND CASE
+           WHEN conversation.participant_a_account_id = ?
+             THEN conversation.participant_b_account_id
+           ELSE conversation.participant_a_account_id
+         END > ?
        ORDER BY peer_account_id
        LIMIT ?`,
     )
     .all(
+      accountId,
+      accountId,
       organizationId,
       accountId,
       deviceId,
       isoTime(storeNow(store)),
-      afterPeerAccountId,
       accountId,
+      afterPeerAccountId,
       limit,
     ) as Array<{ peer_account_id: string }>;
   return rows.map((row) =>
@@ -1441,10 +1530,10 @@ export function cleanupExpiredMlsResourcesInRepository(
          WHERE expires_at <= ? ORDER BY sequence LIMIT ?`,
       )
       .all(before, limit) as Array<{
-        sequence: number;
-        organization_id: string;
-        conversation_id: string;
-      }>;
+      sequence: number;
+      organization_id: string;
+      conversation_id: string;
+    }>;
     const floors = new Map<string, (typeof expiredEvents)[number]>();
     for (const event of expiredEvents) {
       const key = `${event.organization_id}\n${event.conversation_id}`;
@@ -1460,21 +1549,19 @@ export function cleanupExpiredMlsResourcesInRepository(
            SET retention_floor_sequence = MAX(retention_floor_sequence, ?)
            WHERE organization_id = ? AND conversation_id = ?`,
         )
-        .run(
-          floor.sequence,
-          floor.organization_id,
-          floor.conversation_id,
-        );
+        .run(floor.sequence, floor.organization_id, floor.conversation_id);
     }
     let eventsDeleted = 0;
     if (expiredEvents.length > 0) {
       const placeholders = expiredEvents.map(() => '?').join(', ');
-      eventsDeleted = Number(database
-        .prepare(
-          `DELETE FROM mls_transport_events
+      eventsDeleted = Number(
+        database
+          .prepare(
+            `DELETE FROM mls_transport_events
            WHERE sequence IN (${placeholders})`,
-        )
-        .run(...expiredEvents.map((event) => event.sequence)).changes);
+          )
+          .run(...expiredEvents.map((event) => event.sequence)).changes,
+      );
     }
     const retiredSessions = database
       .prepare(
@@ -1491,10 +1578,10 @@ export function cleanupExpiredMlsResourcesInRepository(
          ORDER BY session.retired_at, session.generation LIMIT ?`,
       )
       .all(before, limit) as Array<{
-        organization_id: string;
-        conversation_id: string;
-        generation: number;
-      }>;
+      organization_id: string;
+      conversation_id: string;
+      generation: number;
+    }>;
     let groupSessionsDeleted = 0;
     const deleteSession = database.prepare(
       `DELETE FROM mls_group_sessions
@@ -1523,9 +1610,9 @@ export function cleanupExpiredMlsResourcesInRepository(
          ORDER BY package.expires_at, package.key_package_reference LIMIT ?`,
       )
       .all(before, limit) as Array<{
-        organization_id: string;
-        key_package_reference: string;
-      }>;
+      organization_id: string;
+      key_package_reference: string;
+    }>;
     let keyPackagesDeleted = 0;
     const deletePackage = database.prepare(
       `DELETE FROM mls_key_packages
@@ -1539,16 +1626,18 @@ export function cleanupExpiredMlsResourcesInRepository(
         ).changes,
       );
     }
-    const rateBucketsDeleted = Number(database
-      .prepare(
-        `DELETE FROM mls_resource_rate_buckets
+    const rateBucketsDeleted = Number(
+      database
+        .prepare(
+          `DELETE FROM mls_resource_rate_buckets
          WHERE rowid IN (
            SELECT rowid FROM mls_resource_rate_buckets
            WHERE bucket_started_at_ms < ?
            ORDER BY bucket_started_at_ms LIMIT ?
          )`,
-      )
-      .run(Math.max(0, beforeMs - 2 * 60 * 1_000), limit).changes);
+        )
+        .run(Math.max(0, beforeMs - 2 * 60 * 1_000), limit).changes,
+    );
     return {
       eventsDeleted,
       keyPackagesDeleted,

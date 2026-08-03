@@ -1447,6 +1447,14 @@ export function createClusteredEnterpriseServer(
             typeof body.recipientAccountId === 'string'
               ? body.recipientAccountId
               : '',
+          recipientDeviceId:
+            typeof body.recipientDeviceId === 'string'
+              ? body.recipientDeviceId
+              : undefined,
+          conversationPeerAccountId:
+            typeof body.conversationPeerAccountId === 'string'
+              ? body.conversationPeerAccountId
+              : undefined,
         });
         sendJson(
           res,
@@ -1512,6 +1520,10 @@ export function createClusteredEnterpriseServer(
             epoch: Number(body.epoch),
             groupId: typeof body.groupId === 'string' ? body.groupId : '',
             payload: typeof body.payload === 'string' ? body.payload : '',
+            recipientAccountId:
+              typeof body.recipientAccountId === 'string'
+                ? body.recipientAccountId
+                : null,
             recipientDeviceId:
               typeof body.recipientDeviceId === 'string'
                 ? body.recipientDeviceId

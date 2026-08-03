@@ -2151,18 +2151,37 @@ export function createPostgresEnterpriseCoreRepository(input: {
       raw.recipientAccountId,
       'recipient account id',
     );
+    const recipientDeviceId = raw.recipientDeviceId
+      ? requiredIdentifier(raw.recipientDeviceId, 'recipient device id')
+      : null;
+    const conversationPeerAccountId = requiredIdentifier(
+      raw.conversationPeerAccountId ?? raw.recipientAccountId,
+      'conversation peer account id',
+    );
     mlsDirectConversation({
       organizationId,
       accountId: requesterAccountId,
-      peerAccountId: recipientAccountId,
+      peerAccountId: conversationPeerAccountId,
     });
+    if (
+      recipientAccountId !== requesterAccountId &&
+      recipientAccountId !== conversationPeerAccountId
+    ) {
+      throw new Error('MLS KeyPackage recipient is outside the direct session');
+    }
+    if (
+      recipientAccountId === requesterAccountId &&
+      recipientDeviceId === requesterDeviceId
+    ) {
+      throw new Error('MLS KeyPackage requester cannot claim its own device');
+    }
     const now = mlsNow();
     return transaction(input.pool, async (client) => {
       await requirePostgresMlsParticipants(
         client,
         organizationId,
         requesterAccountId,
-        recipientAccountId,
+        conversationPeerAccountId,
       );
       await requirePostgresMlsDevice(
         client,
@@ -2177,17 +2196,19 @@ export function createPostgresEnterpriseCoreRepository(input: {
           AND device.account_id = package.account_id
           AND device.device_id = package.device_id
          WHERE package.organization_id = $1 AND package.account_id = $2
-           AND package.claimed_by_account_id = $3
-           AND package.claimed_by_device_id = $4
+           AND ($3::text IS NULL OR package.device_id = $3)
+           AND package.claimed_by_account_id = $4
+           AND package.claimed_by_device_id = $5
            AND package.claimed_at IS NOT NULL
            AND package.welcome_event_id IS NULL
-           AND package.expires_at > $5::timestamptz
+           AND package.expires_at > $6::timestamptz
            AND device.approval_state = 'approved' AND device.revoked_at IS NULL
          ORDER BY package.claimed_at, package.key_package_reference
          LIMIT 1`,
         [
           organizationId,
           recipientAccountId,
+          recipientDeviceId,
           requesterAccountId,
           requesterDeviceId,
           now.iso,
@@ -2203,12 +2224,13 @@ export function createPostgresEnterpriseCoreRepository(input: {
           AND device.account_id = package.account_id
           AND device.device_id = package.device_id
          WHERE package.organization_id = $1 AND package.account_id = $2
+           AND ($3::text IS NULL OR package.device_id = $3)
            AND package.claimed_at IS NULL
-           AND package.expires_at > $3::timestamptz
+           AND package.expires_at > $4::timestamptz
            AND device.approval_state = 'approved' AND device.revoked_at IS NULL
          ORDER BY package.created_at, package.key_package_reference
          LIMIT 1 FOR UPDATE OF package SKIP LOCKED`,
-        [organizationId, recipientAccountId, now.iso],
+        [organizationId, recipientAccountId, recipientDeviceId, now.iso],
       );
       const row = available.rows[0];
       if (!row) return null;
@@ -2266,6 +2288,7 @@ export function createPostgresEnterpriseCoreRepository(input: {
     const hasSuppliedKeyPackageTarget =
       raw.recipientDeviceId != null || raw.keyPackageReference != null;
     if (
+      (raw.recipientAccountId != null && !hasSuppliedKeyPackageTarget) ||
       (raw.recipientDeviceId == null) !== (raw.keyPackageReference == null) ||
       (raw.eventType === 'welcome' && !hasSuppliedKeyPackageTarget) ||
       (raw.eventType === 'application' && hasSuppliedKeyPackageTarget)
@@ -2278,14 +2301,35 @@ export function createPostgresEnterpriseCoreRepository(input: {
     const targetKeyPackageReference = hasSuppliedKeyPackageTarget
       ? requireMlsKeyPackageReference(raw.keyPackageReference ?? '')
       : null;
+    const targetAccountId = hasSuppliedKeyPackageTarget
+      ? requiredIdentifier(
+          raw.recipientAccountId ?? peerAccountId,
+          'recipient account id',
+        )
+      : null;
+    if (
+      targetAccountId !== null &&
+      targetAccountId !== senderAccountId &&
+      targetAccountId !== peerAccountId
+    ) {
+      throw new Error('MLS KeyPackage target is outside the direct session');
+    }
+    if (
+      targetAccountId === senderAccountId &&
+      targetDeviceId === senderDeviceId
+    ) {
+      throw new Error('MLS member addition cannot target the sender device');
+    }
     const isMemberAddCommit =
       raw.eventType === 'commit' && hasSuppliedKeyPackageTarget;
     const payload = isMemberAddCommit
       ? requireMlsBase64(
           encodeMlsMemberAddCommitEnvelope({
             commit: rawPayload,
+            recipientAccountId: targetAccountId!,
             recipientDeviceId: targetDeviceId!,
             keyPackageReference: targetKeyPackageReference!,
+            resetFromGroupId: raw.resetFromGroupId ?? null,
           }),
           'MLS member-add Commit envelope',
           MLS_TRANSPORT_PAYLOAD_MAX_BYTES,
@@ -2317,7 +2361,8 @@ export function createPostgresEnterpriseCoreRepository(input: {
       conversationId: direct.conversationId,
       senderAccountId,
       senderDeviceId,
-      recipientAccountId: raw.eventType === 'welcome' ? peerAccountId : null,
+      recipientAccountId:
+        raw.eventType === 'welcome' ? targetAccountId : null,
       recipientDeviceId,
       eventType: raw.eventType,
       epoch,
@@ -2512,7 +2557,7 @@ export function createPostgresEnterpriseCoreRepository(input: {
         await requirePostgresMlsDevice(
           client,
           organizationId,
-          peerAccountId,
+          targetAccountId!,
           targetDeviceId!,
         );
         const claimed = await client.query<MlsKeyPackageRow>(
@@ -2524,7 +2569,7 @@ export function createPostgresEnterpriseCoreRepository(input: {
         const packageRow = claimed.rows[0];
         if (
           !packageRow ||
-          packageRow.account_id !== peerAccountId ||
+          packageRow.account_id !== targetAccountId ||
           packageRow.device_id !== targetDeviceId ||
           packageRow.claimed_by_account_id !== senderAccountId ||
           packageRow.claimed_by_device_id !== senderDeviceId ||
@@ -2562,6 +2607,7 @@ export function createPostgresEnterpriseCoreRepository(input: {
           if (
             !envelope ||
             envelope.recipientDeviceId !== targetDeviceId ||
+            envelope.recipientAccountId !== targetAccountId ||
             envelope.keyPackageReference !== targetKeyPackageReference
           ) {
             throw new Error(

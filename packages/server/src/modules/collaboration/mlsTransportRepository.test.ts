@@ -70,6 +70,7 @@ function createHarness(
       );
   };
   addDevice('alice', 'alice-1');
+  addDevice('alice', 'alice-2');
   addDevice('bob', 'bob-1');
   addDevice('bob', 'bob-2');
   addDevice('bob', 'bob-pending', 'pending');
@@ -101,6 +102,57 @@ function createHarness(
 }
 
 describe('MLS ciphertext transport repository', () => {
+  it('claims an exact peer or same-account device only within the direct session', () => {
+    const { database, facade } = createHarness();
+    const publish = (accountId: string, deviceId: string, reference: string) =>
+      facade.publishMlsKeyPackage({
+        organizationId: 'org-a',
+        accountId,
+        deviceId,
+        ciphersuite: MLS_SUITE,
+        reference,
+        keyPackage: opaque(`key-package-${deviceId}`),
+      });
+    try {
+      publish('bob', 'bob-1', '1'.repeat(64));
+      publish('bob', 'bob-2', '2'.repeat(64));
+      publish('alice', 'alice-2', '3'.repeat(64));
+
+      expect(
+        facade.claimMlsKeyPackage({
+          organizationId: 'org-a',
+          requesterAccountId: 'alice',
+          requesterDeviceId: 'alice-1',
+          recipientAccountId: 'bob',
+          recipientDeviceId: 'bob-2',
+          conversationPeerAccountId: 'bob',
+        }),
+      ).toMatchObject({ accountId: 'bob', deviceId: 'bob-2' });
+      expect(
+        facade.claimMlsKeyPackage({
+          organizationId: 'org-a',
+          requesterAccountId: 'alice',
+          requesterDeviceId: 'alice-1',
+          recipientAccountId: 'alice',
+          recipientDeviceId: 'alice-2',
+          conversationPeerAccountId: 'bob',
+        }),
+      ).toMatchObject({ accountId: 'alice', deviceId: 'alice-2' });
+      expect(() =>
+        facade.claimMlsKeyPackage({
+          organizationId: 'org-a',
+          requesterAccountId: 'alice',
+          requesterDeviceId: 'alice-1',
+          recipientAccountId: 'carol',
+          recipientDeviceId: 'carol-1',
+          conversationPeerAccountId: 'bob',
+        }),
+      ).toThrow(/outside the direct session/i);
+    } finally {
+      database.close();
+    }
+  });
+
   it('publishes packages only for approved devices and recovers an unfinished claim', () => {
     const { database, facade } = createHarness();
     try {
@@ -291,6 +343,7 @@ describe('MLS ciphertext transport repository', () => {
         payload: opaque('commit'),
         recipientDeviceId: 'bob-1',
         keyPackageReference: published.reference,
+        resetFromGroupId: null,
       });
       expect(commit).toMatchObject({
         eventType: 'commit',
@@ -300,8 +353,10 @@ describe('MLS ciphertext transport repository', () => {
       });
       expect(parseMlsMemberAddCommitEnvelope(commit.payload)).toEqual({
         commit: opaque('commit'),
+        recipientAccountId: 'bob',
         recipientDeviceId: 'bob-1',
         keyPackageReference: published.reference,
+        resetFromGroupId: null,
       });
       const welcome = facade.appendMlsTransportEvent({
         organizationId: 'org-a',
