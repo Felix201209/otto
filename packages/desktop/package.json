@@ -25,7 +25,9 @@
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "dist:all": "npm run build && electron-builder --mac dmg --arm64 --x64 && electron-builder --win --x64",
     "release": "node scripts/make-delivery-zip.mjs --build",
-    "release:gate": "node scripts/release-recovery-gate.mjs"
+    "release:gate": "node scripts/release-recovery-gate.mjs",
+    "dist:green": "npm run build && electron-builder --mac --dir \"--config.productName=Otto Green\" --config.appId=ai.otto.green.desktop --config.protocols[0].schemes[0]=otto-green --config.mac.artifactName=OttoGreen-${version}-${arch}.${ext} \"--config.nsis.shortcutName=Otto Green\" --config.extraMetadata.name=otto-green-desktop",
+    "dist:green:win": "node scripts/fetch-win-ripgrep.mjs && npm run build && electron-builder --win --x64 --publish never \"--config.productName=Otto Green\" --config.appId=ai.otto.green.desktop --config.protocols[0].schemes[0]=otto-green --config.win.artifactName=OttoGreen-Setup-${version}-win-x64.${ext} --config.nsis.artifactName=OttoGreen-Setup-${version}-win-x64.${ext} \"--config.nsis.shortcutName=Otto Green\" --config.extraMetadata.name=otto-green-desktop"
   },
   "dependencies": {
     "otto-server": "file:../server",
