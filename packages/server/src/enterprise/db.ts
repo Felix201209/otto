@@ -55,6 +55,7 @@ import {
   PARK_RESOURCE_SCHEMA_CONTRIBUTOR,
   createParkServicesComposition,
   createParkTicketSchemaContributor,
+  createTicketEscalationSchemaContributor,
   listParkTicketsForBackup,
   listTicketDeliveriesForBackup,
   migrateLegacyParkTicketEvents,
@@ -246,6 +247,9 @@ function initSchema(d: Database): void {
     }),
     PARK_STATISTICS_SCHEMA_CONTRIBUTOR,
     createParkTicketSchemaContributor({
+      defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+    }),
+    createTicketEscalationSchemaContributor({
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
     }),
     PARK_RESOURCE_SCHEMA_CONTRIBUTOR,
