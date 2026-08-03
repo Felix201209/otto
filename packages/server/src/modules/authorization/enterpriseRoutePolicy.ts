@@ -81,7 +81,8 @@ export function isAdminRoute(path: string): boolean {
     path.startsWith('/enterprise/organization/departments') ||
     path.startsWith('/enterprise/organization/positions') ||
     path.startsWith('/enterprise/park-meeting-rooms/') ||
-    path.startsWith('/enterprise/platform/organizations/')
+    path.startsWith('/enterprise/platform/organizations/') ||
+    path.startsWith('/enterprise/federation/admin/')
   );
 }
 
@@ -93,6 +94,8 @@ export function isMemberRoute(path: string): boolean {
     path === '/enterprise/atoa/inbox' ||
     path.startsWith('/enterprise/messages/') ||
     path.startsWith('/enterprise/message-attachments/') ||
+    (path.startsWith('/enterprise/federation/') &&
+      !path.startsWith('/enterprise/federation/admin/')) ||
     path.startsWith('/enterprise/park-statistics/') ||
     (path.startsWith('/enterprise/credits/redeem-codes/') &&
       path.endsWith('/revoke'))
