@@ -47,6 +47,7 @@
     "validate:boundaries": "node scripts/validate-boundaries.mjs",
     "sqlcipher:native:verify": "node scripts/verify-sqlcipher-native-assets.mjs",
     "security:e2ee:release:verify": "node scripts/verify-e2ee-release-readiness.mjs",
+    "validate:integration-baseline": "node scripts/validate-server-integration-baseline.mjs",
     "benchmark:low-resource-agents": "node scripts/low-resource-multi-agent-benchmark.mjs",
     "eval:deterministic": "vitest run --config packages/evals/vitest.config.ts",
     "build": "node scripts/build.js",
