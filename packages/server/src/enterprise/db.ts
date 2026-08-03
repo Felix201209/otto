@@ -423,5 +423,651 @@ export const {
       process.env.OTTO_LICENSE_ENFORCE !== 'false'),
   licenseVerificationPublicKeys: () =>
     parsePublicKeyList(
-      process.env.OTTO_LICENS◊èy∂âûÀk∫wµÁM•—•Ωπ%êËÅÕ—…•πúÅÅπ’±∞Ï(ÄÅ¡ΩÕ•—•ΩπQ•—±îËÅÕ—…•πúÅÅπ’±∞Ï(ÄÅÖŸÖ—Ö…U…∞ËÅÕ—…•πúÅÅπ’±∞Ï(ÄÅ•Õëµ•∏ËÅâΩΩ±ïÖ∏Ï(ÄÅÕ—Ö—’ÃËÄùÖç—•ŸîúÅÄùë•ÕÖâ±ïêúÏ(ÄÅ—ÖùÃËÅÕ—…•πùmtÏ(ÄÅç…ïÖ—ïë–ËÅÕ—…•πúÏ(ÄÅ’¡ëÖ—ïë–ËÅÕ—…•πúÏ)Ù()ï·¡Ω…–Å•π—ï…ôÖçîÅççΩ’π—IΩ‹ÅÏ(ÄÅ•êËÅÕ—…•πúÏ(ÄÅΩ…ùÖπ•ÈÖ—•Ωπ}•êËÅÕ—…•πúÏ(ÄÅÖççΩ’π—}—Â¡îËÄù¡ï…ÕΩπÖ∞úÅÄùïπ—ï…¡…•ÕîúÅÅπ’±∞Ï(ÄÅïµ¡±ΩÂïï}•êËÅÕ—…•πúÅÅπ’±∞Ï(ÄÅ’Õï…πÖµîËÅÕ—…•πúÏ(ÄÅ¡°ΩπîËÅÕ—…•πúÅÅπ’±∞Ï(ÄÅôï•Õ°’}Ω¡ïπ}•êËÅÕ—…•πúÅÅπ’±∞Ï(ÄÅ¡ÖÕÕ›Ω…ë}°ÖÕ†ËÅÕ—…•πúÏ(ÄÅπÖµîËÅÕ—…•πúÏ(ÄÅ…Ω±îËÅÕ—…•πúÅÅπ’±∞Ï(ÄÅëï¡Ö…—µïπ–ËÅÕ—…•πúÅÅπ’±∞Ï(ÄÅëï¡Ö…—µïπ—}•êËÅÕ—…•πúÅÅπ’±∞Ï(ÄÅ¡ΩÕ•—•Ωπ}•êËÅÕ—…•πúÅÅπ’±∞Ï(ÄÅ¡ΩÕ•—•Ωπ}—•—±îËÅÕ—…•πúÅÅπ’±∞Ï(ÄÅÖŸÖ—Ö…}’…∞ËÅÕ—…•πúÅÅπ’±∞Ï(ÄÅ•Õ}Öëµ•∏ËÅπ’µâï»Ï(ÄÅÕ—Ö—’ÃËÄùÖç—•ŸîúÅÄùë•ÕÖâ±ïêúÏ(ÄÅëï±ï—ïë}Ö–ËÅÕ—…•πúÅÅπ’±∞Ï(ÄÅç…ïÖ—ïë}Ö–ËÅÕ—…•πúÏ(ÄÅ’¡ëÖ—ïë}Ö–ËÅÕ—…•πúÏ)Ù()ô’πç—•Ω∏ÅπΩ…µÖ±•ÈïUÕï…πÖµî°’Õï…πÖµîËÅÕ—…•πú§ËÅÕ—…•πúÅÏ(ÄÅ…ï—’…∏Å’Õï…πÖµîπ—…•¥†§π—Ω1ΩçÖ±ï1Ω›ï…ÖÕî†ùï∏µULú§Ï)Ù((º®®Éí‚∑ñn˜ñíü¶fö&/örÎñ>ﬂûÓí‚í˛wñ∂cí‚ËÅ∏ƒÿ”æÚoñ∆WûíÎñJ3í‚/ñ>Gû~∑í˛áö^€ñ7ñ:Ôö:$Ä¨‡€éÄ®º)ï·¡Ω…–Åô’πç—•Ω∏ÅπΩ…µÖ±•ÈïA°Ωπî°¡°ΩπîËÅÕ—…•πú§ËÅÕ—…•πúÅÏ(ÄÅ±ï–Åë•ù•—ÃÄÙÅ¡°Ωπîπ—…•¥†§π…ï¡±Öçî†ΩmyqëtΩú∞Äúú§Ï(ÄÅ•òÄ°ë•ù•—ÃπÕ—Ö…—Õ]•—††ú¿¿‡ÿú§§Åë•ù•—ÃÄÙÅë•ù•—ÃπÕ±•çî†–§Ï(ÄÅï±ÕîÅ•òÄ°ë•ù•—ÃπÕ—Ö…—Õ]•—††ú‡ÿú§ÄòòÅë•ù•—Ãπ±ïπù—†ÄÙÙÙÄƒÃ§(ÄÄÄÅë•ù•—ÃÄÙÅë•ù•—ÃπÕ±•çî†»§Ï(ÄÅ•òÄ†ÑΩx≈lÃ¥ÂuqëÏÂÙêºπ—ïÕ–°ë•ù•—Ã§§Å—°…Ω‹Åπï‹Å……Ω»†üö&/örÎñ>ﬂöÇÛñÚ?í‚7ö∂èûÜ∏ú§Ï(ÄÅ…ï—’…∏ÅÄ¨‡ÿëÌë•ù•—ÕıÄÏ)Ù()ô’πç—•Ω∏ÅπΩ…µÖ±•Èï=¡—•ΩπÖ±A°Ωπî†(ÄÅ¡°ΩπîËÅÕ—…•πúÅÅπ’±∞ÅÅ’πëïô•πïê∞(§ËÅÕ—…•πúÅÅπ’±∞ÅÏ(ÄÅ•òÄ°¡°ΩπîÄÙÙÅπ’±∞ÅÒÄÖ¡°Ωπîπ—…•¥†§§Å…ï—’…∏Åπ’±∞Ï(ÄÅ…ï—’…∏ÅπΩ…µÖ±•ÈïA°Ωπî°¡°Ωπî§Ï)Ù()ô’πç—•Ω∏ÅπΩ…µÖ±•Èï=¡—•ΩπÖ±ï•Õ°’=¡ïπ%ê†(ÄÅŸÖ±’îËÅÕ—…•πúÅÅπ’±∞ÅÅ’πëïô•πïê∞(§ËÅÕ—…•πúÅÅπ’±∞ÅÏ(ÄÅ•òÄ°ŸÖ±’îÄÙÙÅπ’±∞ÅÒÄÖŸÖ±’îπ—…•¥†§§Å…ï—’…∏Åπ’±∞Ï(ÄÅçΩπÕ–ÅΩ¡ïπ%êÄÙÅŸÖ±’îπ—…•¥†§Ï(ÄÅ•òÄ†ÑΩyΩ’}mµiÑµË¿¥Â|µt¨êºπ—ïÕ–°Ω¡ïπ%ê§§(ÄÄÄÅ—°…Ω‹Åπï‹Å……Ω»†ü¶é{íÊòÅΩ¡ïπ}•êÉöÇÛñÚ?í‚7ö∂èûÜ∏ú§Ï(ÄÅ…ï—’…∏ÅΩ¡ïπ%êÏ)Ù()ô’πç—•Ω∏ÅπΩ…µÖ±•Èï=¡—•ΩπÖ±ŸÖ—Ö…U…∞†(ÄÅŸÖ±’îËÅÕ—…•πúÅÅπ’±∞ÅÅ’πëïô•πïê∞(§ËÅÕ—…•πúÅÅπ’±∞ÅÏ(ÄÅ•òÄ°ŸÖ±’îÄÙÙÅπ’±∞ÅÒÄÖŸÖ±’îπ—…•¥†§§Å…ï—’…∏Åπ’±∞Ï(ÄÅçΩπÕ–ÅÖŸÖ—Ö…U…∞ÄÙÅŸÖ±’îπ—…•¥†§Ï(ÄÅ•òÄ†Ωy°——¡ÃÈpΩpºΩ§π—ïÕ–°ÖŸÖ—Ö…U…∞§§ÅÏ(ÄÄÄÅ•òÄ°ÖŸÖ—Ö…U…∞π±ïπù—†Ä¯Ä…|¿¿¿§(ÄÄÄÄÄÅ—°…Ω‹Åπï‹Å……Ω»†üñí”ñ?ñr√ñví‚7¢˜¢⁄¢˛Ä»¿¿¿Éí‚´ñ∂_û≤òú§Ï(ÄÄÄÅ—…‰ÅÏ(ÄÄÄÄÄÅ•òÄ°πï‹ÅUI0°ÖŸÖ—Ö…U…∞§π¡…Ω—ΩçΩ∞ÄÑÙÙÄù°——¡ÃËú§Å—°…Ω‹Åπï‹Å……Ω»†§Ï(ÄÄÄÅÙÅçÖ—ç†ÅÏ(ÄÄÄÄÄÅ—°…Ω‹Åπï‹Å……Ω»†üñí”ñ?ñr√ñvöÇÛñÚ?í‚7ö∂èûÜ∏ú§Ï(ÄÄÄÅÙ(ÄÄÄÅ…ï—’…∏ÅÖŸÖ—Ö…U…∞Ï(ÄÅÙ(ÄÅçΩπÕ–ÅµÖ—ç†ÄÙ(ÄÄÄÄΩyëÖ—ÑÈ•µÖùïpº°¡πùÒ©¡ïùÒ›ïâ¡Òù•ò§ÌâÖÕîÿ–∞°mµiÑµË¿¥‰¨Ωt¨ıÏ¿∞…Ù§êΩ§πï·ïå†(ÄÄÄÄÄÅÖŸÖ—Ö…U…∞∞(ÄÄÄÄ§Ï(ÄÅ•òÄ†ÖµÖ—ç†§(ÄÄÄÅ—°…Ω‹Åπï‹Å……Ω»†(ÄÄÄÄÄÄüñí”ñ?íÓöRøö2Å!QQALÉö"XÅA9é)Aé]ïâCé%ÉöÇÛñÚ?ûjÅëÖ—ÑÈ•µÖùîú∞(ÄÄÄÄ§Ï(ÄÅ•òÄ†(ÄÄÄÅÖŸÖ—Ö…U…∞π±ïπù—†Ä¯Ä‹¿¡|¿¿¿ÅÒ(ÄÄÄÅ	’ôôï»πô…Ω¥°µÖ—ç°l…tÑ∞ÄùâÖÕîÿ–ú§πâÂ—ï1ïπù—†Ä¯Ä‘ƒ»Ä®Äƒ¿»–(ÄÄ§ÅÏ(ÄÄÄÅ—°…Ω‹Åπï‹Å……Ω»†üñí”ñ?öV√ö6ªí‚7¢˜¢⁄¢˛Ä‘ƒ…-ú§Ï(ÄÅÙ(ÄÅ…ï—’…∏ÅÖŸÖ—Ö…U…∞Ï)Ù()ï·¡Ω…–ÅçΩπÕ–ÅπΩ…µÖ±•ÈïQÖùÃÄÙÅπΩ…µÖ±•ÈïççΩ’π—QÖùÃÏ()çΩπÕ–Å¡ÖÕÕ›Ω…ë!ÖÕ†ÄÙÅ°ÖÕ°%ëïπ—•—ÂMïç…ï–Ï)çΩπÕ–Å¡ÖÕÕ›Ω…ë5Ö—ç°ïÃÄÙÅ•ëïπ—•—ÂMïç…ï—5Ö—ç°ïÃÏ)çΩπÕ–ÅÖÕÕï…—ççΩ’π—AÖÕÕ›Ω…êÄÙÅÖÕÕï…—%ëïπ—•—ÂççΩ’π—AÖÕÕ›Ω…êÏ)ï·¡Ω…–ÅçΩπÕ–Å•Õççï¡—Öâ±ïççΩ’π—AÖÕÕ›Ω…êÄÙ(ÄÅ•Õççï¡—Öâ±ï%ëïπ—•—ÂççΩ’π—AÖÕÕ›Ω…êÏ()çΩπÕ–ÅÖççΩ’π—QÖùM—Ω…îÄÙÅÏÅëàËÅùï—ÅÙÏ()ï·¡Ω…–Åô’πç—•Ω∏Å—ΩççΩ’π—Y•ï‹°…Ω‹ËÅççΩ’π—IΩ‹§ËÅççΩ’π—Y•ï‹ÅÏ(ÄÅçΩπÕ–ÅΩ…ùÖπ•ÈÖ—•Ω∏ÄÙÅùï—=…ùÖπ•ÈÖ—•Ω∏°…Ω‹πΩ…ùÖπ•ÈÖ—•Ωπ}•ê§Ï(ÄÅ…ï—’…∏ÅÏ(ÄÄÄÅ•êËÅ…Ω‹π•ê∞(ÄÄÄÅΩ…ùÖπ•ÈÖ—•Ωπ%êËÅ…Ω‹πΩ…ùÖπ•ÈÖ—•Ωπ}•ê∞(ÄÄÄÅΩ…ùÖπ•ÈÖ—•Ωπ9ÖµîËÅΩ…ùÖπ•ÈÖ—•Ω∏¸ππÖµîÅÒÄüör´û~óíÚí‚hú∞(ÄÄÄÅÖççΩ’π—QÂ¡îËÅ…Ω‹πÖççΩ’π—}—Â¡îÄÙÙÙÄù¡ï…ÕΩπÖ∞úÄ¸Äù¡ï…ÕΩπÖ∞úÄËÄùïπ—ï…¡…•Õîú∞(ÄÄÄÅïµ¡±ΩÂïï%êËÅ…Ω‹πïµ¡±ΩÂïï}•ê∞(ÄÄÄÅ’Õï…πÖµîËÅ…Ω‹π’Õï…πÖµî∞(ÄÄÄÅ¡°ΩπîËÅ…Ω‹π¡°Ωπî∞(ÄÄÄÅôï•Õ°’=¡ïπ%êËÅ…Ω‹πôï•Õ°’}Ω¡ïπ}•ê∞(ÄÄÄÅπÖµîËÅ…Ω‹ππÖµî∞(ÄÄÄÅ…Ω±îËÅ…Ω‹π…Ω±î∞(ÄÄÄÅëï¡Ö…—µïπ–ËÅ…Ω‹πëï¡Ö…—µïπ–∞(ÄÄÄÅëï¡Ö…—µïπ—%êËÅ…Ω‹πëï¡Ö…—µïπ—}•ê∞(ÄÄÄÅ¡ΩÕ•—•Ωπ%êËÅ…Ω‹π¡ΩÕ•—•Ωπ}•ê∞(ÄÄÄÅ¡ΩÕ•—•ΩπQ•—±îËÅ…Ω‹π¡ΩÕ•—•Ωπ}—•—±î∞(ÄÄÄÅÖŸÖ—Ö…U…∞ËÅ…Ω‹πÖŸÖ—Ö…}’…∞∞(ÄÄÄÅ•Õëµ•∏ËÅ…Ω‹π•Õ}Öëµ•∏ÄÙÙÙÄƒ∞(ÄÄÄÅÕ—Ö—’ÃËÅ…Ω‹πÕ—Ö—’Ã∞(ÄÄÄÅ—ÖùÃËÅ±•Õ—ççΩ’π—QÖùÕ%πIï¡ΩÕ•—Ω…‰†(ÄÄÄÄÄÅÖççΩ’π—QÖùM—Ω…î∞(ÄÄÄÄÄÅ…Ω‹π•ê∞(ÄÄÄÄÄÅ…Ω‹πΩ…ùÖπ•ÈÖ—•Ωπ}•ê∞(ÄÄÄÄ§∞(ÄÄÄÅç…ïÖ—ïë–ËÅ…Ω‹πç…ïÖ—ïë}Ö–∞(ÄÄÄÅ’¡ëÖ—ïë–ËÅ…Ω‹π’¡ëÖ—ïë}Ö–∞(ÄÅÙÏ)Ù()ï·¡Ω…–ÅçΩπÕ–ÅÏ(ÄÅùï—ççΩ’π–∞(ÄÅ±•Õ—ççΩ’π—Ã∞(ÄÅÖ’—°ïπ—•çÖ—ïççΩ’π–∞(ÄÅô•πëççΩ’π—	ÂA°Ωπî∞(ÄÅô•πëç—•ŸïççΩ’π—	ÂA°Ωπî∞(ÄÅ±•Õ—ï•Õ°’ççΩ’π—	•πë•πùÃ∞(ÄÅç…ïÖ—ï’—°MïÕÕ•Ω∏∞(ÄÅùï—ççΩ’π—	ÂMïÕÕ•Ω∏∞(ÄÅ…ïŸΩ≠ï’—°MïÕÕ•Ω∏∞(ÄÅç…ïÖ—ïMµÕ1Ωù•π°Ö±±ïπùî∞(ÄÅë•ÕçÖ…ëMµÕ1Ωù•π°Ö±±ïπùî∞(ÄÅŸï…•ôÂMµÕ1Ωù•π°Ö±±ïπùî∞(ÄÅç…ïÖ—ïMµÕIïù•Õ—…Ö—•Ωπ°Ö±±ïπùî∞(ÄÅë•ÕçÖ…ëMµÕIïù•Õ—…Ö—•Ωπ°Ö±±ïπùî∞(ÄÅŸï…•ôÂMµÕIïù•Õ—…Ö—•Ωπ°Ö±±ïπùî∞)ÙÄÙÅç…ïÖ—ïççΩ’π—ççïÕÕΩµ¡ΩÕ•—•Ω∏ÒççΩ’π—Y•ï‹∞ÅççΩ’π—IΩ‹¯°Ï(ÄÅëàËÅùï—∞(ÄÅëïôÖ’±—=…ùÖπ•ÈÖ—•Ωπ%êËÅU1Q}=I9%iQ%=9}%∞(ÄÅπΩ‹ËÅÖ—îππΩ‹∞(ÄÅπΩ…µÖ±•Èï%ëïπ—•ô•ï»ËÅπΩ…µÖ±•ÈïUÕï…πÖµî∞(ÄÅπΩ…µÖ±•ÈïA°Ωπî∞(ÄÅ¡ÖÕÕ›Ω…ë5Ö—ç°ïÃ∞(ÄÅ•Õ=…ùÖπ•ÈÖ—•Ωπç—•ŸîËÄ°Ω…ùÖπ•ÈÖ—•Ωπ%êËÅÕ—…•πú§ÄÙ¯(ÄÄÄÅùï—=…ùÖπ•ÈÖ—•Ω∏°Ω…ùÖπ•ÈÖ—•Ωπ%ê§¸πÕ—Ö—’ÃÄÙÙÙÄùÖç—•Ÿîú∞(ÄÅΩ…ùÖπ•ÈÖ—•Ωπ·•Õ—ÃËÄ°Ω…ùÖπ•ÈÖ—•Ωπ%êËÅÕ—…•πú§ÄÙ¯(ÄÄÄÅ	ΩΩ±ïÖ∏°ùï—=…ùÖπ•ÈÖ—•Ω∏°Ω…ùÖπ•ÈÖ—•Ωπ%ê§§∞(ÄÅ—ΩççΩ’π—Y•ï‹∞(ÄÅ°ÖÕ°Mïç…ï–ËÅ°ÖÕ°%ëïπ—•—ÂMïç…ï–∞(ÄÅÕïç…ï—5Ö—ç°ïÃËÅ•ëïπ—•—ÂMïç…ï—5Ö—ç°ïÃ∞(ÄÅç…ïÖ—ï°Ö±±ïπùï%êËÄ°≠•πêËÄù±Ωù•∏úÅÄù…ïù•Õ—…Ö—•Ω∏ú§ÄÙ¯(ÄÄÄÅÄëÌ≠•πêÄÙÙÙÄù±Ωù•∏úÄ¸ÄùÕµÃúÄËÄùÕµÕ…ïúùı|ëÌ…ÖπëΩµUU%†•ıÄ∞(ÄÅÖ’ë•–ËÅ±Ωù’ë•–∞)Ù§Ï()çΩπÕ–Å¡ï…ÕΩπÖ±%π—ï±±•ùïπçîÄÙÅç…ïÖ—ïAï…ÕΩπÖ±%π—ï±±•ùïπçïΩµ¡ΩÕ•—•Ω∏(ÄÅççΩ’π—Y•ï‹∞(ÄÅµ¡±ΩÂïïIïçΩ…ê∞(ÄÅ=…ùÖπ•ÈÖ—•ΩπY•ï‹(¯°Ï(ÄÅëàËÅùï—∞(ÄÅëïôÖ’±—=…ùÖπ•ÈÖ—•Ωπ%êËÅU1Q}=I9%iQ%=9}%∞(ÄÅ≠ïÂA…ΩŸ•ëï»ËÅÖççΩ’π—MÂπç-ïÂA…ΩŸ•ëï»∞(ÄÅùï—ççΩ’π–∞(ÄÅùï—=…ùÖπ•ÈÖ—•Ω∏∞(ÄÅùï—µ¡±ΩÂïî∞(ÄÅ±•Õ—ç—•Ÿïµ¡±ΩÂïïÃËÅ±•Õ—µ¡±ΩÂïïÃ∞(ÄÅÖ’ë•–ËÅ±Ωù’ë•–∞)Ù§Ï()ï·¡Ω…–ÅçΩπÕ–ÅÏ(ÄÅ±•Õ—ççΩ’π—MÂπçMπÖ¡Õ°Ω—Ã∞(ÄÅ¡’—ççΩ’π—MÂπçMπÖ¡Õ°Ω–∞(ÄÅùï—Iï¡Ω…–∞(ÄÅùï—QÖÕ≠!•Õ—Ω…‰∞(ÄÅ±ΩùQÖÕ¨∞)ÙÄÙÅ¡ï…ÕΩπÖ±%π—ï±±•ùïπçîÏ)çΩπÕ–Å±•Õ—]Ω…≠±ΩùÕΩ…	Öç≠’¿ÄÙÅ¡ï…ÕΩπÖ±%π—ï±±•ùïπçîπ±•Õ—]Ω…≠±ΩùÕΩ…	Öç≠’¿Ï((º®®ÉíÚí‚ké¶ö[íˆ7û∫áûBñFcñJ3¶ö[í‚®Ä‹Éñíß¶
-¢æﬂ¢öíÊ#ñ£¶£ö"Cñ*æÚ3¢öíÊ#ñ£¶£ñn{öÓkéÄ®º)ï·¡Ω…–ÅçΩπÕ–ÅÏ(ÄÅç…ïÖ—ïççΩ’π–∞(ÄÅ’¡ëÖ—ïççΩ’π–∞(ÄÅëï±ï—ïççΩ’π–∞(ÄÅç…ïÖ—ï=…ùÖπ•ÈÖ—•Ω∏∞(ÄÅ¡…ΩŸ•Õ•Ωπ=…ùÖπ•ÈÖ—•Ω∏∞(ÄÅç…ïÖ—ïMï±ôIïù•Õ—ï…ïëççΩ’π–∞(ÄÅç…ïÖ—ïAï…ÕΩπÖ±Iïù•Õ—ï…ïëççΩ’π–∞(ÄÅ©Ω•π=…ùÖπ•ÈÖ—•Ωπ]•—°%πŸ•—î∞)ÙÄÙÅç…ïÖ—ïççΩ’π—5’—Ö—•ΩπΩµ¡ΩÕ•—•Ω∏(ÄÅççΩ’π—Y•ï‹∞(ÄÅ=…ùÖπ•ÈÖ—•ΩπY•ï‹∞(ÄÅ=…ùÖπ•ÈÖ—•Ωπ%πŸ•—ïY•ï‹(¯°Ï(ÄÅëàËÅùï—∞(ÄÅëïôÖ’±—=…ùÖπ•ÈÖ—•Ωπ%êËÅU1Q}=I9%iQ%=9}%∞(ÄÅπΩ‹ËÅÖ—îππΩ‹∞(ÄÅΩ…ùÖπ•ÈÖ—•Ωπ·•Õ—ÃËÄ°Ω…ùÖπ•ÈÖ—•Ωπ%êËÅÕ—…•πú§ÄÙ¯(ÄÄÄÅ	ΩΩ±ïÖ∏°ùï—=…ùÖπ•ÈÖ—•Ω∏°Ω…ùÖπ•ÈÖ—•Ωπ%ê§§∞(ÄÅπΩ…µÖ±•ÈïUÕï…πÖµî∞(ÄÅπΩ…µÖ±•ÈïA°Ωπî∞(ÄÅπΩ…µÖ±•Èï=¡—•ΩπÖ±A°Ωπî∞(ÄÅπΩ…µÖ±•Èï=¡—•ΩπÖ±ï•Õ°’=¡ïπ%ê∞(ÄÅπΩ…µÖ±•Èï=¡—•ΩπÖ±ŸÖ—Ö…U…∞∞(ÄÅÖÕÕï…—AÖÕÕ›Ω…êËÅÖÕÕï…—ççΩ’π—AÖÕÕ›Ω…ê∞(ÄÅ°ÖÕ°AÖÕÕ›Ω…êËÅ¡ÖÕÕ›Ω…ë!ÖÕ†∞(ÄÅç…ïÖ—ïççΩ’π—π—•—Â%êËÄ°¡…ïô•‡ËÄùÖçåúÅÄùïµ¿ú§ÄÙ¯(ÄÄÄÅÄëÌ¡…ïô•·ı|ëÌ…ÖπëΩµUU%†•ıÄ∞(ÄÅç…ïÖ—ïï±ï—•ΩπAÖÕÕ›Ω…ë!ÖÕ†ËÄ†§ÄÙ¯(ÄÄÄÅ¡ÖÕÕ›Ω…ë!ÖÕ†°…ÖπëΩµ	Â—ïÃ†Ã»§π—ΩM—…•πú†ùâÖÕîÿ—’…∞ú§§∞(ÄÅç…ïÖ—ï=…ùÖπ•ÈÖ—•Ωπ%êËÄ†§ÄÙ¯ÅÅΩ…ù|ëÌ…ÖπëΩµUU%†•ıÄ∞(ÄÅç…ïÖ—ï%πŸ•—ïMïç…ï–ËÄ†§ÄÙ¯Å…ÖπëΩµ	Â—ïÃ†Ã»§π—ΩM—…•πú†ù°ï‡ú§∞(ÄÅç…ïÖ—ïïôÖ’±—M±’ùM’ôô•‡ËÄ†§ÄÙ¯Å…ÖπëΩµ	Â—ïÃ†‘§π—ΩM—…•πú†ù°ï‡ú§∞(ÄÅç…ïÖ—ïUÕï…πÖµïM’ôô•‡ËÄ†§ÄÙ¯Å…ÖπëΩµ	Â—ïÃ†–§π—ΩM—…•πú†ù°ï‡ú§∞(ÄÅç…ïÖ—ïAï…ÕΩπÖ±M±’ùM’ôô•‡ËÄ†§ÄÙ¯Å…ÖπëΩµ	Â—ïÃ†‡§π—ΩM—…•πú†ù°ï‡ú§∞(ÄÅ…ïÕΩ±ŸïÕÕ•ùπµïπ—%ëïπ—•—‰∞(ÄÅùï—AΩÕ•—•ΩπIΩ±ï5Ö¡¡•πúËÅùï—=…ùÖπ•ÈÖ—•ΩπAΩÕ•—•ΩπIΩ±ï5Ö¡¡•πù…ΩµIï¡ΩÕ•—Ω…‰∞(ÄÅç…ïÖ—ïµ¡±ΩÂïî°•π¡’–§ÅÏ(ÄÄÄÅçΩπÕ–ÅÏÅ•πŸ•—ïΩëî∞Ä∏∏πïµ¡±ΩÂïîÅÙÄÙÅ•π¡’–Ï(ÄÄÄÅ…ï—’…∏Åç…ïÖ—ïµ¡±ΩÂïî°Ï(ÄÄÄÄÄÄ∏∏πïµ¡±ΩÂïî∞(ÄÄÄÄÄÅ•πŸ•—ï}çΩëîËÅ•πŸ•—ïΩëî∞(ÄÄÄÅÙ§Ï(ÄÅÙ∞(ÄÅùï—ççΩ’π–∞(ÄÅô•πëççΩ’π—	ÂA°Ωπî∞(ÄÅùï—=…ùÖπ•ÈÖ—•Ω∏∞(ÄÅ•ÕÕ’ï=…ùÖπ•ÈÖ—•Ωπ%πŸ•—î∞(ÄÅ…ïÕΩ±Ÿï=…ùÖπ•ÈÖ—•Ωπ%πŸ•—ï]•—°ïôÖ’±—Ã∞(ÄÅπΩ…µÖ±•Èï=…ùÖπ•ÈÖ—•Ωπ%πŸ•—ïΩëî∞(ÄÅ…ï¡±Öçï5•ù…Ö—ïëççΩ’π—QÖùÃ°ÖççΩ’π—%ê∞ÅΩ…ùÖπ•ÈÖ—•Ωπ%ê∞Å—ÖùÃ§ÅÏ(ÄÄÄÅ…ï¡±Öçï5•ù…Ö—ïëççΩ’π—QÖùÕ%πIï¡ΩÕ•—Ω…‰†(ÄÄÄÄÄÅÖççΩ’π—QÖùM—Ω…î∞(ÄÄÄÄÄÅÖççΩ’π—%ê∞(ÄÄÄÄÄÅΩ…ùÖπ•ÈÖ—•Ωπ%ê∞(ÄÄÄÄÄÅ—ÖùÃ∞(ÄÄÄÄ§Ï(ÄÅÙ∞(ÄÅÖ’ë•–ËÅ±Ωù’ë•–∞)Ù§Ï()ï·¡Ω…–ÅçΩπÕ–ÅÏ(ÄÅïπÕ’…ï•…ïç—5ïÕÕÖùïΩπ—ïπ—πç…Â¡—ïê∞(ÄÅùï—•…ïç—5ïÕÕÖùï——Öç°µïπ–∞(ÄÅ±•Õ—•…ïç—5ïÕÕÖùïÃ∞(ÄÅ±•Õ—Aïπë•πù—ΩÖIï≈’ïÕ—Ã∞(ÄÅ±•Õ—Uπ…ïÖë•…ïç—5ïÕÕÖùï9Ω—•ô•çÖ—•ΩπÃ∞(ÄÅµÖ…≠—ΩÖIï≈’ïÕ—IïÖë…ΩµIïÕ¡ΩπÕî∞(ÄÅÕïπë•…ïç—5ïÕÕÖùî∞(ÄÅ—Ω’ç°ççΩ’π—A…ïÕïπçî∞(ÄÅ±•Õ—ççΩ’π—A…ïÕïπçî∞)ÙÄÙÅç…ïÖ—ïΩ±±ÖâΩ…Ö—•ΩπΩµ¡ΩÕ•—•Ω∏ÒççΩ’π—Y•ï‹¯°Ï(ÄÅëàËÅùï—∞(ÄÅπΩ‹ËÅÖ—îππΩ‹∞(ÄÅç…ïÖ—ï%êËÅ…ÖπëΩµUU%∞(ÄÅô•ï±ë•¡°ï»∞(ÄÅÖ——Öç°µïπ—=â©ïç—M—Ω…î∞(ÄÅùï—ççΩ’π–∞)Ù§Ï()ï·¡Ω…–ÅçΩπÕ–ÅÏ(ÄÅùï—Ö—ÖΩŸï…πÖπçïA…Ωô•±î∞(ÄÅ…ïçΩ…ë’……ïπ—1ïùÖ±ΩπÕïπ–∞(ÄÅï·¡Ω…—ççΩ’π—Ö—Ñ∞(ÄÅëï±ï—ï=›πççΩ’π—Ö—Ñ∞(ÄÅ…ïÖ¡¡±ÂA…•ŸÖçÂï±ï—•ΩπQΩµâÕ—ΩπïÃ∞)ÙÄÙÅç…ïÖ—ïÖ—ÖΩŸï…πÖπçïΩµ¡ΩÕ•—•Ω∏°Ï(ÄÅëàËÅùï—∞(ÄÅ±ïëùï…AÖ—†ËÅAI%Ye}1Q%=9}1I}AQ ∞(ÄÅ±ïëùï…-ïÂAÖ—†ËÅAI%Ye}1Q%=9}1I}-e}AQ ∞(ÄÅô•ï±ë•¡°ï»∞(ÄÅÖ——Öç°µïπ—=â©ïç—M—Ω…î∞(ÄÅç…ïÖ—ïï±ï—•ΩπAÖÕÕ›Ω…ë!ÖÕ†ËÅ¡ÖÕÕ›Ω…ë!ÖÕ†∞)Ù§Ï((ººÅQ°îÅ±ïëùï»Å±•ŸïÃÅΩ’—Õ•ëîÅëÖ—Ñπëà∏ÅIïÕ—Ω…•πúÅÖ∏ÅΩ±ëï»Åïπç…Â¡—ïêÅâÖç≠’¿ÅçÖππΩ–(ººÅ…ïÕ’……ïç–ÅÖ∏ÅÖççΩ’π–Å›°ΩÕîÅëï±ï—•Ω∏Å›ÖÃÅÖ±…ïÖë‰ÅçΩµ¡±ï—ïê∏)…ïÖ¡¡±ÂA…•ŸÖçÂï±ï—•ΩπQΩµâÕ—ΩπïÃ†§Ï()ï·¡Ω…–Å—Â¡îÅççΩ’π—A…ïÕïπçïY•ï‹ÄÙÅΩ±±ÖâΩ…Ö—•ΩπççΩ’π—A…ïÕïπçïY•ï‹Ï()çΩπÕ–Å•π—ïù…Ö—•ΩπëÖ¡—ï…ÃÄÙÅç…ïÖ—ï%π—ïù…Ö—•ΩπëÖ¡—ï…ÕΩµ¡ΩÕ•—•Ω∏°Ï(ÄÅ±•Õ—ï•Õ°’ççΩ’π—	•πë•πùÃ∞(ÄÅ•Õ1•çïπÕïUÕÖâ±ïΩ…=…ùÖπ•ÈÖ—•ΩπïÖ—’…î∞(ÄÅ•Õ=…ùÖπ•ÈÖ—•ΩπïÖ—’…ïπÖâ±ïê∞)Ù§Ï()ï·¡Ω…–ÅçΩπÕ–ÅÏÅ•Õï•Õ°’’—ΩIï¡±ÂπÖâ±ïëΩ…=¡ïπ%êÅÙÄÙÅ•π—ïù…Ö—•ΩπëÖ¡—ï…ÃÏ()ï·¡Ω…–Å—Â¡îÅMµÕ°Ö±±ïπùï%ÕÕ’ïIïÕ’±–ÄÙÅ%ëïπ—•—ÂMµÕ°Ö±±ïπùï%ÕÕ’ïIïÕ’±–Ï)ï·¡Ω…–Å—Â¡îÅMµÕIïù•Õ—…Ö—•ΩπYï…•ôÂIïÕ’±–ÄÙÅ%ëïπ—•—ÂMµÕIïù•Õ—…Ö—•ΩπYï…•ôÂIïÕ’±–Ï)ï·¡Ω…–Å—Â¡îÅMµÕ°Ö±±ïπùïYï…•ôÂIïÕ’±–ÄÙ(ÄÅ%ëïπ—•—ÂMµÕ°Ö±±ïπùïYï…•ôÂIïÕ’±–ÒççΩ’π—Y•ï‹¯Ï((ººÄÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙ(ººÅAÖ…¨Å—ïπÖπ—Ã∞ÅΩ…ùÖπ•ÈÖ—•Ω∏Åµïµâï…Õ°•¿ÅÖπêÅÕï…Ÿ•çîÅÕ¡ïç•Ö±•Õ—Ã(ººÄÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙ()ï·¡Ω…–ÅçΩπÕ–ÅÏ(ÄÅç…ïÖ—ïAÖ…¨∞(ÄÅç…ïÖ—ïAÖ…≠ÕA±Ö—ôΩ…¥∞(ÄÅç…ïÖ—ïAÖ…≠5ïï—•πùIΩΩ¥∞(ÄÅç…ïÖ—ïAÖ…≠Ö—ÖM—Ö—•Õ—•çÕQÖÕ¨∞(ÄÅç…ïÖ—ïAÖ…≠A’â±•çÖ—•Ω∏∞(ÄÅç…ïÖ—ïQ•ç≠ï–∞(ÄÅç…ïÖ—ïQ•ç≠ï—]•—°5ïï—•πùIïÕï…ŸÖ—•Ω∏∞(ÄÅëï±ï—ïAÖ…≠5ïï—•πùIΩΩ¥∞(ÄÅëï±ïùÖ—ïAÖ…≠Ö—ÖM—Ö—•Õ—•çÃ∞(ÄÅùï—AÖ…¨∞(ÄÅùï—AÖ…≠Ö—ÖM—Ö—•Õ—•çÕQïµ¡±Ö—î∞(ÄÅùï—AÖ…≠Ω…=…ùÖπ•ÈÖ—•Ω∏∞(ÄÅùï—AÖ…≠Mï…Ÿ•çïM—Ö—•Õ—•çÃ∞(ÄÅùï—AÖ…≠Mï——•πùÃ∞(ÄÅùï—AÖ…≠QïπÖπ—A…Ωô•±î∞(ÄÅùï—Q•ç≠ï—…ïÖ—Ω…Ω…ççΩ’π–∞(ÄÅùï—Q•ç≠ï—Ω…ççΩ’π–∞(ÄÅùï—Q•ç≠ï—9Ω—•ô•çÖ—•ΩπIïç•¡•ïπ—Ã∞(ÄÅùï—Q•ç≠ï—Q…ÖπÕôï……ïë9Ω—•ô•çÖ—•ΩπIïç•¡•ïπ—Ã∞(ÄÅ•ÕQ•ç≠ï—ïÖ—’…ïπÖâ±ïëΩ…ççΩ’π–∞(ÄÅ•ÕÕ’ïAÖ…≠%πŸ•—î∞(ÄÅ©Ω•π=…ùÖπ•ÈÖ—•ΩπQΩAÖ…¨∞(ÄÅ±•Õ—AÖ…≠ππΩ’πçïµïπ—IïÕ’±—Ã∞(ÄÅ±•Õ—AÖ…≠Ö—ÖM—Ö—•Õ—•çÕQÖÕ≠Ã∞(ÄÅ±•Õ—AÖ…≠5ïï—•πùIΩΩµÃ∞(ÄÅ±•Õ—AÖ…≠5ïï—•πùM±Ω—Ã∞(ÄÅ±•Õ—AÖ…≠A’â±•çÖ—•ΩπÃ∞(ÄÅ±•Õ—AÖ…≠Mï…Ÿ•çïÃ∞(ÄÅ±•Õ—AÖ…≠Mï…Ÿ•çïM¡ïç•Ö±•Õ—Ã∞(ÄÅ±•Õ—AÖ…≠M’…ŸïÂIïÕ’±—Ã∞(ÄÅ±•Õ—AÖ…≠QïπÖπ—=…ùÖπ•ÈÖ—•ΩπÃ∞(ÄÅ±•Õ—Q•ç≠ï—%πâΩ‡∞(ÄÅ±•Õ—Q•ç≠ï—ÕΩ…ççΩ’π–∞(ÄÅµÖ…≠AÖ…≠Ö—ÖM—Ö—•Õ—•çÕIïÖê∞(ÄÅµÖ…≠AÖ…≠A’â±•çÖ—•ΩπIïÖê∞(ÄÅµÖ…≠Q•ç≠ï—IïÖê∞(ÄÅπΩ…µÖ±•ÈïAÖ…≠Mï…Ÿ•çïΩ…µÖ—Ñ∞(ÄÅ…ïçΩ…ëQ•ç≠ï—9Ω—•ô•çÖ—•Ω∏∞(ÄÅ…ïµ•πëAÖ…≠Ö—ÖM—Ö—•Õ—•çÃ∞(ÄÅ…ïµΩŸïAÖ…≠Mï…Ÿ•çïM¡ïç•Ö±•Õ–∞(ÄÅ…ïÕï…ŸïAÖ…≠5ïï—•πùAï…•Ωê∞(ÄÅ…ïÕï…ŸïAÖ…≠5ïï—•πùM±Ω–∞(ÄÅ…ï—’…πAÖ…≠Ö—ÖM—Ö—•Õ—•çÃ∞(ÄÅ…ïŸ•ï›AÖ…≠Ö—ÖM—Ö—•Õ—•çÃ∞(ÄÅÕï—AÖ…≠5ïï—•πùM±Ω—ŸÖ•±Öâ•±•—‰∞(ÄÅÕï—AÖ…≠Mï…Ÿ•çïM¡ïç•Ö±•Õ–∞(ÄÅÕ’âµ•—AÖ…≠Ö—ÖM—Ö—•Õ—•çÕ…Öô–∞(ÄÅÕ’âµ•—AÖ…≠M’…Ÿï‰∞(ÄÅ’¡ëÖ—ïAÖ…≠ÕA±Ö—ôΩ…¥∞(ÄÅ’¡ëÖ—ïAÖ…≠5ïï—•πùIΩΩ¥∞(ÄÅ’¡ëÖ—ïAÖ…≠Mï…Ÿ•çî∞(ÄÅ’¡ëÖ—ïAÖ…≠Mï——•πùÃ∞(ÄÅ’¡ëÖ—ïAÖ…≠QïπÖπ—A…Ωô•±î∞(ÄÅ’¡ëÖ—ïQ•ç≠ï–∞)ÙÄÙÅç…ïÖ—ïAÖ…≠Mï…Ÿ•çïÕΩµ¡ΩÕ•—•Ω∏ÒççΩ’π—Y•ï‹∞Å=…ùÖπ•ÈÖ—•ΩπY•ï‹¯°Ï(ÄÅëàËÅùï—∞(ÄÅùï—ççΩ’π–∞(ÄÅùï—=…ùÖπ•ÈÖ—•Ω∏ËÅùï—π—ï…¡…•Õï=…ùÖπ•ÈÖ—•Ω∏∞(ÄÅ•Õ=…ùÖπ•ÈÖ—•Ωπç—•ŸîËÄ°Ω…ùÖπ•ÈÖ—•Ωπ%ê§ÄÙ¯(ÄÄÄÅùï—=…ùÖπ•ÈÖ—•Ω∏°Ω…ùÖπ•ÈÖ—•Ωπ%ê§¸πÕ—Ö—’ÃÄÙÙÙÄùÖç—•Ÿîú∞(ÄÅ±•Õ—ççΩ’π—Ã∞(ÄÅùï—=…ùÖπ•ÈÖ—•ΩπïÖ—’…ïÃ∞(ÄÅ—Ω=…ùÖπ•ÈÖ—•ΩπY•ï‹ËÅ—Ω=…ùÖπ•ÈÖ—•Ωπ•…ïç—Ω…ÂY•ï‹∞(ÄÅπΩ…µÖ±•Èï=¡—•ΩπÖ±Qï·–∞(ÄÅπΩ…µÖ±•ÈïM±’úËÅπΩ…µÖ±•Èï=…ùÖπ•ÈÖ—•ΩπM±’ú∞(ÄÅπΩ…µÖ±•Èï%πŸ•—ïΩëîËÅπΩ…µÖ±•Èï=…ùÖπ•ÈÖ—•Ωπ%πŸ•—ïΩëî∞(ÄÅπΩ…µÖ±•ÈïQÖùÃ∞(ÄÅç…ïÖ—ïU’•êËÅ…ÖπëΩµUU%∞(ÄÅç…ïÖ—ïIÖπëΩµ!ï‡ËÄ°âÂ—ï1ïπù—†§ÄÙ¯Å…ÖπëΩµ	Â—ïÃ°âÂ—ï1ïπù—†§π—ΩM—…•πú†ù°ï‡ú§∞(ÄÅ•πŸ•—ïYÖ±•ë•—Â5ÃËÅ=I9%iQ%=9}%9Y%Q}Y1%%Qe}5L∞(ÄÅ•πŸ•—ï±¡°Öâï–ËÅ=I9%iQ%=9}%9Y%Q}1A!	P∞(ÄÅ•πŸ•—ïΩëïIÖ›1ïπù—†ËÅ%9Y%Q}=}I]}19Q ∞(ÄÅÖ’ë•–ËÅ±Ωù’ë•–∞)Ù§Ï()ï·¡Ω…–ÅÏ(ÄÅAI-}5Q%9}1=M}5%9UQL∞(ÄÅAI-}5Q%9}=A9}5%9UQL∞(ÄÅAI-}5Q%9}M1=Q}5%9UQL∞(ÄÅAI-}5Q%9}Q%5}M1=QL∞)ÙÅô…Ω¥Äú∏∏ΩµΩë’±ïÃΩ¡Ö…≠}Õï…Ÿ•çïÃΩ•πëï‡π©ÃúÏ)ï·¡Ω…–Å—Â¡îÅÏ(ÄÅAÖ…≠5ïï—•πùIΩΩµY•ï‹∞(ÄÅAÖ…≠5ïï—•πùM±Ω—Y•ï‹∞(ÄÅAÖ…≠Mï——•πùÕY•ï‹∞)ÙÅô…Ω¥Äú∏∏ΩµΩë’±ïÃΩ¡Ö…≠}Õï…Ÿ•çïÃΩ•πëï‡π©ÃúÏ()ï·¡Ω…–Å—Â¡îÅÏ(ÄÅAÖ…≠ππΩ’πçïµïπ—IïÕ’±—Y•ï‹∞(ÄÅAÖ…≠A’â±•çÖ—•ΩπY•ï‹∞(ÄÅAÖ…≠M’…ŸïÂIïÕ’±—Y•ï‹∞)ÙÅô…Ω¥Äú∏∏ΩµΩë’±ïÃΩ¡Ö…≠}Õï…Ÿ•çïÃΩ•πëï‡π©ÃúÏ((ººÄÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙ(ººÅA…ΩŸ•ëï»µ…ï¡Ω…—ïêÅQΩ≠ï∏Å’ÕÖùîÄ°ç±•ïπ—}…ï¡Ω…—ïê∞Å•ëïµ¡Ω—ïπ–§(ººÄÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙ()çΩπÕ–ÅµΩëï±Ö—ï›Ö‰ÄÙÅç…ïÖ—ï5Ωëï±Ö—ï›ÖÂΩµ¡ΩÕ•—•Ω∏°Ï(ÄÅëàËÅùï—∞(ÄÅùï—ççΩ’π–∞(ÄÅùï—=…ùÖπ•ÈÖ—•Ω∏∞(ÄÅ±•Õ—=…ùÖπ•ÈÖ—•ΩπççΩ’π—ÃËÅ±•Õ—ççΩ’π—Ã∞(ÄÅç…ïÖ—ï%êËÅ…ÖπëΩµUU%∞(ÄÅΩπIïçΩ…ëïëUÕÖùî°•π¡’–§ÅÏ(ÄÄÄÅ•òÄ°•π¡’–π—Ω—Ö±QΩ≠ïπÃÄÄƒ§Å…ï—’…∏Ï(ÄÄÄÅçΩπÕ–Åë•ùïÕ–ÄÙÅç…ïÖ—ï!ÖÕ††ùÕ°Ñ»‘ÿú§(ÄÄÄÄÄÄπ’¡ëÖ—î†(ÄÄÄÄÄÄÄÅmùï—ï¡±ΩÂµïπ—%ê†§∞Å•π¡’–πΩ…ùÖπ•ÈÖ—•Ωπ%ê∞Å•π¡’–πµïÕÕÖùï%ëtπ©Ω•∏†ùp¿ú§∞(ÄÄÄÄÄÄÄÄù’—ò‡ú∞(ÄÄÄÄÄÄ§(ÄÄÄÄÄÄπë•ùïÕ–†ù°ï‡ú§Ï(ÄÄÄÅ≈’ï’ï	•±±•πùUÕÖùî°Ï(ÄÄÄÄÄÅΩ…ùÖπ•ÈÖ—•Ωπ%êËÅ•π¡’–πΩ…ùÖπ•ÈÖ—•Ωπ%ê∞(ÄÄÄÄÄÅµΩë’±îËÄùµΩëï±}ùÖ—ï›Ö‰ú∞(ÄÄÄÄÄÅ’π•—ÃËÅ•π¡’–π—Ω—Ö±QΩ≠ïπÃ∞(ÄÄÄÄÄÅµΩëï∞ËÅ•π¡’–πµΩëï∞∞(ÄÄÄÄÄÅ…ïôï…ïπçï%êËÅÅ’ÕÖùï|ëÌë•ùïÕ–πÕ±•çî†¿∞ÄÃ»•ıÄ∞(ÄÄÄÄÄÅ•ëïµ¡Ω—ïπçÂ-ï‰ËÅÅ’ÕÖùîËëÌë•ùïÕ—ıÄ∞(ÄÄÄÅÙ§Ï(ÄÅÙ∞)Ù§Ï()ï·¡Ω…–ÅçΩπÕ–ÅÏÅùï—=…ùÖπ•ÈÖ—•ΩπUÕÖùïM’µµÖ…‰∞Å…ïçΩ…ëQΩ≠ïπUÕÖùîÅÙÄÙÅµΩëï±Ö—ï›Ö‰Ï)ï·¡Ω…–Å—Â¡îÅÏ(ÄÅççΩ’π—QΩ≠ïπUÕÖùïY•ï‹∞(ÄÅ=…ùÖπ•ÈÖ—•ΩπUÕÖùïM’µµÖ…‰∞)ÙÅô…Ω¥Äú∏∏ΩµΩë’±ïÃΩµΩëï±}ùÖ—ï›Ö‰Ω•πëï‡π©ÃúÏ()ï·¡Ω…–ÅÏÅMQ%5Q∞ÅπΩ…µÖ±•ÈïΩÕ—9d∞ÅπΩ…µÖ±•ÈïQΩ≠ïπÃÅÙÏ)ï·¡Ω…–Å—Â¡îÅÏ(ÄÅ1Ωù]Ω…≠QÖÕ≠%π¡’–∞(ÄÅ]Ω…≠±ΩùIïçΩ…ê∞(ÄÅ]Ω…≠±ΩùIï¡Ω…–∞)ÙÅô…Ω¥Äú∏∏ΩµΩë’±ïÃΩ¡ï…ÕΩπÖ±}•π—ï±±•ùïπçîΩ•πëï‡π©ÃúÏ((ººÄÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙ(ººÅ-πΩ›±ïëùîÅΩ¡ï…Ö—•ΩπÃ(ººÄÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙ)ï·¡Ω…–ÅçΩπÕ–ÅÏ(ÄÅΩâÕï…Ÿï-πΩ›±ïëùî∞(ÄÅÖëë-πΩ›±ïëùî∞(ÄÅùï—-πΩ›±ïëùî∞(ÄÅùï—-πΩ›±ïëùïΩ…ëµ•π•Õ—…Ö—•Ω∏∞(ÄÅùï—-πΩ›±ïëùïΩ…	Öç≠’¿∞(ÄÅùï—-πΩ›±ïëùïIïŸ•Õ•ΩπÃ∞(ÄÅùï—5ïµâï…-πΩ›±ïëùî∞(ÄÅ…ïŸ•ï›-πΩ›±ïëùî∞(ÄÅ…ïŸ•Õï-πΩ›±ïëùî∞(ÄÅÕÖŸï-πΩ›±ïëùî∞(ÄÅÕïÖ…ç°-πΩ›±ïëùî∞)ÙÄÙÅç…ïÖ—ïπ—ï…¡…•Õï-πΩ›±ïëùïΩµ¡ΩÕ•—•Ω∏°Ï(ÄÅëàËÅùï—∞(ÄÅëïôÖ’±—=…ùÖπ•ÈÖ—•Ωπ%êËÅU1Q}=I9%iQ%=9}%∞(ÄÅùï—=…ùÖπ•ÈÖ—•Ω∏∞)Ù§Ï((ººÄÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙ(ººÅ%πŸ•—îÅçΩëïÃ(ººÄÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙ(ººÄÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙ(ººÅ·¡Ω…–ÅÖ±∞Ä°ôΩ»ÅâÖç≠’¿§(ººÄÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙÙ)çΩπÕ–ÅâÖç≠’¡Ö—ÖâÖÕïM—Ω…îÄÙÅÏÅëàËÅùï—ÅÙÏ()çΩπÕ–Åïπ—ï…¡…•Õï	Öç≠’¿ÄÙÅëÖ—ÖA±Ö—ôΩ…¥πç…ïÖ—ï	Öç≠’¿°Ï(ÄÅëïôÖ’±—=…ùÖπ•ÈÖ—•Ωπ%êËÅU1Q}=I9%iQ%=9}%∞(ÄÅ±•Õ—µ¡±ΩÂïïÃËÄ°Ω…ùÖπ•ÈÖ—•Ωπ%ê§ÄÙ¯(ÄÄÄÅ±•Õ—µ¡±ΩÂïïÕΩ…	Öç≠’¿°âÖç≠’¡Ö—ÖâÖÕïM—Ω…î∞ÅΩ…ùÖπ•ÈÖ—•Ωπ%ê§∞(ÄÅ±•Õ—QÖÕ≠1ΩùÃËÄ°Ω…ùÖπ•ÈÖ—•Ωπ%ê§ÄÙ¯(ÄÄÄÅ±•Õ—]Ω…≠±ΩùÕΩ…	Öç≠’¿°Ω…ùÖπ•ÈÖ—•Ωπ%ê§∞(ÄÅ±•Õ—-πΩ›±ïëùîËÄ°Ω…ùÖπ•ÈÖ—•Ωπ%ê§ÄÙ¯(ÄÄÄÅùï—-πΩ›±ïëùïΩ…	Öç≠’¿°Ω…ùÖπ•ÈÖ—•Ωπ%ê§∞(ÄÅ±•Õ—%πŸ•—ïΩëïÃËÄ°Ω…ùÖπ•ÈÖ—•Ωπ%ê§ÄÙ¯(ÄÄÄÅ±•Õ—ï¡Ö…—µïπ—%πŸ•—ïÕΩ…	Öç≠’¿°âÖç≠’¡Ö—ÖâÖÕïM—Ω…î∞ÅΩ…ùÖπ•ÈÖ—•Ωπ%ê§∞(ÄÅ±•Õ—’ë•—1ΩùÃËÄ°Ω…ùÖπ•ÈÖ—•Ωπ%ê§ÄÙ¯Åùï—’ë•—1ΩùÃ†»¿¿∞ÅΩ…ùÖπ•ÈÖ—•Ωπ%ê§∞(ÄÄººÅççΩ’π–Å…ï¡ΩÕ•—Ω…•ïÃÅëï±•âï…Ö—ï±‰ÅΩµ•–Å¡ÖÕÕ›Ω…êÅ°ÖÕ°ïÃÅÖπêÅÕïÕÕ•Ω∏Å—Ω≠ïπÃ∏(ÄÅ±•Õ—ççΩ’π—Ã∞(ÄÅ±•Õ—ççΩ’π—QÖùÃËÄ°Ω…ùÖπ•ÈÖ—•Ωπ%ê§ÄÙ¯(ÄÄÄÅ±•Õ—=…ùÖπ•ÈÖ—•ΩπççΩ’π—QÖùÕ%πIï¡ΩÕ•—Ω…‰°ÖççΩ’π—QÖùM—Ω…î∞ÅΩ…ùÖπ•ÈÖ—•Ωπ%ê§∞(ÄÅ±•Õ—Q•ç≠ï—ÃËÄ°Ω…ùÖπ•ÈÖ—•Ωπ%ê§ÄÙ¯(ÄÄÄÅ±•Õ—AÖ…≠Q•ç≠ï—ÕΩ…	Öç≠’¿°âÖç≠’¡Ö—ÖâÖÕïM—Ω…î∞ÅΩ…ùÖπ•ÈÖ—•Ωπ%ê§∞(ÄÅ±•Õ—Q•ç≠ï—ï±•Ÿï…•ïÃËÄ°Ω…ùÖπ•ÈÖ—•Ωπ%ê§ÄÙ¯(ÄÄÄÅ±•Õ—Q•ç≠ï—ï±•Ÿï…•ïÕΩ…	Öç≠’¿°âÖç≠’¡Ö—ÖâÖÕïM—Ω…î∞ÅΩ…ùÖπ•ÈÖ—•Ωπ%ê§∞)Ù§Ï()ï·¡Ω…–ÅçΩπÕ–ÅÏÅï·¡Ω…—±∞ÅÙÄÙÅïπ—ï…¡…•Õï	Öç≠’¿Ï(
+      process.env.OTTO_LICENSE_PUBLIC_KEYS ||
+        process.env.OTTO_LICENSE_PUBLIC_KEY,
+      process.env.OTTO_LICENSE_REVOKED_KEY_IDS,
+    ),
+  telemetryEndpoint: () => process.env.OTTO_TELEMETRY_ENDPOINT || null,
+  telemetryIngestSecret: () =>
+    process.env.OTTO_TELEMETRY_INGEST_SECRET || '',
+  telemetryRetentionDays: () =>
+    Number(process.env.OTTO_TELEMETRY_RETENTION_DAYS || 90),
+  fieldCipher,
+  databaseReadiness: getDatabaseReadiness,
+});
+
+export const {
+  getFederationStatus,
+  getFederationProvisioningManifest,
+  lookupFederationDeployment,
+  queueFederationMessage,
+  listFederationInbox,
+  consumeFederationInbox,
+  createFederationA2aGrant,
+  revokeFederationA2aGrant,
+  blockFederationDeployment,
+  unblockFederationDeployment,
+  listFederationBlocks,
+  runFederationCycle,
+  startFederationRuntime,
+} = createFederationComposition({
+  db: getDB,
+  fieldCipher,
+  deploymentId: getDeploymentId,
+  dataDirectory: DATA_DIR,
+  enabled: () => process.env.OTTO_FEDERATION_ENABLED === 'true',
+  gatewayUrl: () => process.env.OTTO_FEDERATION_GATEWAY_URL?.trim() || null,
+  publicOrigin: () => process.env.OTTO_ENTERPRISE_PUBLIC_URL?.trim() || null,
+  displayName: () =>
+    process.env.OTTO_FEDERATION_DISPLAY_NAME?.trim() ||
+    process.env.OTTO_DEFAULT_ORGANIZATION_NAME?.trim() ||
+    'Otto private deployment',
+  signingKeyPath: () =>
+    process.env.OTTO_FEDERATION_SIGNING_KEY_FILE?.trim() || null,
+  pollIntervalMs: () =>
+    Number(process.env.OTTO_FEDERATION_POLL_INTERVAL_MS || 10_000),
+  allowInsecureLoopback:
+    process.env.NODE_ENV === 'test' &&
+    process.env.OTTO_FEDERATION_ALLOW_INSECURE_LOOPBACK === 'true',
+});
+
+export type OrganizationView = OrganizationDirectoryView;
+
+export const {
+  getOrganization,
+  listOrganizations,
+  getEnterpriseOrganization,
+  listEnterpriseOrganizations,
+  createInviteCode,
+  validateInviteCode,
+  listOrganizationStructure,
+  createOrganizationDepartment,
+  updateOrganizationDepartment,
+  deleteOrganizationDepartment,
+  createOrganizationPosition,
+  updateOrganizationPosition,
+  deleteOrganizationPosition,
+  resolveAssignmentIdentity,
+  createEmployee,
+  getEmployee,
+  listEmployees,
+  updateEmployeeOnboardingProfile,
+  offboardEmployee,
+  normalizeOrganizationInviteCode,
+  inspectOrganizationInvite,
+  issueOrganizationInvite,
+  getOrganizationInvite,
+  resolveOrganizationInviteWithDefaults,
+  resolveOrganizationInvite,
+} = createOrganizationWorkforceComposition({
+  db: getDB,
+  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+  organizationInviteValidityMs: ORGANIZATION_INVITE_VALIDITY_MS,
+  organizationInviteAlphabet: ORGANIZATION_INVITE_ALPHABET,
+  organizationInviteCodeRawLength: INVITE_CODE_RAW_LENGTH,
+  normalizeOptionalText,
+  audit: logAudit,
+});
+
+export type OrganizationPositionRoleMapping =
+  IdentityOrganizationPositionRoleMapping;
+export type OrganizationPositionView = IdentityOrganizationPositionView;
+export type OrganizationDepartmentView = IdentityOrganizationDepartmentView;
+
+export type OrganizationFeatures = IdentityOrganizationFeatures;
+
+export const {
+  getOrganizationFeatures,
+  updateOrganizationFeatures,
+  isOrganizationFeatureEnabled,
+  requireOrganizationFeature,
+} = createAuthorizationComposition({
+  db: getDB,
+  audit: logAudit,
+  isLicenseUsable: isLicenseUsableForOrganizationFeature,
+});
+
+export const {
+  getEnterpriseSkillLeaderboard,
+  installEnterpriseSkill,
+  listEnterpriseSkills,
+  rateEnterpriseSkill,
+  recordEnterpriseSkillUsage,
+  reviewEnterpriseSkill,
+  submitEnterpriseSkill,
+} = createEnterpriseSkillMarketplaceComposition({
+  db: getDB,
+  fieldCipher,
+  createId: randomUUID,
+  organizationExists: (organizationId) => Boolean(getOrganization(organizationId)),
+});
+
+function normalizeOptionalText(
+  value: string | null | undefined,
+  label: string,
+  maxLength = 80,
+): string | null {
+  const clean = value?.trim() || null;
+  if (clean && clean.length > maxLength)
+    throw new Error(`${label}‰∏çËÉΩË∂ÖËøá ${maxLength} ‰∏™Â≠óÁ¨¶`);
+  return clean;
+}
+
+// ============================================================
+// Preset accounts, tags and sessions
+// ============================================================
+
+export interface AccountView {
+  id: string;
+  organizationId: string;
+  organizationName: string;
+  accountType: 'personal' | 'enterprise';
+  employeeId: string | null;
+  username: string;
+  phone: string | null;
+  feishuOpenId: string | null;
+  name: string;
+  role: string | null;
+  department: string | null;
+  departmentId: string | null;
+  positionId: string | null;
+  positionTitle: string | null;
+  avatarUrl: string | null;
+  isAdmin: boolean;
+  status: 'active' | 'disabled';
+  tags: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AccountRow {
+  id: string;
+  organization_id: string;
+  account_type: 'personal' | 'enterprise' | null;
+  employee_id: string | null;
+  username: string;
+  phone: string | null;
+  feishu_open_id: string | null;
+  password_hash: string;
+  name: string;
+  role: string | null;
+  department: string | null;
+  department_id: string | null;
+  position_id: string | null;
+  position_title: string | null;
+  avatar_url: string | null;
+  is_admin: number;
+  status: 'active' | 'disabled';
+  deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function normalizeUsername(username: string): string {
+  return username.trim().toLocaleLowerCase('en-US');
+}
+
+/** ‰∏≠ÂõΩÂ§ßÈôÜÊâãÊú∫Âè∑Áªü‰∏Ä‰øùÂ≠ò‰∏∫ E.164ÔºõÂ±ïÁ§∫Âíå‰∏ãÂèëÁü≠‰ø°Êó∂ÂÜçÂéªÊéâ +86„ÄÇ */
+export function normalizePhone(phone: string): string {
+  let digits = phone.trim().replace(/[^\d]/g, '');
+  if (digits.startsWith('0086')) digits = digits.slice(4);
+  else if (digits.startsWith('86') && digits.length === 13)
+    digits = digits.slice(2);
+  if (!/^1[3-9]\d{9}$/.test(digits)) throw new Error('ÊâãÊú∫Âè∑Ê†ºÂºè‰∏çÊ≠£Á°Æ');
+  return `+86${digits}`;
+}
+
+function normalizeOptionalPhone(
+  phone: string | null | undefined,
+): string | null {
+  if (phone == null || !phone.trim()) return null;
+  return normalizePhone(phone);
+}
+
+function normalizeOptionalFeishuOpenId(
+  value: string | null | undefined,
+): string | null {
+  if (value == null || !value.trim()) return null;
+  const openId = value.trim();
+  if (!/^ou_[A-Za-z0-9_-]+$/.test(openId))
+    throw new Error('È£û‰π¶ open_id Ê†ºÂºè‰∏çÊ≠£Á°Æ');
+  return openId;
+}
+
+function normalizeOptionalAvatarUrl(
+  value: string | null | undefined,
+): string | null {
+  if (value == null || !value.trim()) return null;
+  const avatarUrl = value.trim();
+  if (/^https:\/\//i.test(avatarUrl)) {
+    if (avatarUrl.length > 2_000)
+      throw new Error('Â§¥ÂÉèÂú∞ÂùÄ‰∏çËÉΩË∂ÖËøá 2000 ‰∏™Â≠óÁ¨¶');
+    try {
+      if (new URL(avatarUrl).protocol !== 'https:') throw new Error();
+    } catch {
+      throw new Error('Â§¥ÂÉèÂú∞ÂùÄÊ†ºÂºè‰∏çÊ≠£Á°Æ');
+    }
+    return avatarUrl;
+  }
+  const match =
+    /^data:image\/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(
+      avatarUrl,
+    );
+  if (!match)
+    throw new Error(
+      'Â§¥ÂÉè‰ªÖÊîØÊåÅ HTTPS Êàñ PNG„ÄÅJPEG„ÄÅWebP„ÄÅGIF Ê†ºÂºèÁöÑ data:image',
+    );
+  if (
+    avatarUrl.length > 700_000 ||
+    Buffer.from(match[2]!, 'base64').byteLength > 512 * 1024
+  ) {
+    throw new Error('Â§¥ÂÉèÊï∞ÊçÆ‰∏çËÉΩË∂ÖËøá 512KB');
+  }
+  return avatarUrl;
+}
+
+export const normalizeTags = normalizeAccountTags;
+
+const passwordHash = hashIdentitySecret;
+const passwordMatches = identitySecretMatches;
+const assertAccountPassword = assertIdentityAccountPassword;
+export const isAcceptableAccountPassword =
+  isAcceptableIdentityAccountPassword;
+
+const accountTagStore = { db: getDB };
+
+export function toAccountView(row: AccountRow): AccountView {
+  const organization = getOrganization(row.organization_id);
+  return {
+    id: row.id,
+    organizationId: row.organization_id,
+    organizationName: organization?.name || 'Êú™Áü•‰ºÅ‰∏ö',
+    accountType: row.account_type === 'personal' ? 'personal' : 'enterprise',
+    employeeId: row.employee_id,
+    username: row.username,
+    phone: row.phone,
+    feishuOpenId: row.feishu_open_id,
+    name: row.name,
+    role: row.role,
+    department: row.department,
+    departmentId: row.department_id,
+    positionId: row.position_id,
+    positionTitle: row.position_title,
+    avatarUrl: row.avatar_url,
+    isAdmin: row.is_admin === 1,
+    status: row.status,
+    tags: listAccountTagsInRepository(
+      accountTagStore,
+      row.id,
+      row.organization_id,
+    ),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export const {
+  getAccount,
+  listAccounts,
+  authenticateAccount,
+  findAccountByPhone,
+  findActiveAccountByPhone,
+  listFeishuAccountBindings,
+  createAuthSession,
+  getAccountBySession,
+  revokeAuthSession,
+  createSmsLoginChallenge,
+  discardSmsLoginChallenge,
+  verifySmsLoginChallenge,
+  createSmsRegistrationChallenge,
+  discardSmsRegistrationChallenge,
+  verifySmsRegistrationChallenge,
+} = createAccountAccessComposition<AccountView, AccountRow>({
+  db: getDB,
+  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+  now: Date.now,
+  normalizeIdentifier: normalizeUsername,
+  normalizePhone,
+  passwordMatches,
+  isOrganizationActive: (organizationId: string) =>
+    getOrganization(organizationId)?.status === 'active',
+  organizationExists: (organizationId: string) =>
+    Boolean(getOrganization(organizationId)),
+  toAccountView,
+  hashSecret: hashIdentitySecret,
+  secretMatches: identitySecretMatches,
+  createChallengeId: (kind: 'login' | 'registration') =>
+    `${kind === 'login' ? 'sms' : 'smsreg'}_${randomUUID()}`,
+  audit: logAudit,
+});
+
+const personalIntelligence = createPersonalIntelligenceComposition<
+  AccountView,
+  EmployeeRecord,
+  OrganizationView
+>({
+  db: getDB,
+  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+  keyProvider: accountSyncKeyProvider,
+  getAccount,
+  getOrganization,
+  getEmployee,
+  listActiveEmployees: listEmployees,
+  audit: logAudit,
+});
+
+export const {
+  listAccountSyncSnapshots,
+  putAccountSyncSnapshot,
+  getReport,
+  getTaskHistory,
+  logTask,
+} = personalIntelligence;
+const listWorklogsForBackup = personalIntelligence.listWorklogsForBackup;
+
+/** ‰ºÅ‰∏ö„ÄÅÈ¶ñ‰ΩçÁÆ°ÁêÜÂëòÂíåÈ¶ñ‰∏™ 7 Â§©ÈÇÄËØ∑Ë¶Å‰πàÂÖ®ÈÉ®ÊàêÂäüÔºåË¶Å‰πàÂÖ®ÈÉ®ÂõûÊªö„ÄÇ */
+export const {
+  createAccount,
+  updateAccount,
+  deleteAccount,
+  createOrganization,
+  provisionOrganization,
+  createSelfRegisteredAccount,
+  createPersonalRegisteredAccount,
+  joinOrganizationWithInvite,
+} = createAccountMutationComposition<
+  AccountView,
+  OrganizationView,
+  OrganizationInviteView
+>({
+  db: getDB,
+  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+  now: Date.now,
+  organizationExists: (organizationId: string) =>
+    Boolean(getOrganization(organizationId)),
+  normalizeUsername,
+  normalizePhone,
+  normalizeOptionalPhone,
+  normalizeOptionalFeishuOpenId,
+  normalizeOptionalAvatarUrl,
+  assertPassword: assertAccountPassword,
+  hashPassword: passwordHash,
+  createAccountEntityId: (prefix: 'acc' | 'emp') =>
+    `${prefix}_${randomUUID()}`,
+  createDeletionPasswordHash: () =>
+    passwordHash(randomBytes(32).toString('base64url')),
+  createOrganizationId: () => `org_${randomUUID()}`,
+  createInviteSecret: () => randomBytes(32).toString('hex'),
+  createDefaultSlugSuffix: () => randomBytes(5).toString('hex'),
+  createUsernameSuffix: () => randomBytes(4).toString('hex'),
+  createPersonalSlugSuffix: () => randomBytes(8).toString('hex'),
+  resolveAssignmentIdentity,
+  getPositionRoleMapping: getOrganizationPositionRoleMappingFromRepository,
+  createEmployee(input) {
+    const { inviteCode, ...employee } = input;
+    return createEmployee({
+      ...employee,
+      invite_code: inviteCode,
+    });
+  },
+  getAccount,
+  findAccountByPhone,
+  getOrganization,
+  issueOrganizationInvite,
+  resolveOrganizationInviteWithDefaults,
+  normalizeOrganizationInviteCode,
+  replaceMigratedAccountTags(accountId, organizationId, tags) {
+    replaceMigratedAccountTagsInRepository(
+      accountTagStore,
+      accountId,
+      organizationId,
+      tags,
+    );
+  },
+  audit: logAudit,
+});
+
+export const {
+  ensureDirectMessageContentEncrypted,
+  getDirectMessageAttachment,
+  listDirectMessages,
+  listPendingAtoaRequests,
+  listUnreadDirectMessageNotifications,
+  markAtoaRequestReadFromResponse,
+  sendDirectMessage,
+  touchAccountPresence,
+  listAccountPresence,
+} = createCollaborationComposition<AccountView>({
+  db: getDB,
+  now: Date.now,
+  createId: randomUUID,
+  fieldCipher,
+  attachmentObjectStore,
+  getAccount,
+});
+
+export const {
+  getDataGovernanceProfile,
+  recordCurrentLegalConsent,
+  exportAccountData,
+  deleteOwnAccountData,
+  reapplyPrivacyDeletionTombstones,
+} = createDataGovernanceComposition({
+  db: getDB,
+  ledgerPath: PRIVACY_DELETION_LEDGER_PATH,
+  ledgerKeyPath: PRIVACY_DELETION_LEDGER_KEY_PATH,
+  fieldCipher,
+  attachmentObjectStore,
+  createDeletionPasswordHash: passwordHash,
+});
+
+// The ledger lives outside data.db. Restoring an older encrypted backup cannot
+// resurrect an account whose deletion was already completed.
+reapplyPrivacyDeletionTombstones();
+
+export type AccountPresenceView = CollaborationAccountPresenceView;
+
+const integrationAdapters = createIntegrationAdaptersComposition({
+  listFeishuAccountBindings,
+  isLicenseUsableForOrganizationFeature,
+  isOrganizationFeatureEnabled,
+});
+
+export const { isFeishuAutoReplyEnabledForOpenId } = integrationAdapters;
+
+export type SmsChallengeIssueResult = IdentitySmsChallengeIssueResult;
+export type SmsRegistrationVerifyResult = IdentitySmsRegistrationVerifyResult;
+export type SmsChallengeVerifyResult =
+  IdentitySmsChallengeVerifyResult<AccountView>;
+
+// ============================================================
+// Park tenants, organization membership and service specialists
+// ============================================================
+
+export const {
+  createPark,
+  createParkAsPlatform,
+  createParkMeetingRoom,
+  createParkDataStatisticsTask,
+  createParkPublication,
+  createTicket,
+  createTicketWithMeetingReservation,
+  deleteParkMeetingRoom,
+  delegateParkDataStatistics,
+  getPark,
+  getParkDataStatisticsTemplate,
+  getParkForOrganization,
+  getParkServiceStatistics,
+  getParkSettings,
+  getParkTenantProfile,
+  getTicketCreatorForAccount,
+  getTicketForAccount,
+  getTicketNotificationRecipients,
+  getTicketTransferredNotificationRecipients,
+  isTicketFeatureEnabledForAccount,
+  issueParkInvite,
+  joinOrganizationToPark,
+  listParkAnnouncementResults,
+  listParkDataStatisticsTasks,
+  listParkMeetingRooms,
+  listParkMeetingSlots,
+  listParkPublications,
+  listParkServices,
+  listParkServiceSpecialists,
+  listParkSurveyResults,
+  listParkTenantOrganizations,
+  listTicketInbox,
+  listTicketsForAccount,
+  markParkDataStatisticsRead,
+  markParkPublicationRead,
+  markTicketRead,
+  normalizeParkServiceFormData,
+  recordTicketNotification,
+  remindParkDataStatistics,
+  removeParkServiceSpecialist,
+  reserveParkMeetingPeriod,
+  reserveParkMeetingSlot,
+  returnParkDataStatistics,
+  reviewParkDataStatistics,
+  setParkMeetingSlotAvailability,
+  setParkServiceSpecialist,
+  submitParkDataStatisticsDraft,
+  submitParkSurvey,
+  updateParkAsPlatform,
+  updateParkMeetingRoom,
+  updateParkService,
+  updateParkSettings,
+  updateParkTenantProfile,
+  updateTicket,
+} = createParkServicesComposition<AccountView, OrganizationView>({
+  db: getDB,
+  getAccount,
+  getOrganization: getEnterpriseOrganization,
+  isOrganizationActive: (organizationId) =>
+    getOrganization(organizationId)?.status === 'active',
+  listAccounts,
+  getOrganizationFeatures,
+  toOrganizationView: toOrganizationDirectoryView,
+  normalizeOptionalText,
+  normalizeSlug: normalizeOrganizationSlug,
+  normalizeInviteCode: normalizeOrganizationInviteCode,
+  normalizeTags,
+  createUuid: randomUUID,
+  createRandomHex: (byteLength) => randomBytes(byteLength).toString('hex'),
+  inviteValidityMs: ORGANIZATION_INVITE_VALIDITY_MS,
+  inviteAlphabet: ORGANIZATION_INVITE_ALPHABET,
+  inviteCodeRawLength: INVITE_CODE_RAW_LENGTH,
+  audit: logAudit,
+});
+
+export {
+  PARK_MEETING_CLOSE_MINUTES,
+  PARK_MEETING_OPEN_MINUTES,
+  PARK_MEETING_SLOT_MINUTES,
+  PARK_MEETING_TIME_SLOTS,
+} from '../modules/park_services/index.js';
+export type {
+  ParkMeetingRoomView,
+  ParkMeetingSlotView,
+  ParkSettingsView,
+} from '../modules/park_services/index.js';
+
+export type {
+  ParkAnnouncementResultView,
+  ParkPublicationView,
+  ParkSurveyResultView,
+} from '../modules/park_services/index.js';
+
+// ============================================================
+// Provider-reported Token usage (client_reported, idempotent)
+// ============================================================
+
+const modelGateway = createModelGatewayComposition({
+  db: getDB,
+  getAccount,
+  getOrganization,
+  listOrganizationAccounts: listAccounts,
+  createId: randomUUID,
+  onRecordedUsage(input) {
+    if (input.totalTokens < 1) return;
+    const digest = createHash('sha256')
+      .update(
+        [getDeploymentId(), input.organizationId, input.messageId].join('\0'),
+        'utf8',
+      )
+      .digest('hex');
+    queueBillingUsage({
+      organizationId: input.organizationId,
+      module: 'model_gateway',
+      units: input.totalTokens,
+      model: input.model,
+      referenceId: `usage_${digest.slice(0, 32)}`,
+      idempotencyKey: `usage:${digest}`,
+    });
+  },
+});
+
+export const { getOrganizationUsageSummary, recordTokenUsage } = modelGateway;
+export type {
+  AccountTokenUsageView,
+  OrganizationUsageSummary,
+} from '../modules/model_gateway/index.js';
+
+export { ESTIMATE, normalizeCostCNY, normalizeTokens };
+export type {
+  LogWorkTaskInput,
+  WorklogRecord,
+  WorklogReport,
+} from '../modules/personal_intelligence/index.js';
+
+// ============================================================
+// Knowledge operations
+// ============================================================
+export const {
+  observeKnowledge,
+  addKnowledge,
+  getKnowledge,
+  getKnowledgeForAdministration,
+  getKnowledgeForBackup,
+  getKnowledgeRevisions,
+  getMemberKnowledge,
+  reviewKnowledge,
+  reviseKnowledge,
+  saveKnowledge,
+  searchKnowledge,
+} = createEnterpriseKnowledgeComposition({
+  db: getDB,
+  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+  getOrganization,
+});
+
+// ============================================================
+// Invite codes
+// ============================================================
+// ============================================================
+// Export all (for backup)
+// ============================================================
+const backupDatabaseStore = { db: getDB };
+
+const enterpriseBackup = dataPlatform.createBackup({
+  defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
+  listEmployees: (organizationId) =>
+    listEmployeesForBackup(backupDatabaseStore, organizationId),
+  listTaskLogs: (organizationId) =>
+    listWorklogsForBackup(organizationId),
+  listKnowledge: (organizationId) =>
+    getKnowledgeForBackup(organizationId),
+  listInviteCodes: (organizationId) =>
+    listDepartmentInvitesForBackup(backupDatabaseStore, organizationId),
+  listAuditLogs: (organizationId) => getAuditLogs(200, organizationId),
+  // Account repositories deliberately omit password hashes and session tokens.
+  listAccounts,
+  listAccountTags: (organizationId) =>
+    listOrganizationAccountTagsInRepository(accountTagStore, organizationId),
+  listTickets: (organizationId) =>
+    listParkTicketsForBackup(backupDatabaseStore, organizationId),
+  listTicketDeliveries: (organizationId) =>
+    listTicketDeliveriesForBackup(backupDatabaseStore, organizationId),
+});
+
+export const { exportAll } = enterpriseBackup;

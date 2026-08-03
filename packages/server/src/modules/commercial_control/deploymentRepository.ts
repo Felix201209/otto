@@ -466,4 +466,1047 @@ export function getDeploymentLicense(
       'SELECT * FROM deployment_license ORDER BY updated_at DESC LIMIT 1',
     )
     .get() as DeploymentLicenseRow | undefined;
-  return toDeploymentLicenseView(store,ïw¶‰Ëkºwµç@€€¹ÁÉ•Á…É” 1QI=4Ñ•±•µ•ÑÉå}•Ù•¹ÑÌ]!IÉ•…Ñ•‘}…Ñ}µÌ€ğ€üœ¤(€€€€¹ÉÕ¸¡¹½Ü€´É•Ñ•¹Ñ¥½¹…åÌ€¨€ÈĞ€¨€ØÀ€¨€ØÀ€¨€ÄÀÀÀ¤ì(€½¹ÍĞÍ•ÑÑ¥¹Ì€ô•ÑQ•±•µ•ÑÉåM•ÑÑ¥¹Ì¡ÍÑ½É”¤ì(€½¹ÍĞ±¥•¹Í”€ô•Ñ•Á±½åµ•¹Ñ1¥•¹Í”¡ÍÑ½É”¤ì(€¥˜€ …Í•ÑÑ¥¹Ì¹•¹…‰±•¤É•ÑÕÉ¸ì€¸¸¹É•ÍÕ±Ğ°Í­¥ÁÁ•‘I•…Í½¸è€‘¥Í…‰±•œôì(€¥˜€ …±¥•¹Í”¹Ñ•±•µ•ÑÉå±±½İ•¤(€€€É•ÑÕÉ¸ì€¸¸¹É•ÍÕ±Ğ°Í­¥ÁÁ•‘I•…Í½¸è€±¥•¹Í•}‘¥Í…±±½İÍ}Ñ•±•µ•ÑÉäœôì(€¥˜€ …Í•ÑÑ¥¹Ì¹•¹‘Á½¥¹Ğ¤(€€€É•ÑÕÉ¸ì€¸¸¹É•ÍÕ±Ğ°Í­¥ÁÁ•‘I•…Í½¸è€•¹‘Á½¥¹Ñ}µ¥ÍÍ¥¹œœôì(€±•Ğ•¹‘Á½¥¹ĞèUI0ì(€ÑÉäì(€€€•¹‘Á½¥¹Ğ€ô¹•ÜUI0¡Í•ÑÑ¥¹Ì¹•¹‘Á½¥¹Ğ¤ì(€ô…Ñ ì(€€€É•ÑÕÉ¸ì€¸¸¹É•ÍÕ±Ğ°Í­¥ÁÁ•‘I•…Í½¸è€•¹‘Á½¥¹Ñ}¥¹Ù…±¥œôì(€ô(€¥˜€¡•¹‘Á½¥¹Ğ¹ÁÉ½Ñ½½°€„ôô€¡ÑÑÁÌèœ¤(€€€É•ÑÕÉ¸ì€¸¸¹É•ÍÕ±Ğ°Í­¥ÁÁ•‘I•…Í½¸è€•¹‘Á½¥¹Ñ}É•ÅÕ¥É•Í}¡ÑÑÁÌœôì(€½¹ÍĞÑ•±•µ•ÑÉåQ½­•¸€ô±…Ñ•ÍÑ1¥•¹Í•A…å±½…¡ÍÑ½É”¤¹Ñ•±•µ•ÑÉåQ½­•¸ì(€¥˜€¡ÑåÁ•½˜Ñ•±•µ•ÑÉåQ½­•¸€„ôô€ÍÑÉ¥¹œœñğÑ•±•µ•ÑÉåQ½­•¸¹±•¹Ñ €ğ€ÌÈ¤ì(€€€É•ÑÕÉ¸ì€¸¸¹É•ÍÕ±Ğ°Í­¥ÁÁ•‘I•…Í½¸è€Ñ•±•µ•ÑÉå}Ñ½­•¹}µ¥ÍÍ¥¹œœôì(€ô(€½¹ÍĞÉ½İÌ€ôÍÑ½É”¹‘ˆ ¤(€€€€¹ÁÉ•Á…É” (€€€€€M1P¥°‘•Á±½åµ•¹Ñ}¥°½É…¹¥é…Ñ¥½¹}¥°•Ù•¹Ñ}ÑåÁ”°Á…å±½…‘}©Í½¸°(€€€€€€€€€€€€€Í¥¹…ÑÕÉ”°…ÑÑ•µÁÑÌ°É•…Ñ•‘}…Ñ}µÌ(€€€€€€I=4Ñ•±•µ•ÑÉå}•Ù•¹ÑÌ(€€€€€€]!IÍÑ…ÑÕÌ%8€ ÅÕ•Õ•œ°€™…¥±•œ¤(€€€€€€€€9€¡¹•áÑ}…ÑÑ•µÁÑ}…Ñ}µÌ%L9U10=H¹•áÑ}…ÑÑ•µÁÑ}…Ñ}µÌ€ğô€ü¤(€€€€€€=IH	dÉ•…Ñ•‘}…Ñ}µÌM(€€€€€€1%5%P€ÔÁ€°(€€€€¤(€€€€¹…±°¡¹½Ü¤…ÌQ•±•µ•ÑÉåEÕ•Õ•I½İmtì(€¥˜€¡É½İÌ¹±•¹Ñ €ôôô€À¤É•ÑÕÉ¸É•ÍÕ±Ğì(€É•ÍÕ±Ğ¹…ÑÑ•µÁÑ•€ôÉ½İÌ¹±•¹Ñ ì(€½¹ÍĞ•Ù•¹ÑÌèÉÉ…äñI•½ÉñÍÑÉ¥¹œ°Õ¹­¹½İ¸øø€ômtì(€½¹ÍĞÙ…±¥‘I½İÌèQ•±•µ•ÑÉåEÕ•Õ•I½İmt€ômtì(€™½È€¡½¹ÍĞÉ½Ü½˜É½İÌ¤ì(€€€ÑÉäì(€€€€€½¹ÍĞÁ…å±½…€ô)M=8¹Á…ÉÍ”¡É½Ü¹Á…å±½…‘}©Í½¸¤ì(€€€€€¥˜€¡Ñ•±•µ•ÑÉå%¹Ñ•É¥Ñå!…Í ¡Á…å±½…¤€„ôôÉ½Ü¹Í¥¹…ÑÕÉ”¤ì(€€€€€€€ÍÑ½É”¹‘ˆ ¤(€€€€€€€€€€¹ÁÉ•Á…É” (€€€€€€€€€€€UAQÑ•±•µ•ÑÉå}•Ù•¹ÑÌ(€€€€€€€€€€€€MPÍÑ…ÑÕÌ€ô€‘¥Í…É‘•œ°±…ÍÑ}•ÉÉ½È€ô€ü°ÕÁ‘…Ñ•‘}…Ğ€ô‘…Ñ•Ñ¥µ” ¹½Üœ¤(€€€€€€€€€€€€]!I¥€ô€ı€°(€€€€€€€€€€¤(€€€€€€€€€€¹ÉÕ¸ ±½…°Ñ•±•µ•ÑÉä¥¹Ñ•É¥Ñäµ¥Íµ…Ñ œ°É½Ü¹¥¤ì(€€€€€€€É•ÍÕ±Ğ¹‘¥Í…É‘•€¬ô€Äì(€€€€€€€½¹Ñ¥¹Õ”ì(€€€€€ô(€€€€€•Ù•¹ÑÌ¹ÁÕÍ ¡ì(€€€€€€€¥èÉ½Ü¹¥°(€€€€€€€½É…¹¥é…Ñ¥½¹%èÉ½Ü¹½É…¹¥é…Ñ¥½¹}¥°(€€€€€€€•Ù•¹ÑQåÁ”èÉ½Ü¹•Ù•¹Ñ}ÑåÁ”°(€€€€€€€É•…Ñ•‘Ñ5ÌèÉ½Ü¹É•…Ñ•‘}…Ñ}µÌ°(€€€€€€€Á…å±½…°(€€€€€€€¥¹Ñ•É¥ÑäèÉ½Ü¹Í¥¹…ÑÕÉ”°(€€€€€ô¤ì(€€€€€Ù…±¥‘I½İÌ¹ÁÕÍ ¡É½Ü¤ì(€€€ô…Ñ ì(€€€€€ÍÑ½É”¹‘ˆ ¤(€€€€€€€€¹ÁÉ•Á…É” (€€€€€€€€€UAQÑ•±•µ•ÑÉå}•Ù•¹ÑÌ(€€€€€€€€€€MPÍÑ…ÑÕÌ€ô€‘¥Í…É‘•œ°±…ÍÑ}•ÉÉ½È€ô€ü°ÕÁ‘…Ñ•‘}…Ğ€ô‘…Ñ•Ñ¥µ” ¹½Üœ¤(€€€€€€€€€€]!I¥€ô€ı€°(€€€€€€€€¤(€€€€€€€€¹ÉÕ¸ ±½…°Ñ•±•µ•ÑÉäÁ…å±½…¥¹Ù…±¥œ°É½Ü¹¥¤ì(€€€€€É•ÍÕ±Ğ¹‘¥Í…É‘•€¬ô€Äì(€€€ô(€ô(€¥˜€¡•Ù•¹ÑÌ¹±•¹Ñ €ôôô€À¤É•ÑÕÉ¸É•ÍÕ±Ğì(€ÑÉäì(€€€½¹ÍĞÉ•ÅÕ•ÍÑ	½‘ä€ôì(€€€€€Ù•ÉÍ¥½¸è€Ä°(€€€€€‘•Á±½åµ•¹Ñ%è•Ñ•Á±½åµ•¹Ñ%¡ÍÑ½É”¤°(€€€€€µ…¡¥¹•¥¹•ÉÁÉ¥¹Ğè•Ñ5…¡¥¹•¥¹•ÉÁÉ¥¹Ğ ¤°(€€€€€±¥•¹Í•%è±¥•¹Í”¹¥°(€€€€€•Ù•¹ÑÌ°(€€€ôì(€€€½¹ÍĞÉ•ÅÕ•ÍÑQ¥µ•ÍÑ…µÀ€ô¹½Üì(€€€½¹ÍĞÉ•ÅÕ•ÍÑ9½¹”€ôÉ…¹‘½µUU% ¤ì(€€€½¹ÍĞÉ•ÍÁ½¹Í”€ô…İ…¥Ğ™•Ñ¡%µÁ°¡•¹‘Á½¥¹Ğ°ì(€€€€€µ•Ñ¡½è€A=MPœ°(€€€€€¡•…‘•ÉÌèì(€€€€€€€…ÕÑ¡½É¥é…Ñ¥½¸è	•…É•È€‘íÑ•±•µ•ÑÉåQ½­•¹õ€°(€€€€€€€€½¹Ñ•¹ĞµÑåÁ”œè€…ÁÁ±¥…Ñ¥½¸½©Í½¸œ°(€€€€€€€€ÕÍ•Èµ…•¹Ğœè€=ÑÑ¼µAÉ¥Ù…Ñ”µ•Á±½åµ•¹Ğ¼Äœ°(€€€€€€€€àµ½ÑÑ¼µÑ¥µ•ÍÑ…µÀœèMÑÉ¥¹œ¡É•ÅÕ•ÍÑQ¥µ•ÍÑ…µÀ¤°(€€€€€€€€àµ½ÑÑ¼µ¹½¹”œèÉ•ÅÕ•ÍÑ9½¹”°(€€€€€€€€àµ½ÑÑ¼µÍ¥¹…ÑÕÉ”œèÍ¥¹Q•±•µ•ÑÉåI•ÅÕ•ÍĞ¡ì(€€€€€€€€€Ñ½­•¸èÑ•±•µ•ÑÉåQ½­•¸°(€€€€€€€€€Ñ¥µ•ÍÑ…µÀèÉ•ÅÕ•ÍÑQ¥µ•ÍÑ…µÀ°(€€€€€€€€€¹½¹”èÉ•ÅÕ•ÍÑ9½¹”°(€€€€€€€€€‰½‘äèÉ•ÅÕ•ÍÑ	½‘ä°(€€€€€€€ô¤°(€€€€€ô°(€€€€€‰½‘äè)M=8¹ÍÑÉ¥¹¥™ä¡É•ÅÕ•ÍÑ	½‘ä¤°(€€€€€Í¥¹…°è‰½ÉÑM¥¹…°¹Ñ¥µ•½ÕĞ ÄÕ|ÀÀÀ¤°(€€€ô¤ì(€€€¥˜€ …É•ÍÁ½¹Í”¹½¬¤Ñ¡É½Ü¹•ÜÉÉ½È¡Ñ•±•µ•ÑÉä•¹‘Á½¥¹ĞÉ•ÑÕÉ¹•€‘íÉ•ÍÁ½¹Í”¹ÍÑ…ÑÕÍõ€¤ì(€€€ÉÕ¹%¹QÉ…¹Í…Ñ¥½¸¡ÍÑ½É”¹‘ˆ ¤°€ ¤€ôøì(€€€€€½¹ÍĞÍÑ…Ñ•µ•¹Ğ€ôÍÑ½É”¹‘ˆ ¤¹ÁÉ•Á…É” (€€€€€€€UAQÑ•±•µ•ÑÉå}•Ù•¹ÑÌ(€€€€€€€€MPÍÑ…ÑÕÌ€ô€Í•¹Ğœ°Í•¹Ñ}…Ñ}µÌ€ô€ü°¹•áÑ}…ÑÑ•µÁÑ}…Ñ}µÌ€ô9U10°(€€€€€€€€€€€€±…ÍÑ}•ÉÉ½È€ô9U10°ÕÁ‘…Ñ•‘}…Ğ€ô‘…Ñ•Ñ¥µ” ¹½Üœ¤(€€€€€€€€]!I¥€ô€ı€°(€€€€€€¤ì(€€€€€™½È€¡½¹ÍĞÉ½Ü½˜Ù…±¥‘I½İÌ¤ÍÑ…Ñ•µ•¹Ğ¹ÉÕ¸¡¹½Ü°É½Ü¹¥¤ì(€€€ô¤ì(€€€É•ÍÕ±Ğ¹Í•¹Ğ€ôÙ…±¥‘I½İÌ¹±•¹Ñ ì(€ô…Ñ €¡•ÉÉ½È¤ì(€€€½¹ÍĞµ•ÍÍ…”€ôÍ…™•ÉÉ½É5•ÍÍ…”¡•ÉÉ½È¤ì(€€€ÉÕ¹%¹QÉ…¹Í…Ñ¥½¸¡ÍÑ½É”¹‘ˆ ¤°€ ¤€ôøì(€€€€€½¹ÍĞÍÑ…Ñ•µ•¹Ğ€ôÍÑ½É”¹‘ˆ ¤¹ÁÉ•Á…É” (€€€€€€€UAQÑ•±•µ•ÑÉå}•Ù•¹ÑÌ(€€€€€€€€MPÍÑ…ÑÕÌ€ô€™…¥±•œ°…ÑÑ•µÁÑÌ€ô…ÑÑ•µÁÑÌ€¬€Ä°(€€€€€€€€€€€€¹•áÑ}…ÑÑ•µÁÑ}…Ñ}µÌ€ô€ü°±…ÍÑ}•ÉÉ½È€ô€ü°ÕÁ‘…Ñ•‘}…Ğ€ô‘…Ñ•Ñ¥µ” ¹½Üœ¤(€€€€€€€€]!I¥€ô€ı€°(€€€€€€¤ì(€€€€€™½È€¡½¹ÍĞÉ½Ü½˜Ù…±¥‘I½İÌ¤ì(€€€€€€€ÍÑ…Ñ•µ•¹Ğ¹ÉÕ¸ (€€€€€€€€€¹½Ü€¬Ñ•±•µ•ÑÉåI•ÑÉå•±…å5Ì¡É½Ü¹…ÑÑ•µÁÑÌ€¬€Ä¤°(€€€€€€€€€µ•ÍÍ…”°(€€€€€€€€€É½Ü¹¥°(€€€€€€€€¤ì(€€€€€ô(€€€ô¤ì(€€€É•ÍÕ±Ğ¹™…¥±•€ôÙ…±¥‘I½İÌ¹±•¹Ñ ì(€ô(€É•ÑÕÉ¸É•ÍÕ±Ğì)ô()½¹ÍĞ=I	%9}Q15QIe}-eL€ô¹•ÜM•Ğ¡l(€€µ•ÍÍ…”œ°(€€µ•ÍÍ…•Ìœ°(€€½¹Ñ•¹Ğœ°(€€™¥±”œ°(€€™¥±•Ìœ°(€€…ÑÑ…¡µ•¹Ğœ°(€€…ÑÑ…¡µ•¹ÑÌœ°(€€…Õ‘¥¼œ°(€€µ••Ñ¥¹…Õ‘¥¼œ°(€€ÑÉ…¹ÍÉ¥ÁĞœ°(€€ÁÉ½µÁĞœ°(€€½µÁ±•Ñ¥½¸œ°(€€‘½Õµ•¹Ğœ°(€€‘½Õµ•¹ÑÌœ°)t¤ì()™Õ¹Ñ¥½¸Ñ•±•µ•ÑÉå½¹Ñ…¥¹Í½¹Ñ•¹Ğ¡Ù…±Õ”èÕ¹­¹½İ¸°‘•ÁÑ €ô€À¤è‰½½±•…¸ì(€¥˜€¡‘•ÁÑ €ø€à¤É•ÑÕÉ¸ÑÉÕ”ì(€¥˜€¡ÉÉ…ä¹¥ÍÉÉ…ä¡Ù…±Õ”¤¤(€€€É•ÑÕÉ¸Ù…±Õ”¹Í½µ” ¡¥Ñ•´¤€ôøÑ•±•µ•ÑÉå½¹Ñ…¥¹Í½¹Ñ•¹Ğ¡¥Ñ•´°‘•ÁÑ €¬€Ä¤¤ì(€¥˜€ …Ù…±Õ”ñğÑåÁ•½˜Ù…±Õ”€„ôô€½‰©•Ğœ¤É•ÑÕÉ¸™…±Í”ì(€É•ÑÕÉ¸=‰©•Ğ¹•¹ÑÉ¥•Ì¡Ù…±Õ”…ÌI•½ÉñÍÑÉ¥¹œ°Õ¹­¹½İ¸ø¤¹Í½µ” (€€€€¡m­•ä°¥Ñ•µt¤€ôø(€€€€€=I	%9}Q15QIe}-eL¹¡…Ì¡­•ä¹Ñ½1½İ•É…Í” ¤¹É•Á±…” ½m|µt½œ°€œœ¤¤ñğ(€€€€€Ñ•±•µ•ÑÉå½¹Ñ…¥¹Í½¹Ñ•¹Ğ¡¥Ñ•´°‘•ÁÑ €¬€Ä¤°(€€¤ì)ô()™Õ¹Ñ¥½¸‰•…É•ÉQ½­•¸¡…ÕÑ¡½É¥é…Ñ¥½¸èÍÑÉ¥¹œğÕ¹‘•™¥¹•¤èÍÑÉ¥¹œì(€½¹ÍĞµ…Ñ €ô€½y	•…É•ÉqÌ¬ ¸¬¤½¤¹•á•Œ¡…ÕÑ¡½É¥é…Ñ¥½¸ü¹ÑÉ¥´ ¤ñğ€œœ¤ì(€É•ÑÕÉ¸µ…Ñ ü¹lÅtñğ€œœì)ô()™Õ¹Ñ¥½¸•ÅÕ…±M•É•Ğ¡±•™ĞèÍÑÉ¥¹œ°É¥¡ĞèÍÑÉ¥¹œ¤è‰½½±•…¸ì(€¥˜€ …±•™Ğñğ±•™Ğ¹±•¹Ñ €„ôôÉ¥¡Ğ¹±•¹Ñ ¤É•ÑÕÉ¸™…±Í”ì(€É•ÑÕÉ¸Ñ¥µ¥¹M…™•ÅÕ…°¡	Õ™™•È¹™É½´¡±•™Ğ¤°	Õ™™•È¹™É½´¡É¥¡Ğ¤¤ì)ô()•áÁ½ÉĞ™Õ¹Ñ¥½¸¥¹•ÍÑQ•±•µ•ÑÉå	…Ñ  (€ÍÑ½É”è•Á±½åµ•¹ÑI•Á½Í¥Ñ½ÉåMÑ½É”°(€É…ÜèÕ¹­¹½İ¸°(€…ÕÑ¡½É¥é…Ñ¥½¸èÍÑÉ¥¹œğÕ¹‘•™¥¹•°(€…ÕÑ¡•¹Ñ¥…Ñ¥½¸èQ•±•µ•ÑÉåI•ÅÕ•ÍÑÕÑ¡•¹Ñ¥…Ñ¥½¸°(€¹½Ü€ô…Ñ”¹¹½Ü ¤°(¤èì…•ÁÑ•è¹Õµ‰•Èì‘ÕÁ±¥…Ñ•Ìè¹Õµ‰•Èôì(€½¹ÍĞÍ•É•Ğ€ôÍÑ½É”¹Ñ•±•µ•ÑÉå%¹•ÍÑM•É•Ğ ¤ì(€¥˜€¡Í•É•Ğ¹±•¹Ñ €ğ€ÌÈ¤Ñ¡É½Ü¹•ÜÉÉ½È Ñ•±•µ•ÑÉä¥¹•ÍĞ¥Ì¹½Ğ½¹™¥ÕÉ•œ¤ì(€½¹ÍĞ‰½‘ä€ôÍ…™•)Í½¹=‰©•Ğ¡É…Ü¤ì(€½¹ÍĞ‘•Á±½åµ•¹Ñ%€ôMÑÉ¥¹œ¡‰½‘ä¹‘•Á±½åµ•¹Ñ%ñğ€œœ¤ì(€¥˜€ „½y‘•Á}m„µèÀ´åuìÄØ°ØÑô½¤¹Ñ•ÍĞ¡‘•Á±½åµ•¹Ñ%¤¤(€€€Ñ¡É½Ü¹•ÜÉÉ½È Ñ•±•µ•ÑÉä‘•Á±½åµ•¹Ñ%¥¹Ù…±¥œ¤ì(€½¹ÍĞ•áÁ•Ñ•‘Q½­•¸€ôÉ•…Ñ•!µ…Œ Í¡„ÈÔØœ°Í•É•Ğ¤(€€€€¹ÕÁ‘…Ñ”¡‘•Á±½åµ•¹Ñ%¤(€€€€¹‘¥•ÍĞ ‰…Í”ØÑÕÉ°œ¤ì(€¥˜€ …•ÅÕ…±M•É•Ğ¡‰•…É•ÉQ½­•¸¡…ÕÑ¡½É¥é…Ñ¥½¸¤°•áÁ•Ñ•‘Q½­•¸¤¤(€€€Ñ¡É½Ü¹•ÜÉÉ½È Ñ•±•µ•ÑÉä…ÕÑ¡½É¥é…Ñ¥½¸¥¹Ù…±¥œ¤ì(€½¹ÍĞÑ¥µ•ÍÑ…µÀ€ô9Õµ‰•È¡…ÕÑ¡•¹Ñ¥…Ñ¥½¸¹Ñ¥µ•ÍÑ…µÀ¤ì(€½¹ÍĞ¹½¹”€ô…ÕÑ¡•¹Ñ¥…Ñ¥½¸¹¹½¹”ü¹ÑÉ¥´ ¤ñğ€œœì(€½¹ÍĞÍ¥¹…ÑÕÉ”€ô…ÕÑ¡•¹Ñ¥…Ñ¥½¸¹Í¥¹…ÑÕÉ”ü¹ÑÉ¥´ ¤ñğ€œœì(€¥˜€ (€€€€…9Õµ‰•È¹¥Í¥¹¥Ñ”¡Ñ¥µ•ÍÑ…µÀ¤ñğ(€€€5…Ñ ¹…‰Ì¡¹½Ü€´Ñ¥µ•ÍÑ…µÀ¤€øQ15QIe}IEUMQ}5a}1=-}M-]}5L(€€¤ì(€€€Ñ¡É½Ü¹•ÜÉÉ½È Ñ•±•µ•ÑÉäÉ•ÅÕ•ÍĞÑ¥µ•ÍÑ…µÀ¥¹Ù…±¥œ¤ì(€ô(€¥˜€ „½ym„µéµhÀ´ä¹|èµuìÄØ°ÄÈáô¼¹Ñ•ÍĞ¡¹½¹”¤¤ì(€€€Ñ¡É½Ü¹•ÜÉÉ½È Ñ•±•µ•ÑÉäÉ•ÅÕ•ÍĞ¹½¹”¥¹Ù…±¥œ¤ì(€ô(€½¹ÍĞ•áÁ•Ñ•‘M¥¹…ÑÕÉ”€ôÍ¥¹Q•±•µ•ÑÉåI•ÅÕ•ÍĞ¡ì(€€€Ñ½­•¸è•áÁ•Ñ•‘Q½­•¸°(€€€Ñ¥µ•ÍÑ…µÀ°(€€€¹½¹”°(€€€‰½‘ä°(€ô¤ì(€¥˜€ …•ÅÕ…±M•É•Ğ¡Í¥¹…ÑÕÉ”°•áÁ•Ñ•‘M¥¹…ÑÕÉ”¤¤ì(€€€Ñ¡É½Ü¹•ÜÉÉ½È Ñ•±•µ•ÑÉäÉ•ÅÕ•ÍĞÍ¥¹…ÑÕÉ”¥¹Ù…±¥œ¤ì(€ô(€¥˜€ …ÉÉ…ä¹¥ÍÉÉ…ä¡‰½‘ä¹•Ù•¹ÑÌ¤ñğ‰½‘ä¹•Ù•¹ÑÌ¹±•¹Ñ €ôôô€Àñğ‰½‘ä¹•Ù•¹ÑÌ¹±•¹Ñ €ø€ÄÀÀ¤(€€€Ñ¡É½Ü¹•ÜÉÉ½È Ñ•±•µ•ÑÉä•Ù•¹ÑÌ¥¹Ù…±¥œ¤ì(€±•Ğ…•ÁÑ•€ô€Àì(€±•Ğ‘ÕÁ±¥…Ñ•Ì€ô€Àì(€½¹ÍĞ¥¹Í•ÉĞ€ôÍÑ½É”¹‘ˆ ¤¹ÁÉ•Á…É” (€€€%9MIP=H%9=I%9Q<Ñ•±•µ•ÑÉå}¥¹•ÍÑ}•Ù•¹ÑÌ(€€€€€¡‘•Á±½åµ•¹Ñ}¥°•Ù•¹Ñ}¥°½É…¹¥é…Ñ¥½¹}¥°•Ù•¹Ñ}ÑåÁ”°Á…å±½…‘}©Í½¸°(€€€€€¥¹Ñ•É¥Ñä°Í½ÕÉ•}É•…Ñ•‘}…Ñ}µÌ°É••¥Ù•‘}…Ñ}µÌ¤(€€€€Y1UL€ ü°€ü°€ü°€ü°€ü°€ü°€ü°€ü¥€°(€€¤ì(€ÉÕ¹%¹QÉ…¹Í…Ñ¥½¸¡ÍÑ½É”¹‘ˆ ¤°€ ¤€ôøì(€€€ÍÑ½É”¹‘ˆ ¤¹ÁÉ•Á…É” (€€€€€€1QI=4Ñ•±•µ•ÑÉå}¥¹•ÍÑ}¹½¹•Ì]!IÉ••¥Ù•‘}…Ñ}µÌ€ğ€üœ°(€€€€¤¹ÉÕ¸¡¹½Ü€´Q15QIe}IEUMQ}5a}1=-}M-]}5L€¨€È¤ì(€€€ÑÉäì(€€€€€ÍÑ½É”¹‘ˆ ¤¹ÁÉ•Á…É” (€€€€€€€%9MIP%9Q<Ñ•±•µ•ÑÉå}¥¹•ÍÑ}¹½¹•Ì(€€€€€€€€€¡‘•Á±½åµ•¹Ñ}¥°¹½¹”°É••¥Ù•‘}…Ñ}µÌ¤Y1UL€ ü°€ü°€ü¥€°(€€€€€€¤¹ÉÕ¸¡‘•Á±½åµ•¹Ñ%°¹½¹”°¹½Ü¤ì(€€€ô…Ñ €¡•ÉÉ½È¤ì(€€€€€¥˜€ ½U9%EU½¹ÍÑÉ…¥¹Ğ™…¥±•èÑ•±•µ•ÑÉå}¥¹•ÍÑ}¹½¹•Íp¸½¤¹Ñ•ÍĞ (€€€€€€€Í…™•ÉÉ½É5•ÍÍ…”¡•ÉÉ½È¤°(€€€€€€¤¤ì(€€€€€€€Ñ¡É½Ü¹•ÜÉÉ½È Ñ•±•µ•ÑÉäÉ•ÅÕ•ÍĞÉ•Á±…ä‘•Ñ•Ñ•œ¤ì(€€€€€ô(€€€€€Ñ¡É½Ü•ÉÉ½Èì(€€€ô(€€€™½È€¡½¹ÍĞ¥Ñ•´½˜‰½‘ä¹•Ù•¹ÑÌ…ÌÕ¹­¹½İ¹mt¤ì(€€€€€½¹ÍĞ•Ù•¹Ğ€ôÍ…™•)Í½¹=‰©•Ğ¡¥Ñ•´¤ì(€€€€€½¹ÍĞ¥€ôMÑÉ¥¹œ¡•Ù•¹Ğ¹¥ñğ€œœ¤ì(€€€€€½¹ÍĞ•Ù•¹ÑQåÁ”€ôMÑÉ¥¹œ¡•Ù•¹Ğ¹•Ù•¹ÑQåÁ”ñğ€œœ¤ì(€€€€€½¹ÍĞÉ•…Ñ•‘Ñ5Ì€ô9Õµ‰•È¡•Ù•¹Ğ¹É•…Ñ•‘Ñ5Ì¤ì(€€€€€½¹ÍĞ¥¹Ñ•É¥Ñä€ôMÑÉ¥¹œ¡•Ù•¹Ğ¹¥¹Ñ•É¥Ñäñğ€œœ¤ì(€€€€€¥˜€ „½yÑ•±}m„µèÀ´åuìÄØ°ØÑô½¤¹Ñ•ÍĞ¡¥¤ñğ€„½ym„µèÀ´å|¸èµuìÈ°àÁô½¤¹Ñ•ÍĞ¡•Ù•¹ÑQåÁ”¤¤(€€€€€€€Ñ¡É½Ü¹•ÜÉÉ½È Ñ•±•µ•ÑÉä•Ù•¹Ğ¥‘•¹Ñ¥Ñä¥¹Ù…±¥œ¤ì(€€€€€¥˜€ …9Õµ‰•È¹¥Í¥¹¥Ñ”¡É•…Ñ•‘Ñ5Ì¤ñğÉ•…Ñ•‘Ñ5Ì€ğô€ÀñğÉ•…Ñ•‘Ñ5Ì€ø¹½Ü€¬€Ô€¨€ØÀ€¨€ÄÀÀÀ¤(€€€€€€€Ñ¡É½Ü¹•ÜÉÉ½È Ñ•±•µ•ÑÉä•Ù•¹ĞÑ¥µ•ÍÑ…µÀ¥¹Ù…±¥œ¤ì(€€€€€¥˜€¡Ñ•±•µ•ÑÉå½¹Ñ…¥¹Í½¹Ñ•¹Ğ¡•Ù•¹Ğ¹Á…å±½…¤¤(€€€€€€€Ñ¡É½Ü¹•ÜÉÉ½È Ñ•±•µ•ÑÉä½¹Ñ•¹ĞÁ…å±½…™½É‰¥‘‘•¸œ¤ì(€€€€€¥˜€¡Ñ•±•µ•ÑÉå%¹Ñ•É¥Ñå!…Í ¡•Ù•¹Ğ¹Á…å±½…¤€„ôô¥¹Ñ•É¥Ñä¤(€€€€€€€Ñ¡É½Ü¹•ÜÉÉ½È Ñ•±•µ•ÑÉä•Ù•¹Ğ¥¹Ñ•É¥Ñä¥¹Ù…±¥œ¤ì(€€€€€½¹ÍĞ¥¹™¼€ô¥¹Í•ÉĞ¹ÉÕ¸ (€€€€€€€‘•Á±½åµ•¹Ñ%°(€€€€€€€¥°(€€€€€€€ÑåÁ•½˜•Ù•¹Ğ¹½É…¹¥é…Ñ¥½¹%€ôôô€ÍÑÉ¥¹œœ€ü•Ù•¹Ğ¹½É…¹¥é…Ñ¥½¹%€è¹Õ±°°(€€€€€€€•Ù•¹ÑQåÁ”°(€€€€€€€)M=8¹ÍÑÉ¥¹¥™ä¡•Ù•¹Ğ¹Á…å±½…¤°(€€€€€€€¥¹Ñ•É¥Ñä°(€€€€€€€É•…Ñ•‘Ñ5Ì°(€€€€€€€¹½Ü°(€€€€€€¤ì(€€€€€¥˜€¡¥¹™¼¹¡…¹•Ì€ôôô€Ä¤…•ÁÑ•€¬ô€Äì(€€€€€•±Í”‘ÕÁ±¥…Ñ•Ì€¬ô€Äì(€€€ô(€ô¤ì(€É•ÑÕÉ¸ì…•ÁÑ•°‘ÕÁ±¥…Ñ•Ìôì)ô()™Õ¹Ñ¥½¸•Ñ•Á±½åµ•¹ÑIÕ¹Ñ¥µ•!•…±Ñ  (€ÍÑ½É”è•Á±½åµ•¹ÑI•Á½Í¥Ñ½ÉåMÑ½É”°(¤èAÉ¥Ù…Ñ••Á±½åµ•¹ÑMÑ…ÑÕÍlÉÕ¹Ñ¥µ•!•…±Ñ tì(€½¹ÍĞ‘…Ñ…‰…Í”€ôÍÑ½É”¹‘ˆ ¤ì(€½¹ÍĞµ•µ½Éä€ôÁÉ½•ÍÌ¹µ•µ½ÉåUÍ…” ¤ì(€½¹ÍĞÁÔ€ôÁÉ½•ÍÌ¹ÁÕUÍ…” ¤ì(€½¹ÍĞ½É…¹¥é…Ñ¥½¹Ì€ô‘…Ñ…‰…Í”(€€€€¹ÁÉ•Á…É” (€€€€€€‰M1P=U9P ¨¤L½Õ¹ĞI=4½É…¹¥é…Ñ¥½¹Ì]!IÍÑ…ÑÕÌ€ô€…Ñ¥Ù”œˆ°(€€€€¤(€€€€¹•Ğ ¤…Ìì½Õ¹Ğè¹Õµ‰•Èôì(€½¹ÍĞ…½Õ¹ÑÌ€ô‘…Ñ…‰…Í”(€€€€¹ÁÉ•Á…É” (€€€€€€‰M1P=U9P ¨¤L½Õ¹ĞI=4…½Õ¹ÑÌ]!I‘•±•Ñ•‘}…Ğ%L9U109ÍÑ…ÑÕÌ€ô€…Ñ¥Ù”œˆ°(€€€€¤(€€€€¹•Ğ ¤…Ìì½Õ¹Ğè¹Õµ‰•Èôì(€½¹ÍĞ…Õ‘¥Ğ€ô‘…Ñ…‰…Í”(€€€€¹ÁÉ•Á…É” (€€€€€M1P(€€€€€€MU4¡M]!8±½İ•È¡•Ù•¹Ğ¤1%-€œ••ÉÉ½È”œ=H±½İ•È¡•Ù•¹Ğ¤1%-€œ•™…¥°”œ(€€€€€€€€€€€€=H±½İ•È¡=1M¡‘•Ñ…¥°°€œœ¤¤1%-€œ••ÉÉ½È”œ=H±½İ•È¡=1M¡‘•Ñ…¥°°€œœ¤¤1%-€œ•™…¥°”œ(€€€€€€€€€€Q!8€Ä1M€À9¤L•ÉÉ½É½Õ¹Ğ°(€€€€€€MU4¡M]!8±½İ•È¡•Ù•¹Ğ¤1%-€œ•É…Í ”œ=H±½İ•È¡•Ù•¹Ğ¤1%-€œ•Õ¹…Õ¡Ğ”œ(€€€€€€€€€€€€=H±½İ•È¡=1M¡‘•Ñ…¥°°€œœ¤¤1%-€œ•É…Í ”œ=H±½İ•È¡=1M¡‘•Ñ…¥°°€œœ¤¤1%-€œ•Õ¹…Õ¡Ğ”œ(€€€€€€€€€€Q!8€Ä1M€À9¤LÉ…Í¡½Õ¹Ğ(€€€€I=4…Õ‘¥Ñ}±½Í€°(€€€€¤(€€€€¹•Ğ ¤…Ìì•ÉÉ½É½Õ¹Ğè¹Õµ‰•Èğ¹Õ±°ìÉ…Í¡½Õ¹Ğè¹Õµ‰•Èğ¹Õ±°ôì(€½¹ÍĞÕÍ…”€ô‘…Ñ…‰…Í”(€€€€¹ÁÉ•Á…É” (€€€€€€M1P=U9P ¨¤L…±±½Õ¹Ğ°=1M¡MU4¡Ñ½Ñ…±}Ñ½­•¹Ì¤°€À¤LÑ½­•¹Q½Ñ…°I=4…½Õ¹Ñ}Ñ½­•¹}ÕÍ…”œ°(€€€€¤(€€€€¹•Ğ ¤…Ìì…±±½Õ¹Ğè¹Õµ‰•ÈìÑ½­•¹Q½Ñ…°è¹Õµ‰•Èôì(€É•ÑÕÉ¸ì(€€€ÕÁÑ¥µ•M•Œè5…Ñ ¹É½Õ¹¡ÁÉ½•ÍÌ¹ÕÁÑ¥µ” ¤¤°(€€€¹½‘•Y•ÉÍ¥½¸èÁÉ½•ÍÌ¹Ù•ÉÍ¥½¸°(€€€µ•µ½ÉåIÍÍ5ˆè5…Ñ ¹É½Õ¹¡µ•µ½Éä¹ÉÍÌ€¼€ÄÀÈĞ€¼€ÄÀÈĞ¤°(€€€µ•µ½Éå!•…ÁUÍ•‘5ˆè5…Ñ ¹É½Õ¹¡µ•µ½Éä¹¡•…ÁUÍ•€¼€ÄÀÈĞ€¼€ÄÀÈĞ¤°(€€€ÁÕUÍ•É5Ìè5…Ñ ¹É½Õ¹¡ÁÔ¹ÕÍ•È€¼€ÄÀÀÀ¤°(€€€ÁÕMåÍÑ•µ5Ìè5…Ñ ¹É½Õ¹¡ÁÔ¹ÍåÍÑ•´€¼€ÄÀÀÀ¤°(€€€…Ñ¥Ù•=É…¹¥é…Ñ¥½¹Ìè½É…¹¥é…Ñ¥½¹Ì¹½Õ¹Ğ°(€€€…Ñ¥Ù•½Õ¹ÑÌè…½Õ¹ÑÌ¹½Õ¹Ğ°(€€€…Õ‘¥ÑÉÉ½É½Õ¹Ğè…Õ‘¥Ğ¹•ÉÉ½É½Õ¹Ğ€üü€À°(€€€…Õ‘¥ÑÉ…Í¡½Õ¹Ğè…Õ‘¥Ğ¹É…Í¡½Õ¹Ğ€üü€À°(€€€…•¹Ñ…±±½Õ¹ĞèÕÍ…”¹…±±½Õ¹Ğ°(€€€Ñ½­•¹Q½Ñ…°èÕÍ…”¹Ñ½­•¹Q½Ñ…°°(€€€ÍÕ•ÍÍI…Ñ”è¹Õ±°°(€€€…Ù1…Ñ•¹å5Ìè¹Õ±°°(€ôì)ô()•áÁ½ÉĞ™Õ¹Ñ¥½¸•ÑAÉ¥Ù…Ñ••Á±½åµ•¹ÑMÑ…ÑÕÌ (€ÍÑ½É”è•Á±½åµ•¹ÑI•Á½Í¥Ñ½ÉåMÑ½É”°(¤èAÉ¥Ù…Ñ••Á±½åµ•¹ÑMÑ…ÑÕÌì(€½¹ÍĞÑ•±•µ•ÑÉä€ô•ÑQ•±•µ•ÑÉåM•ÑÑ¥¹Ì¡ÍÑ½É”¤ì(€½¹ÍĞ‰¥±±¥¹MÑ½É”€ôÉ•…Ñ••Á±½åµ•¹Ñ	¥±±¥¹UÍ…•MÑ½É”¡ÍÑ½É”¤ì(€½¹ÍĞ‰¥±±¥¹MÕµµ…Éä€ô•Ñ	¥±±¥¹UÍ…•EÕ•Õ•MÕµµ…Éä¡‰¥±±¥¹MÑ½É”¤ì(€±•ĞÉ••¥ÁÑ-•äèAÉ¥Ù…Ñ••Á±½åµ•¹ÑMÑ…ÑÕÍl‰¥±±¥¹œul•á•ÕÑ¥½¹I••¥ÁĞul­•ät€ô¹Õ±°ì(€±•ĞÉ••¥ÁÑ-•åÉÉ½ÈèÍÑÉ¥¹œğ¹Õ±°€ô¹Õ±°ì(€ÑÉäì(€€€É••¥ÁÑ-•ä€ô•Ñ	¥±±¥¹á•ÕÑ¥½¹I••¥ÁÑ-•ä¡‰¥±±¥¹MÑ½É”¤ì(€ô…Ñ €¡•ÉÉ½È¤ì(€€€É••¥ÁÑ-•åÉÉ½È€ôÍ…™•ÉÉ½É5•ÍÍ…”¡•ÉÉ½È¤ì(€ô(€É•ÑÕÉ¸ì(€€€‘•Á±½åµ•¹Ñ%è•Ñ•Á±½åµ•¹Ñ%¡ÍÑ½É”¤°(€€€µ…¡¥¹•¥¹•ÉÁÉ¥¹Ğè•Ñ5…¡¥¹•¥¹•ÉÁÉ¥¹Ğ ¤°(€€€±¥•¹Í”è•Ñ•Á±½åµ•¹Ñ1¥•¹Í”¡ÍÑ½É”¤°(€€€Ñ•±•µ•ÑÉäèì€¸¸¹Ñ•±•µ•ÑÉä°€¸¸¹•ÑQ•±•µ•ÑÉåEÕ•Õ•MÕµµ…Éä¡ÍÑ½É”¤ô°(€€€‰¥±±¥¹œèì(€€€€€€¸¸¹‰¥±±¥¹MÕµµ…Éä°(€€€€€…‘µ¥ÍÍ¥½¸è•Ñ	¥±±¥¹‘µ¥ÍÍ¥½¹EÕ•Õ•MÕµµ…Éä (€€€€€€€‰¥±±¥¹MÑ½É”°(€€€€€€¤°(€€€€€•á•ÕÑ¥½¹I••¥ÁĞèì(€€€€€€€ÁÉ½Ñ½½°è€•á•ÕÑ¥½¹}É••¥ÁÑ}ØÈœ°(€€€€€€€­•äèÉ••¥ÁÑ-•ä°(€€€€€€€É•¥ÍÑÉ…Ñ¥½¹I•ÅÕ¥É•è‰¥±±¥¹MÕµµ…Éä¹Í•¹Ğ€ôôô€À°(€€€€€€€•ÉÉ½ÈèÉ••¥ÁÑ-•åÉÉ½È°(€€€€€ô°(€€€€€•Ù¥‘•¹•QÉÕÍĞè€Í¥¹•‘}•á•ÕÑ¥½¹}É••¥ÁÑ}ØÈœ°(€€€ô°(€€€‘…Ñ…	½Õ¹‘…Éäèì(€€€€€ÕÁ±½…‘Í½¹Ñ•¹Ñ	å•™…Õ±Ğè™…±Í”°(€€€€€¥¹±Õ‘•ÍUÍ•É5•ÍÍ…•Ìè™…±Í”°(€€€€€¥¹±Õ‘•Í¥±•Ìè™…±Í”°(€€€€€¥¹±Õ‘•Í5••Ñ¥¹Õ‘¥¼è™…±Í”°(€€€€€‘•™…Õ±ÑA…å±½…èl(€€€€€€€€±¥•¹Í”ÍÑ…ÑÕÌœ°(€€€€€€€€Ù•ÉÍ¥½¸œ°(€€€€€€€€µ½‘Õ±”ÕÍ…”½Õ¹Ñ•ÉÌœ°(€€€€€€€€•ÉÉ½È½‘•Ìœ°(€€€€€€€€ÉÕ¹Ñ¥µ”¡•…±Ñ œ°(€€€€€t°(€€€ô°(€€€µ½‘Õ±•…Ñ…±½œè±¥•¹Í•5½‘Õ±•…Ñ…±½œ ¤°(€€€ÉÕ¹Ñ¥µ•!•…±Ñ è•Ñ•Á±½åµ•¹ÑIÕ¹Ñ¥µ•!•…±Ñ ¡ÍÑ½É”¤°(€ôì)ô()•áÁ½ÉĞ™Õ¹Ñ¥½¸•áÁ½ÉÑ•Á±½åµ•¹Ñ¥…¹½ÍÑ¥Ì (€ÍÑ½É”è•Á±½åµ•¹ÑI•Á½Í¥Ñ½ÉåMÑ½É”°(€¥¹ÁÕĞèì¥¹±Õ‘•I•‘…Ñ•‘M…µÁ±•Ìüè‰½½±•…¸ô€ôíô°(¤èI•½ÉñÍÑÉ¥¹œ°Õ¹­¹½İ¸øì(€½¹ÍĞ‘…Ñ…‰…Í”€ôÍÑ½É”¹‘ˆ ¤ì(€½¹ÍĞ½ÉÌ€ô‘…Ñ…‰…Í”(€€€€¹ÁÉ•Á…É” M1P=U9P ¨¤L½Õ¹ĞI=4½É…¹¥é…Ñ¥½¹Ìœ¤(€€€€¹•Ğ ¤…Ìì½Õ¹Ğè¹Õµ‰•Èôì(€½¹ÍĞ…½Õ¹ÑÌ€ô‘…Ñ…‰…Í”(€€€€¹ÁÉ•Á…É” (€€€€€€‰M1P=U9P ¨¤L½Õ¹ĞI=4…½Õ¹ÑÌ]!I‘•±•Ñ•‘}…Ğ%L9U109ÍÑ…ÑÕÌ€ô€…Ñ¥Ù”œˆ°(€€€€¤(€€€€¹•Ğ ¤…Ìì½Õ¹Ğè¹Õµ‰•Èôì(€½¹ÍĞÑ¥­•ÑÌ€ô‘…Ñ…‰…Í”(€€€€¹ÁÉ•Á…É” M1PÍÑ…ÑÕÌ°=U9P ¨¤L½Õ¹ĞI=4¥Ñ}Ñ¥­•ÑÌI=U@	dÍÑ…ÑÕÌœ¤(€€€€¹…±° ¤ì(€½¹ÍĞÉ••¹ÑÉÉ½ÉÌ€ô‘…Ñ…‰…Í”(€€€€¹ÁÉ•Á…É” (€€€€€M1P•Ù•¹Ğ°‘•Ñ…¥°°É•…Ñ•‘}…ĞI=4…Õ‘¥Ñ}±½Ì(€€€€]!I±½İ•È¡•Ù•¹Ğ¤1%-€œ••ÉÉ½È”œ=H±½İ•È¡•Ù•¹Ğ¤1%-€œ•™…¥°”œ(€€€€=IH	dÉ•…Ñ•‘}…ĞM1%5%P€ÈÁ€°(€€€€¤(€€€€¹…±° ¤ì(€É•ÑÕÉ¸ì(€€€•¹•É…Ñ•‘Ğè¹•Ü…Ñ” ¤¹Ñ½%M=MÑÉ¥¹œ ¤°(€€€‘•Á±½åµ•¹Ğè•ÑAÉ¥Ù…Ñ••Á±½åµ•¹ÑMÑ…ÑÕÌ¡ÍÑ½É”¤°(€€€‘…Ñ…‰…Í”èÍÑ½É”¹‘…Ñ…‰…Í•I•…‘¥¹•ÍÌ ¤°(€€€½Õ¹ÑÌèì½É…¹¥é…Ñ¥½¹Ìè½ÉÌ¹½Õ¹Ğ°…Ñ¥Ù•½Õ¹ÑÌè…½Õ¹ÑÌ¹½Õ¹Ğô°(€€€Ñ¥­•ÑÌ°(€€€É••¹ÑÉÉ½ÉÌ°(€€€É•‘…Ñ•‘M…µÁ±•Í%¹±Õ‘•è¥¹ÁÕĞ¹¥¹±Õ‘•I•‘…Ñ•‘M…µÁ±•Ì€ôôôÑÉÕ”°(€€€ÁÉ¥Ù…äè(€€€€€€9¼¡…Ğ½¹Ñ•¹Ğ°™¥±”‰½‘ä°µ••Ñ¥¹œ…Õ‘¥¼°½ÈÉ…ÜÕÁ±½…‘•‘½Õµ•¹Ğ¥Ì¥¹±Õ‘•‰ä‘•™…Õ±Ğ¸œ°(€ôì)ô()•áÁ½ÉĞ™Õ¹Ñ¥½¸¥Í1¥•¹Í•UÍ…‰±•½É=É…¹¥é…Ñ¥½¹•…ÑÕÉ” (€ÍÑ½É”è•Á±½åµ•¹ÑI•Á½Í¥Ñ½ÉåMÑ½É”°(€™•…ÑÕÉ”è=É…¹¥é…Ñ¥½¹•…ÑÕÉ•-•ä°(¤è‰½½±•…¸ì(€½¹ÍĞ±¥•¹Í”€ô•Ñ•Á±½åµ•¹Ñ1¥•¹Í”¡ÍÑ½É”¤ì(€¥˜€ …±¥•¹Í”¹•¹™½É”€˜˜l…Ñ¥Ù”œ°€•áÁ¥É¥¹œœ°€É…”t¹¥¹±Õ‘•Ì¡±¥•¹Í”¹ÍÑ…ÑÕÌ¤¤É•ÑÕÉ¸ÑÉÕ”ì(€¥˜€ …l…Ñ¥Ù”œ°€•áÁ¥É¥¹œœ°€É…”t¹¥¹±Õ‘•Ì¡±¥•¹Í”¹ÍÑ…ÑÕÌ¤¤É•ÑÕÉ¸™…±Í”ì(€™½È€¡½¹ÍĞµ½‘Õ±•9…µ”½˜±¥•¹Í”¹µ½‘Õ±•Ì¤ì(€€€¥˜€¡1%9M}5=U1}QUIMmµ½‘Õ±•9…µ•tü¹¥¹±Õ‘•Ì¡™•…ÑÕÉ”¤¤É•ÑÕÉ¸ÑÉÕ”ì(€ô(€É•ÑÕÉ¸™…±Í”ì)ô()•áÁ½ÉĞ™Õ¹Ñ¥½¸¥Í1¥•¹Í•I•ÍÑÉ¥Ñ•¡ÍÑ½É”è•Á±½åµ•¹ÑI•Á½Í¥Ñ½ÉåMÑ½É”¤è‰½½±•…¸ì(€½¹ÍĞ±¥•¹Í”€ô•Ñ•Á±½åµ•¹Ñ1¥•¹Í”¡ÍÑ½É”¤ì(€É•ÑÕÉ¸€ (€€€±¥•¹Í”¹•¹™½É”€˜˜(€€€€…l…Ñ¥Ù”œ°€•áÁ¥É¥¹œœ°€É…”t¹¥¹±Õ‘•Ì¡±¥•¹Í”¹ÍÑ…ÑÕÌ¤(€€¤ì)ô(
+  return toDeploymentLicenseView(store, row ?? null);
+}
+
+export function importDeploymentLicense(
+  store: DeploymentRepositoryStore,
+  raw: unknown,
+): DeploymentLicenseView {
+  const envelope = safeJsonObject(raw);
+  const payload = safeJsonObject(envelope.license ?? envelope.payload);
+  if (LICENSE_ENCRYPTED_SECRETS_FIELD in payload) {
+    throw new Error('license payload contains a reserved field');
+  }
+  const signature =
+    typeof envelope.signature === 'string' ? envelope.signature : '';
+  const declaredSigningKeyId = typeof envelope.signingKeyId === 'string'
+    ? envelope.signingKeyId
+    : null;
+  const verification = verifyDeploymentLicensePayload(
+    store,
+    payload,
+    signature,
+    declaredSigningKeyId,
+  );
+  if (!verification.valid)
+    throw new Error('license signature invalid');
+  const deploymentId = String(payload.deploymentId || '');
+  if (deploymentId !== getDeploymentId(store))
+    throw new Error('license deploymentId mismatch');
+  const machineFingerprint = String(payload.machineFingerprint || '');
+  if (machineFingerprint !== getMachineFingerprint())
+    throw new Error('license machineFingerprint mismatch');
+  const organizationId = String(payload.organizationId || '');
+  if (!organizationId) throw new Error('license organizationId required');
+  const organization = store.db()
+    .prepare('SELECT id FROM organizations WHERE id = ?')
+    .get(organizationId) as { id: string } | undefined;
+  if (!organization) throw new Error('license organizationId mismatch');
+  const modules = Array.isArray(payload.modules)
+    ? [...new Set(payload.modules
+        .filter((item): item is string => typeof item === 'string' && item.length > 0)
+        .map((item) => canonicalLicenseCapabilityId(item) ?? item))]
+    : [];
+  const knownModules = new Set(
+    licenseModuleCatalog().map((entry) => entry.module),
+  );
+  const unknownModule = modules.find((moduleName) => !knownModules.has(moduleName));
+  if (unknownModule) throw new Error(`license module unknown: ${unknownModule}`);
+  const expiresAtMs = Number(
+    payload.expiresAtMs ?? Date.parse(String(payload.expiresAt || '')),
+  );
+  const parsedIssuedAtMs = Date.parse(String(payload.issuedAt || ''));
+  const issuedAtMs = Number(
+    payload.issuedAtMs ??
+      (Number.isFinite(parsedIssuedAtMs) ? parsedIssuedAtMs : Date.now()),
+  );
+  const seatLimit = Math.max(0, Math.floor(Number(payload.seatLimit ?? 0)));
+  const revision = Math.max(1, Math.floor(Number(payload.revision ?? 1)));
+  const gracePeriodMs = Math.max(0, Math.floor(Number(payload.gracePeriodMs ?? 0)));
+  const seatEnforcement = payload.seatEnforcement === 'enforce' ? 'enforce' : 'monitor';
+  const offline = payload.offline !== false;
+  const billingEnforcement = payload.billingEnforcement === 'enforce'
+    ? 'enforce'
+    : 'disabled';
+  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= 0)
+    throw new Error('license expiresAt invalid');
+  if (!Number.isFinite(issuedAtMs) || issuedAtMs <= 0)
+    throw new Error('license issuedAt invalid');
+  if (issuedAtMs > Date.now() + 5 * 60 * 1000)
+    throw new Error('license issuedAt is in the future');
+  if (expiresAtMs <= issuedAtMs)
+    throw new Error('license expiresAt must be after issuedAt');
+  if (seatLimit <= 0) throw new Error('license seatLimit must be positive');
+  if (!Number.isFinite(revision)) throw new Error('license revision invalid');
+  if (!Number.isFinite(gracePeriodMs) || gracePeriodMs > 30 * 24 * 60 * 60 * 1000)
+    throw new Error('license gracePeriodMs invalid');
+  if (offline && seatEnforcement === 'enforce')
+    throw new Error('offline license cannot enforce real-time seat usage');
+  if (offline && billingEnforcement === 'enforce')
+    throw new Error('offline license cannot enforce real-time billing');
+  if (modules.length === 0) throw new Error('license modules required');
+  const id = String(payload.id || `lic_${randomUUID().replace(/-/g, '')}`);
+  const telemetryAllowed = payload.telemetryAllowed !== false;
+  if (
+    telemetryAllowed &&
+    (typeof payload.telemetryToken !== 'string' ||
+      payload.telemetryToken.length < 32)
+  ) {
+    throw new Error('license telemetryToken required');
+  }
+  const leaseEndpoint =
+    typeof payload.leaseEndpoint === 'string'
+      ? payload.leaseEndpoint.trim()
+      : '';
+  if (!offline) {
+    let parsedLeaseEndpoint: URL;
+    try {
+      parsedLeaseEndpoint = new URL(leaseEndpoint);
+    } catch {
+      throw new Error('online license leaseEndpoint invalid');
+    }
+    if (parsedLeaseEndpoint.protocol !== 'https:')
+      throw new Error('online license leaseEndpoint must use HTTPS');
+    if (
+      typeof payload.leaseToken !== 'string' ||
+      payload.leaseToken.length < 32
+    ) {
+      throw new Error('online license leaseToken required');
+    }
+    if (billingEnforcement === 'enforce') {
+      let billingHoldEndpoint: URL;
+      try {
+        billingHoldEndpoint = typeof payload.billingHoldEndpoint === 'string'
+          ? new URL(payload.billingHoldEndpoint)
+          : new URL('/v1/billing/holds', parsedLeaseEndpoint);
+      } catch {
+        throw new Error('online license billingHoldEndpoint invalid');
+      }
+      if (billingHoldEndpoint.protocol !== 'https:') {
+        throw new Error('online license billingHoldEndpoint must use HTTPS');
+      }
+    }
+  }
+  store.db()
+    .prepare(
+      `INSERT INTO deployment_license
+       (id, revision, deployment_id, organization_id, machine_fingerprint, customer_name, plan,
+        expires_at_ms, seat_limit, grace_period_ms, seat_enforcement, modules_json,
+        offline, telemetry_allowed, issued_at_ms,
+        revoked_at_ms, signature, signature_algorithm, signing_key_id, lease_endpoint,
+        raw_json, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ed25519', ?, ?, ?, datetime('now'))
+     ON CONFLICT(id) DO UPDATE SET
+       revision = excluded.revision,
+       deployment_id = excluded.deployment_id,
+       organization_id = excluded.organization_id,
+       machine_fingerprint = excluded.machine_fingerprint,
+       customer_name = excluded.customer_name,
+       plan = excluded.plan,
+       expires_at_ms = excluded.expires_at_ms,
+       seat_limit = excluded.seat_limit,
+       grace_period_ms = excluded.grace_period_ms,
+       seat_enforcement = excluded.seat_enforcement,
+       modules_json = excluded.modules_json,
+       offline = excluded.offline,
+       telemetry_allowed = excluded.telemetry_allowed,
+       issued_at_ms = excluded.issued_at_ms,
+       revoked_at_ms = excluded.revoked_at_ms,
+       signature = excluded.signature,
+       signature_algorithm = excluded.signature_algorithm,
+       signing_key_id = excluded.signing_key_id,
+       lease_endpoint = excluded.lease_endpoint,
+       raw_json = excluded.raw_json,
+       updated_at = excluded.updated_at`,
+    )
+    .run(
+      id,
+      revision,
+      deploymentId,
+      organizationId,
+      machineFingerprint,
+      String(payload.customerName || 'Private customer'),
+      String(payload.plan || 'enterprise'),
+      expiresAtMs,
+      seatLimit,
+      gracePeriodMs,
+      seatEnforcement,
+      JSON.stringify(modules),
+      offline ? 1 : 0,
+      telemetryAllowed ? 1 : 0,
+      issuedAtMs,
+      payload.revokedAtMs == null ? null : Number(payload.revokedAtMs),
+      signature,
+      verification.keyId,
+      offline ? null : leaseEndpoint,
+      protectLicensePayload(store, payload, id),
+    );
+  store.db()
+    .prepare('DELETE FROM deployment_license_leases WHERE license_id = ?')
+    .run(id);
+  store.audit(
+    'deployment_license_import',
+    null,
+    `License imported: ${id}`,
+    store.defaultOrganizationId,
+  );
+  return getDeploymentLicense(store);
+}
+
+export function importDeploymentLicenseLease(
+  store: DeploymentRepositoryStore,
+  raw: unknown,
+): DeploymentLicenseView {
+  const license = getDeploymentLicense(store);
+  if (license.id === 'unlicensed' || license.offline)
+    throw new Error('online license required');
+  const envelope = safeJsonObject(raw);
+  const payload = safeJsonObject(envelope.lease ?? envelope.payload);
+  const signature =
+    typeof envelope.signature === 'string' ? envelope.signature : '';
+  const declaredSigningKeyId = typeof envelope.signingKeyId === 'string'
+    ? envelope.signingKeyId
+    : null;
+  const verification = verifyDeploymentLicensePayload(
+    store,
+    payload,
+    signature,
+    declaredSigningKeyId,
+  );
+  if (!verification.valid) throw new Error('license lease signature invalid');
+  if (String(payload.licenseId || '') !== license.id)
+    throw new Error('license lease licenseId mismatch');
+  if (String(payload.deploymentId || '') !== license.deploymentId)
+    throw new Error('license lease deploymentId mismatch');
+  if (String(payload.machineFingerprint || '') !== getMachineFingerprint())
+    throw new Error('license lease machineFingerprint mismatch');
+  const issuedAtMs = Number(payload.issuedAtMs);
+  const expiresAtMs = Number(payload.expiresAtMs);
+  if (!Number.isFinite(issuedAtMs) || !Number.isFinite(expiresAtMs))
+    throw new Error('license lease timestamps invalid');
+  if (issuedAtMs > Date.now() + 5 * 60 * 1000 || expiresAtMs <= Date.now())
+    throw new Error('license lease is not active');
+  if (expiresAtMs - issuedAtMs > 24 * 60 * 60 * 1000)
+    throw new Error('license lease duration exceeds 24 hours');
+  const leaseId = String(payload.id || '');
+  if (!leaseId) throw new Error('license lease id required');
+  const refreshedAtMs = Date.now();
+  store.db()
+    .prepare(
+      `INSERT INTO deployment_license_leases
+       (license_id, lease_id, deployment_id, machine_fingerprint, issued_at_ms,
+        expires_at_ms, revoked_at_ms, signature, signature_algorithm, signing_key_id,
+        raw_json, last_refresh_at_ms, last_error, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ed25519', ?, ?, ?, NULL, datetime('now'))
+       ON CONFLICT(license_id) DO UPDATE SET
+         lease_id = excluded.lease_id,
+         deployment_id = excluded.deployment_id,
+         machine_fingerprint = excluded.machine_fingerprint,
+         issued_at_ms = excluded.issued_at_ms,
+         expires_at_ms = excluded.expires_at_ms,
+         revoked_at_ms = excluded.revoked_at_ms,
+         signature = excluded.signature,
+         signature_algorithm = excluded.signature_algorithm,
+         signing_key_id = excluded.signing_key_id,
+         raw_json = excluded.raw_json,
+         last_refresh_at_ms = excluded.last_refresh_at_ms,
+         last_error = NULL,
+         updated_at = excluded.updated_at`,
+    )
+    .run(
+      license.id,
+      leaseId,
+      license.deploymentId,
+      getMachineFingerprint(),
+      issuedAtMs,
+      expiresAtMs,
+      payload.revokedAtMs == null ? null : Number(payload.revokedAtMs),
+      signature,
+      verification.keyId,
+      JSON.stringify(payload),
+      refreshedAtMs,
+    );
+  store.audit(
+    'deployment_license_lease_import',
+    null,
+    `License lease imported: ${leaseId}`,
+    store.defaultOrganizationId,
+  );
+  return getDeploymentLicense(store);
+}
+
+export async function refreshDeploymentLicenseLease(
+  store: DeploymentRepositoryStore,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ refreshed: boolean; skippedReason: string | null; error: string | null }> {
+  const license = getDeploymentLicense(store);
+  if (license.id === 'unlicensed')
+    return { refreshed: false, skippedReason: 'license_missing', error: null };
+  if (license.offline)
+    return { refreshed: false, skippedReason: 'offline_license', error: null };
+  if (!license.lease.endpoint)
+    return { refreshed: false, skippedReason: 'lease_endpoint_missing', error: null };
+  const payload = latestLicensePayload(store);
+  const leaseToken = payload.leaseToken;
+  if (typeof leaseToken !== 'string' || leaseToken.length < 32) {
+    return { refreshed: false, skippedReason: 'lease_token_missing', error: null };
+  }
+  try {
+    const response = await fetchImpl(license.lease.endpoint, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${leaseToken}`,
+        'content-type': 'application/json',
+        'user-agent': 'Otto-Private-Deployment/1',
+      },
+      body: JSON.stringify({
+        version: 1,
+        licenseId: license.id,
+        deploymentId: license.deploymentId,
+        organizationId: license.organizationId,
+        machineFingerprint: getMachineFingerprint(),
+        nonce: randomUUID(),
+        activeSeatCount: activeSeatCount(store, license.organizationId),
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error(`license endpoint returned ${response.status}`);
+    const envelope = safeJsonObject(await response.json());
+    if (envelope.licenseEnvelope) {
+      importDeploymentLicense(store, envelope.licenseEnvelope);
+    }
+    importDeploymentLicenseLease(store, envelope);
+    store.writeSetting('license_lease_last_error', '');
+    return { refreshed: true, skippedReason: null, error: null };
+  } catch (error) {
+    const message = safeErrorMessage(error);
+    store.writeSetting('license_lease_last_error', message);
+    store.db()
+      .prepare(
+        `UPDATE deployment_license_leases
+         SET last_error = ?, updated_at = datetime('now')
+         WHERE license_id = ?`,
+      )
+      .run(message, license.id);
+    return { refreshed: false, skippedReason: null, error: message };
+  }
+}
+
+export function getTelemetrySettings(
+  store: DeploymentRepositoryStore,
+): DeploymentTelemetrySettings {
+  return {
+    enabled: store.readSetting('telemetry_enabled') !== 'false',
+    contentMode:
+      store.readSetting('telemetry_content_mode') === 'diagnostic_redacted'
+        ? 'diagnostic_redacted'
+        : 'operational_only',
+    endpoint:
+      store.readSetting('telemetry_endpoint') ||
+      store.telemetryEndpoint() ||
+      null,
+  };
+}
+
+export function updateTelemetrySettings(
+  store: DeploymentRepositoryStore,
+  patch: Partial<DeploymentTelemetrySettings>,
+): DeploymentTelemetrySettings {
+  if (typeof patch.enabled === 'boolean')
+    store.writeSetting('telemetry_enabled', patch.enabled ? 'true' : 'false');
+  if (
+    patch.contentMode === 'operational_only' ||
+    patch.contentMode === 'diagnostic_redacted'
+  ) {
+    store.writeSetting('telemetry_content_mode', patch.contentMode);
+  }
+  if (typeof patch.endpoint === 'string')
+    store.writeSetting('telemetry_endpoint', patch.endpoint.trim());
+  store.audit(
+    'deployment_telemetry_update',
+    null,
+    'Telemetry settings updated',
+    store.defaultOrganizationId,
+  );
+  return getTelemetrySettings(store);
+}
+
+export function recordTelemetryEvent(
+  store: DeploymentRepositoryStore,
+  input: {
+    organizationId?: string | null;
+    eventType: string;
+    payload: Record<string, unknown>;
+  },
+): void {
+  const license = getDeploymentLicense(store);
+  const settings = getTelemetrySettings(store);
+  if (!settings.enabled || !license.telemetryAllowed) return;
+  const payload = {
+    deploymentId: getDeploymentId(store),
+    organizationId: input.organizationId ?? null,
+    eventType: input.eventType,
+    createdAtMs: Date.now(),
+    payload: input.payload,
+  };
+  store.db()
+    .prepare(
+      `INSERT INTO telemetry_events
+       (id, deployment_id, organization_id, event_type, payload_json, signature, status, attempts, created_at_ms)
+     VALUES (?, ?, ?, ?, ?, ?, 'queued', 0, ?)`,
+    )
+    .run(
+      `tel_${randomUUID().replace(/-/g, '')}`,
+      payload.deploymentId,
+      payload.organizationId,
+      input.eventType,
+      JSON.stringify(payload),
+      telemetryIntegrityHash(payload),
+      payload.createdAtMs,
+    );
+}
+
+export function getTelemetryQueueSummary(store: DeploymentRepositoryStore): {
+  queued: number;
+  failed: number;
+  sent: number;
+  lastQueuedAt: string | null;
+} {
+  const rows = store.db()
+    .prepare(
+      `SELECT status, COUNT(*) AS count, MAX(created_at_ms) AS lastQueuedAt
+     FROM telemetry_events GROUP BY status`,
+    )
+    .all() as Array<{
+    status: string;
+    count: number;
+    lastQueuedAt: number | null;
+  }>;
+  const summary = {
+    queued: 0,
+    failed: 0,
+    sent: 0,
+    lastQueuedAt: null as string | null,
+  };
+  for (const row of rows) {
+    if (row.status === 'queued') summary.queued = row.count;
+    if (row.status === 'failed') summary.failed = row.count;
+    if (row.status === 'sent') summary.sent = row.count;
+    if (row.status === 'queued' && row.lastQueuedAt)
+      summary.lastQueuedAt = dateFromMs(row.lastQueuedAt);
+  }
+  return summary;
+}
+
+interface TelemetryQueueRow {
+  id: string;
+  deployment_id: string;
+  organization_id: string | null;
+  event_type: string;
+  payload_json: string;
+  signature: string;
+  attempts: number;
+  created_at_ms: number;
+}
+
+export interface TelemetryFlushResult {
+  attempted: number;
+  sent: number;
+  discarded: number;
+  failed: number;
+  skippedReason: string | null;
+}
+
+function latestLicensePayload(
+  store: DeploymentRepositoryStore,
+): Record<string, unknown> {
+  const row = store.db()
+    .prepare('SELECT id, raw_json FROM deployment_license ORDER BY updated_at DESC LIMIT 1')
+    .get() as { id: string; raw_json: string } | undefined;
+  if (!row) return {};
+  try {
+    return restoreLicensePayload(
+      store,
+      safeJsonObject(JSON.parse(row.raw_json)),
+      row.id,
+    );
+  } catch {
+    return {};
+  }
+}
+
+export interface DeploymentUpdatePolicyCredentials {
+  licenseId: string;
+  deploymentId: string;
+  machineFingerprint: string;
+  leaseEndpoint: string;
+  leaseToken: string;
+}
+
+/** Returns decrypted credentials only to the in-process commercial control composition. */
+export function getDeploymentUpdatePolicyCredentials(
+  store: DeploymentRepositoryStore,
+): DeploymentUpdatePolicyCredentials | null {
+  const license = getDeploymentLicense(store);
+  if (license.id === 'unlicensed' || license.offline || !license.lease.endpoint) {
+    return null;
+  }
+  const payload = latestLicensePayload(store);
+  const leaseToken = payload.leaseToken;
+  if (typeof leaseToken !== 'string' || leaseToken.length < 32) return null;
+  return {
+    licenseId: license.id,
+    deploymentId: license.deploymentId,
+    machineFingerprint: getMachineFingerprint(),
+    leaseEndpoint: license.lease.endpoint,
+    leaseToken,
+  };
+}
+
+export function getDeploymentBillingCredentials(
+  store: DeploymentRepositoryStore,
+): DeploymentBillingCredentials | null {
+  const license = getDeploymentLicense(store);
+  if (
+    license.id === 'unlicensed' || license.offline ||
+    !license.lease.endpoint || !license.organizationId ||
+    license.lease.status !== 'active' ||
+    ['missing', 'invalid', 'revoked', 'expired'].includes(license.status)
+  ) return null;
+  const payload = latestLicensePayload(store);
+  const leaseToken = payload.leaseToken;
+  if (typeof leaseToken !== 'string' || leaseToken.length < 32) return null;
+  let endpoint: URL;
+  let holdEndpoint: URL;
+  try {
+    endpoint = typeof payload.executionReceiptEndpoint === 'string'
+      ? new URL(payload.executionReceiptEndpoint)
+      : new URL('/v1/billing/execution-receipts', license.lease.endpoint);
+    holdEndpoint = typeof payload.billingHoldEndpoint === 'string'
+      ? new URL(payload.billingHoldEndpoint)
+      : new URL('/v1/billing/holds', license.lease.endpoint);
+  } catch {
+    return null;
+  }
+  if (
+    endpoint.protocol !== 'https:' || holdEndpoint.protocol !== 'https:' ||
+    endpoint.username || endpoint.password || holdEndpoint.username ||
+    holdEndpoint.password
+  ) return null;
+  return {
+    licenseId: license.id,
+    deploymentId: license.deploymentId,
+    organizationId: license.organizationId,
+    machineFingerprint: getMachineFingerprint(),
+    endpoint: endpoint.toString(),
+    holdEndpoint: holdEndpoint.toString(),
+    enforcement: license.billingEnforcement,
+    leaseToken,
+  };
+}
+
+export function createDeploymentBillingUsageStore(
+  store: DeploymentRepositoryStore,
+): BillingUsageRepositoryStore {
+  return {
+    db: store.db,
+    deploymentId: () => getDeploymentId(store),
+    credentials: () => getDeploymentBillingCredentials(store),
+    fieldCipher: store.fieldCipher,
+  };
+}
+
+/** Migrates legacy plaintext lease and telemetry tokens before accepting traffic. */
+export function ensureDeploymentLicenseSecretsEncrypted(
+  store: DeploymentRepositoryStore,
+): number {
+  const rows = store.db()
+    .prepare('SELECT id, raw_json FROM deployment_license')
+    .all() as Array<{ id: string; raw_json: string }>;
+  let migrated = 0;
+  runInTransaction(store.db(), () => {
+    const update = store.db().prepare(
+      `UPDATE deployment_license
+       SET raw_json = ?, updated_at = datetime('now')
+       WHERE id = ?`,
+    );
+    for (const row of rows) {
+      const payload = safeJsonObject(JSON.parse(row.raw_json));
+      if (LICENSE_ENCRYPTED_SECRETS_FIELD in payload) {
+        restoreLicensePayload(store, payload, row.id);
+        continue;
+      }
+      const hasSecret = LICENSE_SECRET_FIELDS.some(
+        (field) => typeof payload[field] === 'string' && payload[field] !== '',
+      );
+      if (!hasSecret) continue;
+      update.run(protectLicensePayload(store, payload, row.id), row.id);
+      migrated += 1;
+    }
+  });
+  return migrated;
+}
+
+function telemetryRetryDelayMs(attempts: number): number {
+  return Math.min(60 * 60 * 1000, 5_000 * 2 ** Math.min(attempts, 10));
+}
+
+function safeErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/[\r\n]+/g, ' ').slice(0, 300);
+}
+
+function runInTransaction<T>(database: Database, action: () => T): T {
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const result = action();
+    database.exec('COMMIT');
+    return result;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+export async function flushTelemetryQueue(
+  store: DeploymentRepositoryStore,
+  fetchImpl: typeof fetch = fetch,
+  now = Date.now(),
+): Promise<TelemetryFlushResult> {
+  const result: TelemetryFlushResult = {
+    attempted: 0,
+    sent: 0,
+    discarded: 0,
+    failed: 0,
+    skippedReason: null,
+  };
+  const configuredRetentionDays = store.telemetryRetentionDays?.() ?? 90;
+  const retentionDays = Number.isFinite(configuredRetentionDays)
+    ? Math.max(1, Math.min(3650, Math.floor(configuredRetentionDays)))
+    : 90;
+  store.db()
+    .prepare('DELETE FROM telemetry_events WHERE created_at_ms < ?')
+    .run(now - retentionDays * 24 * 60 * 60 * 1000);
+  const settings = getTelemetrySettings(store);
+  const license = getDeploymentLicense(store);
+  if (!settings.enabled) return { ...result, skippedReason: 'disabled' };
+  if (!license.telemetryAllowed)
+    return { ...result, skippedReason: 'license_disallows_telemetry' };
+  if (!settings.endpoint)
+    return { ...result, skippedReason: 'endpoint_missing' };
+  let endpoint: URL;
+  try {
+    endpoint = new URL(settings.endpoint);
+  } catch {
+    return { ...result, skippedReason: 'endpoint_invalid' };
+  }
+  if (endpoint.protocol !== 'https:')
+    return { ...result, skippedReason: 'endpoint_requires_https' };
+  const telemetryToken = latestLicensePayload(store).telemetryToken;
+  if (typeof telemetryToken !== 'string' || telemetryToken.length < 32) {
+    return { ...result, skippedReason: 'telemetry_token_missing' };
+  }
+  const rows = store.db()
+    .prepare(
+      `SELECT id, deployment_id, organization_id, event_type, payload_json,
+              signature, attempts, created_at_ms
+       FROM telemetry_events
+       WHERE status IN ('queued', 'failed')
+         AND (next_attempt_at_ms IS NULL OR next_attempt_at_ms <= ?)
+       ORDER BY created_at_ms ASC
+       LIMIT 50`,
+    )
+    .all(now) as TelemetryQueueRow[];
+  if (rows.length === 0) return result;
+  result.attempted = rows.length;
+  const events: Array<Record<string, unknown>> = [];
+  const validRows: TelemetryQueueRow[] = [];
+  for (const row of rows) {
+    try {
+      const payload = JSON.parse(row.payload_json);
+      if (telemetryIntegrityHash(payload) !== row.signature) {
+        store.db()
+          .prepare(
+            `UPDATE telemetry_events
+             SET status = 'discarded', last_error = ?, updated_at = datetime('now')
+             WHERE id = ?`,
+          )
+          .run('local telemetry integrity mismatch', row.id);
+        result.discarded += 1;
+        continue;
+      }
+      events.push({
+        id: row.id,
+        organizationId: row.organization_id,
+        eventType: row.event_type,
+        createdAtMs: row.created_at_ms,
+        payload,
+        integrity: row.signature,
+      });
+      validRows.push(row);
+    } catch {
+      store.db()
+        .prepare(
+          `UPDATE telemetry_events
+           SET status = 'discarded', last_error = ?, updated_at = datetime('now')
+           WHERE id = ?`,
+        )
+        .run('local telemetry payload invalid', row.id);
+      result.discarded += 1;
+    }
+  }
+  if (events.length === 0) return result;
+  try {
+    const requestBody = {
+      version: 1,
+      deploymentId: getDeploymentId(store),
+      machineFingerprint: getMachineFingerprint(),
+      licenseId: license.id,
+      events,
+    };
+    const requestTimestamp = now;
+    const requestNonce = randomUUID();
+    const response = await fetchImpl(endpoint, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${telemetryToken}`,
+        'content-type': 'application/json',
+        'user-agent': 'Otto-Private-Deployment/1',
+        'x-otto-timestamp': String(requestTimestamp),
+        'x-otto-nonce': requestNonce,
+        'x-otto-signature': signTelemetryRequest({
+          token: telemetryToken,
+          timestamp: requestTimestamp,
+          nonce: requestNonce,
+          body: requestBody,
+        }),
+      },
+      body: JSON.stringify(requestBody),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error(`telemetry endpoint returned ${response.status}`);
+    runInTransaction(store.db(), () => {
+      const statement = store.db().prepare(
+        `UPDATE telemetry_events
+         SET status = 'sent', sent_at_ms = ?, next_attempt_at_ms = NULL,
+             last_error = NULL, updated_at = datetime('now')
+         WHERE id = ?`,
+      );
+      for (const row of validRows) statement.run(now, row.id);
+    });
+    result.sent = validRows.length;
+  } catch (error) {
+    const message = safeErrorMessage(error);
+    runInTransaction(store.db(), () => {
+      const statement = store.db().prepare(
+        `UPDATE telemetry_events
+         SET status = 'failed', attempts = attempts + 1,
+             next_attempt_at_ms = ?, last_error = ?, updated_at = datetime('now')
+         WHERE id = ?`,
+      );
+      for (const row of validRows) {
+        statement.run(
+          now + telemetryRetryDelayMs(row.attempts + 1),
+          message,
+          row.id,
+        );
+      }
+    });
+    result.failed = validRows.length;
+  }
+  return result;
+}
+
+const FORBIDDEN_TELEMETRY_KEYS = new Set([
+  'message',
+  'messages',
+  'content',
+  'file',
+  'files',
+  'attachment',
+  'attachments',
+  'audio',
+  'meetingaudio',
+  'transcript',
+  'prompt',
+  'completion',
+  'document',
+  'documents',
+]);
+
+function telemetryContainsContent(value: unknown, depth = 0): boolean {
+  if (depth > 8) return true;
+  if (Array.isArray(value))
+    return value.some((item) => telemetryContainsContent(item, depth + 1));
+  if (!value || typeof value !== 'object') return false;
+  return Object.entries(value as Record<string, unknown>).some(
+    ([key, item]) =>
+      FORBIDDEN_TELEMETRY_KEYS.has(key.toLowerCase().replace(/[_-]/g, '')) ||
+      telemetryContainsContent(item, depth + 1),
+  );
+}
+
+function bearerToken(authorization: string | undefined): string {
+  const match = /^Bearer\s+(.+)$/i.exec(authorization?.trim() || '');
+  return match?.[1] || '';
+}
+
+function equalSecret(left: string, right: string): boolean {
+  if (!left || left.length !== right.length) return false;
+  return timingSafeEqual(Buffer.from(left), Buffer.from(right));
+}
+
+export function ingestTelemetryBatch(
+  store: DeploymentRepositoryStore,
+  raw: unknown,
+  authorization: string | undefined,
+  authentication: TelemetryRequestAuthentication,
+  now = Date.now(),
+): { accepted: number; duplicates: number } {
+  const secret = store.telemetryIngestSecret();
+  if (secret.length < 32) throw new Error('telemetry ingest is not configured');
+  const body = safeJsonObject(raw);
+  const deploymentId = String(body.deploymentId || '');
+  if (!/^dep_[a-z0-9]{16,64}$/i.test(deploymentId))
+    throw new Error('telemetry deploymentId invalid');
+  const expectedToken = createHmac('sha256', secret)
+    .update(deploymentId)
+    .digest('base64url');
+  if (!equalSecret(bearerToken(authorization), expectedToken))
+    throw new Error('telemetry authorization invalid');
+  const timestamp = Number(authentication.timestamp);
+  const nonce = authentication.nonce?.trim() || '';
+  const signature = authentication.signature?.trim() || '';
+  if (
+    !Number.isFinite(timestamp) ||
+    Math.abs(now - timestamp) > TELEMETRY_REQUEST_MAX_CLOCK_SKEW_MS
+  ) {
+    throw new Error('telemetry request timestamp invalid');
+  }
+  if (!/^[a-zA-Z0-9._:-]{16,128}$/.test(nonce)) {
+    throw new Error('telemetry request nonce invalid');
+  }
+  const expectedSignature = signTelemetryRequest({
+    token: expectedToken,
+    timestamp,
+    nonce,
+    body,
+  });
+  if (!equalSecret(signature, expectedSignature)) {
+    throw new Error('telemetry request signature invalid');
+  }
+  if (!Array.isArray(body.events) || body.events.length === 0 || body.events.length > 100)
+    throw new Error('telemetry events invalid');
+  let accepted = 0;
+  let duplicates = 0;
+  const insert = store.db().prepare(
+    `INSERT OR IGNORE INTO telemetry_ingest_events
+     (deployment_id, event_id, organization_id, event_type, payload_json,
+      integrity, source_created_at_ms, received_at_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  runInTransaction(store.db(), () => {
+    store.db().prepare(
+      'DELETE FROM telemetry_ingest_nonces WHERE received_at_ms < ?',
+    ).run(now - TELEMETRY_REQUEST_MAX_CLOCK_SKEW_MS * 2);
+    try {
+      store.db().prepare(
+        `INSERT INTO telemetry_ingest_nonces
+         (deployment_id, nonce, received_at_ms) VALUES (?, ?, ?)`,
+      ).run(deploymentId, nonce, now);
+    } catch (error) {
+      if (/UNIQUE constraint failed: telemetry_ingest_nonces\./i.test(
+        safeErrorMessage(error),
+      )) {
+        throw new Error('telemetry request replay detected');
+      }
+      throw error;
+    }
+    for (const item of body.events as unknown[]) {
+      const event = safeJsonObject(item);
+      const id = String(event.id || '');
+      const eventType = String(event.eventType || '');
+      const createdAtMs = Number(event.createdAtMs);
+      const integrity = String(event.integrity || '');
+      if (!/^tel_[a-z0-9]{16,64}$/i.test(id) || !/^[a-z0-9_.:-]{2,80}$/i.test(eventType))
+        throw new Error('telemetry event identity invalid');
+      if (!Number.isFinite(createdAtMs) || createdAtMs <= 0 || createdAtMs > now + 5 * 60 * 1000)
+        throw new Error('telemetry event timestamp invalid');
+      if (telemetryContainsContent(event.payload))
+        throw new Error('telemetry content payload forbidden');
+      if (telemetryIntegrityHash(event.payload) !== integrity)
+        throw new Error('telemetry event integrity invalid');
+      const info = insert.run(
+        deploymentId,
+        id,
+        typeof event.organizationId === 'string' ? event.organizationId : null,
+        eventType,
+        JSON.stringify(event.payload),
+        integrity,
+        createdAtMs,
+        now,
+      );
+      if (info.changes === 1) accepted += 1;
+      else duplicates += 1;
+    }
+  });
+  return { accepted, duplicates };
+}
+
+function getDeploymentRuntimeHealth(
+  store: DeploymentRepositoryStore,
+): PrivateDeploymentStatus['runtimeHealth'] {
+  const database = store.db();
+  const memory = process.memoryUsage();
+  const cpu = process.cpuUsage();
+  const organizations = database
+    .prepare(
+      "SELECT COUNT(*) AS count FROM organizations WHERE status = 'active'",
+    )
+    .get() as { count: number };
+  const accounts = database
+    .prepare(
+      "SELECT COUNT(*) AS count FROM accounts WHERE deleted_at IS NULL AND status = 'active'",
+    )
+    .get() as { count: number };
+  const audit = database
+    .prepare(
+      `SELECT
+       SUM(CASE WHEN lower(event) LIKE '%error%' OR lower(event) LIKE '%fail%'
+             OR lower(COALESCE(detail, '')) LIKE '%error%' OR lower(COALESCE(detail, '')) LIKE '%fail%'
+           THEN 1 ELSE 0 END) AS errorCount,
+       SUM(CASE WHEN lower(event) LIKE '%crash%' OR lower(event) LIKE '%uncaught%'
+             OR lower(COALESCE(detail, '')) LIKE '%crash%' OR lower(COALESCE(detail, '')) LIKE '%uncaught%'
+           THEN 1 ELSE 0 END) AS crashCount
+     FROM audit_logs`,
+    )
+    .get() as { errorCount: number | null; crashCount: number | null };
+  const usage = database
+    .prepare(
+      'SELECT COUNT(*) AS callCount, COALESCE(SUM(total_tokens), 0) AS tokenTotal FROM account_token_usage',
+    )
+    .get() as { callCount: number; tokenTotal: number };
+  return {
+    uptimeSec: Math.round(process.uptime()),
+    nodeVersion: process.version,
+    memoryRssMb: Math.round(memory.rss / 1024 / 1024),
+    memoryHeapUsedMb: Math.round(memory.heapUsed / 1024 / 1024),
+    cpuUserMs: Math.round(cpu.user / 1000),
+    cpuSystemMs: Math.round(cpu.system / 1000),
+    activeOrganizations: organizations.count,
+    activeAccounts: accounts.count,
+    auditErrorCount: audit.errorCount ?? 0,
+    auditCrashCount: audit.crashCount ?? 0,
+    agentCallCount: usage.callCount,
+    tokenTotal: usage.tokenTotal,
+    successRate: null,
+    avgLatencyMs: null,
+  };
+}
+
+export function getPrivateDeploymentStatus(
+  store: DeploymentRepositoryStore,
+): PrivateDeploymentStatus {
+  const telemetry = getTelemetrySettings(store);
+  const billingStore = createDeploymentBillingUsageStore(store);
+  const billingSummary = getBillingUsageQueueSummary(billingStore);
+  let receiptKey: PrivateDeploymentStatus['billing']['executionReceipt']['key'] = null;
+  let receiptKeyError: string | null = null;
+  try {
+    receiptKey = getBillingExecutionReceiptKey(billingStore);
+  } catch (error) {
+    receiptKeyError = safeErrorMessage(error);
+  }
+  return {
+    deploymentId: getDeploymentId(store),
+    machineFingerprint: getMachineFingerprint(),
+    license: getDeploymentLicense(store),
+    telemetry: { ...telemetry, ...getTelemetryQueueSummary(store) },
+    billing: {
+      ...billingSummary,
+      admission: getBillingAdmissionQueueSummary(
+        billingStore,
+      ),
+      executionReceipt: {
+        protocol: 'execution_receipt_v2',
+        key: receiptKey,
+        registrationRequired: billingSummary.sent === 0,
+        error: receiptKeyError,
+      },
+      evidenceTrust: 'signed_execution_receipt_v2',
+    },
+    dataBoundary: {
+      uploadsContentByDefault: false,
+      includesUserMessages: false,
+      includesFiles: false,
+      includesMeetingAudio: false,
+      defaultPayload: [
+        'license status',
+        'version',
+        'module usage counters',
+        'error codes',
+        'runtime health',
+      ],
+    },
+    moduleCatalog: licenseModuleCatalog(),
+    runtimeHealth: getDeploymentRuntimeHealth(store),
+  };
+}
+
+export function exportDeploymentDiagnostics(
+  store: DeploymentRepositoryStore,
+  input: { includeRedactedSamples?: boolean } = {},
+): Record<string, unknown> {
+  const database = store.db();
+  const orgs = database
+    .prepare('SELECT COUNT(*) AS count FROM organizations')
+    .get() as { count: number };
+  const accounts = database
+    .prepare(
+      "SELECT COUNT(*) AS count FROM accounts WHERE deleted_at IS NULL AND status = 'active'",
+    )
+    .get() as { count: number };
+  const tickets = database
+    .prepare('SELECT status, COUNT(*) AS count FROM it_tickets GROUP BY status')
+    .all();
+  const recentErrors = database
+    .prepare(
+      `SELECT event, detail, created_at FROM audit_logs
+     WHERE lower(event) LIKE '%error%' OR lower(event) LIKE '%fail%'
+     ORDER BY created_at DESC LIMIT 20`,
+    )
+    .all();
+  return {
+    generatedAt: new Date().toISOString(),
+    deployment: getPrivateDeploymentStatus(store),
+    database: store.databaseReadiness(),
+    counts: { organizations: orgs.count, activeAccounts: accounts.count },
+    tickets,
+    recentErrors,
+    redactedSamplesIncluded: input.includeRedactedSamples === true,
+    privacy:
+      'No chat content, file body, meeting audio, or raw uploaded document is included by default.',
+  };
+}
+
+export function isLicenseUsableForOrganizationFeature(
+  store: DeploymentRepositoryStore,
+  feature: OrganizationFeatureKey,
+): boolean {
+  const license = getDeploymentLicense(store);
+  if (!license.enforce && ['active', 'expiring', 'grace'].includes(license.status)) return true;
+  if (!['active', 'expiring', 'grace'].includes(license.status)) return false;
+  for (const moduleName of license.modules) {
+    if (LICENSE_MODULE_FEATURES[moduleName]?.includes(feature)) return true;
+  }
+  return false;
+}
+
+export function isLicenseRestricted(store: DeploymentRepositoryStore): boolean {
+  const license = getDeploymentLicense(store);
+  return (
+    license.enforce &&
+    !['active', 'expiring', 'grace'].includes(license.status)
+  );
+}
