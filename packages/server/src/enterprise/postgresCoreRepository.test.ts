@@ -5,10 +5,12 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 
+import { currentLegalDocumentReferences } from '../modules/data_governance/index.js';
 import { ENTERPRISE_POSTGRES_MIGRATIONS } from './postgresMigrations.js';
 import {
   createPostgresEnterpriseCoreRepository,
   normalizePostgresEnterprisePhone,
+  type PostgresEnterpriseAccountView,
 } from './postgresCoreRepository.js';
 import type {
   PostgresClientLike,
@@ -22,6 +24,29 @@ function result<Row extends Record<string, unknown>>(
 ): PostgresQueryResult<Row> {
   return { rows, rowCount };
 }
+
+const governanceAccount: PostgresEnterpriseAccountView = {
+  id: 'acc_admin',
+  organizationId: 'org_default',
+  organizationName: 'Otto',
+  accountType: 'enterprise',
+  employeeId: null,
+  username: 'admin',
+  phone: null,
+  feishuOpenId: null,
+  name: 'Administrator',
+  role: 'Administrator',
+  department: null,
+  departmentId: null,
+  positionId: null,
+  positionTitle: null,
+  avatarUrl: null,
+  isAdmin: true,
+  status: 'active',
+  tags: [],
+  createdAt: '2026-08-03T00:00:00.000Z',
+  updatedAt: '2026-08-03T00:00:00.000Z',
+};
 
 describe('PostgreSQL enterprise core authority', () => {
   it('installs authoritative organization, account, session, audit and E2EE tables', () => {
@@ -83,6 +108,67 @@ describe('PostgreSQL enterprise core authority', () => {
     }
     expect(migration!.sql).toContain('code_hash TEXT NOT NULL UNIQUE');
     expect(migration!.sql).not.toContain('code TEXT NOT NULL');
+  });
+
+  it('requires an exact policy hash before PostgreSQL reports current consent', async () => {
+    const references = currentLegalDocumentReferences();
+    const pool: PostgresPoolLike = {
+      connect: vi.fn(),
+      query: vi.fn(async () => result([
+        {
+          document_id: references[0]!.id,
+          document_version: references[0]!.version,
+          policy_hash: references[0]!.hash,
+          accepted_at: new Date('2026-08-03T00:00:00.000Z'),
+        },
+        {
+          document_id: references[1]!.id,
+          document_version: references[1]!.version,
+          policy_hash: '0'.repeat(64),
+          accepted_at: new Date('2026-08-03T00:00:00.000Z'),
+        },
+      ])),
+      end: vi.fn(),
+    };
+    const repository = createPostgresEnterpriseCoreRepository({ pool });
+
+    const profile = await repository.getDataGovernanceProfile(governanceAccount);
+
+    expect(profile.documents.map((document) => document.accepted)).toEqual([
+      true,
+      false,
+    ]);
+    expect(profile.currentConsentComplete).toBe(false);
+  });
+
+  it('records both current document hashes in one PostgreSQL transaction', async () => {
+    const statements: Array<{ sql: string; values: readonly unknown[] }> = [];
+    const client: PostgresClientLike = {
+      query: vi.fn(async (sql: string, values: readonly unknown[] = []) => {
+        statements.push({ sql, values });
+        return result();
+      }),
+      release: vi.fn(),
+    };
+    const pool: PostgresPoolLike = {
+      connect: vi.fn(async () => client),
+      query: vi.fn(),
+      end: vi.fn(),
+    };
+    const repository = createPostgresEnterpriseCoreRepository({ pool });
+    const references = currentLegalDocumentReferences();
+
+    await repository.recordCurrentLegalConsent(governanceAccount, references);
+
+    expect(statements.map((statement) => statement.sql.trim())).toEqual([
+      'BEGIN',
+      expect.stringContaining('INSERT INTO legal_consents'),
+      expect.stringContaining('INSERT INTO legal_consents'),
+      'COMMIT',
+    ]);
+    expect(statements[1]!.values).toContain(references[0]!.hash);
+    expect(statements[2]!.values).toContain(references[1]!.hash);
+    expect(client.release).toHaveBeenCalledOnce();
   });
 
   it('installs opaque MLS transport tables without plaintext or private-key columns', () => {

@@ -8,6 +8,7 @@ import {
   EnterpriseClient,
   EnterpriseJoinStateUncertainError,
   logoutAndPersistEnterpriseSession,
+  type EnterpriseLegalDocumentReference,
 } from './enterprise-client.js';
 import {
   ENTERPRISE_MLS_CIPHERSUITE,
@@ -34,6 +35,11 @@ const E2EE_DEVICE = {
   lastSeenAt: '2026-07-31T00:00:00.000Z',
   revokedAt: null,
 };
+
+const LEGAL_DOCUMENTS = [
+  { id: 'terms', version: '2026-08-03', hash: 'a'.repeat(64) },
+  { id: 'privacy', version: '2026-08-03', hash: 'b'.repeat(64) },
+] satisfies EnterpriseLegalDocumentReference[];
 
 function mockE2eeCrypto(input: {
   decryptContent?: string;
@@ -452,6 +458,7 @@ describe('EnterpriseClient', () => {
     expect(challenge.organization).toEqual({ id: 'org_acme', name: '星河科技' });
     const loggedIn = await client.registerWithSms({
       challengeId: 'sms_1', code: '042731', name: '员工一号', password: 'registered-password', legalConsent: true,
+      legalDocuments: LEGAL_DOCUMENTS,
     });
     expect(loggedIn.account.id).toBe(ACCOUNT.id);
     expect(client.snapshot().token).toBe('sms-session');
@@ -465,6 +472,7 @@ describe('EnterpriseClient', () => {
     });
     expect(JSON.parse((fetchMock.mock.calls[2]?.[1] as RequestInit).body as string)).toEqual({
       challengeId: 'sms_1', code: '042731', name: '员工一号', password: 'registered-password', legalConsent: true,
+      legalDocuments: LEGAL_DOCUMENTS,
     });
   });
 
@@ -1389,6 +1397,7 @@ describe('EnterpriseClient', () => {
       name: '员工一号',
       password: 'registered-password',
       legalConsent: true,
+      legalDocuments: LEGAL_DOCUMENTS,
     })).rejects.toThrow('企业服务器版本过旧或功能不完整，请联系管理员升级后重试');
 
     expect(fetchMock).toHaveBeenCalledOnce();
@@ -1746,6 +1755,7 @@ describe('EnterpriseClient', () => {
       name: '员工 A',
       password: 'password-a',
       legalConsent: true,
+      legalDocuments: LEGAL_DOCUMENTS,
     });
     await vi.waitFor(() => expect(fetchMock.mock.calls.some(
       ([url]) => String(url) === 'https://a.otto.test/enterprise/auth/register/sms/verify',

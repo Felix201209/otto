@@ -290,6 +290,21 @@ export interface EnterpriseSmsChallenge {
   message: string;
   registrationMode?: 'personal' | 'enterprise';
   organization: { id: string; name: string } | null;
+  legalDocuments: EnterpriseLegalDocumentReference[];
+}
+
+export interface EnterpriseLegalDocumentReference {
+  id: 'terms' | 'privacy';
+  version: string;
+  hash: string;
+}
+
+export interface EnterpriseLegalDocumentSection {
+  id: string;
+  title: string;
+  paragraphs: string[];
+  items?: string[];
+  important?: boolean;
 }
 
 export interface EnterpriseSmsLoginChallenge {
@@ -340,6 +355,7 @@ export interface EnterpriseDataGovernanceProfile {
     effectiveAt: string;
     required: true;
     summary: string[];
+    sections: EnterpriseLegalDocumentSection[];
     sourceUrls: string[];
     hash: string;
     accepted: boolean;
@@ -1439,6 +1455,7 @@ export interface OttoBridge {
     name: string;
     password: string;
     legalConsent: true;
+    legalDocuments: EnterpriseLegalDocumentReference[];
   }): Promise<{
     serverUrl: string;
     account: EnterpriseAccount;
@@ -1464,7 +1481,9 @@ export interface OttoBridge {
   ): Promise<EnterpriseAccount>;
   enterpriseAccountDelete(id: string): Promise<{ id: string; deleted: true }>;
   enterpriseDataGovernanceGet(): Promise<EnterpriseDataGovernanceProfile>;
-  enterpriseLegalAccept(): Promise<EnterpriseDataGovernanceProfile>;
+  enterpriseLegalAccept(
+    documents: EnterpriseLegalDocumentReference[],
+  ): Promise<EnterpriseDataGovernanceProfile>;
   enterprisePrivacyExport(): Promise<{ ok: true; path: string } | null>;
   enterprisePrivacyDelete(input: {
     password: string;
@@ -2453,6 +2472,7 @@ const bridge: OttoBridge = {
     name: string;
     password: string;
     legalConsent: true;
+    legalDocuments: EnterpriseLegalDocumentReference[];
   }): Promise<{
     serverUrl: string;
     account: EnterpriseAccount;
@@ -2519,9 +2539,12 @@ const bridge: OttoBridge = {
       IPC.enterpriseDataGovernanceGet,
     ) as Promise<EnterpriseDataGovernanceProfile>;
   },
-  enterpriseLegalAccept(): Promise<EnterpriseDataGovernanceProfile> {
+  enterpriseLegalAccept(
+    documents: EnterpriseLegalDocumentReference[],
+  ): Promise<EnterpriseDataGovernanceProfile> {
     return ipcRenderer.invoke(
       IPC.enterpriseLegalAccept,
+      documents,
     ) as Promise<EnterpriseDataGovernanceProfile>;
   },
   enterprisePrivacyExport(): Promise<{ ok: true; path: string } | null> {

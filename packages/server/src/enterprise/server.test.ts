@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { canonicalJson } from '../modules/commercial_control/signedEnvelope.js';
+import { currentLegalDocumentReferences } from '../modules/data_governance/index.js';
 import {
   e2eeDeviceApprovalSignaturePayload,
   e2eeMessageSignaturePayload,
@@ -163,6 +164,7 @@ const ENV_KEYS = [
   'OTTO_TELEMETRY_ENDPOINT',
   'OTTO_DATA_CONTROLLER_NAME',
   'OTTO_PRIVACY_CONTACT',
+  'OTTO_LEGAL_DOCUMENTS_APPROVED',
   'OTTO_DATA_REGION',
   'OTTO_DATA_RESIDENCY',
   'OTTO_CROSS_BORDER_DATA_ENABLED',
@@ -242,7 +244,9 @@ describe('数据治理自助闭环', { timeout: 30_000 }, () => {
     });
     expect(publicLegal.status).toBe(200);
     expect(publicLegal.headers.get('content-type')).toContain('text/html');
-    expect(await publicLegal.text()).toContain('Otto 用户协议与隐私规则');
+    const legalHtml = await publicLegal.text();
+    expect(legalHtml).toContain('Otto 用户协议与隐私规则');
+    expect(legalHtml).toContain('正文 SHA-256');
 
     const profile = await fetch(`${base}/enterprise/privacy`, {
       headers: auth,
@@ -257,7 +261,10 @@ describe('数据治理自助闭环', { timeout: 30_000 }, () => {
     const accept = await fetch(`${base}/enterprise/privacy/accept`, {
       method: 'POST',
       headers: { ...auth, 'content-type': 'application/json' },
-      body: JSON.stringify({ accepted: true }),
+      body: JSON.stringify({
+        accepted: true,
+        documents: currentLegalDocumentReferences(),
+      }),
     });
     expect(accept.status).toBe(200);
     await expect(accept.json()).resolves.toMatchObject({
@@ -2935,6 +2942,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
           name: '王小明',
           password: 'registered-password-1',
           legalConsent: true,
+          legalDocuments: currentLegalDocumentReferences(),
         }),
       },
     );
@@ -3100,6 +3108,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
             name,
             password: 'personal-password-1',
             legalConsent: true,
+            legalDocuments: currentLegalDocumentReferences(),
           }),
         },
       );
@@ -5123,6 +5132,7 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
           name: 'Alpha 新员工',
           password: 'alpha-member-password',
           legalConsent: true,
+          legalDocuments: currentLegalDocumentReferences(),
         }),
       },
     );

@@ -111,6 +111,21 @@ export interface SmsChallenge {
   message: string;
   registrationMode?: 'personal' | 'enterprise';
   organization: { id: string; name: string } | null;
+  legalDocuments: EnterpriseLegalDocumentReference[];
+}
+
+export interface EnterpriseLegalDocumentReference {
+  id: 'terms' | 'privacy';
+  version: string;
+  hash: string;
+}
+
+export interface EnterpriseLegalDocumentSection {
+  id: string;
+  title: string;
+  paragraphs: string[];
+  items?: string[];
+  important?: boolean;
 }
 
 export interface SmsLoginChallenge {
@@ -857,6 +872,7 @@ export interface EnterpriseDataGovernanceProfile {
     effectiveAt: string;
     required: true;
     summary: string[];
+    sections: EnterpriseLegalDocumentSection[];
     sourceUrls: string[];
     hash: string;
     accepted: boolean;
@@ -1431,6 +1447,7 @@ export class EnterpriseClient {
     name: string;
     password: string;
     legalConsent: true;
+    legalDocuments: EnterpriseLegalDocumentReference[];
   }): Promise<{
     account: EnterpriseAccount;
     expiresAt: string;
@@ -1719,11 +1736,13 @@ export class EnterpriseClient {
     return this.request('/enterprise/privacy');
   }
 
-  async acceptCurrentLegalDocuments(): Promise<EnterpriseDataGovernanceProfile> {
+  async acceptCurrentLegalDocuments(
+    documents: EnterpriseLegalDocumentReference[],
+  ): Promise<EnterpriseDataGovernanceProfile> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
     return this.request('/enterprise/privacy/accept', {
       method: 'POST',
-      body: JSON.stringify({ accepted: true }),
+      body: JSON.stringify({ accepted: true, documents }),
     });
   }
 

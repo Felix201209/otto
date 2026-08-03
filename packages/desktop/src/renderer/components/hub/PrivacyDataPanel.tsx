@@ -118,7 +118,14 @@ export function PrivacyDataPanel(): React.JSX.Element {
     setBusy(true);
     setError('');
     try {
-      setProfile(await window.otto.enterpriseLegalAccept());
+      if (!profile) throw new Error('协议版本尚未加载，请稍后重试');
+      setProfile(await window.otto.enterpriseLegalAccept(
+        profile.documents.map((document) => ({
+          id: document.id,
+          version: document.version,
+          hash: document.hash,
+        })),
+      ));
       setNotice('当前版本的用户协议与隐私规则已记录。');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));

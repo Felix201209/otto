@@ -21,6 +21,11 @@ import type {
 } from '../modules/collaboration/index.js';
 import { E2EE_ATTACHMENT_MAX_CIPHERTEXT_BYTES } from '../modules/collaboration/index.js';
 import {
+  currentLegalDocumentReferences,
+  requireCurrentLegalDocumentReferences,
+  sendLegalPage,
+} from '../modules/data_governance/index.js';
+import {
   buildOrganizationInviteLink,
   isAcceptableAccountPassword,
   isOrganizationInviteCode,
@@ -351,6 +356,26 @@ export function createClusteredEnterpriseServer(
   const publicBaseUrl = resolveEnterprisePublicBaseUrl({
     configuredUrl: options.publicUrl,
   });
+  const governanceAuthorization = {
+    deploymentId: process.env.OTTO_DEPLOYMENT_ID?.trim() || 'clustered-enterprise',
+    license: {
+      status: 'unavailable',
+      plan: 'unconfigured',
+      expiresAt: '',
+      seatLimit: 0,
+      activeSeatCount: 0,
+      modules: [] as string[],
+      offline: false,
+      enforce: true,
+    },
+    telemetry: { enabled: false, contentMode: 'metadata_only' },
+    dataBoundary: {
+      authority: 'postgresql',
+      messageContent: 'client_e2ee_ciphertext_only',
+      attachmentContent: 'client_e2ee_ciphertext_only',
+      clientIdentityPrivateKeys: 'client_only',
+    },
+  };
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url || '/', 'http://127.0.0.1');
@@ -385,6 +410,11 @@ export function createClusteredEnterpriseServer(
           authority,
           capabilities: [
             'password_auth',
+            'sms_registration',
+            'personal_registration',
+            'organization_invites',
+            'position_invites',
+            'personal_enterprise_upgrade',
             'multi_organization',
             'organization_structure_v1',
             'direct_messages',
@@ -397,6 +427,8 @@ export function createClusteredEnterpriseServer(
             'postgresql_authority_v1',
             'postgresql_registration_v1',
             'organization_invites_v1',
+            'data_governance_v1',
+            'legal_documents_v1',
             ...(options.attachmentStorage
               ? [
                   'direct_message_attachments_v1',
@@ -406,6 +438,50 @@ export function createClusteredEnterpriseServer(
               : []),
             ...(options.sharedState ? ['redis_shared_state_v1'] : []),
           ],
+        });
+        return;
+      }
+
+      if (path === '/enterprise/legal' && method === 'GET') {
+        const profile = await repository.getDataGovernanceProfile(null);
+        if ((req.headers.accept || '').includes('text/html')) {
+          sendLegalPage(res, profile);
+        } else {
+          sendJson(res, 200, profile);
+        }
+        return;
+      }
+
+      if (path === '/enterprise/privacy' && method === 'GET') {
+        const account = await requireMember(repository, req, res, options.sharedState);
+        if (!account) return;
+        sendJson(res, 200, {
+          ...(await repository.getDataGovernanceProfile(account)),
+          authorization: governanceAuthorization,
+        });
+        return;
+      }
+
+      if (path === '/enterprise/privacy/accept' && method === 'POST') {
+        const account = await requireMember(repository, req, res, options.sharedState);
+        if (!account) return;
+        const body = await readJsonBody(req);
+        if (body.accepted !== true) {
+          sendJson(res, 400, { error: '请明确同意当前用户协议和隐私规则' });
+          return;
+        }
+        try {
+          const documents = requireCurrentLegalDocumentReferences(body.documents);
+          await repository.recordCurrentLegalConsent(account, documents);
+        } catch (error) {
+          sendJson(res, 409, {
+            error: error instanceof Error ? error.message : '协议版本校验失败',
+          });
+          return;
+        }
+        sendJson(res, 200, {
+          ...(await repository.getDataGovernanceProfile(account)),
+          authorization: governanceAuthorization,
         });
         return;
       }
@@ -491,6 +567,7 @@ export function createClusteredEnterpriseServer(
           retryAfterSeconds: issued.retryAfterSeconds,
           registrationMode: issued.registrationMode,
           organization: issued.organization,
+          legalDocuments: currentLegalDocumentReferences(),
         });
         return;
       }
@@ -509,6 +586,15 @@ export function createClusteredEnterpriseServer(
           sendJson(res, 400, { error: 'legal consent is required' });
           return;
         }
+        let legalDocuments;
+        try {
+          legalDocuments = requireCurrentLegalDocumentReferences(body.legalDocuments);
+        } catch (error) {
+          sendJson(res, 409, {
+            error: error instanceof Error ? error.message : 'legal document version is invalid',
+          });
+          return;
+        }
         if (
           !challengeId.startsWith('smsreg_') ||
           !/^\d{6}$/u.test(code) ||
@@ -525,6 +611,7 @@ export function createClusteredEnterpriseServer(
           name,
           password,
           legalConsent: true,
+          legalDocuments,
         });
         if (completed.state === 'phone-conflict') {
           sendJson(res, 409, { error: 'phone is already registered' });

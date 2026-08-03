@@ -144,6 +144,7 @@ import {
   type AccountUpdateInput,
   type EnterpriseAccount,
   type EnterpriseDirectMessageAttachmentUpload,
+  type EnterpriseLegalDocumentReference,
   type EnterprisePrivacyDeletionReceipt,
   type EnterpriseKnowledgeRecordInput,
   type EnterpriseModuleUpdateDescriptor,
@@ -2104,6 +2105,38 @@ function pushEndpointToRenderer(): void {
 // IPC
 // ────────────────────────────────────────────────────────────────────────
 
+function parseLegalDocumentReferences(
+  value: unknown,
+): EnterpriseLegalDocumentReference[] {
+  if (!Array.isArray(value) || value.length !== 2) {
+    throw new Error('请重新打开并阅读当前用户协议和隐私规则');
+  }
+  const seen = new Set<string>();
+  const references = value.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new Error('协议版本信息格式不正确');
+    }
+    const record = entry as Record<string, unknown>;
+    if (
+      (record.id !== 'terms' && record.id !== 'privacy') ||
+      typeof record.version !== 'string' ||
+      typeof record.hash !== 'string' ||
+      !/^[0-9a-f]{64}$/u.test(record.hash) ||
+      seen.has(record.id)
+    ) {
+      throw new Error('协议版本信息格式不正确');
+    }
+    const id = record.id as EnterpriseLegalDocumentReference['id'];
+    seen.add(id);
+    return {
+      id,
+      version: record.version as string,
+      hash: record.hash as string,
+    };
+  });
+  return references;
+}
+
 function registerIpc(): void {
   ipcMain.handle(IPC.writeClipboard, (_e, text: unknown) => {
     if (typeof text !== 'string') return false;
@@ -2249,6 +2282,7 @@ function registerIpc(): void {
     ) {
       throw new Error('姓名、密码和验证码均为必填项');
     }
+    const legalDocuments = parseLegalDocumentReferences(body.legalDocuments);
     return enterpriseAuthOperations.run(async () => {
       const result = await authenticateAndSyncEnterpriseAccount(
         () =>
@@ -2258,6 +2292,7 @@ function registerIpc(): void {
             name: body.name as string,
             password: body.password as string,
             legalConsent: true,
+            legalDocuments,
           }),
         enterpriseClient,
         synchronizeAuthenticatedEnterpriseAccount,
@@ -2399,9 +2434,11 @@ function registerIpc(): void {
     loadEnterpriseSession();
     return enterpriseClient.getDataGovernanceProfile();
   });
-  ipcMain.handle(IPC.enterpriseLegalAccept, async () => {
+  ipcMain.handle(IPC.enterpriseLegalAccept, async (_event, input: unknown) => {
     loadEnterpriseSession();
-    return enterpriseClient.acceptCurrentLegalDocuments();
+    return enterpriseClient.acceptCurrentLegalDocuments(
+      parseLegalDocumentReferences(input),
+    );
   });
   ipcMain.handle(IPC.enterprisePrivacyExport, async () => {
     loadEnterpriseSession();

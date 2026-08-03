@@ -55,6 +55,14 @@ import {
   identitySecretMatches,
   isAcceptableAccountPassword,
 } from '../modules/identity_organization/index.js';
+import {
+  CURRENT_LEGAL_DOCUMENTS,
+  dataGovernanceConfiguration,
+  dataProcessingInventory,
+  legalDocumentHash,
+  requireCurrentLegalDocumentReferences,
+  type LegalDocumentReference,
+} from '../modules/data_governance/index.js';
 import type {
   PostgresClientLike,
   PostgresPoolLike,
@@ -3146,6 +3154,81 @@ export function createPostgresEnterpriseCoreRepository(input: {
     };
   }
 
+  async function getDataGovernanceProfile(
+    account?: PostgresEnterpriseAccountView | null,
+  ) {
+    const accepted = account
+      ? await input.pool.query<{
+          document_id: 'terms' | 'privacy';
+          document_version: string;
+          policy_hash: string;
+          accepted_at: Date | string;
+        } & Record<string, unknown>>(
+          `SELECT document_id, document_version, policy_hash, accepted_at
+           FROM legal_consents WHERE account_id = $1`,
+          [account.id],
+        )
+      : { rows: [] };
+    const documents = CURRENT_LEGAL_DOCUMENTS.map((document) => {
+      const hash = legalDocumentHash(document);
+      const consent = accepted.rows.find(
+        (row) =>
+          row.document_id === document.id &&
+          row.document_version === document.version &&
+          row.policy_hash === hash,
+      );
+      return {
+        ...document,
+        hash,
+        accepted: Boolean(consent),
+        acceptedAt: consent ? new Date(consent.accepted_at).getTime() : null,
+      };
+    });
+    return {
+      ...dataGovernanceConfiguration(),
+      documents,
+      processingActivities: dataProcessingInventory(),
+      rights: [
+        '查看个人信息处理规则和数据处理目录',
+        '访问、更正、复制和导出本人数据',
+        '撤回可选处理同意',
+        '注销账号并删除或匿名化个人数据',
+        '向部署方隐私联系人投诉或咨询',
+      ],
+      currentConsentComplete: account
+        ? documents.every((document) => document.accepted)
+        : false,
+    };
+  }
+
+  async function recordCurrentLegalConsent(
+    account: PostgresEnterpriseAccountView,
+    references: readonly LegalDocumentReference[],
+  ): Promise<void> {
+    requireCurrentLegalDocumentReferences(references);
+    await transaction(input.pool, async (client) => {
+      for (const document of CURRENT_LEGAL_DOCUMENTS) {
+        await client.query(
+          `INSERT INTO legal_consents
+             (account_id, organization_id, document_id, document_version,
+              policy_hash, source, accepted_at)
+           VALUES ($1, $2, $3, $4, $5, 'settings', CURRENT_TIMESTAMP)
+           ON CONFLICT (account_id, document_id, document_version)
+           DO UPDATE SET policy_hash = EXCLUDED.policy_hash,
+                         source = EXCLUDED.source,
+                         accepted_at = EXCLUDED.accepted_at`,
+          [
+            account.id,
+            account.organizationId,
+            document.id,
+            document.version,
+            legalDocumentHash(document),
+          ],
+        );
+      }
+    });
+  }
+
   const registration = createPostgresRegistrationRepository({
     pool: input.pool,
     defaultOrganizationId,
@@ -3157,6 +3240,8 @@ export function createPostgresEnterpriseCoreRepository(input: {
   return {
     defaultOrganizationId,
     readiness,
+    getDataGovernanceProfile,
+    recordCurrentLegalConsent,
     getOrganization,
     getOrganizationFeatures,
     updateOrganizationFeatures,

@@ -10,6 +10,7 @@ import { Database, type EncryptedObjectStore } from './modules/data_platform/ind
 import {
   DATA_GOVERNANCE_SCHEMA_CONTRIBUTOR,
   createPrivacyDeletionLedger,
+  currentLegalDocumentReferences,
   deleteOwnAccountDataInRepository,
   exportAccountDataFromRepository,
   getDataGovernanceProfileFromRepository,
@@ -144,7 +145,12 @@ function createFixture() {
 describe('data_governance consent, export and deletion', () => {
   it('records versioned consent and exports only account-readable fields', () => {
     const fixture = createFixture();
-    recordCurrentLegalConsentInRepository(fixture.store, fixture.account, 'settings');
+    recordCurrentLegalConsentInRepository(
+      fixture.store,
+      fixture.account,
+      'settings',
+      currentLegalDocumentReferences(),
+    );
     expect(getDataGovernanceProfileFromRepository(fixture.store, fixture.account))
       .toMatchObject({ currentConsentComplete: true });
     const exported = exportAccountDataFromRepository(fixture.store, fixture.account) as {

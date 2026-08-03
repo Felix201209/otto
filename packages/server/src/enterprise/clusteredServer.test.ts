@@ -5,6 +5,13 @@
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import {
+  CURRENT_LEGAL_DOCUMENTS,
+  currentLegalDocumentReferences,
+  dataGovernanceConfiguration,
+  dataProcessingInventory,
+  legalDocumentHash,
+} from '../modules/data_governance/index.js';
 import { createClusteredEnterpriseServer } from './clusteredServer.js';
 import type {
   PostgresEnterpriseAccountView,
@@ -42,6 +49,18 @@ const peerAccount: PostgresEnterpriseAccountView = {
 };
 
 function repository(): PostgresEnterpriseCoreRepository {
+  const getDataGovernanceProfile = vi.fn(async () => ({
+    ...dataGovernanceConfiguration(),
+    documents: CURRENT_LEGAL_DOCUMENTS.map((document) => ({
+      ...document,
+      hash: legalDocumentHash(document),
+      accepted: false,
+      acceptedAt: null,
+    })),
+    processingActivities: dataProcessingInventory(),
+    rights: [],
+    currentConsentComplete: false,
+  }));
   return {
     defaultOrganizationId: 'org_default',
     readiness: vi.fn(async () => ({
@@ -67,6 +86,8 @@ function repository(): PostgresEnterpriseCoreRepository {
       token === 'clustered-session-token' ? account : null,
     ),
     revokeAuthSession: vi.fn(async () => true),
+    getDataGovernanceProfile,
+    recordCurrentLegalConsent: vi.fn(async () => undefined),
     getAccount: vi.fn(async (id: string) =>
       id === peerAccount.id ? peerAccount : id === account.id ? account : null,
     ),
@@ -122,6 +143,11 @@ describe('clustered PostgreSQL enterprise server', () => {
       status: 'ok',
       topology: { mode: 'clustered-enterprise', database: 'postgresql' },
       authority: { ready: true, backend: 'postgresql', schemaVersion: 4 },
+      capabilities: expect.arrayContaining([
+        'sms_registration',
+        'personal_registration',
+        'data_governance_v1',
+      ]),
     });
   });
 
@@ -152,6 +178,52 @@ describe('clustered PostgreSQL enterprise server', () => {
       'correct-password',
     );
     expect(repo.clearLoginFailures).toHaveBeenCalledWith('admin');
+  });
+
+  it('serves complete versioned legal text and records exact document consent', async () => {
+    const repo = repository();
+    const { baseUrl } = await listen(repo);
+    const legal = await fetch(`${baseUrl}/enterprise/legal`, {
+      headers: { accept: 'text/html' },
+    });
+    expect(legal.status).toBe(200);
+    const html = await legal.text();
+    expect(html).toContain('正文 SHA-256');
+    expect(html).toContain(CURRENT_LEGAL_DOCUMENTS[0]!.sections[0]!.title);
+
+    const privacy = await fetch(`${baseUrl}/enterprise/privacy`, {
+      headers: { authorization: 'Bearer clustered-session-token' },
+    });
+    expect(privacy.status).toBe(200);
+    expect(await privacy.json()).toMatchObject({
+      currentConsentComplete: false,
+      authorization: {
+        license: { status: 'unavailable', enforce: true },
+        dataBoundary: { authority: 'postgresql' },
+      },
+    });
+
+    const stale = await fetch(`${baseUrl}/enterprise/privacy/accept`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer clustered-session-token',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ accepted: true, documents: [] }),
+    });
+    expect(stale.status).toBe(409);
+
+    const references = currentLegalDocumentReferences();
+    const accepted = await fetch(`${baseUrl}/enterprise/privacy/accept`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer clustered-session-token',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ accepted: true, documents: references }),
+    });
+    expect(accepted.status).toBe(200);
+    expect(repo.recordCurrentLegalConsent).toHaveBeenCalledWith(account, references);
   });
 
   it('relays MLS KeyPackages and opaque events through the PostgreSQL authority', async () => {
@@ -418,6 +490,7 @@ describe('clustered PostgreSQL enterprise server', () => {
           name: 'New User',
           password: 'Secure-password-2026',
           legalConsent: true,
+          legalDocuments: currentLegalDocumentReferences(),
         }),
       },
     );
@@ -432,6 +505,7 @@ describe('clustered PostgreSQL enterprise server', () => {
         challengeId: 'smsreg_1',
         code: '123456',
         legalConsent: true,
+        legalDocuments: currentLegalDocumentReferences(),
       }),
     );
   });

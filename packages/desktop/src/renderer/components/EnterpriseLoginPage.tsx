@@ -3,6 +3,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
+import type { EnterpriseLegalDocumentReference } from '../../preload/index.js';
 import { OttoPetStage } from './OttoPetStage.js';
 
 type LoginMode = 'login' | 'register' | 'join';
@@ -71,6 +72,7 @@ export function isRegistrationReady(input: {
   challengeId: string;
   code: string;
   legalConsent: boolean;
+  legalDocuments: EnterpriseLegalDocumentReference[];
 }): boolean {
   return (!input.inviteRequired
     || input.inviteCode.replace(/[^A-HJ-NP-Za-km-z2-9]/g, '').length === 12)
@@ -79,7 +81,8 @@ export function isRegistrationReady(input: {
     && input.password === input.confirmPassword
     && Boolean(input.challengeId)
     && /^\d{6}$/.test(input.code)
-    && input.legalConsent;
+    && input.legalConsent
+    && input.legalDocuments.length === 2;
 }
 
 function enterpriseServerHost(serverUrl: string): string {
@@ -153,8 +156,16 @@ export function EnterpriseLoginPage({
     retryAfterSeconds: number;
     registrationMode?: 'personal' | 'enterprise';
     organization: { id: string; name: string } | null;
+    legalDocuments: EnterpriseLegalDocumentReference[];
   }>;
-  onRegister: (input: { challengeId: string; code: string; name: string; password: string; legalConsent: true }) => Promise<void>;
+  onRegister: (input: {
+    challengeId: string;
+    code: string;
+    name: string;
+    password: string;
+    legalConsent: true;
+    legalDocuments: EnterpriseLegalDocumentReference[];
+  }) => Promise<void>;
   onClearError: () => void;
 }): React.JSX.Element {
   const [mode, setMode] = useState<LoginMode>(initialInviteCode ? 'join' : 'login');
@@ -180,6 +191,7 @@ export function EnterpriseLoginPage({
   const [challengeId, setChallengeId] = useState('');
   const [notice, setNotice] = useState('');
   const [legalConsent, setLegalConsent] = useState(false);
+  const [legalDocuments, setLegalDocuments] = useState<EnterpriseLegalDocumentReference[]>([]);
   const [organizationName, setOrganizationName] = useState('');
   const [requesting, setRequesting] = useState(false);
   const [countdown, setCountdown] = useState(0);
@@ -198,6 +210,7 @@ export function EnterpriseLoginPage({
     setCode('');
     setNotice('');
     setOrganizationName('');
+    setLegalDocuments([]);
     setCountdown(0);
     setRequesting(false);
     onClearError();
@@ -234,6 +247,7 @@ export function EnterpriseLoginPage({
       setChallengeId(result.challengeId);
       setNotice(result.message);
       setOrganizationName(result.organization?.name ?? '');
+      setLegalDocuments(result.legalDocuments);
       setCountdown(result.retryAfterSeconds);
     } catch {
       // 具体错误由 useEnterpriseAuth 写入 error，表单只负责结束 loading。
@@ -281,6 +295,7 @@ export function EnterpriseLoginPage({
     setCode('');
     setNotice('');
     setOrganizationName('');
+    setLegalDocuments([]);
     setCountdown(0);
   };
 
@@ -295,6 +310,7 @@ export function EnterpriseLoginPage({
       challengeId,
       code,
       legalConsent,
+      legalDocuments,
     })) return;
     if (
       mode === 'login'
@@ -315,6 +331,7 @@ export function EnterpriseLoginPage({
           name: name.trim(),
           password: registrationPassword,
           legalConsent: true,
+          legalDocuments,
         });
       } else if (loginMethod === 'password') {
         await onPasswordLogin({
@@ -549,6 +566,11 @@ export function EnterpriseLoginPage({
                 />
                 <span>我已阅读并同意
                   <button type="button" onClick={() => void window.otto.openExternal(`${initialServerUrl.replace(/\/+$/u, '')}/enterprise/legal`)}>《用户服务协议》与《隐私规则》</button>
+                  <small>
+                    {legalDocuments.length === 2
+                      ? `当前版本 ${legalDocuments.map((document) => `${document.id}:${document.version}#${document.hash.slice(0, 8)}`).join(' · ')}`
+                      : '获取验证码后将绑定当前协议版本与正文哈希'}
+                  </small>
                 </span>
               </label>
             </>
@@ -691,6 +713,7 @@ export function EnterpriseLoginPage({
                 challengeId,
                 code,
                 legalConsent,
+                legalDocuments,
               }))}
           >
             <span>

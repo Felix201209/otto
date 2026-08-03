@@ -17,6 +17,7 @@ import {
 import {
   CURRENT_LEGAL_DOCUMENTS,
   legalDocumentHash,
+  requireCurrentLegalDocumentReferences,
 } from '../modules/data_governance/legalDocuments.js';
 import type {
   PostgresClientLike,
@@ -620,6 +621,7 @@ export function createPostgresRegistrationRepository(input: {
     name: string;
     password: string;
     legalConsent: true;
+    legalDocuments: unknown;
     now?: Date;
   }): Promise<PostgresSmsRegistrationCompletionResult> {
     if (!/^smsreg_[A-Za-z0-9-]+$/u.test(raw.challengeId.trim())) {
@@ -636,6 +638,7 @@ export function createPostgresRegistrationRepository(input: {
       throw new Error('registration name or password is invalid');
     }
     if (raw.legalConsent !== true) throw new Error('legal consent is required');
+    requireCurrentLegalDocumentReferences(raw.legalDocuments);
     const now = raw.now ?? new Date();
 
     type CompletionWithoutAccount = Exclude<

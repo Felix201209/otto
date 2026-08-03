@@ -741,6 +741,7 @@ h6.otto-prose__h {
 .otto-auth-consent { display:flex; align-items:flex-start; gap:9px; color:#9aabc2; font-size:10px; line-height:1.5; cursor:pointer; }
 .otto-auth-consent input { width:15px; height:15px; margin:0; accent-color:var(--auth-electric); flex:0 0 auto; }
 .otto-auth-consent button { padding:0 2px; border:0; color:var(--auth-electric); background:transparent; font:inherit; cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
+.otto-auth-consent small { display:block; margin-top:3px; color:#71839c; overflow-wrap:anywhere; }
 
 /* 身份控制台 */
 .otto-viewall--accounts.is-active { color: var(--otto-accent); background: var(--otto-accent-soft); }

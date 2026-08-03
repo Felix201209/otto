@@ -21,17 +21,22 @@ beforeAll(() => {
   })));
 });
 
+const LEGAL_DOCUMENTS = [
+  { id: 'terms' as const, version: '2026-08-03', hash: 'a'.repeat(64) },
+  { id: 'privacy' as const, version: '2026-08-03', hash: 'b'.repeat(64) },
+];
+
 describe('企业首次注册输入规则', () => {
   it('普通注册不需要邀请码，加入企业时才校验邀请码', () => {
     expect(sanitizeSmsCode('04a27 319')).toBe('042731');
     expect(sanitizeOrganizationInviteCode('ab3D k9Pq z7xY<script>')).toBe('ab3D-k9Pq-z7xY');
-    expect(isRegistrationReady({ inviteCode: '', name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731', legalConsent: true })).toBe(true);
-    expect(isRegistrationReady({ inviteCode: '', name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731', legalConsent: false })).toBe(false);
-    expect(isRegistrationReady({ inviteCode: '', inviteRequired: true, name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731', legalConsent: true })).toBe(false);
-    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: '', code: '042731', legalConsent: true })).toBe(false);
-    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', name: '小明', password: 'short', confirmPassword: 'short', challengeId: 'sms_1', code: '042731', legalConsent: true })).toBe(false);
-    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', name: '小明', password: 'password-1', confirmPassword: 'different', challengeId: 'sms_1', code: '042731', legalConsent: true })).toBe(false);
-    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', inviteRequired: true, name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731', legalConsent: true })).toBe(true);
+    expect(isRegistrationReady({ inviteCode: '', name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731', legalConsent: true, legalDocuments: LEGAL_DOCUMENTS })).toBe(true);
+    expect(isRegistrationReady({ inviteCode: '', name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731', legalConsent: false, legalDocuments: LEGAL_DOCUMENTS })).toBe(false);
+    expect(isRegistrationReady({ inviteCode: '', inviteRequired: true, name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731', legalConsent: true, legalDocuments: LEGAL_DOCUMENTS })).toBe(false);
+    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: '', code: '042731', legalConsent: true, legalDocuments: LEGAL_DOCUMENTS })).toBe(false);
+    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', name: '小明', password: 'short', confirmPassword: 'short', challengeId: 'sms_1', code: '042731', legalConsent: true, legalDocuments: LEGAL_DOCUMENTS })).toBe(false);
+    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', name: '小明', password: 'password-1', confirmPassword: 'different', challengeId: 'sms_1', code: '042731', legalConsent: true, legalDocuments: LEGAL_DOCUMENTS })).toBe(false);
+    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', inviteRequired: true, name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731', legalConsent: true, legalDocuments: LEGAL_DOCUMENTS })).toBe(true);
   });
 });
 
@@ -63,6 +68,7 @@ describe('专业登录入口', () => {
         onRequestRegistrationCode={async () => ({
           challengeId: 'sms_1', message: '验证码已发送', retryAfterSeconds: 60,
           organization: { id: 'org_acme', name: '星河科技' },
+          legalDocuments: LEGAL_DOCUMENTS,
         })}
         onRegister={async () => undefined}
         onClearError={() => undefined}
@@ -93,6 +99,7 @@ describe('专业登录入口', () => {
         onRequestRegistrationCode={async () => ({
           challengeId: 'sms_1', message: '验证码已发送', retryAfterSeconds: 60,
           organization: { id: 'org_acme', name: '星河科技' },
+          legalDocuments: LEGAL_DOCUMENTS,
         })}
         onRegister={async () => undefined}
         onClearError={() => undefined}
@@ -127,6 +134,7 @@ describe('专业登录入口', () => {
       retryAfterSeconds: 60,
       registrationMode: 'personal' as const,
       organization: null,
+      legalDocuments: LEGAL_DOCUMENTS,
     }));
     render(
       <EnterpriseLoginPage
@@ -170,6 +178,7 @@ describe('专业登录入口', () => {
           message: 'unused',
           retryAfterSeconds: 60,
           organization: null,
+          legalDocuments: LEGAL_DOCUMENTS,
         })}
         onRegister={async () => undefined}
         onClearError={() => undefined}
@@ -199,6 +208,7 @@ describe('专业登录入口', () => {
       message: '验证码已发送',
       retryAfterSeconds: 60,
       organization: { id: 'org_acme', name: '星河科技' },
+      legalDocuments: LEGAL_DOCUMENTS,
     }));
     render(
       <EnterpriseLoginPage
@@ -244,6 +254,7 @@ describe('专业登录入口', () => {
       message: '验证码已发送',
       retryAfterSeconds: 60,
       organization: { id: 'org_acme', name: '星河科技' },
+      legalDocuments: LEGAL_DOCUMENTS,
     }));
     const props = {
       initialServerUrl: 'https://enterprise.otto.test',
@@ -297,6 +308,7 @@ describe('专业登录入口', () => {
         onRequestRegistrationCode={async () => ({
           challengeId: 'sms_1', message: '验证码已发送', retryAfterSeconds: 60,
           organization: { id: 'org_acme', name: '星河科技' },
+          legalDocuments: LEGAL_DOCUMENTS,
         })}
         onRegister={async () => undefined}
         onClearError={onClearError}
@@ -335,12 +347,14 @@ describe('专业登录入口', () => {
       message: string;
       retryAfterSeconds: number;
       organization: { id: string; name: string };
+      legalDocuments: typeof LEGAL_DOCUMENTS;
     }) => void;
     const requestPending = new Promise<{
       challengeId: string;
       message: string;
       retryAfterSeconds: number;
       organization: { id: string; name: string };
+      legalDocuments: typeof LEGAL_DOCUMENTS;
     }>((resolve) => {
       finishRequest = resolve;
     });
@@ -385,6 +399,7 @@ describe('专业登录入口', () => {
       message: '旧验证码已发送',
       retryAfterSeconds: 60,
       organization: { id: 'org_stale', name: '旧企业' },
+      legalDocuments: LEGAL_DOCUMENTS,
     });
 
     await waitFor(() => {

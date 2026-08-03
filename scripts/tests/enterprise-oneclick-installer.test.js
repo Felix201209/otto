@@ -469,6 +469,7 @@ describe('enterprise one-click runtime configuration contract', () => {
       'OTTO_TELEMETRY_RETENTION_DAYS',
       'OTTO_DATA_CONTROLLER_NAME',
       'OTTO_PRIVACY_CONTACT',
+      'OTTO_LEGAL_DOCUMENTS_APPROVED',
       'OTTO_DATA_REGION',
       'OTTO_DATA_RESIDENCY',
       'OTTO_STORAGE_VOLUME_ENCRYPTED',
