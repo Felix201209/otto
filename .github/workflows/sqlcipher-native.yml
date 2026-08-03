@@ -77,7 +77,7 @@ jobs:
       - name: Install Unix SQLCipher build prerequisites
         if: runner.os == 'Linux'
         shell: bash
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev make tcl
+        run: sudo apt-get update && sudo apt-get install -y binutils libssl-dev make tcl
 
       - name: Generate SQLCipher amalgamation on Linux
         if: runner.os == 'Linux'
@@ -136,7 +136,11 @@ jobs:
             export CPPFLAGS="-I${OPENSSL_PREFIX}/include"
             export LDFLAGS="-L${OPENSSL_PREFIX}/lib -lcrypto"
           else
-            export LDFLAGS="-lcrypto"
+            # Ubuntu enables --as-needed by default. node-gyp places LDFLAGS
+            # before the static SQLCipher archive, so plain -lcrypto can be
+            # discarded before RAND_bytes and the other OpenSSL references
+            # are seen. Keep libcrypto as an explicit runtime dependency.
+            export LDFLAGS="-Wl,--no-as-needed -lcrypto"
           fi
           export CFLAGS="${CPPFLAGS:-} -DSQLITE_HAS_CODEC -DSQLITE_TEMP_STORE=2 -DSQLITE_EXTRA_INIT=sqlcipher_extra_init -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown -DSQLCIPHER_CRYPTO_OPENSSL"
           export npm_config_runtime=electron
@@ -145,6 +149,14 @@ jobs:
           export npm_config_build_from_source=true
           export npm_config_sqlite3="$GITHUB_WORKSPACE/.sqlcipher-source"
           npm rebuild better-sqlite3 --build-from-source
+
+      - name: Verify Linux addon resolves OpenSSL at runtime
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          binding="node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+          readelf -d "$binding" | grep -E 'NEEDED.*libcrypto\.so'
+          ldd "$binding" | grep -E 'libcrypto\.so.*=>.*'
 
       - name: Build Electron SQLCipher addon on Windows
         if: runner.os == 'Windows'

@@ -9,22 +9,29 @@
  * - GenerateContentResponse 结构: response.candidates[0].content.parts
  * - Content 结构: content.parts
  */
-export function addFunctionCallsGetter(obj: any): void {
+type GetterTarget = Record<string, unknown>;
+type FunctionCallPart = { functionCall?: unknown };
+
+export function addFunctionCallsGetter(obj: object): void {
   if (!obj) return;
 
   const descriptor = Object.getOwnPropertyDescriptor(obj, 'functionCalls');
   if (descriptor) return;
 
   Object.defineProperty(obj, 'functionCalls', {
-    get: function () {
-      const partsFromResponse = this.candidates?.[0]?.content?.parts;
-      const parts = partsFromResponse || this.parts;
+    get () {
+      const target = obj as GetterTarget & {
+        candidates?: Array<{ content?: { parts?: FunctionCallPart[] } }>;
+        parts?: FunctionCallPart[];
+      };
+      const partsFromResponse = target.candidates?.[0]?.content?.parts;
+      const parts = partsFromResponse || target.parts;
 
       if (!parts || !Array.isArray(parts)) return undefined;
 
       const calls = parts
-        .filter((p: any) => p && p.functionCall)
-        .map((p: any) => p.functionCall);
+        .filter((p) => p && p.functionCall)
+        .map((p) => p.functionCall);
 
       return calls.length > 0 ? calls : undefined;
     },

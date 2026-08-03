@@ -138,14 +138,17 @@ export async function resolveAuthHeaders(
 }
 
 /** 从请求里抽取 system 文本(Codex /responses 要求 instructions 非空)。 */
-export function extractSystemText(request: any): string {
-  const si = request?.config?.systemInstruction;
+export function extractSystemText(request: Record<string, unknown>): string {
+  const config = request.config && typeof request.config === 'object' ? request.config as Record<string, unknown> : {};
+  const si = config.systemInstruction;
   if (!si) return '';
   if (typeof si === 'string') return si.trim();
-  if (typeof si?.text === 'string') return si.text.trim();
-  if (Array.isArray(si?.parts)) {
-    return si.parts
-      .map((p: any) => p?.text || '')
+  if (typeof si !== 'object' || si === null) return '';
+  const siRecord = si as Record<string, unknown>;
+  if (typeof siRecord.text === 'string') return siRecord.text.trim();
+  if (Array.isArray(siRecord.parts)) {
+    return siRecord.parts
+      .map((p: unknown) => p && typeof p === 'object' && typeof (p as Record<string, unknown>).text === 'string' ? (p as Record<string, unknown>).text : '')
       .join('\n')
       .trim();
   }

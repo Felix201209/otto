@@ -17,6 +17,11 @@ export * from './parsers/index.js';
 
 // Loaders
 export * from './loaders/index.js';
+import { SettingsManager as SettingsManagerImpl } from './settings-manager.js';
+import { MarketplaceManager as MarketplaceManagerImpl } from './marketplace-manager.js';
+import { PluginInstaller as PluginInstallerImpl } from './plugin-installer.js';
+import { SkillLoader as SkillLoaderImpl } from './skill-loader.js';
+import { SkillContextInjector as SkillContextInjectorImpl } from './skill-context-injector.js';
 
 // Core Services
 export { SettingsManager, SkillsPaths, settingsManager } from './settings-manager.js';
@@ -52,8 +57,7 @@ export { SkillsCompatAdapter } from './skills-compat.js';
  * This should be called once at startup to initialize the Skills system
  */
 export async function initializeSkillsSystem(): Promise<void> {
-  const { SettingsManager } = await import('./settings-manager.js');
-  const settings = new SettingsManager();
+  const settings = new SettingsManagerImpl();
   await settings.initialize();
 }
 
@@ -61,18 +65,11 @@ export async function initializeSkillsSystem(): Promise<void> {
  * Create Skills System instances with proper dependency injection
  */
 export function createSkillsSystem() {
-  // Use dynamic require to avoid circular dependency issues
-  const { SettingsManager } = require('./settings-manager.js');
-  const { MarketplaceManager } = require('./marketplace-manager.js');
-  const { PluginInstaller } = require('./plugin-installer.js');
-  const { SkillLoader } = require('./skill-loader.js');
-  const { SkillContextInjector } = require('./skill-context-injector.js');
-
-  const settings = new SettingsManager();
-  const marketplace = new MarketplaceManager(settings);
-  const installer = new PluginInstaller(settings, marketplace);
-  const loader = new SkillLoader(settings, marketplace);
-  const injector = new SkillContextInjector(loader, settings);
+  const settings = new SettingsManagerImpl();
+  const marketplace = new MarketplaceManagerImpl(settings);
+  const installer = new PluginInstallerImpl(settings, marketplace);
+  const loader = new SkillLoaderImpl(settings, marketplace);
+  const injector = new SkillContextInjectorImpl(loader, settings);
 
   return {
     settings,

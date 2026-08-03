@@ -79,6 +79,7 @@ const TOOL_FEATURE_FLAG_MAP: Record<string, string> = {
   // 桌面自动化 → park_service
   'desktop_automation': 'park_service',
   'web_automation': 'park_service',
+  'rpa_run': 'rpa',
 
   'run_shell_command': 'shell_access',
   'shell': 'shell_access',

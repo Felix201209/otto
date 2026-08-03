@@ -594,6 +594,7 @@ export interface EnterpriseOrganizationDepartment {
   id: string;
   organizationId: string;
   name: string;
+  parentDepartmentId?: string | null;
   memberCount: number;
   positions: EnterpriseOrganizationPosition[];
   createdAt: string;
@@ -617,6 +618,10 @@ export interface EnterpriseParkTenantOrganization {
   parkAddress?: string | null;
   parkRoomNumber?: string | null;
   status: 'active' | 'disabled';
+  industry?: string | null;
+  employeeCount?: number;
+  departmentCount?: number;
+  onlineCount?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -712,6 +717,7 @@ export interface EnterpriseOrganizationView {
     name: string;
     status: 'active' | 'disabled';
     parkId?: string | null;
+    industry?: string | null;
     createdAt: string;
   } | null;
   members: Array<{
@@ -1495,7 +1501,7 @@ export interface OttoBridge {
   enterpriseKnowledgeRevisions(
     id: string,
   ): Promise<EnterpriseKnowledgeRevision[]>;
-  enterpriseOrganizationView(): Promise<EnterpriseOrganizationView>;
+  enterpriseOrganizationView(organizationId?: string): Promise<EnterpriseOrganizationView>;
   enterprisePresenceHeartbeat(): Promise<void>;
   enterpriseOrganizationFeaturesGet(): Promise<EnterpriseOrganizationFeatures>;
   enterpriseOrganizationFeaturesUpdate(
@@ -2583,9 +2589,10 @@ const bridge: OttoBridge = {
       id,
     }) as Promise<EnterpriseKnowledgeRevision[]>;
   },
-  enterpriseOrganizationView(): Promise<EnterpriseOrganizationView> {
+  enterpriseOrganizationView(organizationId?: string): Promise<EnterpriseOrganizationView> {
     return ipcRenderer.invoke(
       IPC.enterpriseOrganizationView,
+      organizationId ?? null,
     ) as Promise<EnterpriseOrganizationView>;
   },
   enterprisePresenceHeartbeat(): Promise<void> {

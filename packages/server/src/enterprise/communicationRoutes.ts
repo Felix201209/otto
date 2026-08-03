@@ -31,7 +31,7 @@ function mlsErrorStatus(error: unknown): number {
   return 400;
 }
 
-function organizationViewPayload(organizationId: string) {
+export function organizationViewPayload(organizationId: string) {
   const organization = db.getOrganization(organizationId);
   const accounts = db.listAccounts(organizationId);
   const employees = db.listEmployees(undefined, organizationId);
@@ -48,6 +48,7 @@ function organizationViewPayload(organizationId: string) {
           name: organization.name,
           status: organization.status,
           parkId: organization.parkId,
+          industry: organization.industry ?? null,
           createdAt: organization.createdAt,
         }
       : null,
@@ -132,7 +133,17 @@ export async function handleCommunicationRoute({
   }
 
   if (path === '/enterprise/organization/view' && method === 'GET') {
-    const organizationId = memberAccount.organizationId;
+    const requestedOrganizationId = url.searchParams.get('organizationId');
+    const organizationId = requestedOrganizationId || memberAccount.organizationId;
+    if (organizationId !== memberAccount.organizationId) {
+      const park = db.getParkForOrganization(memberAccount.organizationId);
+      const targetPark = db.getParkForOrganization(organizationId);
+      if (!memberAccount.isAdmin || park?.adminOrganizationId !== memberAccount.organizationId
+        || targetPark?.id !== park.id) {
+        sendJSON(res, 403, { error: '无权查看该企业组织架构' });
+        return true;
+      }
+    }
     if (!db.getOrganizationFeatures(organizationId).enterprise_tree) {
       sendJSON(res, 403, { error: '企业树功能已由管理员关闭' });
       return true;

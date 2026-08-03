@@ -34,7 +34,6 @@ export function formatLintResults(diagnostics: LintDiagnostic[], filePath: strin
 
   const errors = diagnostics.filter(d => d.severity === 'error');
   const warnings = diagnostics.filter(d => d.severity === 'warning');
-  const others = diagnostics.filter(d => d.severity !== 'error' && d.severity !== 'warning');
 
   let result = `🔍 **Lint Check Results** for ${path.basename(filePath)}:\n`;
   result += `<file_diagnostics path="${filePath}">\n`;

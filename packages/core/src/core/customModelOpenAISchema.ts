@@ -4,30 +4,34 @@ const OPENAI_INTEGER_SCHEMA_KEYWORDS = new Set([
   'minProperties', 'maxProperties', 'multipleOf',
 ]);
 
-export function cleanOpenAICompatibleSchema(schema: any): any {
-  if (!schema || typeof schema !== 'object') return schema;
-  if (Array.isArray(schema)) return schema.map((item: any) => cleanOpenAICompatibleSchema(item));
+type JsonSchema = Record<string, unknown>;
 
-  const cleaned: any = {};
-  for (const key of Object.keys(schema)) {
-    if (key === 'type' && typeof schema[key] === 'string') {
-      cleaned[key] = schema[key].toLowerCase();
+export function cleanOpenAICompatibleSchema(schema: unknown): unknown {
+  if (!schema || typeof schema !== 'object') return schema;
+  if (Array.isArray(schema)) return schema.map((item) => cleanOpenAICompatibleSchema(item));
+
+  const source = schema as JsonSchema;
+  const cleaned: JsonSchema = {};
+  for (const key of Object.keys(source)) {
+    if (key === 'type' && typeof source[key] === 'string') {
+      cleaned[key] = source[key].toLowerCase();
     } else if (OPENAI_INTEGER_SCHEMA_KEYWORDS.has(key)) {
-      const numVal = Number(schema[key]);
+      const numVal = Number(source[key]);
       if (!isNaN(numVal)) {
         cleaned[key] = numVal;
       }
-    } else if (key === 'properties' && typeof schema[key] === 'object') {
+    } else if (key === 'properties' && source[key] && typeof source[key] === 'object') {
       cleaned[key] = {};
-      for (const k of Object.keys(schema[key])) {
-        cleaned[key][k] = cleanOpenAICompatibleSchema(schema[key][k]);
+      const properties = source[key] as JsonSchema;
+      for (const k of Object.keys(properties)) {
+        (cleaned[key] as JsonSchema)[k] = cleanOpenAICompatibleSchema(properties[k]);
       }
     } else if (key === 'items') {
-      cleaned[key] = cleanOpenAICompatibleSchema(schema[key]);
-    } else if (['anyOf', 'oneOf', 'allOf'].includes(key) && Array.isArray(schema[key])) {
-      cleaned[key] = schema[key].map((item: any) => cleanOpenAICompatibleSchema(item));
+      cleaned[key] = cleanOpenAICompatibleSchema(source[key]);
+    } else if (['anyOf', 'oneOf', 'allOf'].includes(key) && Array.isArray(source[key])) {
+      cleaned[key] = source[key].map((item) => cleanOpenAICompatibleSchema(item));
     } else {
-      cleaned[key] = schema[key];
+      cleaned[key] = source[key];
     }
   }
   return cleaned;

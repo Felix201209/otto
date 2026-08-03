@@ -131,17 +131,20 @@ async function allocateNode(state: typeof TaskOrchestrationState.State): Promise
 
   try {
     const config = state.config;
-    const client = (config as any).getOttoClient?.();
+    const client = config.getOttoClient() as unknown as {
+      generateContent?: (request: unknown) => Promise<unknown>;
+    };
     let suggestion: AllocationSuggestion;
 
     if (client) {
       // 用 LLM 做分配决策
-      const response = await (client as any).generateContent({
+      const response = await client.generateContent?.({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         config: { temperature: 0.3 },
       });
 
-      const text = response?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      const responseRecord = response as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> } | undefined;
+      const text = responseRecord?.candidates?.[0]?.content?.parts?.[0]?.text || '';
       suggestion = parseAllocationResponse(text, employees);
     } else {
       // 降级：简单规则匹配（技能匹配 + 最低负载）
@@ -156,7 +159,7 @@ async function allocateNode(state: typeof TaskOrchestrationState.State): Promise
         `[allocate] Task "${task.title}" assigned to ${suggestion.assigneeName} (confidence: ${suggestion.confidence})`,
       ],
     };
-  } catch (error) {
+  } catch (_error) {
     // 降级到规则匹配
     const suggestion = ruleBasedAllocation(task, employees);
     return {
@@ -236,7 +239,7 @@ async function reviewNode(state: typeof TaskOrchestrationState.State): Promise<P
  * 节点4a: 验收通过 → 完成
  */
 async function completeNode(state: typeof TaskOrchestrationState.State): Promise<Partial<TaskOrchestrationStateType>> {
-  const { task, executionResult, allocation } = state;
+  const { task, allocation } = state;
 
   return {
     status: 'completed',

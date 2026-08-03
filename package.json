@@ -1,6 +1,6 @@
 {
   "name": "otto-ai",
-  "version": "1.9.10",
+  "version": "1.10.0",
   "engines": {
     "node": ">=22.16.0"
   },
@@ -9,7 +9,10 @@
     "packages/core",
     "packages/server",
     "packages/desktop",
-    "otto-native"
+    "otto-native",
+    "packages/evals",
+    "packages/workflow",
+    "packages/rpa"
   ],
   "repository": {
     "type": "git",
@@ -45,6 +48,7 @@
     "sqlcipher:native:verify": "node scripts/verify-sqlcipher-native-assets.mjs",
     "security:e2ee:release:verify": "node scripts/verify-e2ee-release-readiness.mjs",
     "benchmark:low-resource-agents": "node scripts/low-resource-multi-agent-benchmark.mjs",
+    "eval:deterministic": "vitest run --config packages/evals/vitest.config.ts",
     "build": "node scripts/build.js",
     "build:packages": "npm run build --workspace=packages/core && npm run build --workspace=packages/server",
     "build:sandbox": "node scripts/build_sandbox.js --skip-npm-install-build",
@@ -58,7 +62,7 @@
     "pack:prod": "cross-env ENABLE_CHECKPOINTING=true npm run bundle:cross-platform:prod && cross-env BUILD_ENV=production ENABLE_CHECKPOINTING=true node scripts/newpack.js",
     "pack:prod:ci": "cross-env ENABLE_CHECKPOINTING=true npm run bundle:cross-platform:prod && cross-env BUILD_ENV=production ENABLE_CHECKPOINTING=true node scripts/newpack.js -- --no-version-bump",
     "test": "npm run test --workspace=packages/core && npm run test --workspace=packages/server && npm run test --workspace=packages/desktop",
-    "test:ci": "npm run test:ci --workspace=packages/core --if-present && npm run test:ci --workspace=packages/server --if-present && npm run test --workspace=packages/desktop && npm run test:scripts",
+    "test:ci": "npm run test:ci --workspace=packages/core --if-present && npm run test:ci --workspace=packages/server --if-present && npm run test --workspace=packages/desktop && npm run test:scripts && npm run eval:deterministic && npm run test --workspace=packages/workflow && npm run test --workspace=packages/rpa",
     "test:scripts": "vitest run --config ./scripts/tests/vitest.config.ts",
     "test:e2e": "npm run test:integration:sandbox:none -- --verbose --keep-output",
     "test:integration:all": "npm run test:integration:sandbox:none && npm run test:integration:sandbox:docker && npm run test:integration:sandbox:podman",
@@ -66,11 +70,11 @@
     "test:integration:sandbox:docker": "GEMINI_SANDBOX=docker node integration-tests/run-tests.js",
     "test:integration:sandbox:podman": "GEMINI_SANDBOX=podman node integration-tests/run-tests.js",
     "lint": "npm run lint:ci",
-    "lint:fix": "eslint packages/server/src packages/desktop/src packages/adapters/mem0 otto-native/src/index.ts scripts deployment/enterprise-oneclick start-enterprise.cjs \"packages/desktop/*.{js,mjs,cjs}\" --ext .ts,.tsx,.js,.mjs,.cjs --fix",
+    "lint:fix": "eslint packages/server/src packages/desktop/src otto-native/src/index.ts scripts deployment/enterprise-oneclick start-enterprise.cjs \"packages/desktop/*.{js,mjs,cjs}\" --ext .ts,.tsx,.js,.mjs,.cjs --fix",
     "lint:core:legacy": "eslint packages/core/src --ext .ts,.tsx",
-    "lint:ci": "eslint packages/server/src packages/desktop/src packages/adapters/mem0 otto-native/src/index.ts scripts deployment/enterprise-oneclick start-enterprise.cjs \"packages/desktop/*.{js,mjs,cjs}\" --ext .ts,.tsx,.js,.mjs,.cjs --max-warnings 0",
+    "lint:ci": "eslint packages/server/src packages/desktop/src otto-native/src/index.ts scripts deployment/enterprise-oneclick start-enterprise.cjs \"packages/desktop/*.{js,mjs,cjs}\" --ext .ts,.tsx,.js,.mjs,.cjs --max-warnings 0",
     "format": "prettier --write .",
-    "typecheck": "npm run typecheck --workspace=packages/core --if-present && npm run typecheck --workspace=packages/server --if-present && npm run typecheck --workspace=packages/desktop --if-present",
+    "typecheck": "npm run typecheck --workspace=packages/core --if-present && npm run typecheck --workspace=packages/server --if-present && npm run typecheck --workspace=packages/desktop --if-present && npm run typecheck --workspace=packages/evals --if-present && npm run typecheck --workspace=packages/workflow --if-present && npm run typecheck --workspace=packages/rpa --if-present",
     "preflight": "npm run clean && npm ci && npm run format && npm run lint:ci && npm run build && npm run typecheck && npm run test:ci",
     "prepare:package": "node scripts/prepare-package.js",
     "postinstall": "node -e \"const fs = require('fs'); const path = 'bundle/fix-binary-permissions.js'; if (fs.existsSync(path)) { require('child_process').execSync('node ' + path + ' --all', {stdio: 'inherit'}); } else { console.log('⏭️  Skipping binary permissions fix (bundle not built yet)'); }\"",
@@ -85,7 +89,6 @@
   "devDependencies": {
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.1",
-    "@types/diff": "^7.0.2",
     "@types/fs-extra": "^11.0.4",
     "@types/html-to-text": "^9.0.4",
     "@types/micromatch": "^4.0.9",
@@ -124,8 +127,8 @@
     "yargs": "17.7.2"
   },
   "dependencies": {
-    "@langchain/core": "^1.2.1",
-    "@langchain/langgraph": "^1.4.7",
+    "@langchain/core": "1.2.4",
+    "@langchain/langgraph": "1.4.8",
     "@larksuiteoapi/node-sdk": "^1.71.1",
     "@vscode/ripgrep": "1.17.0",
     "fs-extra": "^11.3.1",
@@ -151,6 +154,7 @@
     },
     "@grpc/grpc-js": "^1.14.4",
     "@isaacs/brace-expansion": "^5.0.1",
+    "brace-expansion@^2.0.0": "^2.1.3",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@xmldom/xmldom": "^0.8.13",
     "form-data": "^4.0.6",

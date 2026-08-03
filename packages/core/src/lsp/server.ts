@@ -8,7 +8,7 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { spawn, ChildProcess } from 'node:child_process';
-import { LSPServer } from './types.js';
+import type { LSPServerInfo } from './types.js';
 import { BinaryManager } from './binaryManager.js';
 
 /**
@@ -30,7 +30,7 @@ function spawnCommand(bin: string, args: string[], options: { cwd: string }): Ch
   const spawnOptions = {
     cwd: options.cwd,
     shell: false,
-    stdio: ['pipe', 'pipe', 'pipe'] as ('pipe' | 'inherit' | 'ignore')[],
+    stdio: ['pipe', 'pipe', 'pipe'] as Array<'pipe' | 'inherit' | 'ignore'>,
   };
 
   if (isCmdFile && fs.existsSync(bin)) {
@@ -68,8 +68,7 @@ function spawnCommand(bin: string, args: string[], options: { cwd: string }): Ch
 /**
  * 智能根目录探测：向上递归寻找特征文件
  */
-export const NearestRoot = (includePatterns: string[], projectRoot: string) => {
-  return async (file: string): Promise<string> => {
+export const NearestRoot = (includePatterns: string[], projectRoot: string) => async (file: string): Promise<string> => {
     // 🎯 Windows 兼容性：规范化路径并转为小写进行比较，防止驱动器盘符大小写不一致导致判断失败
     let current = path.normalize(path.dirname(path.resolve(file)));
     const stop = path.normalize(path.resolve(projectRoot));
@@ -92,12 +91,11 @@ export const NearestRoot = (includePatterns: string[], projectRoot: string) => {
     }
     return stop;
   };
-};
 
 /**
  * 语言服务配置定义
  */
-export const TypeScriptLSP = (projectRoot: string): LSPServer.Info => ({
+export const TypeScriptLSP = (projectRoot: string): LSPServerInfo => ({
   id: 'typescript-language-server',
   displayName: 'TypeScript/JavaScript Language Server',
   extensions: ['.ts', '.tsx', '.js', '.jsx'],
@@ -120,7 +118,7 @@ export const TypeScriptLSP = (projectRoot: string): LSPServer.Info => ({
   }
 });
 
-export const Pyright = (projectRoot: string): LSPServer.Info => ({
+export const Pyright = (projectRoot: string): LSPServerInfo => ({
   id: 'pyright',
   displayName: 'Python Language Server',
   extensions: ['.py'],
@@ -139,7 +137,7 @@ export const Pyright = (projectRoot: string): LSPServer.Info => ({
   }
 });
 
-export const RustAnalyzer = (projectRoot: string): LSPServer.Info => ({
+export const RustAnalyzer = (projectRoot: string): LSPServerInfo => ({
   id: 'rust-analyzer',
   displayName: 'Rust Language Server',
   extensions: ['.rs'],
@@ -192,11 +190,12 @@ export const RustAnalyzer = (projectRoot: string): LSPServer.Info => ({
     console.log(`[LSP] RustAnalyzer spawn returned: pid=${proc.pid}`);
 
     proc.on('error', (err) => {
+      const details = err as Error & { code?: unknown; errno?: unknown; syscall?: unknown; path?: unknown };
       console.error(`[LSP] RustAnalyzer process error:`, {
-        code: (err as any).code,
-        errno: (err as any).errno,
-        syscall: (err as any).syscall,
-        path: (err as any).path,
+        code: details.code,
+        errno: details.errno,
+        syscall: details.syscall,
+        path: details.path,
         message: err.message
       });
     });
@@ -211,7 +210,7 @@ export const RustAnalyzer = (projectRoot: string): LSPServer.Info => ({
   }
 });
 
-export const Gopls = (projectRoot: string): LSPServer.Info => ({
+export const Gopls = (projectRoot: string): LSPServerInfo => ({
   id: 'gopls',
   displayName: 'Go Language Server',
   extensions: ['.go'],
@@ -241,13 +240,13 @@ export const Gopls = (projectRoot: string): LSPServer.Info => ({
   }
 });
 
-export const Clangd = (projectRoot: string): LSPServer.Info => ({
+export const Clangd = (projectRoot: string): LSPServerInfo => ({
   id: 'clangd',
   displayName: 'C/C++ Language Server',
   extensions: ['.c', '.cpp', '.h', '.hpp', '.cc'],
   root: NearestRoot(['compile_commands.json', 'CMakeLists.txt', '.git'], projectRoot),
   async spawn(root: string) {
-    const installer = await BinaryManager.githubInstaller('clangd', 'clangd', (platform, arch) => {
+    const installer = await BinaryManager.githubInstaller('clangd', 'clangd', (platform, _arch) => {
       const p = platform === 'win32' ? 'windows' : platform === 'darwin' ? 'mac' : 'linux';
       return new RegExp(`clangd-${p}-.*\\.zip`);
     });
@@ -262,7 +261,7 @@ export const Clangd = (projectRoot: string): LSPServer.Info => ({
   }
 });
 
-export const WebLSP = (projectRoot: string): LSPServer.Info => ({
+export const WebLSP = (projectRoot: string): LSPServerInfo => ({
   id: 'vscode-langservers-extracted',
   displayName: 'HTML/CSS/JSON/ESLint Language Server',
   extensions: ['.html', '.css', '.json', '.jsonc'],
@@ -277,7 +276,7 @@ export const WebLSP = (projectRoot: string): LSPServer.Info => ({
   }
 });
 
-export const SqlLSP = (projectRoot: string): LSPServer.Info => ({
+export const SqlLSP = (projectRoot: string): LSPServerInfo => ({
   id: 'sql-language-server',
   displayName: 'SQL Language Server',
   extensions: ['.sql'],
@@ -292,7 +291,7 @@ export const SqlLSP = (projectRoot: string): LSPServer.Info => ({
   }
 });
 
-export const DockerLSP = (projectRoot: string): LSPServer.Info => ({
+export const DockerLSP = (projectRoot: string): LSPServerInfo => ({
   id: 'dockerfile-language-server-nodejs',
   displayName: 'Dockerfile Language Server',
   extensions: ['Dockerfile', '.dockerfile'],
@@ -307,7 +306,7 @@ export const DockerLSP = (projectRoot: string): LSPServer.Info => ({
   }
 });
 
-export const YamlLSP = (projectRoot: string): LSPServer.Info => ({
+export const YamlLSP = (projectRoot: string): LSPServerInfo => ({
   id: 'yaml-language-server',
   displayName: 'YAML Language Server',
   extensions: ['.yaml', '.yml'],
@@ -322,7 +321,7 @@ export const YamlLSP = (projectRoot: string): LSPServer.Info => ({
   }
 });
 
-export const DefaultServers = (projectRoot: string): LSPServer.Info[] => [
+export const DefaultServers = (projectRoot: string): LSPServerInfo[] => [
   TypeScriptLSP(projectRoot),
   Pyright(projectRoot),
   RustAnalyzer(projectRoot),

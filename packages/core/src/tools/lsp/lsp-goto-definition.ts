@@ -8,6 +8,7 @@
 import { BaseTool, Icon, ToolResult } from '../tools.js';
 import { Config } from '../../config/config.js';
 import { LSPManager } from '../../lsp/index.js';
+import type { LspLocationLike } from './lsp-result-types.js';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Type } from '@google/genai';
@@ -81,10 +82,11 @@ export class LSPGotoDefinitionTool extends BaseTool<LSPDefinitionParams, ToolRes
     }
 
     // LSP result can be Location | Location[] | LocationLink[]
-    const locations: any[] = results.flat();
+    const locations = results.flat().filter(Boolean) as unknown as LspLocationLike[];
     const formatted = locations.map(loc => {
-      const uri = loc.uri || loc.targetUri;
-      const range = loc.range || loc.targetSelectionRange;
+      const uri = loc.uri ?? loc.targetUri;
+      const range = loc.range ?? loc.targetSelectionRange;
+      if (!uri || !range) return '';
       const filePath = fileURLToPath(uri);
       // Return 1-based to the AI as well for consistency
       return `- File: ${filePath}\n  Range: Line ${range.start.line + 1}, Char ${range.start.character + 1} to Line ${range.end.line + 1}, Char ${range.end.character + 1}`;

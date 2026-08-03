@@ -31,7 +31,6 @@ import iconv from 'iconv-lite';
 import { t } from '../utils/simpleI18n.js';
 import {
   getDangerousCommandInfo,
-  shouldAlwaysConfirmCommand,
 } from '../utils/dangerous-command-detector.js';
 
 /**
@@ -113,10 +112,7 @@ export interface ShellToolParams {
 }
 
 import { spawn } from 'child_process';
-import {
-  BackgroundTaskManager,
-  getBackgroundTaskManager,
-} from '../services/backgroundTaskManager.js';
+import { getBackgroundTaskManager } from '../services/backgroundTaskManager.js';
 import { getBackgroundModeSignal } from '../services/backgroundModeSignal.js';
 import { summarizeToolOutput } from '../utils/summarizer.js';
 
@@ -176,7 +172,7 @@ function detectWindowsEncoding(): { codePage: string; oemCodePage: string; isChi
         codePage = pageNumber === '936' ? 'gbk' : 'big5';
       }
     }
-  } catch (error) {
+  } catch {
     // chcp失败，尝试其他方法
   }
 
@@ -198,7 +194,7 @@ function detectWindowsEncoding(): { codePage: string; oemCodePage: string; isChi
       codePage = 'big5';
       oemCodePage = 'cp950';
     }
-  } catch (error) {
+  } catch {
     // PowerShell也失败，使用默认值
   }
 
@@ -293,7 +289,7 @@ function decodeWindowsCommandOutput(buffer: Buffer, command: string): string {
         if (decoded && decoded.length > 0 && !decoded.includes('\uFFFD')) {
           return decoded;
         }
-      } catch (error) {
+      } catch {
         // GBK解码失败，继续尝试其他方法
       }
     }
@@ -307,7 +303,7 @@ function decodeWindowsCommandOutput(buffer: Buffer, command: string): string {
           return decoded;
         }
       }
-    } catch (error) {
+    } catch {
       // OEM代码页解码失败
     }
 
@@ -319,14 +315,14 @@ function decodeWindowsCommandOutput(buffer: Buffer, command: string): string {
         if (decoded && decoded.length > 0) {
           return decoded;
         }
-      } catch (error) {
+      } catch {
         continue;
       }
     }
 
     // 所有解码方法都失败，回退到UTF-8
     return buffer.toString('utf8');
-  } catch (error) {
+  } catch {
     // 解码失败，回退到UTF-8
     return buffer.toString('utf8');
   }
@@ -356,9 +352,10 @@ function sanitizeShellOutput(text: string): string {
   let cleaned = stripAnsi(text);
 
   // 2. 移除其他可能破坏界面的ESC序列
-  cleaned = cleaned.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');  // CSI序列
-  cleaned = cleaned.replace(/\x1b\([0-9;]*[a-zA-Z]/g, '');  // 其他ESC序列
-  cleaned = cleaned.replace(/\x1b\][0-9;]*[a-zA-Z]/g, '');  // OSC序列
+  const escape = String.fromCharCode(0x1b);
+  cleaned = cleaned.replace(new RegExp(`${escape}\\[[0-9;]*[a-zA-Z]`, 'g'), '');  // CSI序列
+  cleaned = cleaned.replace(new RegExp(`${escape}\\([0-9;]*[a-zA-Z]`, 'g'), '');  // 其他ESC序列
+  cleaned = cleaned.replace(new RegExp(`${escape}\\][0-9;]*[a-zA-Z]`, 'g'), '');  // OSC序列
 
   // 3. 核心修复：将\r转换为\n（已验证有效）
   // 先处理\r\n组合（Windows标准换行）
@@ -367,7 +364,8 @@ function sanitizeShellOutput(text: string): string {
   cleaned = cleaned.replace(/\r/g, '\n');
 
   // 🔧 减少过滤范围，避免影响实时输出的流式数据
-  cleaned = cleaned.replace(/[\x00\x07\x08\x7F]/g, '');
+  const forbiddenControls = [0, 7, 8, 127].map(code => String.fromCharCode(code)).join('');
+  cleaned = [...cleaned].filter(char => !forbiddenControls.includes(char)).join('');
 
   // 5. 清理多余的连续换行（但保留有意义的空行）
   cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
@@ -555,7 +553,7 @@ Reserve this tool for system commands and terminal operations that have no dedic
         rootCommand: dangerousInfo.rule.id,
         warning: dangerousInfo.warning,
         // ⭐ 危险命令不能添加到allowlist（即使选择ProceedAlways也不行）
-        onConfirm: async (outcome: ToolConfirmationOutcome) => {
+        onConfirm: async (_outcome: ToolConfirmationOutcome) => {
           // 危险命令每次都必须确认，不能whiteklist
           // 所以这里不做任何操作
         },
@@ -654,7 +652,7 @@ Reserve this tool for system commands and terminal operations that have no dedic
 
     // 🚨 保护措施：防止在CLI环境下杀死所有node.exe进程
     // 检测危险的批量结束nodejs进程的命令（仅在非Bun运行时环境下）
-    const isBunRuntime = typeof (globalThis as any).Bun !== 'undefined';
+    const isBunRuntime = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
     const isVSCode = process.env.VSCODE_PLUGIN === '1';
 
     if (!isBunRuntime && !isVSCode) {
@@ -761,7 +759,7 @@ Reserve this tool for system commands and terminal operations that have no dedic
     const internalAbortController = new AbortController();
 
     // Create a manual combined abort signal for better compatibility
-    let isAborted = false;
+    const isAborted = false;
     const abortedSignal = {
       get aborted() { return isAborted || signal.aborted || internalAbortController.signal.aborted; },
       addEventListener: (type: string, listener: EventListener) => {
@@ -1247,9 +1245,6 @@ Reserve this tool for system commands and terminal operations that have no dedic
       taskManager.setTaskPid(task.id, shell.pid);
     }
 
-    let code: number | null = null;
-    let processSignal: NodeJS.Signals | null = null;
-
     shell.stdout.on('data', (data: Buffer) => {
       const decodedStr = decodeWindowsCommandOutput(data, strippedCommand);
       const str = sanitizeShellOutput(decodedStr);
@@ -1267,8 +1262,6 @@ Reserve this tool for system commands and terminal operations that have no dedic
     });
 
     shell.on('exit', (exitCode: number | null, signal: NodeJS.Signals | null) => {
-      code = exitCode;
-      processSignal = signal;
       taskManager.completeTask(task.id, {
         exitCode: exitCode ?? undefined,
         signal: signal ?? undefined,
@@ -1279,7 +1272,7 @@ Reserve this tool for system commands and terminal operations that have no dedic
       if (fs.existsSync(tempFilePath)) {
         try {
           fs.unlinkSync(tempFilePath);
-        } catch (e) {
+        } catch {
           // ignore
         }
       }

@@ -12,25 +12,23 @@ import {
   CountTokensResponse,
   EmbedContentParameters,
   EmbedContentResponse,
-  FinishReason,
 } from '@google/genai';
 import { stripUIFieldsFromArray } from '../types/extendedContent.js';
 import { ContentGenerator } from './contentGenerator.js';
 import { Config } from '../config/config.js';
 import { UserTierId } from '../code_assist/types.js';
-import { proxyAuthManager } from './proxyAuth.js';
+import { proxyAuthManager, type FeishuUserInfo } from './proxyAuth.js';
 import { buildProxyRequestUrl, getActiveProxyServerUrl } from '../config/proxyConfig.js';
 import { logger } from '../utils/enhancedLogger.js';
-import { getDefaultAuthHandler } from '../auth/authNavigator.js';
 import { UnauthorizedError, isOurAuthError } from '../utils/errors.js';
 import { SceneType, SceneManager } from './sceneManager.js';
-import { retryWithBackoff, getErrorStatus } from '../utils/retry.js';
+import { retryWithBackoff } from '../utils/retry.js';
 import { isOttoQuotaError } from '../utils/quotaErrorDetection.js';
 
 import { realTimeTokenEventManager } from '../events/realTimeTokenEvents.js';
 import { MESSAGE_ROLES } from '../config/messageRoles.js';
 import { getGlobalDispatcher } from 'undici';
-import { isCustomModel, resolveThinkingConfig, effortToGeminiLevel, effortToGeminiBudget, effortToOpenAIEffort, effortToAnthropicEffort, effortToAnthropicBudget, ThinkingConfig, isAdaptiveThinkingClaude, applyAnthropicAdaptiveThinking } from '../types/customModel.js';
+import { isCustomModel, effortToGeminiLevel, effortToGeminiBudget, effortToOpenAIEffort, effortToAnthropicEffort, effortToAnthropicBudget, ThinkingConfig, isAdaptiveThinkingClaude, applyAnthropicAdaptiveThinking } from '../types/customModel.js';
 import { callCustomModel, callCustomModelStream } from './customModelAdapter.js';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -55,6 +53,105 @@ import * as os from 'os';
 const REQUEST_DUMP_DIR = path.join(os.homedir(), '.otto-user', 'last-requests');
 const REQUEST_DUMP_LATEST = path.join(os.homedir(), '.otto-user', 'last-stream-request.json');
 const REQUEST_DUMP_RING_SIZE = 5;
+
+/** The proxy may add provider-specific fields; only these fields are read locally. */
+interface DynamicFunctionCall {
+  id?: string;
+  name?: string;
+  args?: unknown;
+}
+
+interface DynamicFunctionResponse {
+  id?: string;
+  name?: string;
+  response?: unknown;
+}
+
+interface DynamicPart {
+  text?: string;
+  reasoning?: string;
+  functionCall?: DynamicFunctionCall;
+  functionResponse?: DynamicFunctionResponse;
+}
+
+interface DynamicStreamPart extends DynamicPart {
+  thought?: boolean;
+  [key: string]: unknown;
+}
+
+interface DynamicStreamChunk {
+  type?: string;
+  error?: unknown;
+  usageMetadata?: Record<string, unknown>;
+  candidates?: Array<{
+    content?: { parts?: DynamicStreamPart[] };
+    finishReason?: string;
+  }>;
+}
+
+interface DynamicContent {
+  role?: string;
+  parts?: DynamicPart[];
+}
+
+type MutableProxyConfig = Record<string, unknown>;
+
+interface ProxyRequestConfig {
+  generationConfig?: MutableProxyConfig;
+  thinkingConfig?: object;
+  httpOptions?: { headers?: Record<string, string> };
+  [key: string]: unknown;
+}
+
+interface ProxyRequestBody {
+  model?: string;
+  config?: ProxyRequestConfig;
+  [key: string]: unknown;
+}
+
+interface RetriableProxyError extends Error {
+  code?: string;
+  cause?: { code?: string };
+  status?: number;
+  response?: { status: number; headers: Record<string, string> };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return isRecord(value) ? value : null;
+}
+
+function getProxyToolNames(requestBody: ProxyRequestBody): string[] {
+  const tools = requestBody.config?.tools;
+  if (!Array.isArray(tools)) {
+    return [];
+  }
+
+  return tools.flatMap((tool) => {
+    if (!isRecord(tool) || !Array.isArray(tool.functionDeclarations)) {
+      return [];
+    }
+    return tool.functionDeclarations.flatMap((declaration) =>
+      isRecord(declaration) && typeof declaration.name === 'string'
+        ? [declaration.name]
+        : [],
+    );
+  });
+}
+
+function getFunctionCalls(response: GenerateContentResponse) {
+  return (response.candidates?.[0]?.content?.parts ?? []).flatMap((part) =>
+    part.functionCall ? [part.functionCall] : [],
+  );
+}
+
+function getUsageCount(usageMetadata: Record<string, unknown> | null, field: string): number {
+  const value = usageMetadata?.[field];
+  return typeof value === 'number' ? value : 0;
+}
 function dumpOutboundRequest(kind: 'stream' | 'unified', body: unknown): void {
   // 默认关闭：仅显式开启文件级调试时才把含对话内容的请求体落盘
   if (process.env.FILE_DEBUG !== '1') {
@@ -159,10 +256,14 @@ function supportsSSEStreaming(modelName: string): boolean {
 /**
  * 按模型关键词适配走 GenAI 格式（Otto 服务端代理）的思考模式配置
  */
-function applyGenAIThinkingConfig(model: string, reqConfig: any, thinkingConfig: ThinkingConfig | undefined): any {
+function applyGenAIThinkingConfig(
+  model: string,
+  reqConfig: ProxyRequestConfig,
+  thinkingConfig: ThinkingConfig | undefined,
+): ProxyRequestConfig {
   // 🐛 [thinking-debug] 入口处先把"用户/项目配置中的 thinkingConfig"打印出来
   // 这是用户在 CLI 里通过 /thinking 设置或项目 settings 注入的原始值
-  // eslint-disable-next-line no-console
+
   console.log(
     `\x1b[35m[thinking-debug]\x1b[0m model=\x1b[36m${model}\x1b[0m  userThinkingConfig=${
       thinkingConfig === undefined ? 'undefined (走默认 auto)' : JSON.stringify(thinkingConfig)
@@ -296,7 +397,7 @@ function applyGenAIThinkingConfig(model: string, reqConfig: any, thinkingConfig:
   if (gc.thinkingConfig !== undefined) injected.thinkingConfig = gc.thinkingConfig; // Gemini
   if (gc.thinking !== undefined) injected.thinking = gc.thinking;                   // Claude / GLM
   if (gc.reasoning_effort !== undefined) injected.reasoning_effort = gc.reasoning_effort; // OpenAI
-  // eslint-disable-next-line no-console
+
   console.log(
     `\x1b[35m[thinking-debug]\x1b[0m \u2192 injected to generationConfig: ${
       Object.keys(injected).length === 0 ? '(none, model not matched)' : JSON.stringify(injected)
@@ -312,7 +413,7 @@ function applyGenAIThinkingConfig(model: string, reqConfig: any, thinkingConfig:
  * 支持Claude和Gemini模型的统一接口
  */
 export class OttoServerAdapter implements ContentGenerator {
-  public userTier?: UserTierId;
+  userTier?: UserTierId;
   private authHandler: (() => Promise<void>) | null = null;
   private config?: Config;
 
@@ -340,7 +441,7 @@ export class OttoServerAdapter implements ContentGenerator {
   /**
    * 设置飞书用户信息
    */
-  setUserInfo(userInfo: any): void {
+  setUserInfo(userInfo: FeishuUserInfo): void {
     proxyAuthManager.setUserInfo(userInfo);
     // 只在调试模式下显示详细日志
     if (process.env.DEBUG || process.env.NODE_ENV === 'development') {
@@ -374,20 +475,20 @@ export class OttoServerAdapter implements ContentGenerator {
    * 清理内容，移除空消息和无效部分，同时合并流式历史中的思维部分到主消息中
    * 针对 Claude、Kimi、GLM 等对消息格式要求严格的模型
    */
-  private cleanContents(contents: any[]): any[] {
+  private cleanContents(contents: DynamicContent[]): DynamicContent[] {
     if (!Array.isArray(contents)) return contents;
 
-    const consolidated: any[] = [];
-    let accumulatedReasoning: any[] = [];
+    const consolidated: DynamicContent[] = [];
+    let accumulatedReasoning: DynamicPart[] = [];
 
     for (const content of contents) {
       // 深度拷贝消息，同时过滤掉无效的空文本/空白字符块，防止传给服务端后转换为大模型格式（如 Anthropic）时报错
       const clonedParts = content.parts
-        ? content.parts.filter((p: any) => {
-            if (p && p.text !== undefined) {
-              return typeof p.text === 'string' && p.text.trim() !== '';
+        ? content.parts.filter((part) => {
+            if (part.text !== undefined) {
+              return part.text.trim() !== '';
             }
-            return p !== null && p !== undefined;
+            return true;
           })
         : [];
 
@@ -400,8 +501,8 @@ export class OttoServerAdapter implements ContentGenerator {
         const parts = clonedContent.parts || [];
 
         // 分离思维部分与非思维部分（如文本、工具调用等）
-        const reasoningParts = parts.filter((p: any) => p && p.reasoning !== undefined);
-        const nonReasoningParts = parts.filter((p: any) => p && p.reasoning === undefined);
+        const reasoningParts = parts.filter((part) => part.reasoning !== undefined);
+        const nonReasoningParts = parts.filter((part) => part.reasoning === undefined);
 
         // 如果包含思维链，则累积暂存
         if (reasoningParts.length > 0) {
@@ -424,7 +525,7 @@ export class OttoServerAdapter implements ContentGenerator {
           // 导致 Kimi K2.6 等模型因 tool_call 消息缺少 reasoning_content 而报错。
           const lastConsolidated = consolidated[consolidated.length - 1];
           if (lastConsolidated && lastConsolidated.role === MESSAGE_ROLES.MODEL) {
-            lastConsolidated.parts.push(...clonedContent.parts);
+            lastConsolidated.parts!.push(...clonedContent.parts);
           } else {
             consolidated.push(clonedContent);
           }
@@ -444,7 +545,7 @@ export class OttoServerAdapter implements ContentGenerator {
       if (!content.parts || content.parts.length === 0) return false;
 
       // 2. 检查 parts 是否有效
-      const hasValidPart = content.parts.some((part: any) => {
+      const hasValidPart = content.parts.some((part) => {
         // 如果是文本，必须非空
         if (part.text !== undefined) return part.text.trim() !== '';
         // 其他类型（functionCall, functionResponse, reasoning, etc.）视为有效
@@ -474,14 +575,14 @@ export class OttoServerAdapter implements ContentGenerator {
     }
 
     // 🆕 调试日志：输出整理后的历史结构，帮助诊断多轮对话中的思维块合并情况
-    if (process.env.DEBUG || process.env.NODE_ENV === 'development' || true) { // 🌟 暂时强制开启以便在用户的终端中显示，极其利于排除故障
+    if (process.env.DEBUG || process.env.NODE_ENV === 'development') {
       console.log(`[cleanContents] 整理后的历史记录列表 (共 ${orphanCleaned.length} 条):`);
       orphanCleaned.forEach((c, idx) => {
-        const partTypes = (c.parts || []).map((p: any) => {
-          if (p.text !== undefined) return `text(${p.text.length})`;
-          if (p.functionCall) return `functionCall(${p.functionCall.name})`;
-          if (p.functionResponse) return `functionResponse(${p.functionResponse.name})`;
-          if (p.reasoning) return `reasoning(${p.reasoning.length})`;
+        const partTypes = (c.parts || []).map((part) => {
+          if (part.text !== undefined) return `text(${part.text.length})`;
+          if (part.functionCall) return `functionCall(${part.functionCall.name})`;
+          if (part.functionResponse) return `functionResponse(${part.functionResponse.name})`;
+          if (part.reasoning) return `reasoning(${part.reasoning.length})`;
           return 'unknown';
         });
         console.log(`  [${idx}] role=${c.role} parts=[${partTypes.join(', ')}]`);
@@ -516,12 +617,12 @@ export class OttoServerAdapter implements ContentGenerator {
    *   - 仅当 fr 数 > 可配对 fc 数（真出现孤儿）才删多出来的那些。
    *   - 孤儿 functionResponse 本就是三家协议的共同禁忌，删除只会让请求更合法。
    */
-  private removeOrphanedToolResponses(contents: any[]): any[] {
+  private removeOrphanedToolResponses(contents: DynamicContent[]): DynamicContent[] {
     if (!Array.isArray(contents) || contents.length === 0) return contents;
 
     // 快速通道：没有任何 functionResponse 时直接返回，零开销、零改动
     const hasAnyFunctionResponse = contents.some(
-      (c) => Array.isArray(c?.parts) && c.parts.some((p: any) => p?.functionResponse),
+      (content) => Array.isArray(content.parts) && content.parts.some((part) => part.functionResponse),
     );
     if (!hasAnyFunctionResponse) return contents;
 
@@ -540,14 +641,14 @@ export class OttoServerAdapter implements ContentGenerator {
 
     // 2) 遍历每条消息，为每个 functionResponse 寻找一个未消耗的配对槽
     let removedCount = 0;
-    const result: any[] = [];
+    const result: DynamicContent[] = [];
     for (const content of contents) {
       if (!Array.isArray(content?.parts)) {
         result.push(content);
         continue;
       }
 
-      const keptParts = content.parts.filter((part: any) => {
+      const keptParts = content.parts.filter((part) => {
         const fr = part?.functionResponse;
         if (!fr) return true; // 非 functionResponse 一律保留
 
@@ -648,7 +749,11 @@ export class OttoServerAdapter implements ContentGenerator {
       }
 
       // 🆕 注入走 GenAI 格式 (Otto 服务端代理) 的思考模式适配
-      const resolvedConfig = applyGenAIThinkingConfig(modelToUse, request.config || {}, this.config?.getThinkingConfig());
+      const resolvedConfig = applyGenAIThinkingConfig(
+        modelToUse,
+        (request.config ?? {}) as unknown as ProxyRequestConfig,
+        this.config?.getThinkingConfig(),
+      );
 
       const unifiedRequest = {
         model: modelToUse,
@@ -692,7 +797,7 @@ export class OttoServerAdapter implements ContentGenerator {
    * 🆕 使用指数退避重试策略处理 429 和 5xx 错误
    * @see https://cloud.google.com/storage/docs/retry-strategy#exponential-backoff
    */
-  private async callUnifiedChatAPI(endpoint: string, requestBody: any, abortSignal?: AbortSignal, sceneType?: string): Promise<GenerateContentResponse> {
+  private async callUnifiedChatAPI(endpoint: string, requestBody: ProxyRequestBody, abortSignal?: AbortSignal, sceneType?: string): Promise<GenerateContentResponse> {
     // 使用指数退避包装实际的 API 调用
     return retryWithBackoff(
       () => this.executeUnifiedChatAPICall(endpoint, requestBody, abortSignal, sceneType),
@@ -726,7 +831,8 @@ export class OttoServerAdapter implements ContentGenerator {
           }
           // ✅ 传输中断/连接异常 - 重试
           const errorMessage = error.message.toLowerCase();
-          const errorCode = (error as any)?.cause?.code || (error as any)?.code;
+          const retriableError = error as RetriableProxyError;
+          const errorCode = retriableError.cause?.code ?? retriableError.code;
           if (
             errorMessage.includes('terminated') ||
             errorMessage.includes('socket hang up') ||
@@ -765,7 +871,7 @@ export class OttoServerAdapter implements ContentGenerator {
    * 执行实际的 API 调用（不含重试逻辑）
    * 被 callUnifiedChatAPI 通过 retryWithBackoff 包装调用
    */
-  private async executeUnifiedChatAPICall(endpoint: string, requestBody: any, abortSignal?: AbortSignal, sceneType?: string): Promise<GenerateContentResponse> {
+  private async executeUnifiedChatAPICall(endpoint: string, requestBody: ProxyRequestBody, abortSignal?: AbortSignal, sceneType?: string): Promise<GenerateContentResponse> {
     const userHeaders = await proxyAuthManager.getUserHeaders(sceneType);
     const proxyUrl = buildProxyRequestUrl(
       proxyAuthManager.getProxyServerUrl(),
@@ -823,9 +929,16 @@ export class OttoServerAdapter implements ContentGenerator {
       // 那就是 server 端的过滤/转换 bug。详见 client.ts:~500 (toolRegistry.
       // getFunctionDeclarations())。
       try {
-        const tools = (requestBody as any)?.config?.tools;
+        const tools = requestBody.config?.tools;
         const names = Array.isArray(tools)
-          ? tools.flatMap((t: any) => (t?.functionDeclarations ?? []).map((d: any) => d?.name))
+          ? tools.flatMap((tool): string[] => {
+              if (!isRecord(tool) || !Array.isArray(tool.functionDeclarations)) return [];
+              return tool.functionDeclarations.flatMap((declaration): string[] =>
+                isRecord(declaration) && typeof declaration.name === 'string'
+                  ? [declaration.name]
+                  : [],
+              );
+            })
           : [];
         console.log(
           `[STOP-DEBUG][adapter] → ${endpoint} model=${requestBody.model} tools(${names.length})=[${names.join(', ')}]`,
@@ -879,11 +992,12 @@ export class OttoServerAdapter implements ContentGenerator {
 
         // 🆕 为 429/5xx 错误创建带状态码的错误对象，便于重试逻辑判断
         const apiError = new Error(`API request failed (${response.status}): ${errorText}`);
-        (apiError as any).status = response.status;
+        const retriableError = apiError as RetriableProxyError;
+        retriableError.status = response.status;
         // 🆕 尝试解析 Retry-After 头，传递给重试逻辑
         const retryAfter = response.headers.get('retry-after');
         if (retryAfter) {
-          (apiError as any).response = {
+          retriableError.response = {
             status: response.status,
             headers: { 'retry-after': retryAfter }
           };
@@ -903,7 +1017,7 @@ export class OttoServerAdapter implements ContentGenerator {
       // 确保响应对象有 functionCalls getter
       if (!responseData.functionCalls) {
         Object.defineProperty(responseData, 'functionCalls', {
-          get: function() {
+          get() {
             if (this.candidates?.[0]?.content?.parts?.length === 0) {
               return undefined;
             }
@@ -912,10 +1026,7 @@ export class OttoServerAdapter implements ContentGenerator {
                 'there are multiple candidates in the response, returning function calls from the first one.',
               );
             }
-            const functionCalls = this.candidates?.[0]?.content?.parts
-              ?.filter((part: any) => part.functionCall)
-              .map((part: any) => part.functionCall)
-              .filter((functionCall: any) => functionCall !== undefined);
+            const functionCalls = getFunctionCalls(this as GenerateContentResponse);
             if (functionCalls?.length === 0) {
               return undefined;
             }
@@ -1000,7 +1111,7 @@ export class OttoServerAdapter implements ContentGenerator {
     const isConnectionError = error instanceof TypeError &&
       (error.message.includes('fetch failed') ||
        error.message.includes('ECONNREFUSED') ||
-       (error as any).cause?.code === 'ECONNREFUSED');
+       (error as RetriableProxyError).cause?.code === 'ECONNREFUSED');
 
     if (isConnectionError) {
       console.error(`❌ 无法连接到服务器，请检查网络连接或服务器状态`);
@@ -1009,14 +1120,15 @@ export class OttoServerAdapter implements ContentGenerator {
     }
 
     // 🚨 特殊处理401错误 - 提供更友好的错误信息
-    if (error instanceof Error && (error as any).isAuthError) {
+    if (error instanceof Error && (error as Error & { isAuthError?: boolean }).isAuthError) {
       const friendlyError = new Error(
         `Authentication failed (401): ${error.message}\n\n` +
         `Please check your Feishu authentication token and try again.\n` +
         `If the problem persists, you may need to re-authenticate.`
       );
-      (friendlyError as any).isAuthError = true;
-      (friendlyError as any).statusCode = 401;
+      const annotatedError = friendlyError as Error & { isAuthError?: boolean; statusCode?: number };
+      annotatedError.isAuthError = true;
+      annotatedError.statusCode = 401;
       throw friendlyError;
     }
 
@@ -1112,7 +1224,11 @@ export class OttoServerAdapter implements ContentGenerator {
       }
 
       // 🆕 注入走 GenAI 格式 (Otto 服务端代理) 的思考模式适配 (流式)
-      const resolvedConfig = applyGenAIThinkingConfig(modelToUse, request.config || {}, this.config?.getThinkingConfig());
+      const resolvedConfig = applyGenAIThinkingConfig(
+        modelToUse,
+        (request.config ?? {}) as unknown as ProxyRequestConfig,
+        this.config?.getThinkingConfig(),
+      );
 
       const streamRequest = {
         model: modelToUse,
@@ -1153,7 +1269,7 @@ export class OttoServerAdapter implements ContentGenerator {
    * 使用指数退避重试策略处理初始连接的 429 和 5xx 错误
    * 注意：只对初始连接进行重试，一旦流开始就不再重试
    */
-  private async callStreamAPI(endpoint: string, requestBody: any, abortSignal?: AbortSignal, sceneType?: string): Promise<Response> {
+  private async callStreamAPI(endpoint: string, requestBody: ProxyRequestBody, abortSignal?: AbortSignal, sceneType?: string): Promise<Response> {
     // 使用指数退避包装实际的流式 API 调用
     return retryWithBackoff(
       () => this.executeStreamAPICall(endpoint, requestBody, abortSignal, sceneType),
@@ -1185,7 +1301,8 @@ export class OttoServerAdapter implements ContentGenerator {
           }
           // ✅ 传输中断/连接异常 - 重试
           const errorMessage = error.message.toLowerCase();
-          const errorCode = (error as any)?.cause?.code || (error as any)?.code;
+          const retryError = error as RetriableProxyError;
+          const errorCode = retryError.cause?.code || retryError.code;
           if (
             errorMessage.includes('terminated') ||
             errorMessage.includes('socket hang up') ||
@@ -1224,7 +1341,7 @@ export class OttoServerAdapter implements ContentGenerator {
    * 执行实际的流式 API 调用（不含重试逻辑）
    * 被 callStreamAPI 通过 retryWithBackoff 包装调用
    */
-  private async executeStreamAPICall(endpoint: string, requestBody: any, abortSignal?: AbortSignal, sceneType?: string): Promise<Response> {
+  private async executeStreamAPICall(endpoint: string, requestBody: ProxyRequestBody, abortSignal?: AbortSignal, sceneType?: string): Promise<Response> {
     const userHeaders = await proxyAuthManager.getUserHeaders(sceneType);
     const proxyUrl = buildProxyRequestUrl(
       proxyAuthManager.getProxyServerUrl(),
@@ -1243,8 +1360,9 @@ export class OttoServerAdapter implements ContentGenerator {
       // 🔍 检查 undici 全局调度器（流式）
       const globalDispatcher = getGlobalDispatcher();
       console.log('🔍 [Otto Debug Stream] Global dispatcher:', globalDispatcher?.constructor?.name || 'undefined');
-      if (globalDispatcher && 'uri' in globalDispatcher) {
-        console.log('  Dispatcher URI:', (globalDispatcher as any).uri);
+      const dispatcherWithUri = globalDispatcher as typeof globalDispatcher & { uri?: unknown };
+      if (typeof dispatcherWithUri?.uri === 'string') {
+        console.log('  Dispatcher URI:', dispatcherWithUri.uri);
       }
     }
 
@@ -1286,10 +1404,7 @@ export class OttoServerAdapter implements ContentGenerator {
       // 🔍 [STOP-DEBUG][adapter] Outgoing tool manifest — stream path.
       // 与 non-stream 路径同义，只是走的是 /v1/chat/stream。
       try {
-        const tools = (requestBody as any)?.config?.tools;
-        const names = Array.isArray(tools)
-          ? tools.flatMap((t: any) => (t?.functionDeclarations ?? []).map((d: any) => d?.name))
-          : [];
+        const names = getProxyToolNames(requestBody);
         console.log(
           `[STOP-DEBUG][adapter] → ${endpoint} (stream) model=${requestBody.model} tools(${names.length})=[${names.join(', ')}]`,
         );
@@ -1335,7 +1450,7 @@ export class OttoServerAdapter implements ContentGenerator {
 
         // 为 429/5xx 错误创建带状态码的错误对象，便于重试逻辑判断
         const apiError = new Error(`Stream API error (${response.status}): ${errorText}`);
-        (apiError as any).status = response.status;
+        (apiError as RetriableProxyError).status = response.status;
         throw apiError;
       }
 
@@ -1408,7 +1523,7 @@ export class OttoServerAdapter implements ContentGenerator {
     const decoder = new TextDecoder();
     let buffer = '';
     let totalBytesRead = 0;
-    let lastUsageMetadata: any = null;
+    let lastUsageMetadata: Record<string, unknown> | null = null;
 
     // 🛡️ 工具调用累积器：服务端常常把同一个 functionCall 拆成多个 SSE chunk
     // 推送（先 name、再分批 args、最后 finishReason）。如果客户端把每个 chunk
@@ -1421,7 +1536,7 @@ export class OttoServerAdapter implements ContentGenerator {
     // 才 yield 一次完整的合并 chunk。纯文本 chunk 仍然立即 yield，保留流式打字体感。
     //
     // 注：mergeStreamContent 之前是死代码（定义但从未调用）；此处启用它。
-    let accumulatedToolChunk: any = null;
+    let accumulatedToolChunk: GenerateContentResponse | null = null;
 
     // 🎯 关键保护机制：监听客户端取消信号
     // 当用户中断时，立即释放流读取器并停止消费数据
@@ -1429,7 +1544,7 @@ export class OttoServerAdapter implements ContentGenerator {
       console.log('[Otto Server] Stream cancelled by user - releasing reader and stopping consumption');
       try {
         reader.cancel();  // 立即取消流读取
-      } catch (e) {
+      } catch {
         // 忽略cancel可能抛出的错误
       }
     };
@@ -1450,9 +1565,9 @@ export class OttoServerAdapter implements ContentGenerator {
           // 📊 记录部分消费的tokens（如果有）
           if (lastUsageMetadata) {
             console.log('[Otto Server] Partial token consumption recorded:', {
-              inputTokens: lastUsageMetadata.promptTokenCount || 0,
-              outputTokens: lastUsageMetadata.candidatesTokenCount || 0,
-              totalTokens: lastUsageMetadata.totalTokenCount || 0,
+              inputTokens: getUsageCount(lastUsageMetadata, 'promptTokenCount'),
+              outputTokens: getUsageCount(lastUsageMetadata, 'candidatesTokenCount'),
+              totalTokens: getUsageCount(lastUsageMetadata, 'totalTokenCount'),
               stoppedReason: 'user_cancelled',
               bytesReceived: totalBytesRead,
             });
@@ -1481,7 +1596,8 @@ export class OttoServerAdapter implements ContentGenerator {
           // 🆕 捕获 TCP 中断错误（如服务器重启导致的连接断开）
           if (readError instanceof TypeError) {
             const errorMessage = readError.message.toLowerCase();
-            const errorCode = (readError as any)?.cause?.code || (readError as any)?.code;
+            const streamReadError = readError as RetriableProxyError;
+            const errorCode = streamReadError.cause?.code || streamReadError.code;
 
             const isTCPInterrupt =
               errorMessage.includes('terminated') ||
@@ -1503,9 +1619,14 @@ export class OttoServerAdapter implements ContentGenerator {
                 `This may be caused by server restart or network issues. ` +
                 `Please retry your request. (Original: ${readError.message})`
               );
-              (streamInterruptError as any).isStreamInterrupt = true;
-              (streamInterruptError as any).isRetryable = true;
-              (streamInterruptError as any).bytesReceived = totalBytesRead;
+              const annotatedError = streamInterruptError as Error & {
+                isStreamInterrupt?: boolean;
+                isRetryable?: boolean;
+                bytesReceived?: number;
+              };
+              annotatedError.isStreamInterrupt = true;
+              annotatedError.isRetryable = true;
+              annotatedError.bytesReceived = totalBytesRead;
               console.warn(`⚠️  [Otto Server] Stream connection interrupted after ${totalBytesRead} bytes. Cause: ${readError.message}`);
               throw streamInterruptError;
             }
@@ -1520,9 +1641,9 @@ export class OttoServerAdapter implements ContentGenerator {
           // 🛡️ 流自然结束：flush 累积的工具调用 chunk
           if (accumulatedToolChunk) {
             // 🔍 [STOP-DEBUG][adapter] 诊断日志 #3a：done flush
-            const fcs = accumulatedToolChunk.candidates?.[0]?.content?.parts?.filter((p: any) => p.functionCall) ?? [];
+            const fcs = getFunctionCalls(accumulatedToolChunk);
             console.log(
-              `[STOP-DEBUG][adapter] FLUSH on reader.done: functionCallCount=${fcs.length}, names=[${fcs.map((p: any) => p.functionCall?.name ?? '').join(',')}]`,
+              `[STOP-DEBUG][adapter] FLUSH on reader.done: functionCallCount=${fcs.length}, names=[${fcs.map((functionCall) => functionCall.name ?? '').join(',')}]`,
             );
             this.finalizeAccumulatedToolChunk(accumulatedToolChunk);
             yield accumulatedToolChunk;
@@ -1548,9 +1669,9 @@ export class OttoServerAdapter implements ContentGenerator {
               // 🛡️ 收到 [DONE]：flush 累积的工具调用 chunk
               if (accumulatedToolChunk) {
                 // 🔍 [STOP-DEBUG][adapter] 诊断日志 #3b：[DONE] flush
-                const fcs = accumulatedToolChunk.candidates?.[0]?.content?.parts?.filter((p: any) => p.functionCall) ?? [];
+                const fcs = getFunctionCalls(accumulatedToolChunk);
                 console.log(
-                  `[STOP-DEBUG][adapter] FLUSH on [DONE]: functionCallCount=${fcs.length}, names=[${fcs.map((p: any) => p.functionCall?.name ?? '').join(',')}]`,
+                  `[STOP-DEBUG][adapter] FLUSH on [DONE]: functionCallCount=${fcs.length}, names=[${fcs.map((functionCall) => functionCall.name ?? '').join(',')}]`,
                 );
                 this.finalizeAccumulatedToolChunk(accumulatedToolChunk);
                 yield accumulatedToolChunk;
@@ -1575,7 +1696,7 @@ export class OttoServerAdapter implements ContentGenerator {
                 );
               }
 
-              const chunk = JSON.parse(data);
+              const chunk = JSON.parse(data) as DynamicStreamChunk;
 
               // 🔍 [STOP-DEBUG][adapter] 诊断日志 #1：原始服务器 chunk
               // 用途：定位 function_call 在哪一层丢失。如果服务器根本没发送
@@ -1642,7 +1763,7 @@ export class OttoServerAdapter implements ContentGenerator {
 
               // 🛡️ 区分工具调用 chunk 与纯文本 chunk
               const parts = genaiResponse.candidates?.[0]?.content?.parts ?? [];
-              const hasFunctionCall = parts.some((p: any) => p.functionCall);
+              const hasFunctionCall = parts.some((part) => part.functionCall);
 
               // 🔍 [STOP-DEBUG][adapter] 诊断日志 #2：累加器决策
               // 用途：判断 chunk 进入了三个分支中的哪一个：
@@ -1652,8 +1773,8 @@ export class OttoServerAdapter implements ContentGenerator {
               // 如果服务器发了 functionCall 但 partsKeys 里看不到 'functionCall'
               // 字段（比如显示 ['toolUse'] / ['name','input']），那就是 schema
               // 不匹配——server 端没把 claude tool_use 翻译成 gemini functionCall。
-              const partsKeys = parts.map((p: any) =>
-                p && typeof p === 'object' ? Object.keys(p) : typeof p,
+              const partsKeys = parts.map((part) =>
+                part && typeof part === 'object' ? Object.keys(part) : typeof part,
               );
               const finishReason = genaiResponse.candidates?.[0]?.finishReason;
               console.log(
@@ -1710,7 +1831,7 @@ export class OttoServerAdapter implements ContentGenerator {
 
       try {
         reader.releaseLock();
-      } catch (e) {
+      } catch {
         // 忽略release可能的错误
       }
     }
@@ -1719,7 +1840,7 @@ export class OttoServerAdapter implements ContentGenerator {
   /**
    * 🆕 将流式块转换为GenAI格式
    */
-  private convertStreamChunkToGenAI(chunk: any): GenerateContentResponse | null {
+  private convertStreamChunkToGenAI(chunk: DynamicStreamChunk): GenerateContentResponse | null {
     if (!chunk.candidates || !Array.isArray(chunk.candidates) || chunk.candidates.length === 0) {
       return null;
     }
@@ -1728,7 +1849,7 @@ export class OttoServerAdapter implements ContentGenerator {
     const response = {
       candidates: chunk.candidates,
       usageMetadata: chunk.usageMetadata
-    } as GenerateContentResponse;
+    } as unknown as GenerateContentResponse;
 
     // 🚀 预处理：补全缺失的 ID
     if (response.candidates?.[0]?.content?.parts) {
@@ -1743,7 +1864,7 @@ export class OttoServerAdapter implements ContentGenerator {
 
     if (!response.functionCalls) {
       Object.defineProperty(response, 'functionCalls', {
-        get: function() {
+        get() {
           if (this.candidates?.[0]?.content?.parts?.length === 0) {
             return undefined;
           }
@@ -1752,10 +1873,7 @@ export class OttoServerAdapter implements ContentGenerator {
               'there are multiple candidates in the response, returning function calls from the first one.',
             );
           }
-          const functionCalls = this.candidates?.[0]?.content?.parts
-            ?.filter((part: any) => part.functionCall)
-            .map((part: any) => part.functionCall)
-            .filter((functionCall: any) => functionCall !== undefined);
+          const functionCalls = getFunctionCalls(this as GenerateContentResponse);
           if (functionCalls?.length === 0) {
             return undefined;
           }
@@ -1778,11 +1896,11 @@ export class OttoServerAdapter implements ContentGenerator {
    *
    * 失败容忍：JSON.parse 抛错时保持原字符串不动，让下游能输出更准确的错误。
    */
-  private finalizeAccumulatedToolChunk(chunk: any): void {
+  private finalizeAccumulatedToolChunk(chunk: GenerateContentResponse): void {
     const parts = chunk?.candidates?.[0]?.content?.parts;
     if (!Array.isArray(parts)) return;
     for (const p of parts) {
-      const fc = p?.functionCall;
+      const fc = p?.functionCall as unknown as DynamicFunctionCall | undefined;
       if (!fc) continue;
       if (typeof fc.args === 'string') {
         const trimmed = fc.args.trim();
@@ -1795,7 +1913,7 @@ export class OttoServerAdapter implements ContentGenerator {
           if (parsed && typeof parsed === 'object') {
             fc.args = parsed;
           }
-        } catch (e) {
+        } catch {
           console.warn(
             `[Otto Server] Failed to parse accumulated functionCall.args as JSON for tool "${fc.name}". Keeping raw string for downstream error reporting. Raw: ${trimmed.substring(0, 200)}`,
           );
@@ -1827,24 +1945,21 @@ export class OttoServerAdapter implements ContentGenerator {
    *   - args 的合并兼容字符串增量（流式 JSON 拼接）和对象增量（浅合并）；
    *   - usageMetadata 与 finishReason 始终用最新 chunk 的值覆盖累积器。
    */
-  private mergeStreamContent(accumulated: any, newChunk: GenerateContentResponse): GenerateContentResponse {
+  private mergeStreamContent(accumulated: GenerateContentResponse | null, newChunk: GenerateContentResponse): GenerateContentResponse {
     if (!accumulated) {
       // 🛡️ 深拷贝首个含 functionCall 的 chunk 作为累积器底座，避免后续
       // mutate 污染原始 chunk（原始 chunk 的 candidates 引用可能被其他
       // 路径读取，例如 chunks[] 历史持久化）。
-      const cloned: any = {
+      const cloned = {
         candidates: newChunk.candidates ? structuredClone(newChunk.candidates) : [],
         usageMetadata: newChunk.usageMetadata,
-      };
+      } as GenerateContentResponse;
       // 重新挂上 functionCalls getter（structuredClone 会丢掉 defineProperty 注入）
       Object.defineProperty(cloned, 'functionCalls', {
-        get: function () {
+        get () {
           const parts = this.candidates?.[0]?.content?.parts;
           if (!parts || parts.length === 0) return undefined;
-          const fcs = parts
-            .filter((p: any) => p.functionCall)
-            .map((p: any) => p.functionCall)
-            .filter((fc: any) => fc !== undefined);
+          const fcs = getFunctionCalls(this as GenerateContentResponse);
           return fcs.length === 0 ? undefined : fcs;
         },
         enumerable: false,
@@ -1864,8 +1979,8 @@ export class OttoServerAdapter implements ContentGenerator {
       return cloned as GenerateContentResponse;
     }
 
-    const accumulatedParts: any[] = accumulated.candidates?.[0]?.content?.parts || [];
-    const newParts: any[] = newChunk.candidates?.[0]?.content?.parts || [];
+    const accumulatedParts = accumulated.candidates?.[0]?.content?.parts || [];
+    const newParts = newChunk.candidates?.[0]?.content?.parts || [];
 
     // 🛡️ 遍历新 chunk 的每一个 part，按 part 类型分别合并
     for (const newPart of newParts) {
@@ -1888,8 +2003,8 @@ export class OttoServerAdapter implements ContentGenerator {
         //     作为新的独立 part 推入，避免静默吞掉并行 tool_call。
         const lastAccPart = accumulatedParts[accumulatedParts.length - 1];
         if (lastAccPart && lastAccPart.functionCall) {
-          const accFc = lastAccPart.functionCall;
-          const newFc = newPart.functionCall;
+          const accFc = lastAccPart.functionCall as unknown as DynamicFunctionCall;
+          const newFc = newPart.functionCall as unknown as DynamicFunctionCall;
 
           const isContinuation =
             !newFc.id || !accFc.id || newFc.id === accFc.id;
@@ -1915,17 +2030,17 @@ export class OttoServerAdapter implements ContentGenerator {
             }
           } else {
             // 并行调用：作为新的独立 part 推入
-            const partToPush: any = { ...newPart, functionCall: { ...newFc } };
+            const partToPush = { ...newPart, functionCall: { ...newFc } };
             if (!partToPush.functionCall.id) {
               const generatedId = `call_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
               console.log(`[Otto Server] 补全缺失的工具 ID (Merge parallel): ${partToPush.functionCall.name} -> ${generatedId}`);
               partToPush.functionCall.id = generatedId;
             }
-            accumulatedParts.push(partToPush);
+            accumulatedParts.push(partToPush as unknown as (typeof accumulatedParts)[number]);
           }
         } else {
           // 新的独立 functionCall part
-          const partToPush: any = { ...newPart, functionCall: { ...newPart.functionCall } };
+          const partToPush = { ...newPart, functionCall: { ...newPart.functionCall } };
           if (!partToPush.functionCall.id) {
             const generatedId = `call_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
             console.log(`[Otto Server] 补全缺失的工具 ID (Merge): ${partToPush.functionCall.name} -> ${generatedId}`);
@@ -1962,7 +2077,7 @@ export class OttoServerAdapter implements ContentGenerator {
   /**
    * 🆕 构建统一请求格式（用于流式）
    */
-  private buildUnifiedRequest(request: GenerateContentParameters, scene: SceneType): any {
+  private buildUnifiedRequest(request: GenerateContentParameters, scene: SceneType): ProxyRequestBody {
     const sceneModel = SceneManager.getModelForScene(scene);
     const userModel = this.config?.getModel();
 
@@ -1998,8 +2113,8 @@ export class OttoServerAdapter implements ContentGenerator {
   /**
    * 🆕 处理流式错误 - 复用统一错误处理逻辑
    */
-  private async *handleStreamError(error: unknown): AsyncGenerator<GenerateContentResponse> {
-    this.handleError(error);
+  private handleStreamError(error: unknown): AsyncGenerator<GenerateContentResponse> {
+    return this.handleError(error);
   }
 
   /**
@@ -2066,7 +2181,7 @@ export class OttoServerAdapter implements ContentGenerator {
   /**
    * Token计数专用API调用
    */
-  private async callUnifiedTokenCountAPI(requestBody: any): Promise<CountTokensResponse> {
+  private async callUnifiedTokenCountAPI(requestBody: ProxyRequestBody): Promise<CountTokensResponse> {
     const userHeaders = await proxyAuthManager.getUserHeaders();
     const proxyUrl = buildProxyRequestUrl(
       proxyAuthManager.getProxyServerUrl(),
@@ -2123,35 +2238,30 @@ export class OttoServerAdapter implements ContentGenerator {
     try {
       const contentsArray = Array.isArray(request.contents) ? request.contents : [{ role: MESSAGE_ROLES.USER, parts: [{ text: request.contents }] }];
       let totalChars = 0;
-      let toolCallCount = 0;
-      let toolResultCount = 0;
-      let textParts = 0;
 
       for (const content of contentsArray) {
         if (typeof content === 'object' && content && 'parts' in content && Array.isArray(content.parts)) {
           for (const part of content.parts) {
+            const partRecord = asRecord(part);
             if (typeof part === 'object' && part && 'text' in part && typeof part.text === 'string') {
               totalChars += part.text.length;
-              textParts++;
-            } else if (typeof part === 'object' && part && 'functionCall' in part && (part as any).functionCall) {
+            } else if (partRecord && isRecord(partRecord.functionCall)) {
               // 估算工具调用的token数
-              const functionCall = (part as any).functionCall;
+              const functionCall = partRecord.functionCall;
               const toolCallText = `[Tool: ${functionCall.name}]` +
                                   JSON.stringify(functionCall.args || {});
               totalChars += toolCallText.length;
-              toolCallCount++;
-           } else if (typeof part === 'object' && part && 'functionResponse' in part && (part as any).functionResponse) {
+           } else if (partRecord && isRecord(partRecord.functionResponse)) {
               // 估算工具响应的token数
-              const functionResponse = (part as any).functionResponse;
-              const output = functionResponse.response?.output || 'result';
+              const functionResponse = partRecord.functionResponse;
+              const response = isRecord(functionResponse.response) ? functionResponse.response : {};
+              const output = response.output || 'result';
               const toolResultText = `[Tool Result: ${output}]`;
               totalChars += toolResultText.length + 20; // 额外的结构开销
-              toolResultCount++;
            }
           }
         } else if (typeof content === 'string') {
           totalChars += content.length;
-          textParts++;
         }
       }
 
@@ -2185,7 +2295,7 @@ export class OttoServerAdapter implements ContentGenerator {
   /**
    * Embedding: Claude doesn't support this
    */
-  async embedContent(request: EmbedContentParameters): Promise<EmbedContentResponse> {
+  async embedContent(_request: EmbedContentParameters): Promise<EmbedContentResponse> {
     throw new Error('Claude models do not support embedding content');
   }
 

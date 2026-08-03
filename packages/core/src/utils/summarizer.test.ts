@@ -22,7 +22,7 @@ vi.mock('../config/config.js');
 describe('summarizers', () => {
   let mockGeminiClient: OttoClient;
   let MockConfig: Mock;
-  let mockTemporaryChat: any;
+  let mockTemporaryChat: { sendMessage: ReturnType<typeof vi.fn> };
   const abortSignal = new AbortController().signal;
 
   beforeEach(() => {

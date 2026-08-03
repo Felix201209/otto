@@ -7,12 +7,15 @@
 import { describe, it, expect } from 'vitest';
 import { PassThrough } from 'node:stream';
 import * as path from 'node:path';
+/* eslint-disable import/no-internal-modules -- documented Node transport is required for stream-backed LSP fixtures. */
 import {
   createMessageConnection,
   StreamMessageReader,
   StreamMessageWriter,
 } from 'vscode-jsonrpc/node.js';
+/* eslint-enable import/no-internal-modules */
 import { createLSPClient, stopLSPClient } from './client.js';
+import type { MessageConnection } from 'vscode-jsonrpc';
 
 type FakeProcess = {
   stdin: PassThrough;
@@ -42,7 +45,7 @@ function createDuplexTransport(): {
 async function runHandshakeScenario(input: {
   serverID: string;
   root: string;
-  scenario: (serverConnection: any) => Promise<void>;
+  scenario: (serverConnection: MessageConnection) => Promise<void>;
 }) {
   const { fakeProcess, serverReader, serverWriter } = createDuplexTransport();
 
@@ -58,15 +61,13 @@ async function runHandshakeScenario(input: {
   });
 
   // Basic request handlers a server would implement.
-  serverConnection.onRequest('textDocument/hover', async () => {
-    return { contents: 'ok' };
-  });
+  serverConnection.onRequest('textDocument/hover', async () => ({ contents: 'ok' }));
 
   serverConnection.listen();
 
   const client = await createLSPClient({
     serverID: input.serverID,
-    server: { process: fakeProcess as any },
+    server: { process: fakeProcess as unknown as import('node:child_process').ChildProcess },
     root: input.root,
   });
 
@@ -162,9 +163,7 @@ describe('LSP createLSPClient handshake robustness', () => {
         new StreamMessageWriter(serverWriter),
       );
 
-      serverConnection.onRequest('initialize', async () => {
-        return { capabilities: {} };
-      });
+      serverConnection.onRequest('initialize', async () => ({ capabilities: {} }));
 
       serverConnection.onRequest('textDocument/hover', async () => {
         // Server asks client to create progress and waits for response.
@@ -179,7 +178,7 @@ describe('LSP createLSPClient handshake robustness', () => {
       const root = path.resolve(process.cwd());
       const client = await createLSPClient({
         serverID: 'pyright',
-        server: { process: fakeProcess as any },
+        server: { process: fakeProcess as unknown as import('node:child_process').ChildProcess },
         root,
       });
 

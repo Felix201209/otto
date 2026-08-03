@@ -6,13 +6,12 @@
  * Tests for high-risk tool classification and policy enforcement.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   isHighRisk,
   isMediumRisk,
   getRiskTier,
   HIGH_RISK_TOOLS,
-  MEDIUM_RISK_TOOLS,
 } from './highRiskTools.js';
 import { CentralPolicy, PolicyDecision, ExecutionContext } from './centralPolicy.js';
 import { Config, ApprovalMode } from '../config/config.js';

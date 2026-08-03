@@ -8,6 +8,7 @@
 import { BaseTool, Icon, ToolResult } from '../tools.js';
 import { Config } from '../../config/config.js';
 import { LSPManager } from '../../lsp/index.js';
+import type { LspHoverContent } from './lsp-result-types.js';
 import * as path from 'node:path';
 import { Type } from '@google/genai';
 
@@ -79,12 +80,13 @@ export class LSPHoverTool extends BaseTool<LSPHoverParams, ToolResult> {
     }
 
     // 聚合结果
-    const content = results.map((r: any) => {
-      if (!r || !r.contents) return '';
-      if (Array.isArray(r.contents)) {
-        return r.contents.map((c: any) => typeof c === 'string' ? c : c.value).join('\n\n');
+    const content = results.map((r) => {
+      const hover = r as unknown as LspHoverContent;
+      if (!hover || !hover.contents) return '';
+      if (Array.isArray(hover.contents)) {
+        return hover.contents.map((c) => typeof c === 'string' ? c : c.value).join('\n\n');
       }
-      return typeof r.contents === 'string' ? r.contents : r.contents.value;
+      return typeof hover.contents === 'string' ? hover.contents : hover.contents.value;
     }).filter(Boolean).join('\n---\n');
 
     return {
@@ -93,4 +95,3 @@ export class LSPHoverTool extends BaseTool<LSPHoverParams, ToolResult> {
     };
   }
 }
-

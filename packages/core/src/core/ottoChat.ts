@@ -21,10 +21,10 @@ import {
 import { Content, stripUIFieldsFromArray } from '../types/extendedContent.js';
 import { CacheSafeParamsStore } from '../services/cacheSafeParams.js';
 import { retryWithBackoff } from '../utils/retry.js';
-import { isFunctionResponse, hasFunctionCall } from '../utils/messageInspectors.js';
+import { isFunctionResponse } from '../utils/messageInspectors.js';
 import { MESSAGE_ROLES } from '../config/messageRoles.js';
 import { SceneType } from './sceneManager.js';
-import { ContentGenerator, AuthType } from './contentGenerator.js';
+import { ContentGenerator } from './contentGenerator.js';
 import { Config } from '../config/config.js';
 import { isOttoQuotaError } from '../utils/quotaErrorDetection.js';
 import {
@@ -42,6 +42,8 @@ import { DEFAULT_GEMINI_FLASH_MODEL, DEFAULT_GEMINI_MODEL } from '../config/mode
 import { WorkflowTool } from '../tools/workflow.js';
 import { tokenUsageEventManager } from '../events/tokenUsageEvents.js';
 import { realTimeTokenEventManager } from '../events/realTimeTokenEvents.js';
+
+type ToolIdentity = { id?: string; name?: string };
 import { SessionManager } from '../services/sessionManager.js';
 
 /**
@@ -225,6 +227,7 @@ export class OttoChat {
 
     // Update session token statistics
     if (usageMetadata && this.config.getProjectRoot()) {
+      const metadata = usageMetadata as GenerateContentResponseUsageMetadata & Record<string, unknown>;
       try {
         const sessionManager = new SessionManager(this.config.getProjectRoot());
         await sessionManager.updateTokenStats(
@@ -237,8 +240,8 @@ export class OttoChat {
             cached_content_token_count: usageMetadata.cachedContentTokenCount || 0,
             thoughts_token_count: 0, // Not available in usageMetadata
             tool_token_count: 0, // Not available in usageMetadata
-            cache_creation_input_tokens: (usageMetadata as any).cacheCreationInputTokens || 0,
-            cache_read_input_tokens: (usageMetadata as any).cacheReadInputTokens || 0,
+            cache_creation_input_tokens: (metadata.cacheCreationInputTokens as number | undefined) || 0,
+            cache_read_input_tokens: (metadata.cacheReadInputTokens as number | undefined) || 0,
           }
         );
       } catch (error) {
@@ -248,11 +251,11 @@ export class OttoChat {
 
       // 触发token使用更新事件，通知UI更新
       tokenUsageEventManager.emitTokenUsage({
-        cache_creation_input_tokens: (usageMetadata as any).cacheCreationInputTokens || 0,
-        cache_read_input_tokens: (usageMetadata as any).cacheReadInputTokens || 0,
+        cache_creation_input_tokens: (metadata.cacheCreationInputTokens as number | undefined) || 0,
+        cache_read_input_tokens: (metadata.cacheReadInputTokens as number | undefined) || 0,
         input_tokens: usageMetadata.promptTokenCount || 0,
         output_tokens: usageMetadata.candidatesTokenCount || 0,
-        credits_usage: (usageMetadata as any).creditsUsage || 0,
+        credits_usage: (metadata.creditsUsage as number | undefined) || 0,
         model: this.config.getModel(),
         timestamp: Date.now(),
       });
@@ -291,8 +294,8 @@ export class OttoChat {
    * Uses a fallback handler if provided by the config; otherwise, returns null.
    */
   private async handleFlashFallback(
-    authType?: string,
-    error?: unknown,
+    _authType?: string,
+    _error?: unknown,
   ): Promise<string | null> {
     // Only handle fallback for OAuth users
     // Flash fallback only supported for Google OAuth, not available with Otto custom-model auth
@@ -497,7 +500,7 @@ export class OttoChat {
       for (const content of requestContents) {
         if (content.role !== MESSAGE_ROLES.MODEL || !content.parts) continue;
         for (const part of content.parts) {
-          const fc = (part as any)?.functionCall;
+          const fc = (part as { functionCall?: Record<string, unknown> }).functionCall;
           if (!fc || typeof fc !== 'object') continue;
           if (typeof fc.id === 'string' && fc.id.length > 0) continue;
           const name = typeof fc.name === 'string' ? fc.name : 'unknown';
@@ -513,16 +516,16 @@ export class OttoChat {
 
       if (namesNeedingSynth.size > 0) {
         let synthCounter = 0;
-        const hasId = (x: any) => x && typeof x.id === 'string' && x.id.length > 0;
+        const hasId = (x: Record<string, unknown> | undefined): x is Record<string, string> => Boolean(x && typeof x.id === 'string' && x.id.length > 0);
 
         // 收集目标 name 的 fc / fr（按文档出现顺序），用于 FIFO 配对。
-        const callsByName = new Map<string, any[]>();
-        const respsByName = new Map<string, any[]>();
+        const callsByName = new Map<string, Array<Record<string, unknown>>>();
+        const respsByName = new Map<string, Array<Record<string, unknown>>>();
         for (const content of requestContents) {
           if (!content.parts) continue;
           if (content.role === MESSAGE_ROLES.MODEL) {
             for (const part of content.parts) {
-              const fc = (part as any)?.functionCall;
+              const fc = (part as { functionCall?: Record<string, unknown> }).functionCall;
               if (!fc || typeof fc !== 'object') continue;
               const name = typeof fc.name === 'string' ? fc.name : 'unknown';
               if (!namesNeedingSynth.has(name)) continue;
@@ -531,7 +534,7 @@ export class OttoChat {
             }
           } else if (content.role === MESSAGE_ROLES.USER) {
             for (const part of content.parts) {
-              const fr = (part as any)?.functionResponse;
+              const fr = (part as { functionResponse?: Record<string, unknown> }).functionResponse;
               if (!fr || typeof fr !== 'object') continue;
               const name = typeof fr.name === 'string' ? fr.name : 'unknown';
               if (!namesNeedingSynth.has(name)) continue;
@@ -547,7 +550,7 @@ export class OttoChat {
 
           // 步骤 A：先剔除「fc / fr 已带相同 id」的自洽配对，避免后续 FIFO 误配。
           const usedResp = new Set<number>();
-          const pendingCalls: any[] = [];
+          const pendingCalls: Array<Record<string, unknown>> = [];
           for (const fc of calls) {
             if (hasId(fc)) {
               const matchIdx = resps.findIndex(
@@ -592,7 +595,7 @@ export class OttoChat {
 
     // 🔍 辅助函数：判断 functionCall 和 functionResponse 是否匹配
     // 支持模糊匹配：如果其中一方缺少 ID，只要名称相同即视为匹配（兼容 Claude 等模型）
-    const isToolMatch = (call: any, resp: any) => {
+    const isToolMatch = (call: ToolIdentity, resp: ToolIdentity) => {
       if (!call || !resp || call.name !== resp.name) return false;
       if (call.id && resp.id) return call.id === resp.id;
       return true; // 其中一方缺少 ID，仅通过名称匹配
@@ -600,7 +603,7 @@ export class OttoChat {
 
     // 🔍 预先收集所有 function call 用于多余 response 检测
     const allFunctionCalls: Array<{
-      call: any;
+      call: ToolIdentity;
       messageIndex: number;
     }> = [];
 
@@ -626,7 +629,8 @@ export class OttoChat {
 
     // 优先级判定函数
     const getPriority = (part: Part): number => {
-      const result = (part.functionResponse?.response as any)?.result;
+      const response = part.functionResponse?.response;
+      const result = response && typeof response === 'object' ? (response as Record<string, unknown>).result : undefined;
       return result === 'user cancel' ? 10 : 100;
     };
 
@@ -723,10 +727,10 @@ export class OttoChat {
         if (functionResponses.length > 0) {
           const orphanedResponses = functionResponses.filter(respPart => {
             const functionResponse = respPart.functionResponse!;
-            return !allFunctionCalls.some(({ call }) => {
+            return !allFunctionCalls.some(({ call }) =>
               // 使用模糊匹配逻辑
-              return isToolMatch(call, functionResponse);
-            });
+               isToolMatch(call, functionResponse)
+            );
           });
 
           if (orphanedResponses.length > 0) {
@@ -735,7 +739,9 @@ export class OttoChat {
               orphanedResponses.map(r => ({
                 name: r.functionResponse!.name,
                 id: r.functionResponse!.id,
-                result: (r.functionResponse!.response as any)?.result
+                result: r.functionResponse!.response && typeof r.functionResponse!.response === 'object'
+                  ? (r.functionResponse!.response as Record<string, unknown>).result
+                  : undefined
               }))
             );
           }
@@ -854,7 +860,7 @@ export class OttoChat {
         }
       } else if (content.role === MESSAGE_ROLES.USER && content.parts) {
         // 过滤 functionResponse —— 使用额度制 name 匹配
-        const validParts: any[] = [];
+        const validParts: Part[] = [];
         for (const part of content.parts) {
           if (!part.functionResponse) {
             validParts.push(part);
@@ -1406,13 +1412,16 @@ export class OttoChat {
     chunkContent: Content,
   ): void {
     const incomingText = (chunkContent.parts || [])
-      .map((p) => (typeof (p as any).reasoning === 'string' ? (p as any).reasoning : ''))
+      .map((p) => {
+        const reasoning = (p as { reasoning?: unknown }).reasoning;
+        return typeof reasoning === 'string' ? reasoning : '';
+      })
       .join('');
     if (!incomingText) return;
 
     const last = outputContent[outputContent.length - 1];
     if (last && this.isReasoningContent(last)) {
-      const firstPart: any = last.parts?.[0];
+      const firstPart = last.parts?.[0] as (Part & { reasoning?: string }) | undefined;
       if (firstPart && typeof firstPart.reasoning === 'string') {
         firstPart.reasoning += incomingText;
         return;
@@ -1420,7 +1429,7 @@ export class OttoChat {
     }
     outputContent.push({
       role: MESSAGE_ROLES.MODEL,
-      parts: [{ reasoning: incomingText } as any],
+      parts: [{ reasoning: incomingText } as Part],
     });
   }
 }
@@ -1437,7 +1446,7 @@ function filterToolsByMessage(userContent: Content, tools: unknown): unknown {
   if (!tools || !Array.isArray(tools)) return tools;
 
   const userText = (userContent.parts ?? [])
-    .filter((p): p is { text: string } => typeof (p as any).text === 'string')
+    .filter((p): p is { text: string } => typeof (p as { text?: unknown }).text === 'string')
     .map(p => p.text)
     .join('');
 

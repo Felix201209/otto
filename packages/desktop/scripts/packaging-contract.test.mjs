@@ -117,9 +117,16 @@ describe('desktop packaging contract', () => {
       await readFile(path.join(packageRoot, 'package.json'), 'utf8'),
     );
     expect(packageJson.build).not.toHaveProperty('includeSubNodeModules');
+    expect(packageJson.build.publish).toEqual([
+      {
+        provider: 'generic',
+        url: 'https://59.110.154.44:7777/downloads',
+      },
+    ]);
     expect(packageJson.scripts['dist:win']).toContain(
       'node scripts/verify-packaged-runtime.mjs release/win-unpacked/resources/app.asar --platform win32',
     );
+    expect(packageJson.scripts['dist:win']).toContain('--publish never');
   });
 
   it('keeps update manifest download URLs bound to the no-proxy update mirror', async () => {
@@ -135,6 +142,14 @@ describe('desktop packaging contract', () => {
     expect(mirrorConfig).toContain('process.env.OTTO_UPDATE_ASSET_BASE_URL');
     expect(mirrorConfig).toContain('https://59.110.154.44:7777/downloads');
     expect(script).not.toContain('github.com/Felix201209/otto-releases/releases/download');
+  });
+
+  it('disables electron-builder implicit publishing for tagged release builds', async () => {
+    const script = await readFile(
+      path.join(packageRoot, 'scripts', 'make-delivery-zip.mjs'),
+      'utf8',
+    );
+    expect(script).toContain("'--publish', 'never'");
   });
 
   it('publishes releases only after the update mirror and enterprise deploy pass', async () => {

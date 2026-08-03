@@ -104,7 +104,7 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
     expect(onNewChat).toHaveBeenCalledTimes(1);
   });
 
-  it('对话任务标题只用一个数字表示总数，并支持整体展开收起', () => {
+  it('任务标题只用一个数字表示总数，并支持整体展开收起', () => {
     renderSidebar({
       groups: [{
         label: '今天',
@@ -115,7 +115,7 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
       }],
     });
 
-    const toggle = screen.getByRole('button', { name: '对话任务（2）' });
+    const toggle = screen.getByRole('button', { name: '任务（2）' });
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByText('第二个任务')).toBeTruthy();
 
@@ -208,25 +208,13 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
     ).toBeNull());
   });
 
-  it('企业版账号不显示重复升级入口', async () => {
-    const enterpriseOrganizationView = vi.fn(async () => ({
-      organization: {
-        id: 'org_acme',
-        name: '星河科技',
-        status: 'active' as const,
-        createdAt: '2026-07-20',
-      },
-      members: [],
-      employeeCount: 0,
-    }));
-    Object.assign(window.otto, { enterpriseOrganizationView });
+  it('企业版账号不显示重复升级入口', () => {
     renderSidebar({
       enterpriseAccount: ENTERPRISE_ACCOUNT,
       onJoinEnterprise: vi.fn(),
     });
 
     expect(screen.queryByRole('button', { name: '升级企业版' })).toBeNull();
-    await waitFor(() => expect(enterpriseOrganizationView).toHaveBeenCalledOnce());
   });
 });
 

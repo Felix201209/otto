@@ -1238,12 +1238,19 @@ export class FeishuGateway {
     if (!res.ok) {
       throw new Error(`tenant_access_token HTTP ${res.status} ${res.statusText}`);
     }
-    let data: FeishuApiResponse<{ tenant_access_token?: string; expire?: number }>;
+    let parsed: unknown;
     try {
-      data = await res.json();
+      parsed = await res.json();
     } catch {
       throw new Error('tenant_access_token: invalid JSON response from Feishu');
     }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('tenant_access_token: invalid JSON response from Feishu');
+    }
+    const data = parsed as FeishuApiResponse<{
+      tenant_access_token?: string;
+      expire?: number;
+    }>;
     if (!data.tenant_access_token) {
       // 脱敏:只暴露飞书错误码/描述,绝不 dump 整个响应体(可能含敏感信息)。
       throw new Error(

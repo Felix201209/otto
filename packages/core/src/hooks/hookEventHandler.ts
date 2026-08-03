@@ -36,13 +36,6 @@ import type {
 import { debugLogger } from '../utils/debugLogger.js';
 
 /**
- * Validates that a value is a non-null object
- */
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-/**
  * Hook event bus that coordinates hook execution across the system
  */
 export class HookEventHandler {

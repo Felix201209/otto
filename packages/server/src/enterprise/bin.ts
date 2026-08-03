@@ -4,6 +4,16 @@
  *
  * Enterprise launcher. PostgreSQL mode is loaded through an isolated async
  * entry point and never imports the legacy SQLite repository.
+ *
+ * Otto Enterprise 服务端启动入口（管理员/老板设备运行）。
+ *
+ *   node dist/enterprise/bin.js                 # 本机启动，端口 7777
+ *   node dist/enterprise/bin.js --seed          # 先灌一批演示数据（看板立刻有东西看）
+ *   OTTO_ENTERPRISE_HOST=0.0.0.0 \
+ *   OTTO_ENTERPRISE_PUBLIC_URL=https://your-public-host \
+ *   OTTO_APP_VERSION=1.10.0 \
+ *   OTTO_BUILD_COMMIT=<完整的40位Git-SHA> \
+ *   OTTO_ENTERPRISE_ADMIN_TOKEN=xxx node dist/enterprise/bin.js   # 局域网 + 鉴权
  */
 
 function configuredForPostgres(): boolean {

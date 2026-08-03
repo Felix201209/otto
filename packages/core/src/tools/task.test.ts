@@ -6,10 +6,12 @@
 
 import { describe, expect, it } from 'vitest';
 import { TaskTool } from './task.js';
+import type { Config } from '../config/config.js';
+import type { ToolRegistry } from './tool-registry.js';
 
 describe('TaskTool', () => {
   it('uses the selected agent display name as the execution description', () => {
-    const tool = new TaskTool({} as any, {} as any);
+    const tool = new TaskTool({} as unknown as Config, {} as unknown as ToolRegistry);
 
     expect(
       tool.getDescription({
@@ -22,7 +24,7 @@ describe('TaskTool', () => {
   });
 
   it('keeps the default code-analysis display name when agent_type is omitted', () => {
-    const tool = new TaskTool({} as any, {} as any);
+    const tool = new TaskTool({} as unknown as Config, {} as unknown as ToolRegistry);
 
     expect(
       tool.getDescription({
@@ -34,7 +36,7 @@ describe('TaskTool', () => {
   });
 
   it('falls back to the provided description for an unknown agent_type', () => {
-    const tool = new TaskTool({} as any, {} as any);
+    const tool = new TaskTool({} as unknown as Config, {} as unknown as ToolRegistry);
 
     expect(
       tool.getDescription({

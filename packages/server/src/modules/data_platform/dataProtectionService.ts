@@ -6,7 +6,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import { cp, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { backup, DatabaseSync } from 'node:sqlite';
+import { DatabaseSync } from 'node:sqlite';
 
 import { createEncryptedBackupArchive } from './encryptedBackupArchive.js';
 import type { EncryptedObjectStore } from './encryptedObjectStore.js';
@@ -448,11 +448,13 @@ export function createDataProtectionService(
       if (options.createDatabaseSnapshot) {
         await options.createDatabaseSnapshot(snapshotPath);
       } else {
-        const source = new DatabaseSync(options.databasePath, {
-          readOnly: true,
-        });
+        const source = new DatabaseSync(options.databasePath);
         try {
-          await backup(source, snapshotPath, { rate: 100 });
+          // `node:sqlite` does not expose its module-level backup helper on all
+          // supported Node 22 builds. VACUUM INTO is SQLite's native online
+          // snapshot primitive and keeps this recovery path portable.
+          const snapshotLiteral = `'${snapshotPath.replace(/'/g, "''")}'`;
+          source.exec(`VACUUM INTO ${snapshotLiteral}`);
         } finally {
           source.close();
         }

@@ -8,21 +8,22 @@ vi.mock('../config/config.js');
 
 describe('ListSkillsTool', () => {
   let tool: ListSkillsTool;
-  let mockConfig: any;
-  let mockCompatAdapter: any;
+  type MockFn = ReturnType<typeof vi.fn>;
+  let mockConfig: Config;
+  let mockCompatAdapter: { listSkills: MockFn };
 
   beforeEach(() => {
     mockConfig = {
       getProjectRoot: vi.fn().mockReturnValue('/mock/root'),
-    };
+    } as unknown as Config;
 
     mockCompatAdapter = {
       listSkills: vi.fn(),
     };
 
-    (SkillsCompatAdapter as any).mockImplementation(() => mockCompatAdapter);
+    (SkillsCompatAdapter as unknown as { mockImplementation: (factory: () => unknown) => unknown }).mockImplementation(() => mockCompatAdapter);
 
-    tool = new ListSkillsTool(mockConfig as any);
+    tool = new ListSkillsTool(mockConfig);
   });
 
   it('should return a specific message when no skills are found without filters', async () => {

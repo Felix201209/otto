@@ -5,6 +5,7 @@
  */
 
 import { Type } from '@google/genai';
+import type { Part } from '@google/genai';
 import { BaseTool, Icon, ToolResult } from './tools.js';
 import { Config } from '../config/config.js';
 import { exec } from 'node:child_process';
@@ -138,7 +139,7 @@ export class VideoAnalyzerTool extends BaseTool<VideoAnalyzerToolParams, ToolRes
         const dlCmd = isYouTube(url) || platform(url) !== 'other'
           ? `yt-dlp -f "best[ext=mp4]/best" -o "${videoPath}" "${url}"`
           : `curl -L -s -o "${videoPath}" "${url}"`;
-        await execAsync(dlCmd, { timeout: 300000, signal } as any);
+        await execAsync(dlCmd, { timeout: 300000, signal });
 
         if (!existsSync(videoPath)) {
           return { llmContent: 'Error: video download failed.', returnDisplay: 'Download failed' };
@@ -180,7 +181,7 @@ export class VideoAnalyzerTool extends BaseTool<VideoAnalyzerToolParams, ToolRes
         `ffmpeg -i "${videoPath}" ` +
         `-vf "select='gt(scene,${SCENE_THRESHOLD})'" ` +
         `-vsync vfr -q:v 2 "${framePattern}" -y`,
-        { timeout: 120000, signal } as any,
+        { timeout: 120000, signal },
       ).catch(() => {/* may produce 0 frames for static videos */});
 
       let frames = existsSync(framesDir)
@@ -233,7 +234,7 @@ export class VideoAnalyzerTool extends BaseTool<VideoAnalyzerToolParams, ToolRes
         try {
           await execAsync(
             `whisper "${videoPath}" --model base --language ${lang} --output_format txt --output_dir "${TEMP_DIR}"`,
-            { timeout: 600000, signal } as any,
+            { timeout: 600000, signal },
           );
           const txtFile = join(TEMP_DIR, videoPath.split('/').pop()!.replace(/\.\w+$/, '') + '.txt');
           if (existsSync(txtFile)) {
@@ -306,7 +307,7 @@ export class VideoAnalyzerTool extends BaseTool<VideoAnalyzerToolParams, ToolRes
           { disableSystemPrompt: true },
         );
 
-        const messageParts: any[] = [{ text: analysisPrompt }];
+        const messageParts: Part[] = [{ text: analysisPrompt }];
         for (const buf of frameBuffers) {
           messageParts.push({
             inlineData: { mimeType: 'image/jpeg', data: buf.toString('base64') },
@@ -320,7 +321,7 @@ export class VideoAnalyzerTool extends BaseTool<VideoAnalyzerToolParams, ToolRes
         );
 
         analysisResult = (getResponseText(response) || '').trim();
-      } catch (e) {
+      } catch (_e) {
         // Fallback: basic summary
         analysisResult =
           `视频"${videoTitle}"分析完成。\n` +

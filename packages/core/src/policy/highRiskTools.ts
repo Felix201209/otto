@@ -33,6 +33,7 @@ export const HIGH_RISK_TOOLS: ReadonlySet<string> = new Set([
   'send_mail',
   'feishu_send',
   'crm_write',
+  'rpa_run',
 ]);
 
 // ---------------------------------------------------------------------------

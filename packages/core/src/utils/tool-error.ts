@@ -26,10 +26,11 @@ export enum ToolErrorCode {
 }
 
 export class ToolError extends Error {
-  public readonly code: ToolErrorCode;
-  public readonly userMessage: string;
-  public readonly fixHint?: string;
-  public readonly llmContext?: string;
+  readonly code: ToolErrorCode;
+  readonly userMessage: string;
+  readonly fixHint?: string;
+  readonly llmContext?: string;
+  readonly cause?: unknown;
 
   constructor(
     code: ToolErrorCode,
@@ -42,9 +43,7 @@ export class ToolError extends Error {
     this.userMessage = userMessage;
     this.fixHint = options?.fixHint;
     this.llmContext = options?.llmContext;
-    if (options?.cause) {
-      (this as any).cause = options.cause;
-    }
+    this.cause = options?.cause;
   }
 
   /** Format for returnDisplay (user-facing, one line) */
@@ -59,7 +58,7 @@ export class ToolError extends Error {
     let s = `${toolName} FAIL [${this.code}]: ${this.userMessage}`;
     if (this.fixHint) s += `\nFix: ${this.fixHint}`;
     if (this.llmContext) s += `\nContext: ${this.llmContext}`;
-    if ((this as any).cause) s += `\nCause: ${(this as any).cause}`;
+    if (this.cause) s += `\nCause: ${this.cause}`;
     return s;
   }
 

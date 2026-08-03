@@ -29,9 +29,10 @@ vi.mock('./marketplace-manager.js');
 
 describe('SkillsCompatAdapter', () => {
   let adapter: SkillsCompatAdapter;
-  let mockLoader: any;
-  let mockSettings: any;
-  let mockMarketplace: any;
+  type MockFn = ReturnType<typeof vi.fn>;
+  let mockLoader: { loadEnabledSkills: MockFn; loadSkill: MockFn };
+  let mockSettings: { initialize: MockFn };
+  let mockMarketplace: Record<string, unknown>;
 
   // Mock skill data
   const createMockSkill = (id: string, marketplaceId: string): Skill => {
@@ -77,18 +78,18 @@ describe('SkillsCompatAdapter', () => {
     mockSettings = {
       initialize: vi.fn().mockResolvedValue(undefined),
     };
-    (SettingsManager as any).mockImplementation(() => mockSettings);
+    (SettingsManager as unknown as { mockImplementation: (factory: () => unknown) => unknown }).mockImplementation(() => mockSettings);
 
     // Mock MarketplaceManager
     mockMarketplace = {};
-    (MarketplaceManager as any).mockImplementation(() => mockMarketplace);
+    (MarketplaceManager as unknown as { mockImplementation: (factory: () => unknown) => unknown }).mockImplementation(() => mockMarketplace);
 
     // Mock SkillLoader
     mockLoader = {
       loadEnabledSkills: vi.fn(),
       loadSkill: vi.fn(),
     };
-    (SkillLoader as any).mockImplementation(() => mockLoader);
+    (SkillLoader as unknown as { mockImplementation: (factory: () => unknown) => unknown }).mockImplementation(() => mockLoader);
 
     // Create adapter instance
     adapter = new SkillsCompatAdapter('/mock/project/root');

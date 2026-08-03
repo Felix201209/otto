@@ -8,6 +8,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BatchTool } from './batch.js';
 import { Config } from '../config/config.js';
 
+type BatchParams = Parameters<BatchTool['getDescription']>[0];
+
 describe('BatchTool', () => {
   let mockConfig: Config;
   let batchTool: BatchTool;
@@ -60,16 +62,16 @@ describe('BatchTool', () => {
     });
 
     it('should handle undefined tool_calls', () => {
-      const result = batchTool.getDescription({ tool_calls: undefined as any });
+      const result = batchTool.getDescription({ tool_calls: undefined as unknown as BatchParams });
       expect(result).toBe('No tools');
     });
 
     it('should handle tool name aliases (robustness)', () => {
       const result = batchTool.getDescription({
         tool_calls: [
-          { tool: '', parameters: {}, name: 'read_file' } as any,
-          { tool: '', parameters: {}, function: 'write_file' } as any,
-          { tool: '', parameters: {}, tool_name: 'glob' } as any,
+          { tool: '', parameters: {}, name: 'read_file' } as unknown as BatchParams,
+          { tool: '', parameters: {}, function: 'write_file' } as unknown as BatchParams,
+          { tool: '', parameters: {}, tool_name: 'glob' } as unknown as BatchParams,
         ],
       });
       expect(result).toBe('3 tools: read_file, write_file, glob');
@@ -79,7 +81,7 @@ describe('BatchTool', () => {
         // 业务实现：normalizeToolCalls 在缺失/无效 tool 名时回退为 'unknown'（小写）。
         // 见 packages/core/src/tools/batch.ts 中 normalizeToolCalls / fallback 'unknown'。
         const result = batchTool.getDescription({
-          tool_calls: [{ tool: '', parameters: {} } as any],
+          tool_calls: [{ tool: '', parameters: {} } as unknown as BatchParams],
         });
         expect(result).toBe('1 tool: unknown');
     });
@@ -89,7 +91,7 @@ describe('BatchTool', () => {
             tool_calls: [
                 '{"tool": "read_file", "parameters": {}}',
                 '{"tool": "write_file", "parameters": {}}'
-            ] as any
+            ] as unknown as BatchParams
         });
         expect(result).toBe('2 tools: read_file, write_file');
     });
@@ -98,14 +100,14 @@ describe('BatchTool', () => {
     it('should fall back to "unknown" for invalid stringified JSON', () => {
       // 业务行为：JSON.parse 失败时返回 { tool: 'unknown', parameters: {} }
       const result = batchTool.getDescription({
-        tool_calls: ['not a json string'] as any,
+        tool_calls: ['not a json string'] as unknown as BatchParams,
       });
       expect(result).toBe('1 tool: unknown');
     });
 
     it('should fall back to "unknown" for null/non-object tool_calls items', () => {
       const result = batchTool.getDescription({
-        tool_calls: [null, 42, true] as any,
+        tool_calls: [null, 42, true] as unknown as BatchParams,
       });
       expect(result).toBe('3 tools: unknown, unknown, unknown');
     });
@@ -115,7 +117,7 @@ describe('BatchTool', () => {
       // 当 tool_calls 是非数组的 truthy 值（如字符串）时，
       // normalizeToolCalls 返回 []，最终格式化成 '0 tool: '。这是当前业务事实，本用例锁定该行为以防回归。
       const result = batchTool.getDescription({
-        tool_calls: 'not an array' as any,
+        tool_calls: 'not an array' as unknown as BatchParams,
       });
       expect(result).toBe('0 tool: ');
     });
@@ -124,7 +126,7 @@ describe('BatchTool', () => {
       // 业务实现：toolName = call.tool || call.name || call.function || call.tool_name || 'unknown'
       const result = batchTool.getDescription({
         tool_calls: [
-          { tool: 'read_file', name: 'shadow_a', function: 'shadow_b', tool_name: 'shadow_c', parameters: {} } as any,
+          { tool: 'read_file', name: 'shadow_a', function: 'shadow_b', tool_name: 'shadow_c', parameters: {} } as unknown as BatchParams,
         ],
       });
       expect(result).toBe('1 tool: read_file');
@@ -135,11 +137,11 @@ describe('BatchTool', () => {
     it('should handle tool name aliases during execution', async () => {
       const mockTool = { execute: vi.fn().mockResolvedValue({ llmContent: 'success' }) };
       const mockRegistry = { getTool: vi.fn().mockReturnValue(mockTool) };
-      (mockConfig.getToolRegistry as any).mockResolvedValue(mockRegistry);
+      (mockConfig.getToolRegistry as unknown as { mockResolvedValue: (value: unknown) => void }).mockResolvedValue(mockRegistry);
 
       const params = {
         tool_calls: [
-            { tool: '', parameters: { path: 'a' }, name: 'read_file' } as any
+            { tool: '', parameters: { path: 'a' }, name: 'read_file' } as unknown as BatchParams
         ]
       };
 
@@ -153,12 +155,12 @@ describe('BatchTool', () => {
     it('should handle stringified JSON tool calls during execution', async () => {
         const mockTool = { execute: vi.fn().mockResolvedValue({ llmContent: 'success' }) };
         const mockRegistry = { getTool: vi.fn().mockReturnValue(mockTool) };
-        (mockConfig.getToolRegistry as any).mockResolvedValue(mockRegistry);
+        (mockConfig.getToolRegistry as unknown as { mockResolvedValue: (value: unknown) => void }).mockResolvedValue(mockRegistry);
 
         const params = {
           tool_calls: [
               '{"tool": "read_file", "parameters": {"path": "a"}}'
-          ] as any
+          ] as unknown as BatchParams
         };
 
         const result = await batchTool.execute(params, new AbortController().signal);

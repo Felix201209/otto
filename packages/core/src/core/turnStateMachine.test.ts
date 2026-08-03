@@ -313,6 +313,8 @@ function smAt(state: TurnState): TurnStateMachine {
     case TurnState.PLANNING:
       sm.transition(TurnState.PLANNING);
       return sm;
+    default:
+      throw new Error(`Unsupported test state: ${state}`);
     case TurnState.AWAITING_PERMISSION:
       sm.transition(TurnState.PLANNING);
       sm.transition(TurnState.AWAITING_PERMISSION);

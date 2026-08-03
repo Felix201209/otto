@@ -53,6 +53,7 @@ type ToolKind =
   | 'skill'
   | 'audio'
   | 'agent'
+  | 'automation'
   | 'generic';
 
 interface ResolvedTool {
@@ -226,10 +227,48 @@ function isDocumentTool(name: string): boolean {
   return DOCUMENT_TOOL_PATTERNS.some((pattern) => name.includes(pattern));
 }
 
+function automationAction(action: string | undefined): string {
+  switch (action) {
+    case 'start': return '创建自动流程';
+    case 'run_next': return '执行下一步';
+    case 'approve': return '记录执行批准';
+    case 'recover': return '检查中断状态';
+    case 'take_over': return '人工接管流程';
+    case 'status': return '查看流程状态';
+    default: return '处理自动流程';
+  }
+}
+
+function automationSafetyNotice(tool: ToolCall, output?: string): string | undefined {
+  if (!output || !['rpa_run', 'durable_workflow'].includes(normalizeToolName(tool.toolName))) return undefined;
+  if (/unknown_outcome|browser context is unavailable/iu.test(output)) {
+    return '执行结果未知，Otto 不会自动重试。请核对外部系统，再让 Otto 记录人工接管或从导航检查点重新开始。';
+  }
+  if (/awaiting_approval|"approvalId"/u.test(output)) {
+    return '此流程在等待独立批准；批准记录写入后才会继续执行。';
+  }
+  if (/"state":"paused"|"status":"cancelled"/u.test(output)) {
+    return '流程已暂停或由人工接管结束；不会自行恢复。';
+  }
+  return undefined;
+}
+
 function resolveTool(tc: ToolCall): ResolvedTool {
   const name = normalizeToolName(tc.toolName);
   const d: ToolCallConfirmationDetails = tc.confirmationDetails ?? {};
   const p = tc.parameters ?? {};
+
+  if (name === 'rpa_run' || name === 'durable_workflow') {
+    const action = str(p.action);
+    const target = str(p.run_id) ?? str(p.workflow_id) ?? str(p.definition_id) ?? tc.description ?? '';
+    return {
+      kind: 'automation',
+      label: name === 'rpa_run' ? '网页自动化流程' : '可恢复工作流',
+      action: automationAction(action),
+      target,
+      output: tc.liveOutput ?? str(tc.result?.data),
+    };
+  }
 
   // —— 编辑文件 —— //
   const isEdit =
@@ -869,6 +908,7 @@ function ToolItem({ tool }: { tool: ToolCall }): React.JSX.Element {
   const resolved = refineResolvedTool(resolveTool(tool));
   const st = statusInfo(tool.status);
   const feishuAuthorization = extractFeishuAuthorization(tool, resolved.output);
+  const safetyNotice = automationSafetyNotice(tool, resolved.output);
   // 编辑文件卡默认展开看 diff（spec 截图）；exec/generic 运行中默认展开露实时输出，
   // 否则默认折叠。
   const [open, setOpen] = useState(resolved.kind === 'edit' || st.running);
@@ -879,6 +919,7 @@ function ToolItem({ tool }: { tool: ToolCall }): React.JSX.Element {
   const Icon = resolved.kind === 'exec' ? IconTerminal : IconFile;
   const hasBody =
     Boolean(feishuAuthorization) ||
+    Boolean(safetyNotice) ||
     (resolved.kind === 'edit' && Boolean(resolved.diff)) ||
     (resolved.kind !== 'edit' && Boolean(resolved.output));
   const rawName = tool.toolName || tool.displayName || '';
@@ -937,8 +978,9 @@ function ToolItem({ tool }: { tool: ToolCall }): React.JSX.Element {
               <FeishuAuthorizationCard authorization={feishuAuthorization} />
             ) : resolved.kind === 'edit' && resolved.diff ? (
               <DiffView diff={resolved.diff} path={resolved.target} />
-            ) : resolved.output ? (
+            ) : safetyNotice || resolved.output ? (
               <div className="otto-tool__output-wrap">
+                {safetyNotice ? <div className="otto-tool__safety-notice" role="status">{safetyNotice}</div> : null}
                 <div className="otto-tool__output-actions">
                   <button
                     type="button"

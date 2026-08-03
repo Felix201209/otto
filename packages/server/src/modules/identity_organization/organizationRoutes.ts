@@ -29,11 +29,13 @@ export interface OrganizationRouteServices {
   createOrganizationDepartment(input: {
     organizationId: string;
     name: string;
+    parentDepartmentId?: string | null;
   }): unknown;
   updateOrganizationDepartment(input: {
     organizationId: string;
     departmentId: string;
     name: string;
+    parentDepartmentId?: string | null;
   }): unknown;
   deleteOrganizationDepartment(input: {
     organizationId: string;
@@ -138,6 +140,7 @@ export async function handleOrganizationRoute({
       const department = services.createOrganizationDepartment({
         organizationId,
         name: typeof body.name === 'string' ? body.name : '',
+        parentDepartmentId: typeof body.parentDepartmentId === 'string' ? body.parentDepartmentId : null,
       });
       sendJSON(res, 201, { department });
     } catch (error) {
@@ -164,6 +167,7 @@ export async function handleOrganizationRoute({
           organizationId,
           departmentId,
           name: typeof body.name === 'string' ? body.name : '',
+          parentDepartmentId: typeof body.parentDepartmentId === 'string' ? body.parentDepartmentId : null,
         });
         sendJSON(res, 200, { department });
       }

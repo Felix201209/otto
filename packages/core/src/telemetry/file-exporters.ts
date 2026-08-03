@@ -30,6 +30,10 @@ class FileExporter {
       this.writeStream.end(resolve);
     });
   }
+
+  forceFlush(): Promise<void> {
+    return Promise.resolve();
+  }
 }
 
 export class FileSpanExporter extends FileExporter implements SpanExporter {
@@ -83,7 +87,4 @@ export class FileMetricExporter
     return AggregationTemporality.CUMULATIVE;
   }
 
-  async forceFlush(): Promise<void> {
-    return Promise.resolve();
-  }
 }

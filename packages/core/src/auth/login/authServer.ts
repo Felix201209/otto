@@ -15,6 +15,13 @@ import { ProxyAuthManager } from '../../core/proxyAuth.js';
 import { AuthTemplates } from './templates/index.js';
 import { getUserAgent } from '../../utils/userAgent.js';
 
+type VipLoginData = {
+  accessToken?: string;
+  refreshToken?: string;
+  expiresIn?: number;
+  user?: { email?: string; name?: string; avatar?: string; quota_name?: string; expires_at?: string };
+};
+
 
 
 /**
@@ -32,7 +39,7 @@ export class AuthServer {
   /**
    * 启动认证服务器
    */
-  public async start(): Promise<void> {
+  async start(): Promise<void> {
     await this.startSelectServer();
     await this.startCallbackServer();
   }
@@ -40,14 +47,14 @@ export class AuthServer {
   /**
    * 获取实际的选择服务器端口
    */
-  public getActualSelectPort(): number {
+  getActualSelectPort(): number {
     return this.actualSelectPort;
   }
 
   /**
    * 获取实际的回调服务器端口
    */
-  public getActualCallbackPort(): number {
+  getActualCallbackPort(): number {
     return this.actualCallbackPort;
   }
 
@@ -161,7 +168,7 @@ export class AuthServer {
           resolve();
         });
 
-        this.selectServer!.on('error', (err: any) => {
+        this.selectServer!.on('error', (err: NodeJS.ErrnoException) => {
           if (err.code === 'EADDRINUSE') {
             console.log(`⚠️ 端口 ${currentPort} 被占用，尝试端口 ${currentPort + 1}`);
             if (currentPort < this.BASE_SELECT_PORT + 10) { // 最多尝试10个端口
@@ -228,7 +235,7 @@ export class AuthServer {
           resolve();
         });
 
-        this.callbackServer!.on('error', (err: any) => {
+        this.callbackServer!.on('error', (err: NodeJS.ErrnoException) => {
           if (err.code === 'EADDRINUSE') {
             console.log(`⚠️ 端口 ${currentPort} 被占用，尝试端口 ${currentPort + 1}`);
             if (currentPort < this.BASE_CALLBACK_PORT + 10) { // 最多尝试10个端口
@@ -292,9 +299,9 @@ export class AuthServer {
             'User-Agent': getUserAgent()
           }
         });
-      } catch (fetchError: any) {
+      } catch (fetchError: unknown) {
         // 网络层错误处理
-        console.error('❌ [Auth Server] 网络请求失败:', fetchError.message);
+        console.error('❌ [Auth Server] 网络请求失败:', fetchError instanceof Error ? fetchError.message : String(fetchError));
         throw new Error(this.formatNetworkError(fetchError, 'Checking Feishu login permission'));
       }
 
@@ -306,8 +313,8 @@ export class AuthServer {
       let data;
       try {
         data = await response.json();
-      } catch (jsonError: any) {
-        console.error('❌ [Auth Server] 响应解析失败:', jsonError.message);
+      } catch (jsonError: unknown) {
+        console.error('❌ [Auth Server] 响应解析失败:', jsonError instanceof Error ? jsonError.message : String(jsonError));
         throw new Error('Server returned an invalid response format. Please try again later.');
       }
 
@@ -382,7 +389,7 @@ export class AuthServer {
   /**
    * 处理启动飞书认证请求
    */
-  private async handleStartFeishuAuth(res: http.ServerResponse, reqBody?: any): Promise<void> {
+  private async handleStartFeishuAuth(res: http.ServerResponse, reqBody?: { appId?: string }): Promise<void> {
     try {
       console.log('🚀 [Auth Server] 启动飞书认证流程');
 
@@ -402,7 +409,7 @@ export class AuthServer {
 
       const response = {
         success: true,
-        authUrl: authUrl
+        authUrl
       };
 
       res.writeHead(200, {
@@ -437,7 +444,7 @@ export class AuthServer {
       redirect_uri: `http://localhost:${this.actualCallbackPort}/callback`,
       response_type: 'code',
       scope: 'contact:user.employee_id:readonly',
-      state: state,
+      state,
     });
 
     const authUrl = `https://open.feishu.cn/open-apis/authen/v1/authorize?${params.toString()}`;
@@ -465,7 +472,7 @@ export class AuthServer {
 
       const response = {
         success: true,
-        authUrl: authUrl
+        authUrl
       };
 
       res.writeHead(200, {
@@ -537,7 +544,7 @@ export class AuthServer {
           if (loginResult.success) {
             // 登录成功
             console.log('✅ [Auth Server] VIP卡登录成功');
-            await this.handleVipCardSuccess(res, loginResult.data, trimmedCode);
+            await this.handleVipCardSuccess(res, loginResult.data as VipLoginData, trimmedCode);
             return;
           }
 
@@ -585,7 +592,7 @@ export class AuthServer {
             }
 
             console.log('✅ [Auth Server] VIP卡激活并登录成功');
-            await this.handleVipCardSuccess(res, loginResult.data, trimmedCode);
+            await this.handleVipCardSuccess(res, loginResult.data as VipLoginData, trimmedCode);
           } else {
             // 其他登录错误
             console.error('❌ [Auth Server] VIP卡登录失败:', loginResult.error);
@@ -634,7 +641,7 @@ export class AuthServer {
   /**
    * 尝试VIP卡登录
    */
-  private async tryVipCardLogin(serverUrl: string, code: string): Promise<{ success: boolean; data?: any; error?: string }> {
+  private async tryVipCardLogin(serverUrl: string, code: string): Promise<{ success: boolean; data?: unknown; error?: string }> {
     try {
       const response = await fetch(`${serverUrl}/web-api/code/vip-login`, {
         method: 'POST',
@@ -652,8 +659,8 @@ export class AuthServer {
       } else {
         return { success: false, error: data.error || '登录失败' };
       }
-    } catch (error: any) {
-      console.error('❌ [Auth Server] VIP卡登录请求失败:', error.message);
+    } catch (error: unknown) {
+      console.error('❌ [Auth Server] VIP卡登录请求失败:', error instanceof Error ? error.message : String(error));
       return { success: false, error: this.formatNetworkError(error, 'VIP卡登录') };
     }
   }
@@ -661,7 +668,7 @@ export class AuthServer {
   /**
    * 尝试VIP卡快速注册
    */
-  private async tryVipCardRegister(serverUrl: string, code: string): Promise<{ success: boolean; data?: any; error?: string }> {
+  private async tryVipCardRegister(serverUrl: string, code: string): Promise<{ success: boolean; data?: unknown; error?: string }> {
     try {
       const response = await fetch(`${serverUrl}/web-api/code/quick-register`, {
         method: 'POST',
@@ -679,8 +686,8 @@ export class AuthServer {
       } else {
         return { success: false, error: data.error || '注册失败' };
       }
-    } catch (error: any) {
-      console.error('❌ [Auth Server] VIP卡注册请求失败:', error.message);
+    } catch (error: unknown) {
+      console.error('❌ [Auth Server] VIP卡注册请求失败:', error instanceof Error ? error.message : String(error));
       return { success: false, error: this.formatNetworkError(error, 'VIP卡注册') };
     }
   }
@@ -691,7 +698,7 @@ export class AuthServer {
    * @param loginData vip-login接口返回的数据
    * @param code 兑换码，用于构造用户信息的fallback
    */
-  private async handleVipCardSuccess(res: http.ServerResponse, loginData: any, code: string): Promise<void> {
+  private async handleVipCardSuccess(res: http.ServerResponse, loginData: VipLoginData, code: string): Promise<void> {
     // 保存JWT令牌和用户信息到~/.otto/目录
     const proxyAuthManager = ProxyAuthManager.getInstance();
 
@@ -763,7 +770,7 @@ export class AuthServer {
   /**
    * 验证JWT token格式
    */
-  private verifyJwtFormat(token: string): { valid: boolean; payload?: any; error?: string } {
+  private verifyJwtFormat(token: string): { valid: boolean; payload?: Record<string, unknown>; error?: string } {
     try {
       // JWT应该有3个部分，用.分隔
       const parts = token.split('.');
@@ -771,13 +778,13 @@ export class AuthServer {
         return { valid: false, error: 'JWT格式错误：应该包含3个部分' };
       }
 
-      const [header, payload, signature] = parts;
+      const [header, payload] = parts;
 
       // 验证header
       let decodedHeader;
       try {
         decodedHeader = JSON.parse(Buffer.from(header, 'base64url').toString());
-      } catch (e) {
+      } catch {
         return { valid: false, error: 'JWT header解码失败' };
       }
 
@@ -785,7 +792,7 @@ export class AuthServer {
       let decodedPayload;
       try {
         decodedPayload = JSON.parse(Buffer.from(payload, 'base64url').toString());
-      } catch (e) {
+      } catch {
         return { valid: false, error: 'JWT payload解码失败' };
       }
 
@@ -881,8 +888,8 @@ export class AuthServer {
             }
           })
         });
-      } catch (fetchError: any) {
-        console.error('❌ [Auth Server] 网络请求失败:', fetchError.message);
+      } catch (fetchError: unknown) {
+        console.error('❌ [Auth Server] 网络请求失败:', fetchError instanceof Error ? fetchError.message : String(fetchError));
         this.sendErrorResponse(res, this.formatNetworkError(fetchError, 'Connecting to authentication server'));
         return;
       }
@@ -897,8 +904,8 @@ export class AuthServer {
       let jwtData;
       try {
         jwtData = await jwtResponse.json();
-      } catch (jsonError: any) {
-        console.error('❌ [Auth Server] JWT响应解析失败:', jsonError.message);
+      } catch (jsonError: unknown) {
+        console.error('❌ [Auth Server] JWT响应解析失败:', jsonError instanceof Error ? jsonError.message : String(jsonError));
         this.sendErrorResponse(res, 'Server returned an invalid response format. Please try again later.');
         return;
       }
@@ -994,13 +1001,13 @@ export class AuthServer {
             'User-Agent': getUserAgent()
           },
           body: JSON.stringify({
-            code: code,
+            code,
             redirect_uri: `http://localhost:${this.actualCallbackPort}/callback`,
             app_id: stateAppId,
           })
         });
-      } catch (fetchError: any) {
-        console.error('❌ [Auth Server] 网络请求失败:', fetchError.message);
+      } catch (fetchError: unknown) {
+        console.error('❌ [Auth Server] 网络请求失败:', fetchError instanceof Error ? fetchError.message : String(fetchError));
         throw new Error(this.formatNetworkError(fetchError, 'Connecting to authentication server'));
       }
 
@@ -1011,8 +1018,8 @@ export class AuthServer {
       let exchangeData;
       try {
         exchangeData = await exchangeResponse.json();
-      } catch (jsonError: any) {
-        console.error('❌ [Auth Server] 响应解析失败:', jsonError.message);
+      } catch (jsonError: unknown) {
+        console.error('❌ [Auth Server] 响应解析失败:', jsonError instanceof Error ? jsonError.message : String(jsonError));
         throw new Error('Server returned an invalid response format. Please try again later.');
       }
 
@@ -1045,8 +1052,8 @@ export class AuthServer {
             }
           })
         });
-      } catch (fetchError: any) {
-        console.error('❌ [Auth Server] 网络请求失败:', fetchError.message);
+      } catch (fetchError: unknown) {
+        console.error('❌ [Auth Server] 网络请求失败:', fetchError instanceof Error ? fetchError.message : String(fetchError));
         this.sendErrorResponse(res, this.formatNetworkError(fetchError, 'Connecting to authentication server'));
         return;
       }
@@ -1061,8 +1068,8 @@ export class AuthServer {
       let jwtData;
       try {
         jwtData = await jwtResponse.json();
-      } catch (jsonError: any) {
-        console.error('❌ [Auth Server] JWT响应解析失败:', jsonError.message);
+      } catch (jsonError: unknown) {
+        console.error('❌ [Auth Server] JWT响应解析失败:', jsonError instanceof Error ? jsonError.message : String(jsonError));
         this.sendErrorResponse(res, 'Server returned an invalid response format. Please try again later.');
         return;
       }
@@ -1171,7 +1178,7 @@ export class AuthServer {
   /**
    * 停止服务器
    */
-  public stop(): void {
+  stop(): void {
     if (this.selectServer) {
       this.selectServer.close();
       console.log('🛑 认证选择服务器已停止');
@@ -1188,7 +1195,7 @@ export class AuthServer {
   /**
    * 格式化网络错误为用户友好的提示
    */
-  private formatNetworkError(error: any, operation: string): string {
+  private formatNetworkError(error: unknown, operation: string): string {
     // TypeError: Invalid URL
     if (error instanceof TypeError && error.message.includes('Invalid URL')) {
       return `服务器配置错误，请联系管理员 (错误: ${error.message})`;
@@ -1200,7 +1207,8 @@ export class AuthServer {
     }
 
     // FetchError with error codes
-    const errorCode = error.code || error.errno;
+    const errorRecord = error as { code?: string; errno?: string; message?: string };
+    const errorCode = errorRecord.code || errorRecord.errno;
 
     if (errorCode === 'ENOTFOUND') {
       return `无法连接到服务器 (DNS解析失败)，请检查网络连接`;
@@ -1219,12 +1227,12 @@ export class AuthServer {
     }
 
     // AbortError (timeout)
-    if (error.name === 'AbortError') {
+    if (errorRecord.code === 'AbortError' || (error instanceof Error && error.name === 'AbortError')) {
       return `${operation}超时，请检查网络连接`;
     }
 
     // 默认错误
-    return `${operation}失败: ${error.message || '未知错误'}，请稍后重试`;
+    return `${operation}失败: ${errorRecord.message || '未知错误'}，请稍后重试`;
   }
 
   /**

@@ -23,7 +23,7 @@ import {
   recordFileOperationMetric,
   FileOperation,
 } from '../telemetry/metrics.js';
-import { PROJECT_CONFIG_DIR_NAME, ProjectSettingsManager } from '../config/projectSettings.js';
+import { PROJECT_CONFIG_DIR_NAME } from '../config/projectSettings.js';
 import { isClipboardPath } from '../utils/pathUtils.js';
 
 /**
@@ -458,10 +458,10 @@ This tool automatically enables external file access when absolute paths are det
           reason: 'gemini ignored',
         });
       }
-    } catch (error) {
+    } catch (_error) {
       return {
-        llmContent: `Error during file search: ${getErrorMessage(error)}`,
-        returnDisplay: `## File Search Error\n\nAn error occurred while searching for files:\n\`\`\`\n${getErrorMessage(error)}\n\`\`\``,
+        llmContent: `Error during file search: ${getErrorMessage(_error)}`,
+        returnDisplay: `## File Search Error\n\nAn error occurred while searching for files:\n\`\`\`\n${getErrorMessage(_error)}\n\`\`\``,
       };
     }
 
@@ -663,7 +663,7 @@ This tool automatically enables external file access when absolute paths are det
         const stats = await fs.promises.stat(filePath);
         actualFilesTotalSize += stats.size;
       }
-    } catch (error) {
+    } catch (_error) {
       // 如果无法获取文件大小，回退到内容大小
       actualFilesTotalSize = totalContentSize;
     }

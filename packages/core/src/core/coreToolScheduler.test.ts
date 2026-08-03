@@ -12,7 +12,6 @@ import * as path from 'node:path';
 import {
   CoreToolScheduler,
   ToolCall,
-  ValidatingToolCall,
   convertToFunctionResponse,
 } from './coreToolScheduler.js';
 import {

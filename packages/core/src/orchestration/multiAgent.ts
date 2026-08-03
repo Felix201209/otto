@@ -297,7 +297,7 @@ export class MultiAgentCollaboration {
    */
   async handleCollaborationRequest(
     req: CollaborationRequest,
-    config: Config,
+    _config: Config,
   ): Promise<CollaborationResponse> {
     // 根据请求类型执行对应操作
     // 例如："查老张下周日历" → 调用 calendar +agenda
@@ -338,8 +338,8 @@ export class MultiAgentCollaboration {
    */
   cleanupStaleRequests(): void {
     const now = Date.now();
-    for (const [id, req] of this.pendingRequests) {
-      const reqTime = parseInt(id.split('_')[1] || '0');
+    for (const [id] of this.pendingRequests) {
+      const reqTime = parseInt(id.split('_')[1] || '0', 10);
       if (now - reqTime > 5 * 60 * 1000) {
         this.pendingRequests.delete(id);
       }
@@ -371,8 +371,9 @@ export function initCollaboration(
   feishuChatId?: string,
 ): void {
   const mgr = getCollaborationManager();
-  const agentId = (config as any).getSessionId?.() || 'otto-main';
-  const userId = (config as any).getFeishuUser?.() || userName;
+  const provider = config as Config & { getFeishuUser?: () => string };
+  const agentId = config.getSessionId() || 'otto-main';
+  const userId = provider.getFeishuUser?.() || userName;
 
   mgr.register({
     agentId,

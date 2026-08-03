@@ -332,7 +332,7 @@ async function build(sourceCommit) {
   log('BUILD', '构建 Mac arm64...');
   runBuildStep(
     NPX_BIN,
-    ['electron-builder', '--mac', 'dmg', '--arm64'],
+    ['electron-builder', '--mac', 'dmg', '--arm64', '--publish', 'never'],
     'mac-arm64',
   );
   execFileSync(
@@ -349,7 +349,11 @@ async function build(sourceCommit) {
   log('BUILD', 'Mac arm64 最终 DMG 的 preload、IPC 与 WS 动态验收通过');
 
   log('BUILD', '构建 Mac x64...');
-  runBuildStep(NPX_BIN, ['electron-builder', '--mac', 'dmg', '--x64'], 'mac');
+  runBuildStep(
+    NPX_BIN,
+    ['electron-builder', '--mac', 'dmg', '--x64', '--publish', 'never'],
+    'mac',
+  );
 
   log('BUILD', '构建 Windows x64...');
   const windowsSigningEnv = {

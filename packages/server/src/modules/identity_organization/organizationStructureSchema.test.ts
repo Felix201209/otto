@@ -115,6 +115,34 @@ describe('organization structure schema contributor', () => {
     }
   });
 
+  it('adds parent_department_id to an existing department table', () => {
+    const database = createDatabase();
+    try {
+      database.exec(`
+        CREATE TABLE organization_departments (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          name TEXT NOT NULL COLLATE NOCASE,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(organization_id, name)
+        );
+        INSERT INTO organization_departments (id, organization_id, name)
+        VALUES ('dept-a', 'org-a', 'Engineering');
+      `);
+
+      applySchema(database);
+
+      expect(
+        database
+          .prepare('SELECT parent_department_id FROM organization_departments WHERE id = ?')
+          .get('dept-a'),
+      ).toEqual({ parent_department_id: null });
+    } finally {
+      database.close();
+    }
+  });
+
   it('restricts deleting a populated department and cascades an organization removal', () => {
     const database = createDatabase();
     try {

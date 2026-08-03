@@ -9,7 +9,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { isNodeError } from '../utils/errors.js';
 import { exec } from 'node:child_process';
-import { simpleGit, SimpleGit, CheckRepoActions } from 'simple-git';
+import { simpleGit, SimpleGit } from 'simple-git';
 import { getProjectHash, OTTO_DIR } from '../utils/paths.js';
 
 /**
@@ -34,14 +34,14 @@ export class GitService {
   /**
    * Check if Git service is disabled due to initialization errors
    */
-  public isGitDisabled(): boolean {
+  isGitDisabled(): boolean {
     return this.isDisabled;
   }
 
   /**
    * Get the reason why Git service was disabled
    */
-  public getDisabledReason(): string | undefined {
+  getDisabledReason(): string | undefined {
     return this.disabledReason;
   }
 
@@ -167,7 +167,7 @@ export class GitService {
           success: true,
           disabled: false
         };
-      } catch (error) {
+  } catch (error) {
         console.error(`[CHECKPOINT DEBUG] Failed to setup shadow git repository:`, error);
         
         // Check if this is a Git version issue (--initial-branch not supported)
@@ -194,7 +194,7 @@ export class GitService {
           disabledReason: this.disabledReason
         };
       }
-    } catch (error) {
+  } catch (error) {
       // Catch-all for any unexpected errors
       console.error(`[CHECKPOINT DEBUG] Unexpected error during Git service initialization:`, error);
       this.isDisabled = true;
@@ -233,7 +233,7 @@ export class GitService {
 
     try {
       await fs.mkdir(repoDir, { recursive: true });
-    } catch (error) {
+        } catch (error) {
       console.error(`[CHECKPOINT DEBUG] Failed to create repository directory:`, error);
       throw error;
     }
@@ -257,7 +257,7 @@ export class GitService {
     try {
       await fs.access(gitDir);
       isRepoDefined = true;
-    } catch (error) {
+    } catch (_error) {
       isRepoDefined = false;
     }
 
@@ -316,7 +316,7 @@ export class GitService {
 
     try {
       await fs.access(gitDir);
-    } catch (error) {
+    } catch (_error) {
       console.log(`[CHECKPOINT DEBUG] Shadow git repository does not exist, creating...`);
       try {
         await this.setupShadowGitRepository();
@@ -489,7 +489,7 @@ export class GitService {
       try {
         await strategies[i]();
         return; // 成功则退出
-      } catch (error) {
+      } catch {
         if (i === strategies.length - 1) {
           console.warn(`[CHECKPOINT DEBUG] All fallback strategies failed, proceeding with commit anyway`);
         }
@@ -543,7 +543,7 @@ export class GitService {
       await this.safeRestoreFiles(repo, commitHash);
 
       console.log(`[CHECKPOINT DEBUG] Successfully restored from snapshot: ${commitHash}`);
-    } catch (error) {
+        } catch (error) {
       console.error(`[CHECKPOINT DEBUG] Failed to restore from snapshot:`, error);
       throw error;
     }

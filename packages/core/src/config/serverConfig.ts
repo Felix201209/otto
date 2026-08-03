@@ -58,7 +58,7 @@ export class ServerConfigFetcher {
   /**
    * 获取单例实例。
    */
-  public static getInstance(): ServerConfigFetcher {
+  static getInstance(): ServerConfigFetcher {
     if (!ServerConfigFetcher.instance) {
       ServerConfigFetcher.instance = new ServerConfigFetcher();
     }
@@ -69,7 +69,7 @@ export class ServerConfigFetcher {
    * 从服务端获取配置（带缓存）
    * 缓存时间：5分钟
    */
-  public async getConfig(): Promise<ServerClientConfig> {
+  async getConfig(): Promise<ServerClientConfig> {
     const now = new Date();
 
     // 检查缓存是否仍然有效
@@ -128,7 +128,7 @@ export class ServerConfigFetcher {
   /**
    * 获取飞书配置（默认租户）
    */
-  public async getFeishuConfig(): Promise<{ appId: string }> {
+  async getFeishuConfig(): Promise<{ appId: string }> {
     const config = await this.getConfig();
     return { appId: config.feishu.appId };
   }
@@ -136,7 +136,7 @@ export class ServerConfigFetcher {
   /**
    * 获取所有飞书租户列表
    */
-  public async getFeishuTenants(): Promise<FeishuTenantInfo[]> {
+  async getFeishuTenants(): Promise<FeishuTenantInfo[]> {
     const config = await this.getConfig();
     return config.feishuTenants || [{ appId: config.feishu.appId, label: '飞书登录', tenantKey: 'main' }];
   }
@@ -144,7 +144,7 @@ export class ServerConfigFetcher {
   /**
    * 清除缓存配置
    */
-  public clearCache(): void {
+  clearCache(): void {
     this.cachedConfig = null;
     this.cacheExpiry = null;
     console.log('🔄 配置缓存已清除');
@@ -153,7 +153,7 @@ export class ServerConfigFetcher {
   /**
    * 测试服务端连接
    */
-  public async testConnection(): Promise<boolean> {
+  async testConnection(): Promise<boolean> {
     try {
       // BYO-key: 未配置服务端地址时直接判定不可连接，不发起请求。
       const baseUrl = this.getServerBaseUrl();

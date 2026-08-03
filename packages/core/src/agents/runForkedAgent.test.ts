@@ -13,8 +13,7 @@ function makeStreamingGenerator(
   chunks: Array<{ text?: string } | { _throw: Error }>,
 ): ContentGenerator {
   return {
-    generateContentStream: vi.fn(async () => {
-      return (async function* () {
+    generateContentStream: vi.fn(async () => (async function* () {
         for (const c of chunks) {
           if ('_throw' in c) throw c._throw;
           yield {
@@ -23,8 +22,7 @@ function makeStreamingGenerator(
             ],
           } as never;
         }
-      })();
-    }),
+      })()),
     // Unused — only generateContentStream is exercised here.
     generateContent: vi.fn(),
   } as unknown as ContentGenerator;
@@ -120,8 +118,7 @@ describe('runForkedAgent', () => {
   it('returns cancelled and preserves partial text when signal aborts mid-stream', async () => {
     const ctrl = new AbortController();
     const gen: ContentGenerator = {
-      generateContentStream: vi.fn(async () => {
-        return (async function* () {
+      generateContentStream: vi.fn(async () => (async function* () {
           yield {
             candidates: [{ content: { parts: [{ text: 'first ' }] } }],
           } as never;
@@ -130,8 +127,7 @@ describe('runForkedAgent', () => {
           yield {
             candidates: [{ content: { parts: [{ text: 'should not arrive' }] } }],
           } as never;
-        })();
-      }),
+        })()),
       generateContent: vi.fn(),
     } as unknown as ContentGenerator;
 
@@ -180,14 +176,12 @@ describe('runForkedAgent', () => {
 
   it('handles a chunk with no text parts without crashing', async () => {
     const gen: ContentGenerator = {
-      generateContentStream: vi.fn(async () => {
-        return (async function* () {
+      generateContentStream: vi.fn(async () => (async function* () {
           yield { candidates: [{ content: { parts: [] } }] } as never;
           yield {
             candidates: [{ content: { parts: [{ text: 'hello' }] } }],
           } as never;
-        })();
-      }),
+        })()),
       generateContent: vi.fn(),
     } as unknown as ContentGenerator;
     const result = await runForkedAgent({

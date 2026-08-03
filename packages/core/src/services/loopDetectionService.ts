@@ -8,7 +8,7 @@ import { createHash } from 'crypto';
 import { OttoEventType, ServerOttoStreamEvent } from '../core/turn.js';
 import { logLoopDetected } from '../telemetry/loggers.js';
 import { LoopDetectedEvent, LoopType } from '../telemetry/types.js';
-import { Config, DEFAULT_GEMINI_FLASH_MODEL } from '../config/config.js';
+import { Config } from '../config/config.js';
 import { MESSAGE_ROLES } from '../config/messageRoles.js';
 import { SchemaUnion, Type } from '@google/genai';
 
@@ -77,18 +77,21 @@ const MIN_LLM_CHECK_INTERVAL = 5;
  * This is used when the confidence of a loop is low, to check less frequently.
  */
 const MAX_LLM_CHECK_INTERVAL = 15;
+type LoopDetectionResponse = { confidence?: number; reasoning?: string };
 
 /**
  * 使用统一接口进行循环检测
  */
 async function callGeminiLoopDetectionAPI(
-  contents: any[],
-  schema: any,
+  contents: unknown[],
+  schema: SchemaUnion,
   abortSignal: AbortSignal,
   config: Config,
-): Promise<any> {
+): Promise<LoopDetectionResponse> {
   // 🔄 使用统一的OttoServerAdapter接口
-  const ottoAdapter = config.getOttoClient()?.getContentGenerator() as any;
+  const ottoAdapter = config.getOttoClient()?.getContentGenerator() as unknown as {
+    generateContent: (request: unknown, scene: string) => Promise<LoopDetectionResponse>;
+  };
   if (!ottoAdapter) {
     throw new Error('OttoServerAdapter not available');
   }
@@ -96,10 +99,10 @@ async function callGeminiLoopDetectionAPI(
   console.log(`[LoopDetection] Calling unified interface for loop detection`);
 
   const response = await ottoAdapter.generateContent({
-    contents: contents,
+    contents,
     config: {
       responseMimeType: 'application/json',
-      abortSignal: abortSignal,
+      abortSignal,
       httpOptions: {
         headers: {
           'X-Scene-Type': 'json_generation',
@@ -392,7 +395,7 @@ export class LoopDetectionService {
     }
 
     // Filter ASCII symbols and common formatting characters
-    if (/^[\s\-=*_+|#.`\/\\~]+$/.test(chunk)) {
+    if (/^[\s\-=*_+|#.`\u002F\\~]+$/.test(chunk)) {
       return false;
     }
 

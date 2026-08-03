@@ -23,6 +23,14 @@ function getLSPManager(projectRoot: string): LSPManager {
 interface LSPDocumentSymbolsParams {
   filePath: string;
 }
+interface DocumentSymbolLike {
+  name: string;
+  kind: number;
+  range?: { start: { line: number; character: number } };
+  selectionRange?: { start: { line: number; character: number } };
+  children?: DocumentSymbolLike[];
+  location?: { range: { start: { line: number; character: number } } };
+}
 
 export class LSPDocumentSymbolsTool extends BaseTool<LSPDocumentSymbolsParams, ToolResult> {
   static Name = 'lsp_document_symbols';
@@ -77,24 +85,28 @@ export class LSPDocumentSymbolsTool extends BaseTool<LSPDocumentSymbolsParams, T
       return kinds[kind] || `Unknown(${kind})`;
     };
 
-    const formatSymbol = (s: any, indent: string = ''): string => {
+    const formatSymbol = (s: DocumentSymbolLike, indent: string = ''): string => {
       // 🎯 优化点：优先使用 selectionRange，它指向符号的标识符（名称）位置，而不是 range（包含修饰符的整个范围）
-      const pos = s.selectionRange ? s.selectionRange.start : s.range.start;
+      const range = s.range ?? s.location?.range;
+      if (!range) return `${indent}- [Unknown] ${s.name}`;
+      const pos = s.selectionRange ? s.selectionRange.start : range.start;
       const kindName = getSymbolKindName(s.kind);
       let res = `${indent}- [${kindName}] ${s.name} (Line ${pos.line + 1}, Char ${pos.character + 1})`;
       if (s.children && s.children.length > 0) {
-        res += '\n' + s.children.map((c: any) => formatSymbol(c, indent + '  ')).join('\n');
+        res += '\n' + s.children.map((c) => formatSymbol(c, indent + '  ')).join('\n');
       }
       return res;
     };
 
-    const symbols: any[] = results.flat().filter(Boolean);
+    const symbols = results.flat().filter((s): s is DocumentSymbolLike => Boolean(s));
     const formatted = symbols.map(s => {
       if (s.range) { // DocumentSymbol
         return formatSymbol(s);
       } else { // SymbolInformation
         const kindName = getSymbolKindName(s.kind);
-        return `- [${kindName}] ${s.name} (Line ${s.location.range.start.line + 1}, Char ${s.location.range.start.character + 1})`;
+        const start = s.location?.range.start;
+        if (!start) return `- [${kindName}] ${s.name}`;
+        return `- [${kindName}] ${s.name} (Line ${start.line + 1}, Char ${start.character + 1})`;
       }
     }).join('\n');
 

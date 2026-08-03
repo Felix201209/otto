@@ -4,6 +4,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import os from 'os';
 import { DesktopAutomationTool } from './desktop-automation.js';
+import type { DesktopAutomationToolParams } from './desktop-automation.js';
 import { createMockConfig } from '../utils/test-helpers.js';
 import { ProcessGuard } from '../utils/process-guard.js';
 import {
@@ -128,7 +129,7 @@ describe('DesktopAutomationTool', () => {
     expect(tool.validateToolParams({ action: 'wait_for_app', app_name: 'Safari' })).toBeNull();
   });
   it('accepts all 17 actions', () => {
-    const actions: Array<{ action: any; extra?: any }> = [
+    const actions: Array<{ action: DesktopAutomationToolParams['action']; extra?: Record<string, unknown> }> = [
       { action: 'launch_app', extra: { app_name: 'Test' } },
       { action: 'quit_app', extra: { app_name: 'Test' } },
       { action: 'window_manager', extra: { app_name: 'Test', window_operation: 'tile_left' } },

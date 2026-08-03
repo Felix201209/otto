@@ -37,7 +37,7 @@ export function isSilentMode(): boolean {
 /**
  * Logs a message only if silent mode is disabled
  */
-export function logIfNotSilent(level: 'log' | 'info' | 'warn' | 'debug', ...args: any[]): void {
+export function logIfNotSilent(level: 'log' | 'info' | 'warn' | 'debug', ...args: unknown[]): void {
   if (!silentMode) {
     originalConsole[level](...args);
   }
@@ -46,6 +46,6 @@ export function logIfNotSilent(level: 'log' | 'info' | 'warn' | 'debug', ...args
 /**
  * Always logs an error message regardless of silent mode
  */
-export function logError(...args: any[]): void {
+export function logError(...args: unknown[]): void {
   console.error(...args);
 }

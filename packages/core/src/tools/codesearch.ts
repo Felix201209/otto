@@ -93,7 +93,7 @@ export class CodeSearchTool extends BaseTool<CodeSearchToolParams, ToolResult> {
         name: "get_code_context_exa",
         arguments: {
           query: params.query,
-          tokensNum: tokensNum,
+          tokensNum,
         },
       },
     };

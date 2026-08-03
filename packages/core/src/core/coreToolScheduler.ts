@@ -6,33 +6,19 @@
 
 import {
   ToolCallRequestInfo,
-  ToolCallResponseInfo,
   ToolConfirmationOutcome,
-  Tool,
-  ToolCallConfirmationDetails,
-  ToolResult,
-  ToolResultDisplay,
   ToolRegistry,
   ApprovalMode,
   EditorType,
   Config,
-  logToolCall,
-  ToolCallEvent,
   PreToolExecutionHandler,
   ToolConfirmationPayload,
 } from '../index.js';
 import { Part, PartListUnion } from '@google/genai';
 import { getResponseTextFromParts } from '../utils/generateContentResponseUtilities.js';
 import {
-  isModifiableTool,
-  ModifyContext,
-  modifyWithEditor,
-} from '../tools/modifiable-tool.js';
-import * as Diff from 'diff';
-import {
   ToolExecutionEngine,
   ToolExecutionContext,
-  RuntimeConfirmationRequest,
   // 🎯 从基础层导入所有工具调用类型
   ValidatingToolCall,
   ScheduledToolCall,
@@ -46,6 +32,7 @@ import {
   Status,
 } from './toolExecutionEngine.js';
 import { MainAgentAdapter } from './mainAgentAdapter.js';
+import type { HookEventHandler } from '../hooks/hookEventHandler.js';
 // TaskStateManager 已移除，简化状态管理
 
 // 🎯 类型定义已移至 ToolExecutionEngine，从那里导入
@@ -179,25 +166,6 @@ export function convertToFunctionResponse(
   );
 }
 
-const createErrorResponse = (
-  request: ToolCallRequestInfo,
-  error: Error,
-): ToolCallResponseInfo => ({
-  callId: request.callId,
-  error,
-  responseParts: {
-    functionResponse: {
-      id: request.callId,
-      name: request.name,
-      response: { error: error.message },
-    },
-  },
-  resultDisplay: error.message,
-  summary: error.message,
-});
-
-
-
 interface CoreToolSchedulerOptions {
   toolRegistry: Promise<ToolRegistry>;
   outputUpdateHandler?: OutputUpdateHandler;
@@ -207,7 +175,7 @@ interface CoreToolSchedulerOptions {
   approvalMode?: ApprovalMode;
   getPreferredEditor: () => EditorType | undefined;
   config: Config;
-  hookEventHandler?: any; // HookEventHandler type - optional
+  hookEventHandler?: HookEventHandler;
 }
 
 /**

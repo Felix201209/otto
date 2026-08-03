@@ -171,7 +171,7 @@ function formatProgressSnapshot(output: string, durationSec: number): string {
   }
 
   // Count tool calls for a quick progress indicator.
-  const toolCallCount = (output.match(/^[📖✏️🗑️📦🔍⚡💭🌐🔄🔧✅⚠️]/gu) || []).length;
+  const toolCallCount = (output.match(/^(?:📖|✏️|🗑️|📦|🔍|⚡|💭|🌐|🔄|🔧|✅|⚠️)/gmu) || []).length;
 
   return `Running for ${durationSec}s | ${toolCallCount} tool calls so far\n\n--- Recent activity ---\n${recentLines.join('\n')}`;
 }

@@ -32,6 +32,7 @@ import { SchemaValidator } from '../utils/schemaValidator.js';
 import { Config } from '../config/config.js';
 import { OrgMemoryStore } from '../memory/orgMemoryStore.js';
 import { CodebaseMemoryProvider } from '../memory/codebaseMemoryProvider.js';
+import type { Permission } from '../memory/orgMemoryTypes.js';
 import { createProjectArchiveSummary, createSkillCandidate } from '../memory/skillFormation.js';
 import type { OrgMemoryRecord, ProjectRecord, ProjectType, UsageRecord } from '../memory/orgMemoryTypes.js';
 import { findMostSimilarTopic, DEFAULT_MERGE_THRESHOLD, type TopicCandidate } from '../utils/topicSimilarity.js';
@@ -190,7 +191,7 @@ FILES CREATED:
     if (err) return { llmContent: err, returnDisplay: err };
 
     // 权限检查：按操作类型映射所需权限
-    const permissionMap: Record<string, string> = {
+    const permissionMap: Record<string, Permission> = {
       learn: 'memory:team:write',
       recall: 'memory:team:read',
       onboard: 'memory:team:write',
@@ -210,12 +211,13 @@ FILES CREATED:
       try {
         const { getEnterpriseSync } = await import('../orchestration/enterpriseSync.js');
         const sync = getEnterpriseSync(this.config.getProjectRoot());
-        const userId = (this.config as any).getFeishuUser?.() || 'local';
+        const provider = this.config as Config & { getFeishuUser?: () => string };
+        const userId = provider.getFeishuUser?.() || 'local';
         // 本地桌面/CLI 用户是其本机数据的所有者；企业 License 只约束已识别的
         // 飞书成员。否则本机存在 enterprise.json、但当前请求没有飞书 open_id 时，
         // 会把所有本地记忆操作误判为无权限，并让测试受真实机器配置污染。
         if (userId !== 'local') {
-          const hasPermission = await sync.checkPermission(userId, requiredPermission as any).catch(() => true);
+          const hasPermission = await sync.checkPermission(userId, requiredPermission).catch(() => true);
           if (!hasPermission) {
             return {
               llmContent: `权限不足：需要 ${requiredPermission} 权限`,
@@ -266,8 +268,8 @@ FILES CREATED:
   // LEARN: auto-extract knowledge from task execution
   // ============================================================
   private learn(p: MemoryManagerToolParams): string {
-    const empId = p.employee_id || os.userInfo().username;
     const now = new Date().toISOString().split('T')[0];
+    const empId = p.employee_id || os.userInfo().username;
     const durationMatch = p.task_result?.match(/(\d+\.?\d*)\s*min/);
     const duration = durationMatch ? parseFloat(durationMatch[1]) : 0;
     const success = p.task_result?.includes('fail') ? false : true;
@@ -523,7 +525,6 @@ ${efficiencyLines.join('\n')}
   private report(p: MemoryManagerToolParams): string {
     const period = p.period || '30d';
     const viewer = p.viewer || 'employee';
-    const empId = p.employee_id || os.userInfo().username;
 
     const empFile = path.join(MEMORY_DIR, 'employee.markdown');
     if (!fs.existsSync(empFile)) {
@@ -549,7 +550,6 @@ ${efficiencyLines.join('\n')}
     // Calculate metrics
     const totalTasks = tasks.length;
     const totalMinutes = tasks.reduce((sum, t) => sum + t.duration, 0);
-    const avgDuration = totalTasks > 0 ? totalMinutes / totalTasks : 0;
 
     // Group by task type
     const byType: Record<string, { count: number; totalMin: number; avgMin: number }> = {};
@@ -558,7 +558,7 @@ ${efficiencyLines.join('\n')}
       byType[t.type].count++;
       byType[t.type].totalMin += t.duration;
     }
-    for (const [type, data] of Object.entries(byType)) {
+    for (const [_type, data] of Object.entries(byType)) {
       data.avgMin = data.totalMin / data.count;
     }
 
@@ -654,7 +654,7 @@ ${efficiencyLines.join('\n')}
   // ============================================================
   // SYNC: anonymize + prepare for cloud
   // ============================================================
-  private sync(p: MemoryManagerToolParams): string {
+  private sync(_p: MemoryManagerToolParams): string {
     const files: string[] = [];
     let totalSize = 0;
     for (const [name, fpath] of [['department', path.join(MEMORY_DIR, 'department.markdown')], ['role', path.join(MEMORY_DIR, 'role.markdown')]]) {
@@ -966,7 +966,7 @@ ${efficiencyLines.join('\n')}
     }
   }
 
-  private updateEfficiencyTrend(empFile: string, content: string, taskType: string, duration: number, success: boolean): void {
+  private updateEfficiencyTrend(empFile: string, content: string, taskType: string, duration: number, _success: boolean): void {
     if (duration <= 0) return;
     const sectionHeader = '## Efficiency Trends';
     let c = content;
@@ -986,7 +986,7 @@ ${efficiencyLines.join('\n')}
     fs.writeFileSync(empFile, c);
   }
 
-  private discoverPatterns(wfFile: string, taskType: string): void {
+  private discoverPatterns(wfFile: string, _taskType: string): void {
     // Read all execution records and find common patterns
     const content = fs.readFileSync(wfFile, 'utf8');
     const executions = content.split('## Execution').filter(s => s.trim());

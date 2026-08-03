@@ -370,7 +370,7 @@ function baseDefaultServices(park: string): ParkService[] {
       ],
     },
     {
-      id: 'network-phone', icon: IconWrench, name: '网络与电话', desc: '宽带、固话开通与调试',
+      id: 'network-phone', icon: IconWrench, name: '网络与固话', desc: '宽带、固话开通与调试',
       prompt: `帮我提交${park}网络或固话业务申请。公司名称：；房间号：；业务类型：；工位或号码数量：；期望开通日期：；联系人：；联系电话：`,
       demoSubject: 'A 座 1203 室企业网络开通申请',
       steps: [
@@ -1642,6 +1642,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
         }
         const identity = `${session.account.organizationId}:${session.account.id}`;
         if (ticketPollIdentity.current !== identity) {
+          const previousIdentity = ticketPollIdentity.current;
           ticketPollIdentity.current = identity;
           ticketPollInitialized.current = false;
           notifiedTicketKeys.current.clear();
@@ -1649,7 +1650,10 @@ export function ParkServicesPlugin(): React.JSX.Element {
           setOwnHistory([]);
           setBackgroundTickets([]);
           setBackgroundTicketSummaryCount(0);
-          setServiceWindows([]);
+          // Initial identity hydration must not close a form the user opened
+          // while the first ticket poll was still in flight. Only a real
+          // account or organization switch invalidates open service windows.
+          if (previousIdentity !== null) setServiceWindows([]);
         }
         const tickets = await window.otto.enterpriseTicketList();
         if (cancelled) return;

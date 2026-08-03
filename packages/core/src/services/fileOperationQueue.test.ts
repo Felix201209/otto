@@ -5,7 +5,7 @@
  */
 
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   FileOperationQueue,
   getGlobalFileOperationQueue,
@@ -21,9 +21,7 @@ describe('FileOperationQueue', () => {
 
   describe('enqueue', () => {
     it('should execute a single operation immediately', async () => {
-      const result = await queue.enqueue('/path/to/file.ts', async () => {
-        return 'done';
-      });
+      const result = await queue.enqueue('/path/to/file.ts', async () => 'done');
 
       expect(result).toBe('done');
     });
@@ -141,9 +139,7 @@ describe('FileOperationQueue', () => {
 
   describe('enqueueMultiple', () => {
     it('should execute without queuing when no files are involved', async () => {
-      const result = await queue.enqueueMultiple([], async () => {
-        return 'done';
-      });
+      const result = await queue.enqueueMultiple([], async () => 'done');
 
       expect(result).toBe('done');
     });

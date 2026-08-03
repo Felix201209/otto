@@ -12,6 +12,7 @@ import * as os from 'node:os';
 import { DeleteFileTool, DeleteFileToolParams } from './delete-file.js';
 import { Config, ApprovalMode } from '../config/config.js';
 import { ToolRegistry } from './tool-registry.js';
+import type { ToolDeleteConfirmationDetails } from './tools.js';
 
 // Mock dependencies
 vi.mock('../telemetry/metrics.js', () => ({
@@ -272,10 +273,11 @@ describe('DeleteFileTool', () => {
       if (result) {
         expect(result.type).toBe('delete');
         expect(result.title).toContain('Confirm Delete');
-        expect((result as any).fileName).toBe('test-file.txt');
-        expect((result as any).filePath).toBe(testFilePath);
-        expect((result as any).fileContent).toBe(testFileContent);
-        expect((result as any).reason).toBe('test confirmation');
+        const details = result as ToolDeleteConfirmationDetails;
+        expect(details.fileName).toBe('test-file.txt');
+        expect(details.filePath).toBe(testFilePath);
+        expect(details.fileContent).toBe(testFileContent);
+        expect(details.reason).toBe('test confirmation');
       }
     });
 

@@ -16,7 +16,6 @@ import { SchemaValidator } from '../utils/schemaValidator.js';
 import { Config } from '../config/config.js';
 import {
   isWithinRoot,
-  processSingleFileContent,
   detectFileType,
 } from '../utils/fileUtils.js';
 import { makeRelative, shortenPath } from '../utils/paths.js';

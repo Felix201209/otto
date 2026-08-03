@@ -35,7 +35,7 @@ export class OttoAuthHandler {
   /**
    * 构建Otto认证URL
    */
-  public buildAuthUrl(): string {
+  buildAuthUrl(): string {
     // BYO-key: 未配置认证服务地址时该登录流不可用，抛错由调用方 catch 优雅处理，
     // 避免生成以 '?redirect_to=' 开头的无效 URL。
     if (!this.config.authUrl) {
@@ -51,7 +51,7 @@ export class OttoAuthHandler {
   /**
    * 处理Otto认证回调
    */
-  public handleCallback(url: URL): OttoAuthResult {
+  handleCallback(url: URL): OttoAuthResult {
     console.log('🔄 [Otto Auth] 处理Otto认证回调');
     console.log('🔄 [Otto Auth] 回调URL:', url.toString());
 
@@ -94,8 +94,8 @@ export class OttoAuthHandler {
     console.log('✅ [Otto Auth] Otto认证成功');
     return {
       success: true,
-      token: token,
-      user_id: user_id
+      token,
+      user_id
     };
   }
 }

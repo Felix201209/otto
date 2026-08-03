@@ -485,7 +485,7 @@ export function extractCompactSummary(transcript: string, maxLen: number): strin
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
     // Keep: tool call markers, status lines, short text lines
-    const isToolMarker = /^[📖✏️🗑️📦🔍⚡💭🌐🔄🔧✅⚠️📋📊💡🚀⏳⏹️⏱️❌]/u.test(line);
+    const isToolMarker = /^(?:📖|✏️|🗑️|📦|🔍|⚡|💭|🌐|🔄|🔧|✅|⚠️|📋|📊|💡|🚀|⏳|⏹️|⏱️|❌)/u.test(line);
     const isShort = line.length <= 200;
     const candidate = isToolMarker || isShort ? line : line.slice(0, 100) + '…';
 

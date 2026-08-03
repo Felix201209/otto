@@ -217,9 +217,10 @@ export class AskUserQuestionTool extends BaseTool<
             }
             if (opt && typeof opt === 'object') {
               // 容错：如果把选项写成只有 label/value 或无 description 的情况
-              const rawLabel = (opt as any).label || (opt as any).value || 'Option';
+              const optionRecord = opt as { label?: unknown; value?: unknown; description?: unknown };
+              const rawLabel = optionRecord.label ?? optionRecord.value ?? 'Option';
               const label = String(rawLabel).trim() || 'Option';
-              const description = opt.description ? String(opt.description).trim() : '';
+              const description = optionRecord.description ? String(optionRecord.description).trim() : '';
               return {
                 ...opt,
                 label,

@@ -9,11 +9,37 @@ import { MESSAGE_ROLES } from '../config/messageRoles.js';
 import { cleanOpenAICompatibleSchema } from './customModelOpenAISchema.js';
 import { pairToolCallIds } from './customModelToolCallIds.js';
 
+interface ConverterFunctionCall { id?: string; name?: string; args?: unknown }
+interface ConverterFunctionResponse { name?: string; response?: unknown }
+interface ConverterPart {
+  text?: string;
+  reasoning?: string;
+  inlineData?: { mimeType?: string; data?: string };
+  functionCall?: ConverterFunctionCall;
+  functionResponse?: ConverterFunctionResponse;
+}
+interface ConverterContent { role?: string; parts?: ConverterPart[] }
+interface OpenAIToolCall { id?: string; type: 'function'; function: { name?: string; arguments: string } }
+interface OpenAIMessage {
+  role?: string;
+  content?: unknown;
+  tool_call_id?: string;
+  tool_calls?: OpenAIToolCall[];
+  reasoning_content?: string;
+  [key: string]: unknown;
+}
+interface OpenAIToolDefinition {
+  name?: string;
+  description?: string;
+  parameters?: unknown;
+  functionDeclarations?: Array<{ name?: string; description?: string; parameters?: unknown }>;
+}
+
 /**
  * OpenAI 格式转换工具
  */
-function closeOpenAIToolCallGaps(messages: any[]): any[] {
-  const closed: any[] = [];
+function closeOpenAIToolCallGaps(messages: OpenAIMessage[]): OpenAIMessage[] {
+  const closed: OpenAIMessage[] = [];
   let pendingToolIds: Set<string> | null = null;
 
   const appendMissingToolResults = () => {
@@ -38,7 +64,7 @@ function closeOpenAIToolCallGaps(messages: any[]): any[] {
   for (const msg of messages) {
     if (msg?.role === 'tool') {
       const toolCallId = msg.tool_call_id;
-      if (pendingToolIds?.has(toolCallId)) {
+      if (typeof toolCallId === 'string' && pendingToolIds?.has(toolCallId)) {
         closed.push(msg);
         pendingToolIds.delete(toolCallId);
         if (pendingToolIds.size === 0) {
@@ -56,7 +82,7 @@ function closeOpenAIToolCallGaps(messages: any[]): any[] {
     if (msg?.role === 'assistant' && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
       pendingToolIds = new Set(
         msg.tool_calls
-          .map((toolCall: any) => toolCall?.id)
+          .map((toolCall) => toolCall?.id)
           .filter((id: unknown): id is string => typeof id === 'string' && id.length > 0),
       );
       if (pendingToolIds.size === 0) {
@@ -74,7 +100,7 @@ export const OpenAIConverter = {
    * 将单个 part 转换为 OpenAI content 格式
    * 支持 text 和 inlineData (图片)
    */
-  partToOpenAIContent(part: any): any | null {
+  partToOpenAIContent(part: ConverterPart): OpenAIMessage['content'] | null {
     if (part.text) {
       return { type: 'text', text: part.text };
     }
@@ -91,8 +117,8 @@ export const OpenAIConverter = {
     return null;
   },
 
-  contentsToMessages(contents: any[]): any[] {
-    const messages: any[] = [];
+  contentsToMessages(contents: ConverterContent[]): OpenAIMessage[] {
+    const messages: OpenAIMessage[] = [];
     let pendingReasoning = '';
 
     // 🆕 与 Anthropic 路径一致：先做一次 tool_call ↔ tool_result 的 id 配对。
@@ -109,9 +135,9 @@ export const OpenAIConverter = {
       // 1. 检查是否为纯思考消息：
       // 在历史中，我们把流式输出的多个 reasoning 块通过 appendReasoningToOutput 聚合成纯 reasoning Content。
       // 它通常只有 parts 且都是带 reasoning 字段的对象。
-      const isPureReasoning = role === 'assistant' && parts.length > 0 && parts.every((p: any) => p.reasoning !== undefined);
+      const isPureReasoning = role === 'assistant' && parts.length > 0 && parts.every((p) => p.reasoning !== undefined);
       if (isPureReasoning) {
-        pendingReasoning += parts.map((p: any) => p.reasoning).join('');
+        pendingReasoning += parts.map((p) => p.reasoning).join('');
         continue; // 过滤纯思考消息，使其不作为独立对话发送（避免 API 报错）
       }
 
@@ -121,13 +147,13 @@ export const OpenAIConverter = {
       }
 
       // 2. 处理包含工具调用的消息
-      if (parts.some((p: any) => p.functionCall)) {
-        const msg: any = {
+      if (parts.some((p) => p.functionCall)) {
+        const msg: OpenAIMessage = {
           role,
           content: null,
           tool_calls: parts
-            .filter((p: any) => p.functionCall)
-            .map((p: any, idx: number) => ({
+            .filter((p): p is ConverterPart & { functionCall: ConverterFunctionCall } => Boolean(p.functionCall))
+            .map((p, idx) => ({
               // 权威配对 id 优先（保证与下游 tool 消息的 tool_call_id 严格一致）
               id: idByPart.get(p) || p.functionCall.id || `call_${Date.now()}_${idx}`,
               type: 'function',
@@ -151,9 +177,9 @@ export const OpenAIConverter = {
       }
 
       // 3. 处理工具执行结果消息
-      if (parts.some((p: any) => p.functionResponse)) {
-        const functionResponseParts = parts.filter((p: any) => p.functionResponse);
-        const toolMessages: any[] = [];
+      if (parts.some((p) => p.functionResponse)) {
+        const functionResponseParts = parts.filter((p): p is ConverterPart & { functionResponse: ConverterFunctionResponse } => Boolean(p.functionResponse));
+        const toolMessages: OpenAIMessage[] = [];
         for (const p of functionResponseParts) {
           const mappedId = idByPart.get(p);
           if (mappedId === undefined) {
@@ -186,14 +212,14 @@ export const OpenAIConverter = {
       }
 
       // 4. 检查是否包含图片内容
-      const hasImageContent = parts.some((p: any) => p.inlineData);
+      const hasImageContent = parts.some((p) => p.inlineData);
 
       if (hasImageContent) {
         const contentParts = parts
-          .map((part: any) => OpenAIConverter.partToOpenAIContent(part))
+          .map((part) => OpenAIConverter.partToOpenAIContent(part))
           .filter(Boolean);
 
-        const msg: any = {
+        const msg: OpenAIMessage = {
           role,
           content: contentParts,
         };
@@ -202,8 +228,8 @@ export const OpenAIConverter = {
       }
 
       // 5. 纯文本内容
-      const textContent = parts.map((part: any) => part.text || '').join('\n');
-      const msg: any = {
+      const textContent = parts.map((part) => part.text || '').join('\n');
+      const msg: OpenAIMessage = {
         role,
         content: textContent,
       };
@@ -217,7 +243,7 @@ export const OpenAIConverter = {
     // a single assistant message with reasoning_content, content, and tool_calls
     // combined for the same turn. Without this merge, tools calls may be rejected
     // because reasoning_content is missing from the tool-call message.
-    const merged: any[] = [];
+    const merged: OpenAIMessage[] = [];
     for (const msg of messages) {
       const last = merged[merged.length - 1];
       if (last && last.role === 'assistant' && msg.role === 'assistant') {
@@ -246,11 +272,11 @@ export const OpenAIConverter = {
     return closeOpenAIToolCallGaps(merged);
   },
 
-  toolsToOpenAITools(tools: any[]): any[] | undefined {
+  toolsToOpenAITools(tools: OpenAIToolDefinition[]): OpenAIMessage[] | undefined {
     if (!tools || tools.length === 0) return undefined;
-    return tools.flatMap((tool: any) => {
+    return tools.flatMap((tool) => {
       if (tool.functionDeclarations && Array.isArray(tool.functionDeclarations)) {
-        return tool.functionDeclarations.map((fd: any) => ({
+        return tool.functionDeclarations.map((fd) => ({
           type: 'function',
           function: {
             name: fd.name,

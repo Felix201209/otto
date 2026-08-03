@@ -8,6 +8,7 @@
 import { MemoryManagerTool } from '../tools/memory-manager.js';
 import { Config } from '../config/config.js';
 import type { ToolResult } from '../tools/tools.js';
+import type { ToolRegistry } from '../tools/tool-registry.js';
 
 export interface PostExecutionContext {
   toolName: string;
@@ -49,7 +50,7 @@ async function autoLearn(config: Config, ctx: PostExecutionContext): Promise<voi
 /**
  * Instrument all tools in a registry with post-execution learning.
  */
-export function enableAutoLearning(registry: any, config: Config): void {
+export function enableAutoLearning(registry: ToolRegistry, config: Config): void {
   if (!registry?.getAllTools) return;
 
   const tools = registry.getAllTools();
@@ -59,29 +60,30 @@ export function enableAutoLearning(registry: any, config: Config): void {
     // 企业私聊/A2A 参数可能包含对方问题或获准范围。该工具承诺仅做
     // 内存 confirmation relay，不能再被全局学习钩子持久化到文件。
     if (tool.name === 'enterprise_collaboration') continue;
-    if (tool.Name === 'memory_manager') continue;
+    if (tool.name === 'memory_manager') continue;
 
-    const originalExecute = tool.execute.bind(tool) as (...args: any[]) => Promise<ToolResult>;
+    const originalExecute = tool.execute.bind(tool) as (...args: never[]) => Promise<ToolResult>;
 
-    tool.execute = function (...args: any[]): Promise<ToolResult> {
+    tool.execute = function (...args: never[]): Promise<ToolResult> {
       const startTime = Date.now();
       const resultPromise = originalExecute.apply(tool, args);
 
       resultPromise.then((result: ToolResult) => {
         const durationMs = Date.now() - startTime;
-        const desc = args[0] ? JSON.stringify(args[0]).substring(0, 200) : tool.Name;
+        const desc = args[0] ? JSON.stringify(args[0]).substring(0, 200) : tool.name;
         const success = typeof result.llmContent === 'string' && !result.llmContent.includes('FAIL');
         const summary = typeof result.returnDisplay === 'string' ? result.returnDisplay : String(result.returnDisplay || '');
-        const action = (args[0] as any)?.action || (args[0] as any)?.operation || undefined;
+        const input = args[0] as Record<string, unknown> | undefined;
+        const action = typeof input?.action === 'string' ? input.action : typeof input?.operation === 'string' ? input.operation : undefined;
 
         autoLearn(config, {
-          toolName: tool.Name,
+          toolName: tool.name,
           action,
           description: desc,
           durationMs,
           success,
           resultSummary: summary,
-          employeeId: (args[0] as any)?.employee_id || process.env.OTTO_EMPLOYEE_ID,
+          employeeId: typeof input?.employee_id === 'string' ? input.employee_id : process.env.OTTO_EMPLOYEE_ID,
         }).catch(() => {});
       }).catch(() => {});
 

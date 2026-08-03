@@ -21,7 +21,8 @@ import {
   ToolCallEvent,
   ToolConfirmationPayload,
 } from '../index.js';
-import { PartListUnion, Part } from '@google/genai';
+import { userInfo } from 'node:os';
+import { Part } from '@google/genai';
 import { convertToFunctionResponse } from './coreToolScheduler.js';
 import { todoStore, checkTodoStaleness } from '../tools/todo-store.js';
 import {
@@ -208,6 +209,16 @@ export interface RuntimeConfirmationRequest {
   reject: (error: Error) => void;
 }
 
+type ExtendedConfirmationDetails = ToolCallConfirmationDetails & {
+  warning?: string;
+  originalOnConfirm?: ToolCallConfirmationDetails['onConfirm'];
+};
+
+function resolveUserId(config: Config): string {
+  const provider = config as Config & { getFeishuUser?: () => string };
+  return provider.getFeishuUser?.() || userInfo().username;
+}
+
 /**
  * 工具执行引擎配置选项
  */
@@ -301,7 +312,7 @@ export class ToolExecutionEngine {
    * 用于在开启新 Turn 或发现状态异常时，清理所有挂起的工具调用。
    * 这是一个安全的兜底操作，确保引擎不会因为孤儿调用而永久锁定。
    */
-  public reset(): void {
+  reset(): void {
     if (this.toolCalls.length === 0) return;
 
     // 通知适配器
@@ -357,7 +368,7 @@ export class ToolExecutionEngine {
       const auditor = getAuditLogger();
       await auditor.log({
         sessionId: this.config?.getSessionId?.() || 'unknown',
-        userId: (this.config as any)?.getFeishuUser?.() || require('os').userInfo().username,
+        userId: resolveUserId(this.config),
         toolName: waitingCall.request.name,
         action: `confirmation:${outcome}:${describeAction(waitingCall.request.name, waitingCall.request.args)}`,
         category: inferCategory(waitingCall.request.name, waitingCall.request.args),
@@ -457,7 +468,7 @@ export class ToolExecutionEngine {
    * 当子Agent的工具状态发生变化时，将子工具调用存储到父工具的 subToolCalls 属性中
    */
   private createStatusUpdateCallback(parentContext: ToolExecutionContext, parentCallId: string) {
-    return (subAgentToolCalls: any[], subContext: any) => {
+    return (subAgentToolCalls: EngineToolCall[], _subContext: ToolExecutionContext) => {
       // 找到父工具调用
       const parentToolIndex = this.toolCalls.findIndex(call =>
         call.request.callId === parentCallId
@@ -576,7 +587,7 @@ export class ToolExecutionEngine {
         } as WaitingToolCall;
         break;
 
-      case 'cancelled':
+      case 'cancelled': {
         const reason = auxiliaryData as string;
         const errorResponse = createErrorResponse(
           originalCall.request,
@@ -588,8 +599,7 @@ export class ToolExecutionEngine {
           originalCall.status === 'awaiting_approval' &&
           originalCall.confirmationDetails
         ) {
-          errorResponse.resultDisplay =
-            originalCall.confirmationDetails as any;
+          errorResponse.resultDisplay = originalCall.confirmationDetails as unknown as NonNullable<typeof errorResponse.resultDisplay>;
         }
 
         updatedCall = {
@@ -601,6 +611,7 @@ export class ToolExecutionEngine {
             : undefined,
         } as CancelledToolCall;
         break;
+      }
 
       default:
         updatedCall = {
@@ -716,8 +727,7 @@ export class ToolExecutionEngine {
         // 🛡️ 中央策略门控 — 所有工具执行前的唯一决策点
         const policyResult = this.centralPolicy.canExecute(reqInfo.name, {
           sessionId: this.config.getSessionId(),
-          userId: (this.config as any)?.getFeishuUser?.() ||
-            (typeof require !== 'undefined' ? require('os').userInfo().username : 'system'),
+          userId: resolveUserId(this.config),
           source: context.agentType === 'sub' ? 'subagent' :
             process.env.TERM_PROGRAM === 'vscode' ? 'desktop' : 'terminal',
           toolArgs: reqInfo.args as Record<string, unknown>,
@@ -751,7 +761,9 @@ export class ToolExecutionEngine {
 
     // 🎯 修复竞态条件：先创建 Promise 并添加 resolver，再启动工具验证和执行
     // 这样在验证循环中发生的同步或异步完成也能被正确捕获
+    let completionResolver!: (calls: CompletedEngineToolCall[]) => void;
     const completionPromise = new Promise<CompletedEngineToolCall[]>((resolve) => {
+      completionResolver = resolve;
       this.completionResolvers.push(resolve);
     });
 
@@ -783,7 +795,7 @@ export class ToolExecutionEngine {
         // Check if this is a dangerous command (has warning field)
         const isDangerousCommand =
           confirmationDetails &&
-          (confirmationDetails as any).warning;
+          (confirmationDetails as ExtendedConfirmationDetails).warning;
 
         // 🎯 AskUserQuestion: even in YOLO mode we MUST pop the dialog — the
         // whole point of this tool is to ask the user, so bypassing confirmation
@@ -791,17 +803,17 @@ export class ToolExecutionEngine {
         // get "User declined").
         const isAskUserQuestion =
           confirmationDetails &&
-          (confirmationDetails as any).type === 'question';
+          confirmationDetails.type === 'question';
 
         // If dangerous command or a user-question tool, always require confirmation (skip YOLO mode)
         // Workflow confirmation is also mandatory — it spins up many sub-agents and burns tokens.
         const isWorkflowConfirm =
           confirmationDetails &&
-          (confirmationDetails as any).type === 'workflow';
+          confirmationDetails.type === 'workflow';
 
         if (isDangerousCommand || isAskUserQuestion || isWorkflowConfirm) {
           // 🎯 保存原始onConfirm以避免递归
-          const originalOnConfirm = (confirmationDetails as any).onConfirm;
+          const originalOnConfirm = confirmationDetails.onConfirm;
 
           // 🎯 统一确认流程：包装onConfirm，保存原始函数引用
           const wrappedConfirmationDetails: ToolCallConfirmationDetails = {
@@ -837,7 +849,7 @@ export class ToolExecutionEngine {
             this.setStatusInternal(reqInfo.callId, 'scheduled', undefined, context);
           } else {
             // 🎯 保存原始onConfirm以避免递归
-            const originalOnConfirm = (confirmationDetails as any).onConfirm;
+            const originalOnConfirm = confirmationDetails.onConfirm;
 
             // 🎯 统一确认流程：包装onConfirm，保存原始函数引用
             const wrappedConfirmationDetails: ToolCallConfirmationDetails = {
@@ -882,7 +894,7 @@ export class ToolExecutionEngine {
     // 如果没有工具调用，直接返回空数组
     if (newToolCalls.length === 0) {
       // 仍然需要清理 resolver 避免内存泄漏，虽然这里还没 return
-      this.completionResolvers = this.completionResolvers.filter(r => r !== (completionPromise as any).resolve);
+      this.completionResolvers = this.completionResolvers.filter(r => r !== completionResolver);
       return [];
     }
 
@@ -924,7 +936,7 @@ export class ToolExecutionEngine {
     await this.logConfirmationDecision(waitingCall, outcome, payload);
 
     // 🎯 调用原始确认逻辑，避免递归
-    const confirmationDetails = waitingCall.confirmationDetails as any;
+    const confirmationDetails = waitingCall.confirmationDetails as ExtendedConfirmationDetails;
     if (confirmationDetails.originalOnConfirm) {
       // 主Agent：调用保存的原始onConfirm
       await confirmationDetails.originalOnConfirm(outcome, payload);
@@ -1007,7 +1019,7 @@ export class ToolExecutionEngine {
           const originalContent = await modifyContext.getCurrentContent(waitingCall.request.args);
           const updatedParams = modifyContext.createUpdatedParams(
             originalContent,
-            (payload as any).newContent,
+            payload.newContent ?? '',
             waitingCall.request.args,
           ) as Record<string, unknown>;
 
@@ -1297,7 +1309,7 @@ export class ToolExecutionEngine {
         const cat = inferCategory(reqInfo.name, reqInfo.args);
         auditor.log({
           sessionId: this.config?.getSessionId?.() || 'unknown',
-          userId: (this.config as any)?.getFeishuUser?.() || require('os').userInfo().username,
+          userId: resolveUserId(this.config),
           toolName: reqInfo.name,
           action: describeAction(reqInfo.name, reqInfo.args),
           category: cat,
@@ -1393,7 +1405,7 @@ export class ToolExecutionEngine {
         const auditor = getAuditLogger();
         auditor.log({
           sessionId: this.config?.getSessionId?.() || 'unknown',
-          userId: (this.config as any)?.getFeishuUser?.() || require('os').userInfo().username,
+          userId: resolveUserId(this.config),
           toolName: reqInfo.name,
           action: describeAction(reqInfo.name, reqInfo.args),
           category: inferCategory(reqInfo.name, reqInfo.args),

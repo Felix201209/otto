@@ -530,7 +530,7 @@ DEPENDENCIES: pie/bar/line/scatter/histogram charts on CSV/JSON + CSV/JSON pivot
   // Parses CSV/JSON directly in TS so these paths work without any external binary.
   private parseTable(f: string): {
     columns: string[];
-    rows: Record<string, string>[];
+    rows: Array<Record<string, string>>;
   } {
     const e = path.extname(f).toLowerCase();
     const raw = fs.readFileSync(f, 'utf8');
@@ -539,7 +539,7 @@ DEPENDENCIES: pie/bar/line/scatter/histogram charts on CSV/JSON + CSV/JSON pivot
   }
   private parseJsonTable(raw: string): {
     columns: string[];
-    rows: Record<string, string>[];
+    rows: Array<Record<string, string>>;
   } {
     let data: unknown;
     try {
@@ -549,7 +549,7 @@ DEPENDENCIES: pie/bar/line/scatter/histogram charts on CSV/JSON + CSV/JSON pivot
     }
     const arr = Array.isArray(data) ? data : [data];
     const columns: string[] = [];
-    const rows: Record<string, string>[] = [];
+    const rows: Array<Record<string, string>> = [];
     for (const item of arr) {
       if (item && typeof item === 'object' && !Array.isArray(item)) {
         const rec: Record<string, string> = {};
@@ -588,12 +588,12 @@ DEPENDENCIES: pie/bar/line/scatter/histogram charts on CSV/JSON + CSV/JSON pivot
   }
   private parseCsvTable(raw: string): {
     columns: string[];
-    rows: Record<string, string>[];
+    rows: Array<Record<string, string>>;
   } {
     const lines = raw.split(/\r?\n/).filter((l) => l.length > 0);
     if (lines.length === 0) return { columns: [], rows: [] };
     const columns = this.parseCsvLine(lines[0]);
-    const rows: Record<string, string>[] = [];
+    const rows: Array<Record<string, string>> = [];
     for (let i = 1; i < lines.length; i++) {
       const cells = this.parseCsvLine(lines[i]);
       const rec: Record<string, string> = {};
@@ -612,11 +612,11 @@ DEPENDENCIES: pie/bar/line/scatter/histogram charts on CSV/JSON + CSV/JSON pivot
     title: string,
   ): string {
     const total = values.reduce((a, b) => a + b, 0);
-    const W = 800,
-      H = 600,
-      cx = 300,
-      cy = 300,
-      r = 220;
+    const W = 800;
+      const H = 600;
+      const cx = 300;
+      const cy = 300;
+      const r = 220;
     const palette = [
       '#4A90D9',
       '#D94A90',
@@ -646,10 +646,10 @@ DEPENDENCIES: pie/bar/line/scatter/histogram charts on CSV/JSON + CSV/JSON pivot
       const color = palette[i % palette.length];
       if (total > 0 && frac > 0) {
         const end = angle + frac * Math.PI * 2;
-        const x1 = cx + r * Math.cos(angle),
-          y1 = cy + r * Math.sin(angle);
-        const x2 = cx + r * Math.cos(end),
-          y2 = cy + r * Math.sin(end);
+        const x1 = cx + r * Math.cos(angle);
+          const y1 = cy + r * Math.sin(angle);
+        const x2 = cx + r * Math.cos(end);
+          const y2 = cy + r * Math.sin(end);
         const large = frac > 0.5 ? 1 : 0;
         // Full circle (single slice = 100%) needs a special path
         if (frac >= 0.9999) {
@@ -663,8 +663,8 @@ DEPENDENCIES: pie/bar/line/scatter/histogram charts on CSV/JSON + CSV/JSON pivot
         }
         // percentage label at slice midpoint
         const mid = angle + (frac * Math.PI * 2) / 2;
-        const lx = cx + r * 0.6 * Math.cos(mid),
-          ly = cy + r * 0.6 * Math.sin(mid);
+        const lx = cx + r * 0.6 * Math.cos(mid);
+          const ly = cy + r * 0.6 * Math.sin(mid);
         slices.push(
           `<text x="${lx.toFixed(2)}" y="${ly.toFixed(2)}" font-size="16" fill="#fff" text-anchor="middle" dominant-baseline="middle">${pct.toFixed(1)}%</text>`,
         );
@@ -692,7 +692,7 @@ ${legend.join('\n')}
   }
   // Aggregate rows into (label -> summed numeric value) pairs for a pie chart.
   private aggregateForPie(
-    rows: Record<string, string>[],
+    rows: Array<Record<string, string>>,
     labelCol: string,
     valueCol?: string,
   ): { labels: string[]; values: number[] } {
@@ -798,8 +798,8 @@ ${legend.join('\n')}
     yLabel: string,
     body: string,
   ): string {
-    const W = 800,
-      H = 600;
+    const W = 800;
+      const H = 600;
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
 <rect width="${W}" height="${H}" fill="#ffffff"/>
 <text x="${W / 2}" y="36" font-size="22" font-family="sans-serif" text-anchor="middle" fill="#222">${this.svgEsc(title)}</text>
@@ -833,8 +833,8 @@ ${body}
   private yAxis(min: number, max: number): string {
     const { x0, y0, x1, y1 } = this.plotBox();
     const ticks = this.niceTicks(min, max);
-    const lo = Math.min(min, ticks[0]),
-      hi = Math.max(max, ticks[ticks.length - 1]);
+    const lo = Math.min(min, ticks[0]);
+      const hi = Math.max(max, ticks[ticks.length - 1]);
     const range = hi - lo || 1;
     const parts: string[] = [];
     for (const t of ticks) {
@@ -851,8 +851,8 @@ ${body}
   // Numeric bounds helper.
   private bounds(vals: number[]): { min: number; max: number } {
     if (!vals.length) return { min: 0, max: 1 };
-    let min = Math.min(...vals),
-      max = Math.max(...vals);
+    let min = Math.min(...vals);
+      let max = Math.max(...vals);
     if (min === max) {
       min = min - 1;
       max = max + 1;
@@ -908,8 +908,8 @@ ${body}
       xb.min -= 1;
       xb.max += 1;
     }
-    const yr = yb.max - yb.min || 1,
-      xr = xb.max - xb.min || 1;
+    const yr = yb.max - yb.min || 1;
+      const xr = xb.max - xb.min || 1;
     const px = (x: number) => x0 + ((x - xb.min) / xr) * (x1 - x0);
     const py = (y: number) => y1 - ((y - yb.min) / yr) * (y1 - y0);
     const pts = xs
@@ -948,8 +948,8 @@ ${body}
       xb.min -= 1;
       xb.max += 1;
     }
-    const yr = yb.max - yb.min || 1,
-      xr = xb.max - xb.min || 1;
+    const yr = yb.max - yb.min || 1;
+      const xr = xb.max - xb.min || 1;
     const px = (x: number) => x0 + ((x - xb.min) / xr) * (x1 - x0);
     const py = (y: number) => y1 - ((y - yb.min) / yr) * (y1 - y0);
     const dots = xs
@@ -970,8 +970,8 @@ ${body}
     xLabel: string,
   ): string {
     const { x0, y0, x1, y1 } = this.plotBox();
-    let lo = Math.min(...values),
-      hi = Math.max(...values);
+    let lo = Math.min(...values);
+      let hi = Math.max(...values);
     if (lo === hi) {
       lo -= 0.5;
       hi += 0.5;
@@ -1160,8 +1160,8 @@ ${body}
     title: string,
     col: string,
   ): string {
-    let lo = Math.min(...values),
-      hi = Math.max(...values);
+    let lo = Math.min(...values);
+      let hi = Math.max(...values);
     if (lo === hi) {
       lo -= 0.5;
       hi += 0.5;
@@ -1220,7 +1220,7 @@ ${body}
     return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   }
   private computePivot2D(
-    rows: Record<string, string>[],
+    rows: Array<Record<string, string>>,
     rowCol: string,
     colCol: string,
     aggExpr: string,

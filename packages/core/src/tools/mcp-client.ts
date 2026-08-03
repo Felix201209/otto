@@ -166,7 +166,7 @@ let mcpDiscoveryState: MCPDiscoveryState = MCPDiscoveryState.NOT_STARTED;
  * Flag to track if MCP discovery has been triggered (prevents duplicate discovery)
  * Used in VSCode plugin mode where multiple AIService/Config instances are created
  */
-let mcpDiscoveryTriggered: boolean = false;
+let mcpDiscoveryTriggered = false;
 
 /**
  * Check if MCP discovery has already been triggered
@@ -268,7 +268,7 @@ export function getAllMCPServerToolNames(): Map<string, string[]> {
 export function syncMcpToolsToRegistry(toolRegistry: ToolRegistry): number {
   let syncedCount = 0;
 
-  for (const [serverName, tools] of globalDiscoveredTools.entries()) {
+  for (const [_serverName, tools] of globalDiscoveredTools.entries()) {
     for (const tool of tools) {
       // Clone the tool to avoid sharing state between registries
       const clonedTool = tool.clone();

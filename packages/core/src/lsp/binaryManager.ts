@@ -278,9 +278,9 @@ export class BinaryManager {
       const res = await request(apiUri, {
         headers
       });
-      const release = (await res.body.json()) as any;
+      const release = (await res.body.json()) as { assets: Array<{ name: string; size: number; browser_download_url: string }> };
 
-      let asset = release.assets.find((a: any) => {
+      let asset = release.assets.find((a) => {
         if (typeof expectedName === 'string') return a.name === expectedName;
         return expectedName.test(a.name);
       });
@@ -326,7 +326,7 @@ export class BinaryManager {
 
         // Try fallback patterns
         if (fallbackPatterns.length > 0) {
-          asset = release.assets.find((a: any) =>
+          asset = release.assets.find((a) =>
             fallbackPatterns.some(p => p.test(a.name))
           );
         }
@@ -334,7 +334,7 @@ export class BinaryManager {
 
       if (!asset) {
         // Log available assets for debugging
-        const availableAssets = release.assets.map((a: any) => a.name).join(', ');
+        const availableAssets = release.assets.map((a) => a.name).join(', ');
         throw new Error(`Could not find a suitable binary for ${platform}-${arch} in ${owner}/${repo} releases. Available: ${availableAssets}`);
       }
 
@@ -342,8 +342,6 @@ export class BinaryManager {
       console.log(`[LSP] File size: ${(asset.size / 1024 / 1024).toFixed(1)}MB`);
 
       const tempDownloadPath = path.join(destDir, asset.name);
-      let lastLogTime = Date.now();
-      let lastLoggedSize = 0;
 
       // 🎯 使用 curl 下载，通过监控文件大小来显示下载进度
       await new Promise<void>((resolve, reject) => {
@@ -365,8 +363,6 @@ export class BinaryManager {
             const currentMB = (currentSize / 1024 / 1024).toFixed(1);
             const totalMB = (asset.size / 1024 / 1024).toFixed(1);
             console.log(`[LSP] ⬇️  ${asset.name}: ${currentMB}MB / ${totalMB}MB (${downloaded}%)`);
-            lastLoggedSize = currentSize;
-            lastLogTime = Date.now();
           }
         }, 2000); // 每2秒输出一次进度
 

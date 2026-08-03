@@ -10,6 +10,7 @@ import {
   FunctionCall,
   FunctionDeclaration,
   FinishReason,
+  GenerateContentParameters,
 } from '@google/genai';
 import {
   ToolCallConfirmationDetails,
@@ -24,6 +25,7 @@ import {
   toFriendlyError,
 } from '../utils/errors.js';
 import { OttoChat } from './ottoChat.js';
+import type { Config } from '../config/config.js';
 import { SceneType } from './sceneManager.js';
 import { validateAndFixFunctionCall } from '../utils/functionCallValidator.js';
 import { TurnStateMachine, TurnState, describeTransition } from './turnStateMachine.js';
@@ -251,30 +253,30 @@ export type ServerOttoStreamEvent =
 export class Turn {
   readonly pendingToolCalls: ToolCallRequestInfo[];
   private debugResponses: GenerateContentResponse[];
-  private config: any; // Config reference for hook access
+  private config?: Config; // Config reference for hook access
   /**
    * Optional deterministic state machine tracking the turn lifecycle.
    * When set, transitions are enforced at key points in the turn flow.
    * This is opt-in to avoid breaking existing callers that don't wire a machine.
    */
-  public stateMachine?: TurnStateMachine;
+  stateMachine?: TurnStateMachine;
   /**
    * Optional checkpoint manager for crash recovery.
    * When set, the turn saves progress after each tool execution and can
    * skip re-execution of already-completed irreversible tools on resume.
    */
-  public checkpointManager?: TurnCheckpointManager;
+  checkpointManager?: TurnCheckpointManager;
   /**
    * The turn ID (unique per execution). Used as the key for checkpoint files.
    * Auto-generated if not provided.
    */
-  public readonly turnId: string;
+  readonly turnId: string;
 
   constructor(
     private readonly chat: OttoChat,
     private readonly prompt_id: string,
     private readonly modelName?: string,
-    configParam?: any,
+    configParam?: Config,
     stateMachine?: TurnStateMachine,
     checkpointManager?: TurnCheckpointManager,
   ) {
@@ -303,7 +305,7 @@ export class Turn {
     if (!this.stateMachine) return;
     try {
       this.stateMachine.transition(to);
-    } catch (e) {
+    } catch (_e) {
       // Log but don't crash — state tracking is observability, not control flow
       console.warn(
         `[Turn] State transition rejected: ${describeTransition(this.stateMachine.current, to)}`,
@@ -400,13 +402,13 @@ export class Turn {
           const beforeModelResult = await this.config.getHookSystem()
             .getEventHandler()
             .fireBeforeModelEvent({
-              model: this.modelName,
+              model: this.modelName ?? '',
               contents: req,
             });
 
           // 检查是否有修改
           if (beforeModelResult?.finalOutput?.applyLLMRequestModifications) {
-            req = beforeModelResult.finalOutput.applyLLMRequestModifications(req);
+            req = beforeModelResult.finalOutput.applyLLMRequestModifications({ model: this.modelName ?? '', contents: req } as GenerateContentParameters) as unknown as PartListUnion;
           }
         } catch (hookError) {
           console.warn(`[Turn] BeforeModel hook execution failed: ${hookError}`);
@@ -419,7 +421,7 @@ export class Turn {
           await this.config.getHookSystem()
             .getEventHandler()
             .fireBeforeToolSelectionEvent({
-              model: this.modelName,
+              model: this.modelName ?? '',
               contents: req,
             });
         } catch (hookError) {
@@ -472,7 +474,9 @@ export class Turn {
         // 🆕 检测 reasoning 字段（模型的思考过程）
         // 格式: {"candidates":[{"content":{"parts":[{"reasoning":"..."}],"role":"model"},"index":0}]}
         if (thoughtPart && 'reasoning' in thoughtPart) {
-          const reasoningText = (thoughtPart as any).reasoning || '';
+          const reasoningText = typeof (thoughtPart as { reasoning?: unknown }).reasoning === 'string'
+            ? (thoughtPart as { reasoning: string }).reasoning
+            : '';
           const reasoning: ReasoningSummary = {
             text: reasoningText,
           };
@@ -562,14 +566,15 @@ export class Turn {
             try {
               const candidate = resp.candidates?.[0];
               const parts = candidate?.content?.parts ?? [];
-              const partsSummary = parts.map((p: any, i: number) => {
-                const keys = Object.keys(p);
+              const partsSummary = parts.map((p, i: number) => {
+                const part = p as Record<string, unknown>;
+                const keys = Object.keys(part);
                 let desc = `part[${i}] keys=[${keys.join(',')}]`;
-                if (p.text) desc += ` text=${JSON.stringify(p.text.substring(0, 200))}${p.text.length > 200 ? '...(truncated)' : ''}`;
-                if (p.functionCall) desc += ` functionCall=${JSON.stringify(p.functionCall)}`;
-                if (p.functionResponse) desc += ` functionResponse=present`;
-                if (p.thought) desc += ` thought=true`;
-                if ('reasoning' in p) desc += ` reasoning=present`;
+                if (typeof part.text === 'string') desc += ` text=${JSON.stringify(part.text.substring(0, 200))}${part.text.length > 200 ? '...(truncated)' : ''}`;
+                if (part.functionCall) desc += ` functionCall=${JSON.stringify(part.functionCall)}`;
+                if (part.functionResponse) desc += ` functionResponse=present`;
+                if (part.thought) desc += ` thought=true`;
+                if ('reasoning' in part) desc += ` reasoning=present`;
                 return desc;
               });
 
@@ -595,7 +600,7 @@ export class Turn {
                   `                Otto proxy /v1/chat/stream handler. Especially seen on claude-opus-4-7.\n` +
                   `  Effect: the agent appears to "say one sentence and stop". No recovery is possible\n` +
                   `          client-side — the tool name and arguments are gone. This needs a server fix.\n` +
-                  `  Context: model=${this.modelName}, candidatesTokenCount=${resp.usageMetadata?.candidatesTokenCount ?? 'unknown'}, role=${candidate?.content?.role ?? 'unknown'}`,
+                  `  Context: model=${this.modelName}, candidatesTokenCount=${resp.usageMetadata?.candidatesTokenCount ?? 'unknown'}, role=${candidate?.content?.role ?? 'unknown'}, parts=${partsSummary.join('; ')}`,
                 );
               }
 
@@ -607,11 +612,11 @@ export class Turn {
               // 尝试完整dump（限制大小防止日志爆炸）
               const rawJson = JSON.stringify(resp, null, 2);
               if (rawJson.length <= 5000) {
-
+                // Detailed dump intentionally omitted from normal logs.
               } else {
-
+                // Large dump intentionally omitted to avoid log noise.
               }
-            } catch (dumpError) {
+            } catch {
 
             }
           }
@@ -647,7 +652,7 @@ export class Turn {
               await this.config.getHookSystem()
                 .getEventHandler()
                 .fireAfterModelEvent(
-                  { model: this.modelName },
+                  { model: this.modelName ?? '' } as GenerateContentParameters,
                   resp
                 );
             } catch (hookError) {
@@ -678,9 +683,9 @@ export class Turn {
             outputTokens: resp.usageMetadata.candidatesTokenCount || 0,
             totalTokens: resp.usageMetadata.totalTokenCount || 0,
             cachedContentTokens: resp.usageMetadata.cachedContentTokenCount,
-            cacheCreationInputTokens: (resp.usageMetadata as any).cacheCreationInputTokens,
-            cacheReadInputTokens: (resp.usageMetadata as any).cacheReadInputTokens,
-            creditsUsage: (resp.usageMetadata as any).creditsUsage,
+            cacheCreationInputTokens: (resp.usageMetadata as GenerateContentResponse['usageMetadata'] & Record<string, unknown>).cacheCreationInputTokens as number | undefined,
+            cacheReadInputTokens: (resp.usageMetadata as GenerateContentResponse['usageMetadata'] & Record<string, unknown>).cacheReadInputTokens as number | undefined,
+            creditsUsage: (resp.usageMetadata as GenerateContentResponse['usageMetadata'] & Record<string, unknown>).creditsUsage as number | undefined,
             model: this.modelName, // 🎯 记录真实使用的模型名称
           };
 

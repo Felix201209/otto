@@ -16,6 +16,7 @@ import { BaseTool, ToolResult, ToolCallConfirmationDetails, Icon, ToolLocation }
 import { Type } from '@google/genai';
 import { SchemaValidator } from '../utils/schemaValidator.js';
 import { Config, ApprovalMode } from '../config/config.js';
+import { SceneType } from '../core/sceneManager.js';
 
 const execAsync = promisify(exec);
 
@@ -238,14 +239,14 @@ GPU: Uses WebGPU/WebCodecs for hardware acceleration.`;
         }
 
         case 'ai_edit': {
-          const client = (this.config as any).getOttoClient?.();
+          const client = this.config.getOttoClient();
           if (client?.createTemporaryChat) {
             try {
-              const chat = await client.createTemporaryChat('IMAGE_READER' as any);
+              const chat = await client.createTemporaryChat(SceneType.IMAGE_READER);
               const resp = await chat.sendMessage({
                 message: [{ text: `You are a video editing assistant. Convert this instruction to step-by-step editing commands: "${p.ai_instruction}". Reply with numbered steps.` }],
                 config: { abortSignal: _s },
-              }, `ai-edit-${Date.now()}`, 'IMAGE_READER' as any);
+              }, `ai-edit-${Date.now()}`, SceneType.IMAGE_READER);
               const llmResponse = (resp?.text || '').trim();
               r = `AI edit plan:\n${llmResponse.substring(0, 800)}`;
             } catch {

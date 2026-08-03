@@ -5,7 +5,7 @@
  */
 
 
-import { BaseTool, Icon, ToolResult, ToolLocation, ToolCallConfirmationDetails, ToolEditConfirmationDetails, ToolConfirmationOutcome } from './tools.js';
+import { BaseTool, Icon, ToolResult, ToolCallConfirmationDetails, ToolEditConfirmationDetails, ToolConfirmationOutcome } from './tools.js';
 import { Config, ApprovalMode } from '../config/config.js';
 import { PatchParser } from '../utils/patch-parser.js';
 import { Type } from '@google/genai';
@@ -150,6 +150,8 @@ export class PatchTool extends BaseTool<PatchToolParams, ToolResult> {
                         }
                         break;
                     }
+                    default:
+                        throw new Error('Unsupported patch hunk type');
                 }
             }
 

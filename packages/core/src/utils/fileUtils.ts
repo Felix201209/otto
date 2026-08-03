@@ -24,7 +24,6 @@ const MAX_IMAGE_WIDTH_AGGRESSIVE = 1280; // 激进压缩时的最大宽度
 const MAX_IMAGE_HEIGHT_AGGRESSIVE = 720;  // 激进压缩时的最大高度
 const JPEG_QUALITY = 60; // 降低JPEG质量以获得更好的压缩率
 const JPEG_QUALITY_AGGRESSIVE = 45; // 更激进的压缩质量
-const PNG_COMPRESSION_LEVEL = 6;
 
 // Default values for encoding and separator format
 export const DEFAULT_ENCODING: BufferEncoding = 'utf-8';
@@ -139,11 +138,11 @@ async function compressImage(
   console.log(`🖼️  Jimp图片压缩开始 - 原始大小: ${originalSizeKB}KB, 格式: ${mimeType}`);
 
   try {
-    const { default: Jimp } = await import('jimp');
+    const { Jimp, JimpMime, ResizeStrategy } = await import('jimp');
     // 使用Jimp加载图片
     const image = await Jimp.read(imageBuffer);
-    const originalWidth = image.getWidth();
-    const originalHeight = image.getHeight();
+    const originalWidth = image.width;
+    const originalHeight = image.height;
 
     console.log(`📏 图片元数据: ${originalWidth}x${originalHeight}, 格式: ${mimeType}`);
 
@@ -176,26 +175,33 @@ async function compressImage(
     let resizedImage = image;
     if (originalWidth > targetWidth || originalHeight > targetHeight) {
       // Jimp.RESIZE_BEZIER provides good quality for downscaling
-      resizedImage = image.scaleToFit(targetWidth, targetHeight, Jimp.RESIZE_BEZIER);
-      console.log(`📐 图片已缩放至: ${resizedImage.getWidth()}x${resizedImage.getHeight()}`);
+      resizedImage.scaleToFit({
+        w: targetWidth,
+        h: targetHeight,
+        mode: ResizeStrategy.BEZIER,
+      });
+      console.log(`📐 图片已缩放至: ${resizedImage.width}x${resizedImage.height}`);
     }
 
     let compressedBuffer: Buffer;
-    let finalMimeType: string;
+    const finalMimeType = 'image/jpeg';
 
     // Convert all images to JPEG for maximum compression
     console.log('🎨 转换为JPEG格式进行激进压缩...');
 
     // Try different quality levels and choose the best compression
-    const jpegNormal = await resizedImage.quality(JPEG_QUALITY).getBufferAsync(Jimp.MIME_JPEG);
-    const jpegAggressive = await resizedImage.quality(JPEG_QUALITY_AGGRESSIVE).getBufferAsync(Jimp.MIME_JPEG);
+    const jpegNormal = await resizedImage.getBuffer(JimpMime.jpeg, {
+      quality: JPEG_QUALITY,
+    });
+    const jpegAggressive = await resizedImage.getBuffer(JimpMime.jpeg, {
+      quality: JPEG_QUALITY_AGGRESSIVE,
+    });
 
     // Choose the version with better compression
     compressedBuffer = jpegAggressive.length < jpegNormal.length ? jpegAggressive : jpegNormal;
     const selectedQuality = jpegAggressive.length < jpegNormal.length ? JPEG_QUALITY_AGGRESSIVE : JPEG_QUALITY;
 
     console.log(`📊 选择JPEG质量: ${selectedQuality} (${Math.round(compressedBuffer.length/1024)}KB)`);
-    finalMimeType = 'image/jpeg';
 
     // 4MB兜底机制：如果压缩后仍然大于4MB，继续缩小尺寸
     const maxSize = 4 * 1024 * 1024; // 4MB
@@ -210,23 +216,29 @@ async function compressImage(
       while (currentBuffer.length > maxSize && attempts < maxAttempts) {
         attempts++;
         // 每次将尺寸缩小20%
-        const currentWidth = currentImage.getWidth();
-        const currentHeight = currentImage.getHeight();
+        const currentWidth = currentImage.width;
+        const currentHeight = currentImage.height;
         const newWidth = Math.floor(currentWidth * 0.8);
         const newHeight = Math.floor(currentHeight * 0.8);
 
         console.log(`🔄 兜底压缩第${attempts}次: ${currentWidth}x${currentHeight} → ${newWidth}x${newHeight}`);
 
-        currentImage = currentImage.resize(newWidth, newHeight, Jimp.RESIZE_BEZIER);
+        currentImage.resize({
+          w: newWidth,
+          h: newHeight,
+          mode: ResizeStrategy.BEZIER,
+        });
 
         // 使用最激进的质量
-        currentBuffer = await currentImage.quality(JPEG_QUALITY_AGGRESSIVE).getBufferAsync(Jimp.MIME_JPEG);
+        currentBuffer = await currentImage.getBuffer(JimpMime.jpeg, {
+          quality: JPEG_QUALITY_AGGRESSIVE,
+        });
 
         console.log(`📏 当前大小: ${Math.round(currentBuffer.length/1024)}KB`);
       }
 
       if (currentBuffer.length <= maxSize) {
-        console.log(`✅ 兜底压缩成功！最终尺寸: ${currentImage.getWidth()}x${currentImage.getHeight()}`);
+        console.log(`✅ 兜底压缩成功！最终尺寸: ${currentImage.width}x${currentImage.height}`);
         compressedBuffer = currentBuffer;
         resizedImage = currentImage;
       } else {
@@ -288,13 +300,13 @@ async function isLinuxDeviceTreeFile(filePath: string): Promise<boolean> {
     // Simple feature check: any device tree characteristic indicates it's a DT file
     return /\/\/\s*SPDX-License-Identifier:|\/dts-v1\/|#include.*dt-bindings|compatible\s*=|#address-cells|&\w+/.test(content);
 
-  } catch (error) {
+  } catch (_error) {
     return false;
   } finally {
     if (fileHandle) {
       try {
         await fileHandle.close();
-      } catch (closeError) {
+      } catch {
         // Ignore close errors
       }
     }
@@ -404,11 +416,14 @@ async function extractExcelContent(filePath: string): Promise<string> {
     /**
      * Clean cell content by removing excess whitespace and control characters
      */
-    const cleanCellContent = (cell: any): string => {
+    const cleanCellContent = (cell: unknown): string => {
       if (cell === null || cell === undefined) return '';
       let text = String(cell);
       // Remove control characters (except newlines and tabs)
-      text = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+      text = [...text].filter(char => {
+        const code = char.charCodeAt(0);
+        return !(code <= 8 || code === 11 || code === 12 || (code >= 14 && code <= 31) || code === 127);
+      }).join('');
       // Normalize multiple spaces to single space
       text = text.replace(/\s+/g, ' ');
       // Trim leading and trailing whitespace
@@ -425,14 +440,14 @@ async function extractExcelContent(filePath: string): Promise<string> {
       }
 
       // Convert to array of arrays (rows and columns)
-      const jsonData: any[][] = XLSX.utils.sheet_to_json(worksheet, {
+      const jsonData: unknown[][] = XLSX.utils.sheet_to_json(worksheet, {
         header: 1,
         defval: '', // Use empty string for empty cells
         blankrows: false // Skip completely blank rows
       });
 
       // Format as tab-separated values
-      jsonData.forEach((row: any[], rowIndex) => {
+      jsonData.forEach((row: unknown[], _rowIndex) => {
         const cleanedRow = row.map(cleanCellContent);
         // Only add rows that have at least one non-empty cell
         if (cleanedRow.some(cell => cell.length > 0)) {
@@ -658,23 +673,27 @@ async function extractPdfWithPdf2json(filePath: string): Promise<string> {
         reject(new Error('pdf2json parsing timeout after 6 seconds'));
       }, 6000);
 
-      pdfParser.on('pdfParser_dataError', (errData: any) => {
+      pdfParser.on('pdfParser_dataError', (errData: unknown) => {
         clearTimeout(timeout);
-        reject(new Error(`pdf2json parsing error: ${errData?.parserError || 'unknown error'}`));
+        const parserError = errData && typeof errData === 'object' ? (errData as { parserError?: string }).parserError : undefined;
+        reject(new Error(`pdf2json parsing error: ${parserError || 'unknown error'}`));
       });
 
-      pdfParser.on('pdfParser_dataReady', (pdfData: any) => {
+      pdfParser.on('pdfParser_dataReady', (pdfData: unknown) => {
         clearTimeout(timeout);
         try {
           let fullText = '';
 
-          if (pdfData?.Pages) {
-            pdfData.Pages.forEach((page: any) => {
-              if (page?.Texts) {
-                page.Texts.forEach((text: any) => {
-                  if (text?.R?.[0]?.T) {
+          const pages = pdfData && typeof pdfData === 'object' ? (pdfData as { Pages?: unknown[] }).Pages : undefined;
+          if (pages) {
+            pages.forEach((page: unknown) => {
+              const pageData = page && typeof page === 'object' ? page as { Texts?: unknown[] } : {};
+              if (pageData.Texts) {
+                pageData.Texts.forEach((text: unknown) => {
+                  const textData = text && typeof text === 'object' ? text as { R?: Array<{ T?: string }> } : {};
+                  if (textData.R?.[0]?.T) {
                     // Decode URI components and add spaces between text elements
-                    fullText += decodeURIComponent(text.R[0].T) + ' ';
+                    fullText += decodeURIComponent(textData.R[0].T) + ' ';
                   }
                 });
               }

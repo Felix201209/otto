@@ -2,7 +2,7 @@
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   FeatureFlagManager,
   FEATURE_FLAGS,
@@ -17,10 +17,10 @@ vi.mock('fs', async () => {
 
   return {
     ...actual,
-    existsSync: vi.fn((p: string) => {
+    existsSync: vi.fn((p: string) =>
       // 模拟 ~/.otto/settings.json 始终「存在」
-      return p.includes('.otto/settings.json') ? true : false;
-    }),
+       p.includes('.otto/settings.json') ? true : false
+    ),
     readFileSync: vi.fn((p: string) => {
       const key = p.toString();
       return store[key] || '{}';
@@ -51,12 +51,12 @@ function createManager(initialFlags?: Record<string, boolean>): FeatureFlagManag
 }
 
 describe('FeatureFlagManager', () => {
-  it('all flags have defaults (park_service off, others on)', () => {
+  it('all high-risk automation flags are off by default', () => {
     const mgr = createManager();
 
     for (const flag of allFlags()) {
       const enabled = mgr.isEnabled(flag);
-      if (flag === 'park_service') {
+      if (flag === 'park_service' || flag === 'rpa') {
         expect(enabled).toBe(false);
       } else {
         expect(enabled).toBe(true);
@@ -67,6 +67,11 @@ describe('FeatureFlagManager', () => {
   it('park_service is off by default', () => {
     const mgr = createManager();
     expect(mgr.isEnabled('park_service')).toBe(false);
+  });
+
+  it('rpa is off by default', () => {
+    const mgr = createManager();
+    expect(mgr.isEnabled('rpa')).toBe(false);
   });
 
   it('getAll returns correct state', () => {

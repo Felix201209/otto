@@ -12,7 +12,6 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs-extra';
-import path from 'path';
 import {
   SkillScript,
   ScriptType,
@@ -292,11 +291,12 @@ export class ScriptExecutor {
         executionTime,
         success: true,
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const execError = error as { killed?: boolean; signal?: string; code?: string | number; stdout?: string; stderr?: string; message?: string };
       const executionTime = Date.now() - startTime;
 
       // Check if timeout
-      if (error.killed || error.signal === 'SIGTERM') {
+      if (execError.killed || execError.signal === 'SIGTERM') {
         throw new SkillError(
           `Script execution timeout (${options.timeout}ms)`,
           SkillErrorCode.SCRIPT_TIMEOUT,
@@ -305,7 +305,7 @@ export class ScriptExecutor {
       }
 
       // Check if output too large
-      if (error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+      if (execError.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
         throw new SkillError(
           `Script output exceeds maximum size (${options.maxOutputSize} bytes)`,
           SkillErrorCode.SCRIPT_EXECUTION_FAILED,
@@ -314,12 +314,12 @@ export class ScriptExecutor {
       }
 
       return {
-        stdout: error.stdout || '',
-        stderr: error.stderr || error.message,
-        exitCode: error.code || 1,
+        stdout: execError.stdout || '',
+        stderr: execError.stderr || execError.message || '',
+        exitCode: typeof execError.code === 'number' ? execError.code : 1,
         executionTime,
         success: false,
-        error: error.message,
+        error: execError.message || String(error),
       };
     }
   }

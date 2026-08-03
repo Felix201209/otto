@@ -14,7 +14,7 @@
  * 3. 模型返回非标准格式（如带有多余空格、换行）
  * 4. 嵌套 JSON 字符串（需要二次解析）
  */
-export function parseJSONSafe(jsonStr: string): any {
+export function parseJSONSafe(jsonStr: string): unknown {
   // 处理空值
   if (!jsonStr || jsonStr === 'null' || jsonStr === 'undefined') {
     return {};
@@ -26,7 +26,7 @@ export function parseJSONSafe(jsonStr: string): any {
   }
 
   // 清理字符串
-  let cleanStr = jsonStr.trim();
+  const cleanStr = jsonStr.trim();
 
   // 处理空对象字符串
   if (cleanStr === '{}' || cleanStr === '') {
@@ -36,7 +36,7 @@ export function parseJSONSafe(jsonStr: string): any {
   // 第一次尝试：直接解析
   try {
     return JSON.parse(cleanStr);
-  } catch (firstError) {
+  } catch (_firstError) {
     // 继续尝试修复
   }
 
@@ -157,6 +157,8 @@ function repairIncompleteJSON(jsonStr: string): string | null {
         break;
       case ']':
         bracketCount--;
+        break;
+      default:
         break;
       case ',':
         // 逗号后面可能是安全的截断点（如果不在嵌套结构中）

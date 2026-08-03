@@ -127,7 +127,7 @@ describe('LspTool', () => {
     });
 
     it('should return error when params is not an object', () => {
-      const params = 'invalid string params' as any;
+      const params = 'invalid string params' as unknown as Parameters<typeof lspTool.validateToolParams>[0];
       const error = lspTool.validateToolParams(params);
       expect(error).toContain('params must be an object');
       expect(error).toContain('lsp');
@@ -135,7 +135,7 @@ describe('LspTool', () => {
     });
 
     it('should return error when params is null', () => {
-      const params = null as any;
+      const params = null as unknown as Parameters<typeof lspTool.validateToolParams>[0];
       const error = lspTool.validateToolParams(params);
       expect(error).toContain('params must be an object');
       expect(error).toContain('null');
@@ -286,7 +286,7 @@ describe('LspTool', () => {
     });
 
     it('should have all valid operations in enum', () => {
-      const operationSchema = (lspTool.schema.parameters?.properties as any)?.operation;
+      const operationSchema = (lspTool.schema.parameters?.properties as Record<string, { enum?: string[] }>)?.operation;
       expect(operationSchema.enum).toContain('goToDefinition');
       expect(operationSchema.enum).toContain('findReferences');
       expect(operationSchema.enum).toContain('hover');

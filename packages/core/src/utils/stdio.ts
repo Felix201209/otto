@@ -54,7 +54,7 @@ export function createWorkingStdio(): {
       if (isKey(prop, target)) {
         const value = target[prop];
         if (typeof value === 'function') {
-          return (value as Function).bind(target);
+          return (value as (...args: never[]) => unknown).bind(target);
         }
         return value;
       }
@@ -71,7 +71,7 @@ export function createWorkingStdio(): {
       if (isKey(prop, target)) {
         const value = target[prop];
         if (typeof value === 'function') {
-          return (value as Function).bind(target);
+          return (value as (...args: never[]) => unknown).bind(target);
         }
         return value;
       }

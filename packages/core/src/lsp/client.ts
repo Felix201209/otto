@@ -7,18 +7,21 @@
 
 import { pathToFileURL } from 'node:url';
 import * as path from 'node:path';
+import type { ChildProcess } from 'node:child_process';
+/* eslint-disable import/no-internal-modules -- documented Node transport required for child-process streams. */
 import {
   createMessageConnection,
   StreamMessageReader,
   StreamMessageWriter,
 } from 'vscode-jsonrpc/node.js';
-import { LSPClient, LSPServer } from './types.js';
+/* eslint-enable import/no-internal-modules */
+import type { LSPClientInfo } from './types.js';
 
 export async function createLSPClient(input: {
   serverID: string;
-  server: { process: any };
+  server: { process: ChildProcess };
   root: string;
-}): Promise<LSPClient.Info> {
+}): Promise<LSPClientInfo> {
   // 🎯 Windows 兼容性：确保驱动器盘符为小写，并统一使用 %3A
   // 这是 Pyright 等基于 vscode-uri 的服务器在 Windows 上的标准预期
   const normalizeUri = (uri: string) =>
@@ -38,12 +41,12 @@ export async function createLSPClient(input: {
 
   // 1. 建立基于 Stdio 的连接
   const connection = createMessageConnection(
-    new StreamMessageReader(input.server.process.stdout),
-    new StreamMessageWriter(input.server.process.stdin),
+    new StreamMessageReader(input.server.process.stdout!),
+    new StreamMessageWriter(input.server.process.stdin!),
   );
 
   // 2. 监听错误和关闭
-  connection.onError((e: [Error, any, number | undefined]) => {
+  connection.onError((e: [Error, unknown, number | undefined]) => {
     console.error(`[LSP][${input.serverID}] Connection error:`, e[0]);
   });
 
@@ -56,7 +59,7 @@ export async function createLSPClient(input: {
   // 如果 client 不响应，这些 server 可能会阻塞后续响应，表现为“卡住”。
 
   // 监听服务端推送的诊断信息
-  connection.onNotification('textDocument/publishDiagnostics', (params: any) => {
+  connection.onNotification('textDocument/publishDiagnostics', (params: { uri?: string; diagnostics?: unknown[] }) => {
     if (debug) {
       console.log(`[LSP][${input.serverID}] textDocument/publishDiagnostics received for ${params.uri}: ${params.diagnostics?.length || 0} items`);
     }
@@ -74,41 +77,25 @@ export async function createLSPClient(input: {
   }
 
   // 处理 workspace/configuration 请求，返回空配置
-  connection.onRequest('workspace/configuration', (params: any) => {
-    return (params.items || []).map(() => ({}));
-  });
+  connection.onRequest('workspace/configuration', (params: { items?: unknown[] }) => (params.items || []).map(() => ({})));
 
   // 处理 client/registerCapability 请求，简单返回成功
-  connection.onRequest('client/registerCapability', () => {
-    return {};
-  });
+  connection.onRequest('client/registerCapability', () => ({}));
 
   // 处理 client/unregisterCapability 请求
-  connection.onRequest('client/unregisterCapability', () => {
-    return {};
-  });
+  connection.onRequest('client/unregisterCapability', () => ({}));
 
   // 处理 window/workDoneProgress/create 请求（常见于 Pyright / Rust Analyzer 等）
-  connection.onRequest('window/workDoneProgress/create', () => {
-    return null;
-  });
+  connection.onRequest('window/workDoneProgress/create', () => null);
 
   // 一些 server 会主动请求 refresh（客户端无需处理具体逻辑，返回成功即可）
-  connection.onRequest('workspace/semanticTokens/refresh', () => {
-    return null;
-  });
-  connection.onRequest('workspace/inlayHint/refresh', () => {
-    return null;
-  });
-  connection.onRequest('workspace/codeLens/refresh', () => {
-    return null;
-  });
-  connection.onRequest('workspace/diagnostic/refresh', () => {
-    return null;
-  });
+  connection.onRequest('workspace/semanticTokens/refresh', () => null);
+  connection.onRequest('workspace/inlayHint/refresh', () => null);
+  connection.onRequest('workspace/codeLens/refresh', () => null);
+  connection.onRequest('workspace/diagnostic/refresh', () => null);
 
   // 处理 window/showMessageRequest（避免 server 等待用户交互而阻塞）
-  connection.onRequest('window/showMessageRequest', (params: any) => {
+  connection.onRequest('window/showMessageRequest', (params: { actions?: unknown[] }) => {
     const actions = params?.actions;
     if (Array.isArray(actions) && actions.length > 0) {
       return actions[0];
@@ -117,19 +104,15 @@ export async function createLSPClient(input: {
   });
 
   // 处理 workspace/applyEdit（部分 server 会尝试修复/整理 import 等）
-  connection.onRequest('workspace/applyEdit', () => {
-    return { applied: true };
-  });
+  connection.onRequest('workspace/applyEdit', () => ({ applied: true }));
 
   // 处理 workspace/workspaceFolders 请求
-  connection.onRequest('workspace/workspaceFolders', () => {
-    return [
+  connection.onRequest('workspace/workspaceFolders', () => [
       {
         uri: rootUri,
         name: path.basename(input.root),
       },
-    ];
-  });
+    ]);
 
   // 3. 启动监听
   connection.listen();
@@ -138,7 +121,7 @@ export async function createLSPClient(input: {
   const initializeParams = {
     processId: process.pid,
     rootPath: input.root,
-    rootUri: rootUri,
+    rootUri,
     capabilities: {
       window: {
         workDoneProgress: true,
@@ -194,7 +177,7 @@ export async function createLSPClient(input: {
   const result = (await connection.sendRequest(
     'initialize',
     initializeParams,
-  )) as any;
+  )) as { capabilities?: unknown };
   await connection.sendNotification('initialized', {});
 
   // 🎯 给 Pyright 发送一个初始配置，强制它开始工作
@@ -211,7 +194,7 @@ export async function createLSPClient(input: {
 }
 
 
-export async function stopLSPClient(client: LSPClient.Info) {
+export async function stopLSPClient(client: LSPClientInfo) {
   try {
     await client.connection.sendRequest('shutdown');
     await client.connection.sendNotification('exit');

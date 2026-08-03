@@ -20,7 +20,7 @@ export interface DangerousCommandRule {
   /** 是否跨平台（true表示在所有平台上适用） */
   crossPlatform: boolean;
   /** 适用的平台（如果crossPlatform为false） */
-  platforms?: ('win32' | 'linux' | 'darwin')[];
+  platforms?: Array<'win32' | 'linux' | 'darwin'>;
   /** 检测到时的提示信息 */
   warningMessage: string;
 }
@@ -212,7 +212,7 @@ const DANGEROUS_COMMAND_RULES: DangerousCommandRule[] = [
     //  - 文件参数中禁止出现 *, ?, [, ]（任意位置），避免与 rm-with-wildcard 重叠
     //  - 限制在同一条子命令内（避免 rm ... && echo ... 导致跨命令误判）
     pattern:
-      /(?:^|(?:;|&&|\|\||\||&)\s*)rm\b(?:\s+-[^\s;&|]+)*\s+(?!-)[^\s;&|*?\[\]]+\s+(?!-)[^\s;&|*?\[\]]+\s+(?!-)[^\s;&|*?\[\]]+/i,
+      /(?:^|(?:;|&&|\|\||\||&)\s*)rm\b(?:\s+-[^\s;&|]+)*\s+(?!-)[^\s;&|*?\u005B\]]+\s+(?!-)[^\s;&|*?\u005B\]]+\s+(?!-)[^\s;&|*?\u005B\]]+/i,
     crossPlatform: true,
     warningMessage:
       '⚠️ 这个rm命令删除多个文件。必须确认。',
@@ -299,7 +299,7 @@ export function detectDangerousCommand(
   for (const rule of DANGEROUS_COMMAND_RULES) {
     // 检查平台是否匹配
     if (!rule.crossPlatform && rule.platforms) {
-      if (!rule.platforms.includes(platform as any)) {
+      if (!rule.platforms.includes(platform as 'win32' | 'linux' | 'darwin')) {
         continue;
       }
     }

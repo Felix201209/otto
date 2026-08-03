@@ -30,7 +30,7 @@ export class LocalTimeTool extends BaseTool<LocalTimeParams, ToolResult> {
 
   // Config is accepted for parity with other core tools, even though this
   // tool does not need any configuration at runtime.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
   constructor(private readonly config: Config) {
     super(
       LocalTimeTool.Name,

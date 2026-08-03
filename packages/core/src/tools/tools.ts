@@ -5,6 +5,7 @@
  */
 
 import { FunctionDeclaration, PartListUnion, Schema } from '@google/genai';
+import type { EngineToolCall } from '../core/toolExecutionEngine.js';
 
 /**
  * Interface representing the base Tool functionality
@@ -627,7 +628,7 @@ export interface ToolExecutionServices {
    * 允许SubAgent向父Agent同步工具调用状态
    */
   statusUpdateCallback?: (
-    toolCalls: any[], // 使用any避免循环依赖
+    toolCalls: EngineToolCall[],
     context: {
       agentId: string;
       agentType: 'main' | 'sub';

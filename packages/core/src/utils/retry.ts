@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { AuthType } from '../core/contentGenerator.js';
 import {
   isProQuotaExceededError,
   isGenericQuotaExceededError,
@@ -313,7 +312,7 @@ function logRetryAttempt(
     const isConnectionError = error instanceof TypeError &&
       (error.message.includes('fetch failed') ||
        error.message.includes('ECONNREFUSED') ||
-       (error as any).cause?.code === 'ECONNREFUSED');
+       (error.cause as { code?: unknown } | undefined)?.code === 'ECONNREFUSED');
 
     if (isConnectionError) {
       console.warn(

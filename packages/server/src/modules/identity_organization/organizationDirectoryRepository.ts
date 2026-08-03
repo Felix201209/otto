@@ -11,6 +11,7 @@ export interface OrganizationDirectoryView {
   parkId: string | null;
   parkAddress?: string | null;
   parkRoomNumber?: string | null;
+  industry?: string | null;
   status: 'active' | 'disabled';
   createdAt: string;
   updatedAt: string;
@@ -22,6 +23,7 @@ export interface OrganizationDirectoryRow {
   slug: string;
   invite_secret: string;
   park_id?: string | null;
+  industry?: string | null;
   park_address?: string | null;
   park_room_number?: string | null;
   status: 'active' | 'disabled';
@@ -43,6 +45,7 @@ export function toOrganizationDirectoryView(
     parkId: row.park_id ?? null,
     parkAddress: row.park_address ?? null,
     parkRoomNumber: row.park_room_number ?? null,
+    industry: row.industry ?? null,
     status: row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

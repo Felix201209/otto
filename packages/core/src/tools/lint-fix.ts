@@ -135,7 +135,7 @@ export class LintFixTool extends BaseTool<LintFixParams, ToolResult> {
   /**
    * 执行工具操作
    */
-  async execute(params: LintFixParams, signal: AbortSignal): Promise<ToolResult> {
+  async execute(params: LintFixParams, _signal: AbortSignal): Promise<ToolResult> {
     const validationError = this.validateToolParams(params);
     if (validationError) {
       return {

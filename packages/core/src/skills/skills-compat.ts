@@ -148,7 +148,7 @@ export class SkillsCompatAdapter {
    * Generate summary text for AI context
    * Preserves the original SkillsContextBuilder formatting logic
    */
-  private async generateSummary(skills: SkillInfo[]): Promise<string> {
+  private async generateSummary(_skills: SkillInfo[]): Promise<string> {
     // Load raw skills to access location metadata for proper grouping
     const rawSkills = await this.loadRawSkills();
     return this.generateSummaryFromRawSkills(rawSkills);

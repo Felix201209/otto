@@ -55,7 +55,6 @@ import { GoalAchievedTool } from '../tools/goal-achieved.js';
 import { getKnowledgeCapturePipeline } from '../knowledge/knowledgeCapturePipeline.js';
 import {
   SessionMemoryInjector,
-  type MemoryInjection,
 } from '../memory/sessionMemoryInjector.js';
 import { assembleRelevantLayeredMemory } from '../memory/memoryRecall.js';
 import { FileMemoryProvider } from '../memory/memoryProvider.js';
@@ -71,6 +70,13 @@ import {
 } from '../services/memoryPressureMonitor.js';
 
 import { OttoServerAdapter } from './OttoServerAdapter.js';
+import {
+  captureFinancialComputationEvidence,
+  classifyFinancialInput,
+  FINANCIAL_COMPUTATION_BLOCK_MESSAGE,
+  shouldBlockFinancialOutput,
+  type FinancialConversationState,
+} from '../policy/financialComputationPolicy.js';
 
 function isThinkingSupported(_model: string) {
   // ✅ 服务端内部决定模型 - 客户端总是尝试启用thinking
@@ -183,6 +189,8 @@ export class OttoClient {
   };
   private sessionTurnCount = 0;
   private readonly MAX_TURNS = 100;
+  /** Kept by prompt id so the tool-response turn cannot silently drop the guard. */
+  private readonly financialConversationStates = new Map<string, FinancialConversationState>();
 
   private async buildSystemInstruction(model: string, isVSCode: boolean): Promise<string> {
     const userRules = this.config.getUserRules();
@@ -1313,6 +1321,18 @@ Use Glob and ReadFile tools to explore specific files during our conversation.
       return !!part.functionResponse;
     });
 
+    const requestText = extractTextFromRequest(request);
+    if (!hasFunctionResponse && requestText.trim() && requestText.trim() !== 'Please continue.') {
+      this.financialConversationStates.set(prompt_id, classifyFinancialInput(requestText));
+    }
+    const financialState = this.financialConversationStates.get(prompt_id);
+    if (hasFunctionResponse && financialState?.requiresVerifiedEvidence && !financialState.evidence) {
+      financialState.evidence = captureFinancialComputationEvidence(
+        request,
+        financialState.sourceInputHash ?? requestText,
+      );
+    }
+
     if (this.config.getIdeMode() && !hasFunctionResponse) {
       const openFiles = ideContext.getOpenFilesContext();
       if (openFiles) {
@@ -1444,6 +1464,11 @@ ${injection.summary}]` },
 
         // 继续传递事件给上层处理
         yield event;
+      } else if (
+        event.type === OttoEventType.Content
+        && shouldBlockFinancialOutput(this.financialConversationStates.get(prompt_id), event.value)
+      ) {
+        yield { type: OttoEventType.Content, value: FINANCIAL_COMPUTATION_BLOCK_MESSAGE };
       } else {
         yield event;
       }
