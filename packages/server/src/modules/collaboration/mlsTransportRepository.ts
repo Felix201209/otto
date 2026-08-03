@@ -96,6 +96,11 @@ export interface MlsKeyPackageView {
   expiresAt: string;
 }
 
+export interface MlsKeyPackageInventoryEntry {
+  reference: string;
+  expiresAt: string;
+}
+
 export interface AppendMlsTransportEventInput {
   organizationId: string;
   senderAccountId: string;
@@ -602,6 +607,90 @@ export function publishMlsKeyPackageInRepository(
            WHERE organization_id = ? AND key_package_reference = ?`,
         )
         .get(organizationId, reference) as KeyPackageRow,
+    );
+  });
+}
+
+export function listMlsKeyPackageInventoryInRepository(
+  store: MlsTransportStore,
+  raw: {
+    organizationId: string;
+    accountId: string;
+    deviceId: string;
+  },
+): MlsKeyPackageInventoryEntry[] {
+  const organizationId = requireMlsIdentifier(
+    raw.organizationId,
+    'organization id',
+  );
+  const accountId = requireMlsIdentifier(raw.accountId, 'account id');
+  const deviceId = requireMlsIdentifier(raw.deviceId, 'device id');
+  requireParticipants(store, organizationId, accountId, accountId);
+  const database = store.db();
+  requireActiveApprovedDevice(database, organizationId, accountId, deviceId);
+  const rows = database
+    .prepare(
+      `SELECT key_package_reference, expires_at
+       FROM mls_key_packages
+       WHERE organization_id = ? AND account_id = ? AND device_id = ?
+         AND claimed_at IS NULL AND expires_at > ?
+       ORDER BY key_package_reference
+       LIMIT 101`,
+    )
+    .all(
+      organizationId,
+      accountId,
+      deviceId,
+      isoTime(storeNow(store)),
+    ) as Array<{ key_package_reference: string; expires_at: string }>;
+  if (rows.length > 100) {
+    throw new Error('MLS KeyPackage inventory exceeds the safe response limit');
+  }
+  return rows.map((row) => ({
+    reference: requireMlsKeyPackageReference(row.key_package_reference),
+    expiresAt: row.expires_at,
+  }));
+}
+
+export function retireMlsKeyPackageInRepository(
+  store: MlsTransportStore,
+  raw: {
+    organizationId: string;
+    accountId: string;
+    deviceId: string;
+    reference: string;
+  },
+): boolean {
+  const organizationId = requireMlsIdentifier(
+    raw.organizationId,
+    'organization id',
+  );
+  const accountId = requireMlsIdentifier(raw.accountId, 'account id');
+  const deviceId = requireMlsIdentifier(raw.deviceId, 'device id');
+  const reference = requireMlsKeyPackageReference(raw.reference);
+  requireParticipants(store, organizationId, accountId, accountId);
+  const database = store.db();
+  requireActiveApprovedDevice(database, organizationId, accountId, deviceId);
+  return withMlsMutation(database, () => {
+    const existing = database
+      .prepare(
+        `SELECT claimed_at FROM mls_key_packages
+         WHERE organization_id = ? AND account_id = ? AND device_id = ?
+           AND key_package_reference = ?`,
+      )
+      .get(organizationId, accountId, deviceId, reference) as
+      | { claimed_at: string | null }
+      | undefined;
+    if (!existing) return true;
+    if (existing.claimed_at !== null) return false;
+    return (
+      database
+        .prepare(
+          `DELETE FROM mls_key_packages
+           WHERE organization_id = ? AND account_id = ? AND device_id = ?
+             AND key_package_reference = ? AND claimed_at IS NULL`,
+        )
+        .run(organizationId, accountId, deviceId, reference).changes === 1
     );
   });
 }
@@ -1377,6 +1466,12 @@ export function createMlsTransportFacade(store: MlsTransportStore) {
   return {
     publishMlsKeyPackage: (input: PublishMlsKeyPackageInput) =>
       publishMlsKeyPackageInRepository(store, input),
+    listMlsKeyPackageInventory: (
+      input: Parameters<typeof listMlsKeyPackageInventoryInRepository>[1],
+    ) => listMlsKeyPackageInventoryInRepository(store, input),
+    retireMlsKeyPackage: (
+      input: Parameters<typeof retireMlsKeyPackageInRepository>[1],
+    ) => retireMlsKeyPackageInRepository(store, input),
     claimMlsKeyPackage: (input: ClaimMlsKeyPackageInput) =>
       claimMlsKeyPackageInRepository(store, input),
     appendMlsTransportEvent: (input: AppendMlsTransportEventInput) =>

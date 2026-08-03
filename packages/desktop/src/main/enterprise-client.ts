@@ -21,9 +21,11 @@ import {
   ENTERPRISE_MLS_CIPHERSUITE,
   enterpriseMlsDirectConversationId,
   parseEnterpriseMlsInboundConversationPeerPage,
+  parseEnterpriseMlsKeyPackageInventory,
   parseEnterpriseMlsPublishedKeyPackage,
   parseEnterpriseMlsTransportEvent,
   type EnterpriseMlsAppendTransportEventInput,
+  type EnterpriseMlsKeyPackageInventory,
   type EnterpriseMlsPublishedKeyPackage,
   type EnterpriseMlsTransportEvent,
 } from './enterprise-mls.js';
@@ -1102,11 +1104,47 @@ export class EnterpriseClient {
       published.accountId !== account.id ||
       published.deviceId !== deviceId ||
       published.reference !== keyPackage.reference ||
-      published.keyPackage !== keyPackage.key_package
+      published.keyPackage !== keyPackage.key_package ||
+      published.claimedAt !== null
     ) {
       throw new Error('enterprise MLS KeyPackage publication binding is invalid');
     }
     return published;
+  }
+
+  async listMlsKeyPackageInventory(
+    deviceId: string,
+  ): Promise<EnterpriseMlsKeyPackageInventory> {
+    await this.requireMlsTransportAccount();
+    const response = await this.request<unknown>(
+      `/enterprise/e2ee/mls/key-packages/inventory?deviceId=${encodeURIComponent(deviceId)}`,
+    );
+    return parseEnterpriseMlsKeyPackageInventory(response, deviceId);
+  }
+
+  async retireMlsKeyPackage(
+    deviceId: string,
+    reference: string,
+  ): Promise<void> {
+    await this.requireMlsTransportAccount();
+    if (!/^[0-9a-f]{64}$/.test(reference)) {
+      throw new Error('MLS KeyPackage reference is invalid');
+    }
+    const response = await this.request<{
+      deviceId?: unknown;
+      reference?: unknown;
+      retired?: unknown;
+    }>(
+      `/enterprise/e2ee/mls/key-packages/${reference}?deviceId=${encodeURIComponent(deviceId)}`,
+      { method: 'DELETE' },
+    );
+    if (
+      response.deviceId !== deviceId ||
+      response.reference !== reference ||
+      response.retired !== true
+    ) {
+      throw new Error('enterprise MLS KeyPackage retirement binding is invalid');
+    }
   }
 
   async claimMlsKeyPackage(

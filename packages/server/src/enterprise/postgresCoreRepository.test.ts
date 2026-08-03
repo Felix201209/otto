@@ -232,6 +232,20 @@ describe('PostgreSQL enterprise core authority', () => {
     expect(migration!.sql).not.toContain('payload');
   });
 
+  it('indexes exact-device unclaimed KeyPackage inventory without key bytes', () => {
+    const migration = ENTERPRISE_POSTGRES_MIGRATIONS.find(
+      (candidate) => candidate.version === 12,
+    );
+    expect(migration).toMatchObject({
+      version: 12,
+      name: 'mls-key-package-device-inventory-index',
+    });
+    expect(migration!.sql).toContain('mls_key_packages_device_inventory');
+    expect(migration!.sql).toContain('device_id');
+    expect(migration!.sql).toContain('WHERE claimed_at IS NULL');
+    expect(migration!.sql).not.toContain('key_package)');
+  });
+
   it('checks for a recoverable claim before locking a new KeyPackage', async () => {
     const statements: Array<{ sql: string; values: readonly unknown[] }> = [];
     const packageRow = {
@@ -360,6 +374,111 @@ describe('PostgreSQL enterprise core authority', () => {
       'acc_aaron',
       25,
     ]);
+  });
+
+  it('lists PostgreSQL unclaimed KeyPackage references for the exact device', async () => {
+    const statements: Array<{ sql: string; values: readonly unknown[] }> = [];
+    const pool: PostgresPoolLike = {
+      connect: vi.fn(),
+      query: vi.fn(async (sql: string, values: readonly unknown[] = []) => {
+        statements.push({ sql, values });
+        if (sql.includes('SELECT 1 FROM accounts AS account')) {
+          return result([{ available: 1 }]);
+        }
+        if (sql.includes('SELECT 1 FROM e2ee_devices')) {
+          return result([{ available: 1 }]);
+        }
+        if (
+          sql.includes('FROM mls_key_packages') &&
+          sql.includes('claimed_at IS NULL')
+        ) {
+          return result([
+            {
+              key_package_reference: 'a'.repeat(64),
+              expires_at: new Date('2026-08-10T00:00:00.000Z'),
+            },
+            {
+              key_package_reference: 'b'.repeat(64),
+              expires_at: new Date('2026-08-10T00:00:00.000Z'),
+            },
+          ]);
+        }
+        return result();
+      }),
+      end: vi.fn(),
+    };
+    const repository = createPostgresEnterpriseCoreRepository({ pool });
+
+    await expect(
+      repository.listMlsKeyPackageInventory({
+        organizationId: 'org_default',
+        accountId: 'acc_bob',
+        deviceId: 'bob-device',
+      }),
+    ).resolves.toEqual([
+      {
+        reference: 'a'.repeat(64),
+        expiresAt: '2026-08-10T00:00:00.000Z',
+      },
+      {
+        reference: 'b'.repeat(64),
+        expiresAt: '2026-08-10T00:00:00.000Z',
+      },
+    ]);
+    const inventory = statements.find((statement) =>
+      statement.sql.includes('FROM mls_key_packages'),
+    );
+    expect(inventory?.sql).toContain('device_id = $3');
+    expect(inventory?.sql).toContain('expires_at > $4::timestamptz');
+    expect(inventory?.sql).not.toContain('key_package,');
+    expect(inventory?.values).toEqual([
+      'org_default',
+      'acc_bob',
+      'bob-device',
+      expect.any(String),
+    ]);
+  });
+
+  it('retires an unclaimed PostgreSQL KeyPackage under a device row lock', async () => {
+    const statements: string[] = [];
+    const client: PostgresClientLike = {
+      query: vi.fn(async (sql: string) => {
+        statements.push(sql.trim());
+        if (sql.includes('SELECT 1 FROM accounts AS account')) {
+          return result([{ available: 1 }]);
+        }
+        if (sql.includes('SELECT 1 FROM e2ee_devices')) {
+          return result([{ available: 1 }]);
+        }
+        if (sql.includes('SELECT claimed_at FROM mls_key_packages')) {
+          return result([{ claimed_at: null }]);
+        }
+        return result();
+      }),
+      release: vi.fn(),
+    };
+    const pool: PostgresPoolLike = {
+      connect: vi.fn(async () => client),
+      query: vi.fn(),
+      end: vi.fn(),
+    };
+    const repository = createPostgresEnterpriseCoreRepository({ pool });
+
+    await expect(
+      repository.retireMlsKeyPackage({
+        organizationId: 'org_default',
+        accountId: 'acc_bob',
+        deviceId: 'bob-device',
+        reference: 'a'.repeat(64),
+      }),
+    ).resolves.toBe(true);
+    expect(
+      statements.some((statement) =>
+        statement.includes('DELETE FROM mls_key_packages'),
+      ),
+    ).toBe(true);
+    expect(statements).toEqual(expect.arrayContaining(['BEGIN', 'COMMIT']));
+    expect(client.release).toHaveBeenCalledOnce();
   });
 
   it('stores an initial PostgreSQL MLS Commit as opaque bytes at epoch one', async () => {

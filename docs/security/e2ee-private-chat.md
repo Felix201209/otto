@@ -191,6 +191,27 @@ publishes a native OpenMLS KeyPackage reference for each approved device; the
 server treats that protocol reference as opaque and no longer substitutes an
 unrelated application-level digest.
 
+Approved devices now maintain a bounded pool of ten usable one-time
+KeyPackages instead of relying on a single package between identity refreshes.
+The server exposes only the current device's sorted, unclaimed, unexpired
+references and expiry times; it never returns KeyPackage bytes through the
+inventory endpoint and never receives private key material. SQLite and
+PostgreSQL use dedicated device-inventory indexes. The desktop validates the
+device binding, reference syntax, ordering, uniqueness, expiry and 100-entry
+response ceiling, then skips references still present on the server, retries
+unconfirmed local publications idempotently, and creates only enough fresh
+packages to reach the target. A one-hour remaining-lifetime margin prevents a
+pool from expiring as a batch. The existing 100-package/device inventory quota
+and 60-publication/minute rate limit remain authoritative.
+
+An unclaimed server reference that is absent from the authenticated local MLS
+snapshot is treated as an orphan, not as usable inventory. The approved device
+retires that reference under the same account/device binding before publishing
+a replacement. Retirement is idempotent only while the package is absent or
+still unclaimed; if another participant has already claimed it, retirement
+fails closed because the corresponding Welcome can no longer be proven
+decryptable by the current local state.
+
 The inactive desktop path now has initial-session orchestration without being
 wired into production chat. A deterministic account ordering prevents both
 participants from racing to create different initial groups. KeyPackage claims

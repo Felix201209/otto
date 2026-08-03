@@ -16,6 +16,7 @@ import {
   EnterpriseMlsSessionManager,
   EnterpriseMlsOutboxRetryScheduler,
   enterpriseMlsDirectConversationId,
+  type EnterpriseMlsKeyPackageInventory,
   type EnterpriseMlsSessionOperations,
   type EnterpriseMlsTransportClient,
   type EnterpriseMlsTransportEvent,
@@ -659,7 +660,7 @@ function coordinatorHarness(keyPackages: MlsKeyPackage[] = []) {
       keyPackage: keyPackage.key_package,
       createdAt: '2026-08-02T00:00:00.000Z',
       claimedAt: null,
-      expiresAt: '2026-08-09T00:00:00.000Z',
+      expiresAt: '2099-01-01T00:00:00.000Z',
     })),
     claimMlsKeyPackage: vi.fn(async () => ({
       reference: 'b'.repeat(64),
@@ -692,6 +693,13 @@ function coordinatorHarness(keyPackages: MlsKeyPackage[] = []) {
       async (): Promise<EnterpriseMlsTransportEvent[]> => [],
     ),
     listMlsInboundConversationPeers: vi.fn(async (): Promise<string[]> => []),
+    listMlsKeyPackageInventory: vi.fn(
+      async (deviceId: string): Promise<EnterpriseMlsKeyPackageInventory> => ({
+        deviceId,
+        keyPackages: [],
+      }),
+    ),
+    retireMlsKeyPackage: vi.fn(async () => undefined),
   } satisfies EnterpriseMlsTransportClient;
   return { group, sessions, transport };
 }
@@ -724,14 +732,28 @@ function transportEvent(
 }
 
 describe('EnterpriseMlsSessionCoordinator', () => {
-  it('recovers local KeyPackage inventory and replaces only a claimed package', async () => {
+  it('reuses server inventory and replaces only unavailable local KeyPackages', async () => {
     const claimed: MlsKeyPackage = {
       protocol: 'mls10-openmls-0.8' as const,
       ciphersuite: 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519' as const,
       reference: 'c'.repeat(64),
       key_package: 'b2xkLWtleS1wYWNrYWdl',
     };
-    const { sessions, transport } = coordinatorHarness([claimed]);
+    const available: MlsKeyPackage = {
+      ...claimed,
+      reference: 'd'.repeat(64),
+      key_package: 'YXZhaWxhYmxlLWtleS1wYWNrYWdl',
+    };
+    const { sessions, transport } = coordinatorHarness([available, claimed]);
+    transport.listMlsKeyPackageInventory.mockResolvedValue({
+      deviceId: 'device-a',
+      keyPackages: [
+        {
+          reference: available.reference,
+          expiresAt: '2099-01-01T00:00:00.000Z',
+        },
+      ],
+    });
     transport.publishMlsKeyPackage
       .mockRejectedValueOnce(
         new Error('MLS KeyPackage reference conflict or reuse'),
@@ -744,7 +766,7 @@ describe('EnterpriseMlsSessionCoordinator', () => {
         keyPackage: 'a2V5LXBhY2thZ2U=',
         createdAt: '2026-08-02T00:00:00.000Z',
         claimedAt: null,
-        expiresAt: '2026-08-09T00:00:00.000Z',
+        expiresAt: '2099-01-01T00:00:00.000Z',
       });
     const coordinator = new EnterpriseMlsSessionCoordinator(
       sessions,
@@ -752,14 +774,45 @@ describe('EnterpriseMlsSessionCoordinator', () => {
     );
 
     await expect(
-      coordinator.ensurePublishedKeyPackage(),
-    ).resolves.toMatchObject({
-      reference: 'a'.repeat(64),
-    });
+      coordinator.ensurePublishedKeyPackageInventory(2, 0),
+    ).resolves.toBe(2);
+    expect(transport.listMlsKeyPackageInventory).toHaveBeenCalledWith(
+      'device-a',
+    );
     expect(transport.publishMlsKeyPackage.mock.calls).toEqual([
       ['device-a', claimed],
       ['device-a', expect.objectContaining({ reference: 'a'.repeat(64) })],
     ]);
+  });
+
+  it('retires an unclaimed server KeyPackage whose private key is absent locally', async () => {
+    const { sessions, transport } = coordinatorHarness();
+    transport.listMlsKeyPackageInventory.mockResolvedValue({
+      deviceId: 'device-a',
+      keyPackages: [
+        {
+          reference: 'd'.repeat(64),
+          expiresAt: '2099-01-01T00:00:00.000Z',
+        },
+      ],
+    });
+    const coordinator = new EnterpriseMlsSessionCoordinator(
+      sessions,
+      transport,
+    );
+
+    await expect(
+      coordinator.ensurePublishedKeyPackageInventory(1, 0),
+    ).resolves.toBe(1);
+
+    expect(transport.retireMlsKeyPackage).toHaveBeenCalledWith(
+      'device-a',
+      'd'.repeat(64),
+    );
+    expect(transport.publishMlsKeyPackage).toHaveBeenCalledWith(
+      'device-a',
+      expect.objectContaining({ reference: 'a'.repeat(64) }),
+    );
   });
 
   it('replays a persisted pending invitation with stable event identifiers', async () => {

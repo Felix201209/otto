@@ -446,6 +446,14 @@ export const COLLABORATION_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor = {
         ON direct_message_attachments(storage_backend, storage_key);
       CREATE INDEX IF NOT EXISTS idx_mls_key_packages_expiry
         ON mls_key_packages(expires_at, organization_id);
+      CREATE INDEX IF NOT EXISTS idx_mls_key_packages_device_inventory
+        ON mls_key_packages(
+          organization_id,
+          account_id,
+          device_id,
+          key_package_reference,
+          expires_at
+        ) WHERE claimed_at IS NULL;
       CREATE UNIQUE INDEX IF NOT EXISTS idx_mls_group_sessions_active
         ON mls_group_sessions(organization_id, conversation_id)
         WHERE status = 'active';

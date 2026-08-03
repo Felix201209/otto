@@ -269,6 +269,61 @@ export async function handleCommunicationRoute({
     return true;
   }
 
+  if (
+    path === '/enterprise/e2ee/mls/key-packages/inventory' &&
+    method === 'GET'
+  ) {
+    const deviceId = url.searchParams.get('deviceId') || '';
+    try {
+      const keyPackages = db.listMlsKeyPackageInventory({
+        organizationId: memberAccount.organizationId,
+        accountId: memberAccount.id,
+        deviceId,
+      });
+      res.setHeader('Cache-Control', 'no-store');
+      sendJSON(res, 200, { deviceId, keyPackages });
+    } catch (error) {
+      sendJSON(res, mlsErrorStatus(error), {
+        error:
+          error instanceof Error
+            ? error.message
+            : 'MLS KeyPackage inventory lookup failed',
+      });
+    }
+    return true;
+  }
+
+  const retireMlsKeyPackageMatch = path.match(
+    /^\/enterprise\/e2ee\/mls\/key-packages\/([0-9a-f]{64})$/,
+  );
+  if (retireMlsKeyPackageMatch && method === 'DELETE') {
+    const deviceId = url.searchParams.get('deviceId') || '';
+    try {
+      const reference = retireMlsKeyPackageMatch[1] ?? '';
+      const retired = db.retireMlsKeyPackage({
+        organizationId: memberAccount.organizationId,
+        accountId: memberAccount.id,
+        deviceId,
+        reference,
+      });
+      if (!retired) {
+        sendJSON(res, 409, {
+          error: 'claimed MLS KeyPackage cannot be retired',
+        });
+      } else {
+        sendJSON(res, 200, { deviceId, reference, retired: true });
+      }
+    } catch (error) {
+      sendJSON(res, mlsErrorStatus(error), {
+        error:
+          error instanceof Error
+            ? error.message
+            : 'MLS KeyPackage retirement failed',
+      });
+    }
+    return true;
+  }
+
   if (path === '/enterprise/e2ee/mls/key-packages' && method === 'POST') {
     const body = await readBody(req, 96 * 1024);
     try {

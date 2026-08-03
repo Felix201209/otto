@@ -1307,6 +1307,42 @@ export function createClusteredEnterpriseServer(
         return;
       }
 
+      if (
+        path === '/enterprise/e2ee/mls/key-packages/inventory' &&
+        method === 'GET'
+      ) {
+        const deviceId = url.searchParams.get('deviceId') || '';
+        const keyPackages = await repository.listMlsKeyPackageInventory({
+          organizationId: member.organizationId,
+          accountId: member.id,
+          deviceId,
+        });
+        res.setHeader('Cache-Control', 'no-store');
+        sendJson(res, 200, { deviceId, keyPackages });
+        return;
+      }
+
+      const retireMlsKeyPackageRoute =
+        /^\/enterprise\/e2ee\/mls\/key-packages\/([0-9a-f]{64})$/.exec(path);
+      if (retireMlsKeyPackageRoute && method === 'DELETE') {
+        const deviceId = url.searchParams.get('deviceId') || '';
+        const reference = retireMlsKeyPackageRoute[1] ?? '';
+        const retired = await repository.retireMlsKeyPackage({
+          organizationId: member.organizationId,
+          accountId: member.id,
+          deviceId,
+          reference,
+        });
+        if (!retired) {
+          sendJson(res, 409, {
+            error: 'claimed MLS KeyPackage cannot be retired',
+          });
+        } else {
+          sendJson(res, 200, { deviceId, reference, retired: true });
+        }
+        return;
+      }
+
       if (path === '/enterprise/e2ee/mls/key-packages' && method === 'POST') {
         const body = await readJsonBody(req, 96 * 1024);
         const keyPackage = await repository.publishMlsKeyPackage({

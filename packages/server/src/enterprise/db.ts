@@ -918,6 +918,8 @@ export const {
   listE2eeDevices,
   listE2eeKeyTransparency,
   publishMlsKeyPackage,
+  listMlsKeyPackageInventory,
+  retireMlsKeyPackage,
   claimMlsKeyPackage,
   appendMlsTransportEvent,
   listMlsTransportEvents,

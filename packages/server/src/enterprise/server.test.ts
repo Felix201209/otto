@@ -2463,6 +2463,29 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       keyPackage: { reference: string };
     };
     expect(keyPackage.keyPackage.reference).toBe('d'.repeat(64));
+    const inventoryBeforeClaim = await fetch(
+      `${base}/enterprise/e2ee/mls/key-packages/inventory?deviceId=${encodeURIComponent(bobDevice.deviceId)}`,
+      { headers: { authorization: `Bearer ${bobToken}` } },
+    );
+    expect(inventoryBeforeClaim.status).toBe(200);
+    expect(inventoryBeforeClaim.headers.get('cache-control')).toBe('no-store');
+    await expect(inventoryBeforeClaim.json()).resolves.toMatchObject({
+      deviceId: bobDevice.deviceId,
+      keyPackages: [{ reference: keyPackage.keyPackage.reference }],
+    });
+    const retiredAbsent = await fetch(
+      `${base}/enterprise/e2ee/mls/key-packages/${'e'.repeat(64)}?deviceId=${encodeURIComponent(bobDevice.deviceId)}`,
+      {
+        method: 'DELETE',
+        headers: { authorization: `Bearer ${bobToken}` },
+      },
+    );
+    expect(retiredAbsent.status).toBe(200);
+    await expect(retiredAbsent.json()).resolves.toEqual({
+      deviceId: bobDevice.deviceId,
+      reference: 'e'.repeat(64),
+      retired: true,
+    });
     const claimed = await fetch(
       `${base}/enterprise/e2ee/mls/key-packages/claim`,
       {
@@ -2477,6 +2500,14 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     expect(claimed.status).toBe(200);
     await expect(claimed.json()).resolves.toMatchObject({
       keyPackage: { reference: keyPackage.keyPackage.reference },
+    });
+    const inventoryAfterClaim = await fetch(
+      `${base}/enterprise/e2ee/mls/key-packages/inventory?deviceId=${encodeURIComponent(bobDevice.deviceId)}`,
+      { headers: { authorization: `Bearer ${bobToken}` } },
+    );
+    await expect(inventoryAfterClaim.json()).resolves.toEqual({
+      deviceId: bobDevice.deviceId,
+      keyPackages: [],
     });
     const claimedAgain = await fetch(
       `${base}/enterprise/e2ee/mls/key-packages/claim`,

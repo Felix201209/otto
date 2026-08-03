@@ -13,6 +13,7 @@ import {
 import {
   ENTERPRISE_MLS_CIPHERSUITE,
   enterpriseMlsDirectConversationId,
+  parseEnterpriseMlsKeyPackageInventory,
 } from './enterprise-mls.js';
 import type {
   EnterpriseE2eeCrypto,
@@ -40,6 +41,49 @@ const LEGAL_DOCUMENTS = [
   { id: 'terms', version: '2026-08-03', hash: 'a'.repeat(64) },
   { id: 'privacy', version: '2026-08-03', hash: 'b'.repeat(64) },
 ] satisfies EnterpriseLegalDocumentReference[];
+
+describe('parseEnterpriseMlsKeyPackageInventory', () => {
+  const entry = (reference: string, expiresAt = '2026-08-10T00:00:00.000Z') => ({
+    reference,
+    expiresAt,
+  });
+
+  it.each([
+    {
+      name: 'wrong device binding',
+      value: { deviceId: 'device-2', keyPackages: [] },
+    },
+    {
+      name: 'duplicate reference',
+      value: {
+        deviceId: 'device-1',
+        keyPackages: [entry('a'.repeat(64)), entry('a'.repeat(64))],
+      },
+    },
+    {
+      name: 'non-monotonic reference order',
+      value: {
+        deviceId: 'device-1',
+        keyPackages: [entry('b'.repeat(64)), entry('a'.repeat(64))],
+      },
+    },
+    {
+      name: 'expired reference',
+      value: {
+        deviceId: 'device-1',
+        keyPackages: [entry('a'.repeat(64), '2026-08-02T00:00:00.000Z')],
+      },
+    },
+  ])('rejects $name', ({ value }) => {
+    expect(() =>
+      parseEnterpriseMlsKeyPackageInventory(
+        value,
+        'device-1',
+        Date.parse('2026-08-03T00:00:00.000Z'),
+      ),
+    ).toThrow('KeyPackage inventory is invalid');
+  });
+});
 
 function mockE2eeCrypto(input: {
   decryptContent?: string;
@@ -255,6 +299,24 @@ describe('EnterpriseClient', () => {
           expiresAt: '2099-01-01',
         }),
       )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          deviceId: 'device-1',
+          keyPackages: [
+            {
+              reference: keyPackageReference,
+              expiresAt: '2099-01-01T00:00:00.000Z',
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          deviceId: 'device-1',
+          reference: keyPackageReference,
+          retired: true,
+        }),
+      )
       .mockResolvedValueOnce(jsonResponse(201, { keyPackage: published }))
       .mockResolvedValueOnce(jsonResponse(200, { keyPackage: claimed }))
       .mockResolvedValueOnce(jsonResponse(201, { event }))
@@ -271,6 +333,20 @@ describe('EnterpriseClient', () => {
 
     expect(client.supportsMlsTransportFoundation()).toBe(true);
     expect(client.supportsMlsPrivateMessages()).toBe(false);
+    await expect(
+      client.listMlsKeyPackageInventory('device-1'),
+    ).resolves.toEqual({
+      deviceId: 'device-1',
+      keyPackages: [
+        {
+          reference: keyPackageReference,
+          expiresAt: '2099-01-01T00:00:00.000Z',
+        },
+      ],
+    });
+    await expect(
+      client.retireMlsKeyPackage('device-1', keyPackageReference),
+    ).resolves.toBeUndefined();
     await expect(
       client.publishMlsKeyPackage('device-1', {
         protocol: 'mls10-openmls-0.8',
@@ -300,13 +376,15 @@ describe('EnterpriseClient', () => {
     ).resolves.toEqual(['acc_other', 'acc_peer']);
 
     expect(fetchMock.mock.calls.slice(2).map(([url]) => url)).toEqual([
+      'https://enterprise.otto.test/enterprise/e2ee/mls/key-packages/inventory?deviceId=device-1',
+      `https://enterprise.otto.test/enterprise/e2ee/mls/key-packages/${keyPackageReference}?deviceId=device-1`,
       'https://enterprise.otto.test/enterprise/e2ee/mls/key-packages',
       'https://enterprise.otto.test/enterprise/e2ee/mls/key-packages/claim',
       'https://enterprise.otto.test/enterprise/e2ee/mls/conversations/acc_peer/events',
       'https://enterprise.otto.test/enterprise/e2ee/mls/conversations/acc_peer/events?afterSequence=0&limit=25',
       'https://enterprise.otto.test/enterprise/e2ee/mls/inbound-conversations?deviceId=device-1&limit=500',
     ]);
-    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toMatchObject({
+    expect(JSON.parse(String(fetchMock.mock.calls[4]?.[1]?.body))).toMatchObject({
       keyPackageReference,
     });
   });
@@ -355,6 +433,17 @@ describe('EnterpriseClient', () => {
       .mockResolvedValueOnce(jsonResponse(200, { events: [event] }))
       .mockResolvedValueOnce(
         jsonResponse(200, { peerAccountIds: ['acc_peer', 'acc_peer'] }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          deviceId: 'device-1',
+          keyPackages: [
+            {
+              reference: 'a'.repeat(64),
+              expiresAt: '2020-01-01T00:00:00.000Z',
+            },
+          ],
+        }),
       );
     const client = new EnterpriseClient(fetchMock as typeof fetch);
     await client.loginWithPassword(
@@ -369,6 +458,9 @@ describe('EnterpriseClient', () => {
     await expect(
       client.listMlsInboundConversationPeers('device-1'),
     ).rejects.toThrow('inbound conversation list is invalid');
+    await expect(
+      client.listMlsKeyPackageInventory('device-1'),
+    ).rejects.toThrow('KeyPackage inventory is invalid');
   });
 
   it('paginates sorted inbound MLS peers with an opaque account cursor', async () => {

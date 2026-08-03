@@ -678,9 +678,12 @@ async function synchronizeAuthenticatedEnterpriseAccount(
         enterpriseMlsOutboxRetry.start();
         enterpriseMlsInboundPoll.start();
         try {
-          await enterpriseMlsCoordinator.ensurePublishedKeyPackage();
+          await enterpriseMlsCoordinator.ensurePublishedKeyPackageInventory();
         } catch (error) {
-          console.warn('[otto-desktop] MLS KeyPackage publication failed:', error);
+          console.warn(
+            '[otto-desktop] MLS KeyPackage inventory maintenance failed:',
+            error,
+          );
         }
       } catch (error) {
         await enterpriseMlsOutboxRetry.stop();

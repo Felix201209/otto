@@ -40,6 +40,16 @@ export interface EnterpriseMlsPublishedKeyPackage {
   expiresAt: string;
 }
 
+export interface EnterpriseMlsKeyPackageInventoryEntry {
+  reference: string;
+  expiresAt: string;
+}
+
+export interface EnterpriseMlsKeyPackageInventory {
+  deviceId: string;
+  keyPackages: EnterpriseMlsKeyPackageInventoryEntry[];
+}
+
 export interface EnterpriseMlsAppendTransportEventInput {
   senderDeviceId: string;
   eventId: string;
@@ -75,6 +85,10 @@ export interface EnterpriseMlsTransportClient {
     deviceId: string,
     keyPackage: MlsKeyPackage,
   ): Promise<EnterpriseMlsPublishedKeyPackage>;
+  listMlsKeyPackageInventory(
+    deviceId: string,
+  ): Promise<EnterpriseMlsKeyPackageInventory>;
+  retireMlsKeyPackage(deviceId: string, reference: string): Promise<void>;
   claimMlsKeyPackage(
     requesterDeviceId: string,
     recipientAccountId: string,
@@ -360,6 +374,44 @@ export function parseEnterpriseMlsPublishedKeyPackage(
     throw new Error('enterprise MLS KeyPackage response is invalid');
   }
   return { ...keyPackage } as EnterpriseMlsPublishedKeyPackage;
+}
+
+export function parseEnterpriseMlsKeyPackageInventory(
+  value: unknown,
+  expectedDeviceId: string,
+  nowMs = Date.now(),
+): EnterpriseMlsKeyPackageInventory {
+  const inventory = value as Partial<EnterpriseMlsKeyPackageInventory>;
+  if (
+    !inventory ||
+    !IDENTIFIER.test(expectedDeviceId) ||
+    inventory.deviceId !== expectedDeviceId ||
+    !Array.isArray(inventory.keyPackages) ||
+    inventory.keyPackages.length > 100 ||
+    !Number.isSafeInteger(nowMs) ||
+    nowMs < 0
+  ) {
+    throw new Error('enterprise MLS KeyPackage inventory is invalid');
+  }
+  let previousReference = '';
+  const keyPackages = inventory.keyPackages.map((value) => {
+    const entry = value as Partial<EnterpriseMlsKeyPackageInventoryEntry>;
+    if (
+      !entry ||
+      !isMlsReference(entry.reference) ||
+      entry.reference <= previousReference ||
+      !isIsoTime(entry.expiresAt) ||
+      Date.parse(entry.expiresAt) <= nowMs
+    ) {
+      throw new Error('enterprise MLS KeyPackage inventory is invalid');
+    }
+    previousReference = entry.reference;
+    return {
+      reference: entry.reference,
+      expiresAt: entry.expiresAt,
+    };
+  });
+  return { deviceId: expectedDeviceId, keyPackages };
 }
 
 export function parseEnterpriseMlsTransportEvent(
@@ -964,7 +1016,20 @@ export class EnterpriseMlsSessionCoordinator {
     private readonly transport: EnterpriseMlsTransportClient,
   ) {}
 
-  ensurePublishedKeyPackage(): Promise<EnterpriseMlsPublishedKeyPackage> {
+  ensurePublishedKeyPackageInventory(
+    target = 10,
+    minimumRemainingMs = 60 * 60 * 1_000,
+  ): Promise<number> {
+    if (
+      !Number.isSafeInteger(target) ||
+      target < 1 ||
+      target > 50 ||
+      !Number.isSafeInteger(minimumRemainingMs) ||
+      minimumRemainingMs < 0 ||
+      minimumRemainingMs > 24 * 60 * 60 * 1_000
+    ) {
+      throw new Error('MLS KeyPackage inventory policy is invalid');
+    }
     const scope = this.sessions.activeScope();
     const key = JSON.stringify([
       scope.serverUrl,
@@ -973,19 +1038,80 @@ export class EnterpriseMlsSessionCoordinator {
       scope.deviceId,
     ]);
     return this.exclusive(this.publicationOperations, key, async () => {
+      const nowMs = Date.now();
+      const inventory = await this.transport.listMlsKeyPackageInventory(
+        scope.deviceId,
+      );
+      if (inventory.deviceId !== scope.deviceId) {
+        throw new Error('MLS KeyPackage inventory device binding is invalid');
+      }
       const existing = await this.sessions.listKeyPackages();
+      if (existing.length > 100) {
+        throw new Error('local MLS KeyPackage inventory exceeds the safe limit');
+      }
+      const localReferences = new Set(
+        existing.map((keyPackage) => keyPackage.reference),
+      );
+      if (localReferences.size !== existing.length) {
+        throw new Error('local MLS KeyPackage inventory contains duplicates');
+      }
+      const serverReferences = new Set<string>();
+      const usableReferences = new Set<string>();
+      for (const keyPackage of inventory.keyPackages) {
+        if (!localReferences.has(keyPackage.reference)) {
+          await this.transport.retireMlsKeyPackage(
+            scope.deviceId,
+            keyPackage.reference,
+          );
+          continue;
+        }
+        serverReferences.add(keyPackage.reference);
+        if (
+          Date.parse(keyPackage.expiresAt) - nowMs >= minimumRemainingMs
+        ) {
+          usableReferences.add(keyPackage.reference);
+        }
+      }
+      if (usableReferences.size >= target) return usableReferences.size;
       for (const keyPackage of existing) {
+        if (serverReferences.has(keyPackage.reference)) continue;
         try {
-          return await this.transport.publishMlsKeyPackage(
+          const published = await this.transport.publishMlsKeyPackage(
             scope.deviceId,
             keyPackage,
           );
+          serverReferences.add(published.reference);
+          if (
+            Date.parse(published.expiresAt) - nowMs >=
+            minimumRemainingMs
+          ) {
+            usableReferences.add(published.reference);
+          }
+          if (usableReferences.size >= target) return usableReferences.size;
         } catch (error) {
           if (!this.isKeyPackageReuse(error)) throw error;
         }
       }
-      const created = await this.sessions.createKeyPackage();
-      return this.transport.publishMlsKeyPackage(scope.deviceId, created);
+      for (let attempt = 0; attempt < target * 2; attempt += 1) {
+        const created = await this.sessions.createKeyPackage();
+        try {
+          const published = await this.transport.publishMlsKeyPackage(
+            scope.deviceId,
+            created,
+          );
+          serverReferences.add(published.reference);
+          if (
+            Date.parse(published.expiresAt) - nowMs >=
+            minimumRemainingMs
+          ) {
+            usableReferences.add(published.reference);
+          }
+          if (usableReferences.size >= target) return usableReferences.size;
+        } catch (error) {
+          if (!this.isKeyPackageReuse(error)) throw error;
+        }
+      }
+      throw new Error('MLS KeyPackage inventory could not reach its target');
     });
   }
 

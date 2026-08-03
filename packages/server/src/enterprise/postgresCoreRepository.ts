@@ -43,6 +43,7 @@ import {
   type AppendMlsTransportEventInput,
   type ClaimMlsKeyPackageInput,
   type MlsKeyPackageView,
+  type MlsKeyPackageInventoryEntry,
   type MlsResourceCleanupResult,
   type MlsResourceGovernancePolicy,
   type MlsResourceRateAction,
@@ -2015,6 +2016,111 @@ export function createPostgresEnterpriseCoreRepository(input: {
     });
   }
 
+  async function listMlsKeyPackageInventory(raw: {
+    organizationId: string;
+    accountId: string;
+    deviceId: string;
+  }): Promise<MlsKeyPackageInventoryEntry[]> {
+    const organizationId = requiredIdentifier(
+      raw.organizationId,
+      'organization id',
+    );
+    const accountId = requiredIdentifier(raw.accountId, 'account id');
+    const deviceId = requiredIdentifier(raw.deviceId, 'device id');
+    const account = await input.pool.query(
+      `SELECT 1 FROM accounts AS account
+       JOIN organizations AS organization
+         ON organization.id = account.organization_id
+       WHERE account.organization_id = $1 AND account.id = $2
+         AND account.status = 'active' AND account.deleted_at IS NULL
+         AND organization.status = 'active'`,
+      [organizationId, accountId],
+    );
+    if (!account.rows[0]) {
+      throw new Error('MLS participant is not active in organization');
+    }
+    await requirePostgresMlsDevice(
+      input.pool,
+      organizationId,
+      accountId,
+      deviceId,
+    );
+    const inventory = await input.pool.query<
+      {
+        key_package_reference: string;
+        expires_at: Date | string;
+      } & Record<string, unknown>
+    >(
+      `SELECT key_package_reference, expires_at
+       FROM mls_key_packages
+       WHERE organization_id = $1 AND account_id = $2 AND device_id = $3
+         AND claimed_at IS NULL AND expires_at > $4::timestamptz
+       ORDER BY key_package_reference
+       LIMIT 101`,
+      [organizationId, accountId, deviceId, mlsNow().iso],
+    );
+    if (inventory.rows.length > 100) {
+      throw new Error('MLS KeyPackage inventory exceeds the safe response limit');
+    }
+    return inventory.rows.map((row) => ({
+      reference: requireMlsKeyPackageReference(row.key_package_reference),
+      expiresAt: iso(row.expires_at)!,
+    }));
+  }
+
+  async function retireMlsKeyPackage(raw: {
+    organizationId: string;
+    accountId: string;
+    deviceId: string;
+    reference: string;
+  }): Promise<boolean> {
+    const organizationId = requiredIdentifier(
+      raw.organizationId,
+      'organization id',
+    );
+    const accountId = requiredIdentifier(raw.accountId, 'account id');
+    const deviceId = requiredIdentifier(raw.deviceId, 'device id');
+    const reference = requireMlsKeyPackageReference(raw.reference);
+    return transaction(input.pool, async (client) => {
+      const account = await client.query(
+        `SELECT 1 FROM accounts AS account
+         JOIN organizations AS organization
+           ON organization.id = account.organization_id
+         WHERE account.organization_id = $1 AND account.id = $2
+           AND account.status = 'active' AND account.deleted_at IS NULL
+           AND organization.status = 'active'`,
+        [organizationId, accountId],
+      );
+      if (!account.rows[0]) {
+        throw new Error('MLS participant is not active in organization');
+      }
+      await requirePostgresMlsDevice(
+        client,
+        organizationId,
+        accountId,
+        deviceId,
+      );
+      const existing = await client.query<
+        { claimed_at: Date | string | null } & Record<string, unknown>
+      >(
+        `SELECT claimed_at FROM mls_key_packages
+         WHERE organization_id = $1 AND account_id = $2 AND device_id = $3
+           AND key_package_reference = $4
+         FOR UPDATE`,
+        [organizationId, accountId, deviceId, reference],
+      );
+      if (!existing.rows[0]) return true;
+      if (existing.rows[0].claimed_at !== null) return false;
+      await client.query(
+        `DELETE FROM mls_key_packages
+         WHERE organization_id = $1 AND account_id = $2 AND device_id = $3
+           AND key_package_reference = $4 AND claimed_at IS NULL`,
+        [organizationId, accountId, deviceId, reference],
+      );
+      return true;
+    });
+  }
+
   async function claimMlsKeyPackage(
     raw: ClaimMlsKeyPackageInput,
   ): Promise<MlsKeyPackageView | null> {
@@ -3347,6 +3453,8 @@ export function createPostgresEnterpriseCoreRepository(input: {
     revokeE2eeDevice,
     listE2eeKeyTransparency,
     publishMlsKeyPackage,
+    listMlsKeyPackageInventory,
+    retireMlsKeyPackage,
     claimMlsKeyPackage,
     appendMlsTransportEvent,
     listMlsTransportEvents,

@@ -237,6 +237,13 @@ describe('clustered PostgreSQL enterprise server', () => {
       claimedAt: null,
     };
     const publishMlsKeyPackage = vi.fn(async () => keyPackage);
+    const listMlsKeyPackageInventory = vi.fn(async () => [
+      {
+        reference: keyPackage.reference,
+        expiresAt: '2026-08-08T00:00:00.000Z',
+      },
+    ]);
+    const retireMlsKeyPackage = vi.fn(async () => true);
     const claimMlsKeyPackage = vi.fn(async () => keyPackage);
     const appendMlsTransportEvent = vi.fn(async () => ({
       sequence: 1,
@@ -258,6 +265,8 @@ describe('clustered PostgreSQL enterprise server', () => {
     const repo = {
       ...repository(),
       publishMlsKeyPackage,
+      listMlsKeyPackageInventory,
+      retireMlsKeyPackage,
       claimMlsKeyPackage,
       appendMlsTransportEvent,
       listMlsTransportEvents,
@@ -280,6 +289,31 @@ describe('clustered PostgreSQL enterprise server', () => {
       }),
     });
     expect(publish.status).toBe(201);
+    const inventory = await fetch(
+      `${baseUrl}/enterprise/e2ee/mls/key-packages/inventory?deviceId=admin-device`,
+      { headers },
+    );
+    expect(inventory.status).toBe(200);
+    expect(inventory.headers.get('cache-control')).toBe('no-store');
+    await expect(inventory.json()).resolves.toEqual({
+      deviceId: 'admin-device',
+      keyPackages: [
+        {
+          reference: keyPackage.reference,
+          expiresAt: '2026-08-08T00:00:00.000Z',
+        },
+      ],
+    });
+    const retired = await fetch(
+      `${baseUrl}/enterprise/e2ee/mls/key-packages/${keyPackage.reference}?deviceId=admin-device`,
+      { method: 'DELETE', headers },
+    );
+    expect(retired.status).toBe(200);
+    await expect(retired.json()).resolves.toEqual({
+      deviceId: 'admin-device',
+      reference: keyPackage.reference,
+      retired: true,
+    });
     const claim = await fetch(
       `${baseUrl}/enterprise/e2ee/mls/key-packages/claim`,
       {
@@ -326,6 +360,17 @@ describe('clustered PostgreSQL enterprise server', () => {
         reference: keyPackage.reference,
       }),
     );
+    expect(listMlsKeyPackageInventory).toHaveBeenCalledWith({
+      organizationId: 'org_default',
+      accountId: 'acc_admin',
+      deviceId: 'admin-device',
+    });
+    expect(retireMlsKeyPackage).toHaveBeenCalledWith({
+      organizationId: 'org_default',
+      accountId: 'acc_admin',
+      deviceId: 'admin-device',
+      reference: keyPackage.reference,
+    });
     expect(claimMlsKeyPackage).toHaveBeenCalledWith(
       expect.objectContaining({ recipientAccountId: 'acc_peer' }),
     );

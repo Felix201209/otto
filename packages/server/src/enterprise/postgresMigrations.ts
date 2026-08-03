@@ -773,6 +773,20 @@ CREATE INDEX mls_transport_events_inbound_welcome
   WHERE event_type = 'welcome';
 `,
   },
+  {
+    version: 12,
+    name: 'mls-key-package-device-inventory-index',
+    sql: `
+CREATE INDEX mls_key_packages_device_inventory
+  ON mls_key_packages (
+    organization_id,
+    account_id,
+    device_id,
+    key_package_reference
+  ) INCLUDE (expires_at)
+  WHERE claimed_at IS NULL;
+`,
+  },
 ];
 
 export const ENTERPRISE_POSTGRES_SCHEMA_VERSION =

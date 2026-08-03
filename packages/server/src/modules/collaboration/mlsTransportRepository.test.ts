@@ -150,6 +150,112 @@ describe('MLS ciphertext transport repository', () => {
     }
   });
 
+  it('lists only unclaimed unexpired KeyPackages for the exact approved device', () => {
+    const { database, facade, advanceTime } = createHarness({
+      nowMs: Date.parse('2026-08-03T00:00:00.000Z'),
+    });
+    const publish = (deviceId: string, reference: string) =>
+      facade.publishMlsKeyPackage({
+        organizationId: 'org-a',
+        accountId: 'bob',
+        deviceId,
+        ciphersuite: MLS_SUITE,
+        reference,
+        keyPackage: opaque(`key-package-${reference[0]}`),
+      });
+    try {
+      publish('bob-1', 'a'.repeat(64));
+      publish('bob-1', 'b'.repeat(64));
+      publish('bob-2', 'c'.repeat(64));
+      facade.claimMlsKeyPackage({
+        organizationId: 'org-a',
+        requesterAccountId: 'alice',
+        requesterDeviceId: 'alice-1',
+        recipientAccountId: 'bob',
+      });
+
+      expect(
+        facade.listMlsKeyPackageInventory({
+          organizationId: 'org-a',
+          accountId: 'bob',
+          deviceId: 'bob-1',
+        }),
+      ).toEqual([
+        {
+          reference: 'b'.repeat(64),
+          expiresAt: '2026-08-10T00:00:00.000Z',
+        },
+      ]);
+      expect(
+        facade.retireMlsKeyPackage({
+          organizationId: 'org-a',
+          accountId: 'bob',
+          deviceId: 'bob-1',
+          reference: 'b'.repeat(64),
+        }),
+      ).toBe(true);
+      expect(
+        facade.retireMlsKeyPackage({
+          organizationId: 'org-a',
+          accountId: 'bob',
+          deviceId: 'bob-1',
+          reference: 'b'.repeat(64),
+        }),
+      ).toBe(true);
+      expect(
+        facade.retireMlsKeyPackage({
+          organizationId: 'org-a',
+          accountId: 'bob',
+          deviceId: 'bob-1',
+          reference: 'a'.repeat(64),
+        }),
+      ).toBe(false);
+      expect(
+        facade.listMlsKeyPackageInventory({
+          organizationId: 'org-a',
+          accountId: 'bob',
+          deviceId: 'bob-1',
+        }),
+      ).toEqual([]);
+      expect(
+        facade.listMlsKeyPackageInventory({
+          organizationId: 'org-a',
+          accountId: 'bob',
+          deviceId: 'bob-2',
+        }),
+      ).toEqual([
+        {
+          reference: 'c'.repeat(64),
+          expiresAt: '2026-08-10T00:00:00.000Z',
+        },
+      ]);
+      expect(() =>
+        facade.listMlsKeyPackageInventory({
+          organizationId: 'org-a',
+          accountId: 'bob',
+          deviceId: 'bob-pending',
+        }),
+      ).toThrow(/active and approved/i);
+      expect(
+        (
+          database.prepare('PRAGMA index_list(mls_key_packages)').all() as
+            Array<{ name: string }>
+        ).map((index) => index.name),
+      ).toContain('idx_mls_key_packages_device_inventory');
+
+      advanceTime(8 * 24 * 60 * 60 * 1_000);
+      expect(
+        facade.listMlsKeyPackageInventory({
+          organizationId: 'org-a',
+          accountId: 'bob',
+          deviceId: 'bob-1',
+        }),
+      ).toEqual([]);
+    } finally {
+      database.close();
+    }
+  });
+
   it('binds Welcome to the claimed device and stores only opaque bytes', () => {
     const { database, facade } = createHarness();
     try {
