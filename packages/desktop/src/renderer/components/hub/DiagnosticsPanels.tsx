@@ -270,7 +270,7 @@ export function WorkflowsPanel({ data }: { data: UseSettingsData }): React.JSX.E
   return (
     <Panel
       title="Workflow"
-      desc="多智能体 workflow 的运行记录与各 agent 明细。"
+      desc="多专家 workflow 的运行记录与各 agent 明细。"
       actions={
         <button type="button" className="otto-hub__btn" onClick={actions.refreshWorkflows}>
           刷新

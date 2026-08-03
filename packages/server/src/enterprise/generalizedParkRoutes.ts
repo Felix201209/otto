@@ -157,7 +157,22 @@ export async function handleGeneralizedParkRoute({
       'current organization is not a park admin organization',
     );
     if (!park) return true;
-    sendJSON(res, 200, { organizations: db.listParkTenantOrganizations(park.id) });
+    const organizations = db.listParkTenantOrganizations(park.id).map((organization) => {
+      const activeAccounts = db.listAccounts(organization.id)
+        .filter((account) => account.status === 'active');
+      const onlineAccountIds = new Set(
+        db.listAccountPresence(organization.id)
+          .filter((presence) => presence.online)
+          .map((presence) => presence.accountId),
+      );
+      return {
+        ...organization,
+        employeeCount: activeAccounts.length,
+        departmentCount: db.listOrganizationStructure(organization.id).length,
+        onlineCount: activeAccounts.filter((account) => onlineAccountIds.has(account.id)).length,
+      };
+    });
+    sendJSON(res, 200, { organizations });
     return true;
   }
 

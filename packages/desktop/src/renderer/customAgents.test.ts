@@ -10,7 +10,7 @@ import {
   parseCustomAgents,
 } from './customAgents.js';
 
-describe('自定义智能体定义', () => {
+describe('自定义专家定义', () => {
   it('按账号和企业隔离本地定义，避免退出后串到另一个账号', () => {
     expect(customAgentStorageKey('org-a', 'account-1'))
       .not.toBe(customAgentStorageKey('org-a', 'account-2'));
@@ -32,7 +32,7 @@ describe('自定义智能体定义', () => {
     expect(() => createCustomAgent(
       { name: ' ', instructions: '有职责' },
       { id: 'custom-2', now: '2026-07-20T16:00:00.000Z' },
-    )).toThrow('请输入智能体名称');
+    )).toThrow('请输入专家名称');
     expect(() => createCustomAgent(
       { name: '助手', instructions: ' ' },
       { id: 'custom-3', now: '2026-07-20T16:00:00.000Z' },
@@ -40,7 +40,7 @@ describe('自定义智能体定义', () => {
     expect(() => createCustomAgent(
       { name: '超长'.repeat(30), instructions: '有职责' },
       { id: 'custom-4', now: '2026-07-20T16:00:00.000Z' },
-    )).toThrow('智能体名称不能超过 40 个字符');
+    )).toThrow('专家名称不能超过 40 个字符');
   });
 
   it('读取持久化内容时丢弃损坏、越界或注入形态的记录', () => {

@@ -26,7 +26,7 @@ import type { RespondQuestionFn } from './ToolCalls.js';
 import { Composer } from './Composer.js';
 import type { SlashCommand } from './SlashCommands.js';
 import { IconArrowDown, IconMoon, IconSun, OttoAvatar } from './icons.js';
-import { ParkServicesPlugin } from './ParkServicesPlugin.js';
+
 import { OttoPetStage } from './OttoPetStage.js';
 import {
   PET_WIDGET_PREFERENCE_EVENT,
@@ -104,7 +104,7 @@ interface ChatViewProps {
   onRespondQuestion?: RespondQuestionFn;
   /** 打开「模型与 BYO-key 设置」面板（接到 Composer 模型菜单的「管理模型」入口）。 */
   onOpenSetup: () => void;
-  /** 切换右侧智能体面板显示/隐藏。 */
+  /** 切换右侧专家面板显示/隐藏。 */
   onToggleAgents: () => void;
   /** 斜杠命令 `/new`：新建会话（App handleNewChat）。 */
   onNewChat: () => void;
@@ -296,16 +296,16 @@ export function ChatView({
             title={modelManagementLabel}
             aria-label={modelManagementLabel}
           >
-            Settings
+            设置
           </button>
           <button
             type="button"
             className="otto-topbar-setup"
             onClick={onToggleAgents}
-            title="智能体面板"
-            aria-label="智能体面板"
+            title="专家面板"
+            aria-label="专家面板"
           >
-            Workspace
+            专家
           </button>
         </div>
       </header>
@@ -344,7 +344,7 @@ export function ChatView({
       ) : null}
 
       {/* 园区服务插件：常驻挂载（右侧面板「园区服务」入口经事件打开弹窗）。 */}
-      <ParkServicesPlugin />
+
 
       {petWidgetEnabled ? (
         <OttoPetStage
