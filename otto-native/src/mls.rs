@@ -1253,6 +1253,163 @@ impl MlsKernel {
         Ok(sequence)
     }
 
+    pub fn receive_transport_commit(
+        &mut self,
+        raw_scope: &str,
+        raw_conversation_id: &str,
+        raw_peer_account_id: &str,
+        encoded_commit: &str,
+        sequence: u64,
+        raw_expected_group_id: &str,
+        expected_epoch: u64,
+        raw_sender_device_id: &str,
+    ) -> Result<ExportedGroupState, String> {
+        let scope = validate_scope(raw_scope)?;
+        let conversation_id = validate_conversation_id(raw_conversation_id)?;
+        let peer_account_id = validate_account_id(raw_peer_account_id)?;
+        let expected_group_id = decode_base64("MLS group id", raw_expected_group_id, 128)?;
+        let sender_device_id = validate_device_id(raw_sender_device_id)?;
+        let serialized = decode_base64("MLS Commit", encoded_commit, MAX_WELCOME_BASE64)?;
+        self.require_identity(&scope)?;
+        if scope.split('/').nth(2) == Some(peer_account_id.as_str()) {
+            return Err("MLS Commit peer account is invalid".into());
+        }
+        if self.conversation_routes.get(&conversation_id) != Some(&peer_account_id) {
+            return Err("MLS Commit peer binding is invalid".into());
+        }
+        let current_cursor = self
+            .transport_cursors
+            .get(&conversation_id)
+            .copied()
+            .unwrap_or(0);
+        if sequence == 0 || sequence <= current_cursor {
+            return Err("MLS Commit transport event was already processed".into());
+        }
+
+        let message = MlsMessageIn::tls_deserialize_exact(serialized)
+            .map_err(|error| format!("MLS Commit decoding failed: {error}"))?
+            .try_into_protocol_message()
+            .map_err(|error| format!("MLS Commit message type failed: {error}"))?;
+        let current_member_scopes = {
+            let group = self
+                .groups
+                .get(&conversation_id)
+                .ok_or_else(|| "MLS conversation group is missing".to_string())?;
+            if group.pending_commit().is_some() {
+                return Err("MLS group has an unmerged pending commit".into());
+            }
+            let next_epoch = group
+                .epoch()
+                .as_u64()
+                .checked_add(1)
+                .ok_or_else(|| "MLS group epoch is exhausted".to_string())?;
+            if group.group_id().as_slice() != expected_group_id.as_slice()
+                || expected_epoch != next_epoch
+            {
+                return Err("MLS Commit does not advance the active group epoch".into());
+            }
+            require_direct_peer_binding(group, &scope, &peer_account_id)?;
+            group_member_scopes(group, &scope)?
+        };
+
+        let processed = {
+            let group = self
+                .groups
+                .get_mut(&conversation_id)
+                .ok_or_else(|| "MLS conversation group is missing".to_string())?;
+            catch_unwind(AssertUnwindSafe(|| {
+                group.process_message(&self.provider, message)
+            }))
+        };
+        let processed = match processed {
+            Ok(Ok(processed)) => processed,
+            Ok(Err(error)) => {
+                self.quarantine_conversation(&conversation_id);
+                return Err(format!(
+                    "MLS Commit processing failed: {error}; conversation state quarantined"
+                ));
+            }
+            Err(_) => {
+                self.quarantine_conversation(&conversation_id);
+                return Err("MLS Commit processing failed; conversation state quarantined".into());
+            }
+        };
+
+        let authenticated_commit = (|| -> Result<_, String> {
+            if processed.aad() != conversation_aad(&conversation_id)
+                || processed.group_id().as_slice() != expected_group_id.as_slice()
+                || processed.epoch().as_u64().checked_add(1) != Some(expected_epoch)
+            {
+                return Err("MLS Commit security binding is invalid".into());
+            }
+            let sender_scope = validate_member_credential(processed.credential(), &scope)?;
+            if sender_scope.split('/').nth(2) != Some(peer_account_id.as_str())
+                || sender_scope.rsplit('/').next() != Some(sender_device_id.as_str())
+            {
+                return Err("MLS Commit sender binding is invalid".into());
+            }
+            let staged = match processed.into_content() {
+                ProcessedMessageContent::StagedCommitMessage(staged) => staged,
+                _ => return Err("MLS message is not a Commit".into()),
+            };
+            if staged.epoch().as_u64() != expected_epoch
+                || staged.self_removed()
+                || staged.queued_proposals().next().is_some()
+            {
+                return Err(
+                    "MLS direct-session Commit contains an unsupported membership or proposal change"
+                        .into(),
+                );
+            }
+            let update_scope = staged
+                .update_path_leaf_node()
+                .ok_or_else(|| "MLS Commit update path is missing".to_string())
+                .and_then(|leaf| validate_member_credential(leaf.credential(), &scope))?;
+            if update_scope != sender_scope {
+                return Err("MLS Commit update identity is invalid".into());
+            }
+            Ok(staged)
+        })();
+
+        let staged = match authenticated_commit {
+            Ok(staged) => staged,
+            Err(error) => {
+                self.quarantine_conversation(&conversation_id);
+                return Err(format!("{error}; conversation state quarantined"));
+            }
+        };
+
+        let merged = (|| -> Result<ExportedGroupState, String> {
+            let group = self
+                .groups
+                .get_mut(&conversation_id)
+                .ok_or_else(|| "MLS conversation group is missing".to_string())?;
+            group
+                .merge_staged_commit(&self.provider, *staged)
+                .map_err(|error| format!("MLS Commit merge failed: {error}"))?;
+            let updated_member_scopes = group_member_scopes(group, &scope)?;
+            if updated_member_scopes != current_member_scopes
+                || group.group_id().as_slice() != expected_group_id.as_slice()
+                || group.epoch().as_u64() != expected_epoch
+            {
+                return Err(
+                    "MLS Commit changed the direct-session membership or security binding".into(),
+                );
+            }
+            require_direct_peer_binding(group, &scope, &peer_account_id)?;
+            Ok(export_group_state(&conversation_id, group))
+        })();
+        let merged = match merged {
+            Ok(merged) => merged,
+            Err(error) => {
+                self.quarantine_conversation(&conversation_id);
+                return Err(format!("{error}; conversation state quarantined"));
+            }
+        };
+        self.transport_cursors.insert(conversation_id, sequence);
+        Ok(merged)
+    }
+
     pub fn receive_transport_application(
         &mut self,
         raw_scope: &str,
@@ -1875,6 +2032,17 @@ impl MlsKernel {
             .map(|key| key.as_slice())
             .ok_or_else(|| "MLS persistence key is not configured".to_string())
     }
+
+    fn quarantine_conversation(&mut self, conversation_id: &str) {
+        self.groups.remove(conversation_id);
+        self.pending_invitations.remove(conversation_id);
+        self.transport_cursors.remove(conversation_id);
+        self.conversation_routes.remove(conversation_id);
+        self.pending_applications
+            .retain(|_, pending| pending.conversation_id != conversation_id);
+        self.pending_received_applications
+            .retain(|_, pending| pending.conversation_id != conversation_id);
+    }
 }
 
 fn export_group_state(conversation_id: &str, group: &MlsGroup) -> ExportedGroupState {
@@ -1924,6 +2092,13 @@ fn require_direct_peer_binding(
         return Err("MLS direct group peer binding is invalid".into());
     }
     Ok(())
+}
+
+fn group_member_scopes(group: &MlsGroup, local_scope: &str) -> Result<HashSet<String>, String> {
+    group
+        .members()
+        .map(|member| validate_member_credential(&member.credential, local_scope))
+        .collect()
 }
 
 fn validate_conversation_id(raw: &str) -> Result<String, String> {
@@ -2050,7 +2225,68 @@ fn validate_application_event_id(raw: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openmls::prelude::{tls_codec::Deserialize, KeyPackageIn, ProtocolVersion};
+    use openmls::prelude::{
+        tls_codec::Deserialize, KeyPackageIn, LeafNodeParameters, ProtocolVersion,
+    };
+
+    fn established_direct_group() -> (
+        MlsKernel,
+        MlsKernel,
+        &'static str,
+        &'static str,
+        &'static str,
+        String,
+    ) {
+        let alice_scope = "server-a/org-a/alice/alice-device";
+        let bob_scope = "server-a/org-a/bob/bob-device";
+        let conversation = "conversation-a";
+        let mut alice = MlsKernel::default();
+        let mut bob = MlsKernel::default();
+        alice.initialize(alice_scope).unwrap();
+        bob.initialize(bob_scope).unwrap();
+        let bob_key_package = bob.create_key_package(bob_scope).unwrap();
+        alice.create_group(alice_scope, conversation).unwrap();
+        let invitation = alice
+            .add_member(alice_scope, conversation, &bob_key_package.key_package)
+            .unwrap();
+        let committed = alice
+            .merge_pending_commit(alice_scope, conversation, "bob")
+            .unwrap();
+        bob.join_group(
+            bob_scope,
+            conversation,
+            "alice",
+            &bob_key_package.reference,
+            &committed.group_id,
+            &invitation.welcome,
+        )
+        .unwrap();
+        (
+            alice,
+            bob,
+            alice_scope,
+            bob_scope,
+            conversation,
+            committed.group_id,
+        )
+    }
+
+    fn create_self_update_commit(kernel: &mut MlsKernel, conversation: &str) -> String {
+        let identity = kernel.identity.as_ref().unwrap();
+        let group = kernel.groups.get_mut(conversation).unwrap();
+        group.set_aad(conversation_aad(conversation));
+        let commit = group
+            .self_update(
+                &kernel.provider,
+                &identity.signer,
+                LeafNodeParameters::default(),
+            )
+            .unwrap()
+            .into_commit();
+        let encoded = BASE64.encode(commit.to_bytes().unwrap());
+        group.merge_pending_commit(&kernel.provider).unwrap();
+        encoded
+    }
 
     #[test]
     fn another_device_scope_requires_an_explicit_reset() {
@@ -2184,6 +2420,205 @@ mod tests {
             .decrypt_application(bob_scope, conversation, &encrypted.ciphertext)
             .unwrap_err()
             .contains("group is missing"));
+    }
+
+    #[test]
+    fn remote_update_commit_atomically_advances_epoch_cursor_and_persisted_state() {
+        let state_key = BASE64.encode([11u8; 32]);
+        let (mut alice, mut bob, alice_scope, bob_scope, conversation, group_id) =
+            established_direct_group();
+        bob.configure_persistence(bob_scope, &state_key).unwrap();
+        let commit = create_self_update_commit(&mut alice, conversation);
+
+        let updated = bob
+            .receive_transport_commit(
+                bob_scope,
+                conversation,
+                "alice",
+                &commit,
+                9,
+                &group_id,
+                2,
+                "alice-device",
+            )
+            .unwrap();
+        assert_eq!(updated.epoch, 2);
+        assert_eq!(updated.member_count, 2);
+        assert_eq!(bob.transport_cursor(bob_scope, conversation).unwrap(), 9);
+        assert!(bob
+            .receive_transport_commit(
+                bob_scope,
+                conversation,
+                "alice",
+                &commit,
+                9,
+                &group_id,
+                2,
+                "alice-device",
+            )
+            .unwrap_err()
+            .contains("already processed"));
+
+        let snapshot = bob.export_encrypted_state(bob_scope).unwrap();
+        let mut restored = MlsKernel::default();
+        restored
+            .configure_persistence(bob_scope, &state_key)
+            .unwrap();
+        restored
+            .restore_encrypted_state(bob_scope, &snapshot)
+            .unwrap();
+        let restored_group = restored
+            .inspect_group(bob_scope, conversation)
+            .unwrap()
+            .unwrap();
+        assert_eq!(restored_group.epoch, 2);
+        assert_eq!(
+            restored.transport_cursor(bob_scope, conversation).unwrap(),
+            9
+        );
+
+        let encrypted = alice
+            .encrypt_application(alice_scope, conversation, b"after remote commit")
+            .unwrap();
+        let received = restored
+            .receive_transport_application(
+                bob_scope,
+                conversation,
+                "alice",
+                &format!("mls-{}", "9".repeat(64)),
+                &encrypted.ciphertext,
+                10,
+                &group_id,
+                2,
+                "alice-device",
+                "2026-08-03T00:00:00.000Z",
+            )
+            .unwrap();
+        assert_eq!(
+            BASE64.decode(received.plaintext).unwrap(),
+            b"after remote commit"
+        );
+    }
+
+    #[test]
+    fn remote_commit_tampering_quarantines_without_advancing_cursor() {
+        let (mut alice, mut bob, _, bob_scope, conversation, group_id) = established_direct_group();
+        let commit = create_self_update_commit(&mut alice, conversation);
+        let mut tampered = BASE64.decode(commit).unwrap();
+        *tampered.last_mut().unwrap() ^= 1;
+
+        let error = bob
+            .receive_transport_commit(
+                bob_scope,
+                conversation,
+                "alice",
+                &BASE64.encode(tampered),
+                1,
+                &group_id,
+                2,
+                "alice-device",
+            )
+            .unwrap_err();
+        assert!(error.contains("quarantined"));
+        assert!(bob
+            .inspect_group(bob_scope, conversation)
+            .unwrap()
+            .is_none());
+        assert_eq!(bob.transport_cursor(bob_scope, conversation).unwrap(), 0);
+    }
+
+    #[test]
+    fn remote_commit_rejects_a_substituted_sender_device() {
+        let (mut alice, mut bob, _, bob_scope, conversation, group_id) = established_direct_group();
+        let commit = create_self_update_commit(&mut alice, conversation);
+
+        let error = bob
+            .receive_transport_commit(
+                bob_scope,
+                conversation,
+                "alice",
+                &commit,
+                1,
+                &group_id,
+                2,
+                "substituted-device",
+            )
+            .unwrap_err();
+        assert!(error.contains("sender binding is invalid"));
+        assert!(error.contains("quarantined"));
+        assert!(bob
+            .inspect_group(bob_scope, conversation)
+            .unwrap()
+            .is_none());
+        assert_eq!(bob.transport_cursor(bob_scope, conversation).unwrap(), 0);
+    }
+
+    #[test]
+    fn remote_commit_quarantines_direct_session_membership_changes() {
+        let (mut alice, mut bob, alice_scope, bob_scope, conversation, group_id) =
+            established_direct_group();
+        let bob_state_key = BASE64.encode([13u8; 32]);
+        bob.configure_persistence(bob_scope, &bob_state_key)
+            .unwrap();
+        bob.encrypt_transport_application(
+            bob_scope,
+            conversation,
+            "alice",
+            b"must be removed with quarantined state",
+        )
+        .unwrap();
+        let charlie_scope = "server-a/org-a/charlie/charlie-device";
+        let mut charlie = MlsKernel::default();
+        charlie.initialize(charlie_scope).unwrap();
+        let charlie_key_package = charlie.create_key_package(charlie_scope).unwrap();
+        alice
+            .groups
+            .get_mut(conversation)
+            .unwrap()
+            .set_aad(conversation_aad(conversation));
+        let invitation = alice
+            .add_member(alice_scope, conversation, &charlie_key_package.key_package)
+            .unwrap();
+
+        let error = bob
+            .receive_transport_commit(
+                bob_scope,
+                conversation,
+                "alice",
+                &invitation.commit,
+                1,
+                &group_id,
+                2,
+                "alice-device",
+            )
+            .unwrap_err();
+        assert!(error.contains("unsupported membership or proposal change"));
+        assert!(error.contains("quarantined"));
+        assert!(bob
+            .inspect_group(bob_scope, conversation)
+            .unwrap()
+            .is_none());
+        assert!(bob
+            .list_pending_application_peers(bob_scope)
+            .unwrap()
+            .is_empty());
+
+        let snapshot = bob.export_encrypted_state(bob_scope).unwrap();
+        let mut restored = MlsKernel::default();
+        restored
+            .configure_persistence(bob_scope, &bob_state_key)
+            .unwrap();
+        restored
+            .restore_encrypted_state(bob_scope, &snapshot)
+            .unwrap();
+        assert!(restored
+            .inspect_group(bob_scope, conversation)
+            .unwrap()
+            .is_none());
+        assert!(restored
+            .list_pending_application_peers(bob_scope)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

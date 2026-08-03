@@ -150,6 +150,9 @@ crypto provider in `otto-native`. It creates signed, one-time public MLS 1.0
 KeyPackages and supports an in-memory two-device flow for group creation,
 Welcome joining, pending-commit merge, and authenticated application-message
 encryption/decryption behind a device-and-conversation-scoped JSON-RPC boundary.
+For an established direct session, the native boundary also authenticates and
+merges a peer's proposal-free self-update Commit for the immediately following
+epoch.
 Tests reject replayed and tampered ciphertext, mismatched group bindings, and
 sends attempted while a member commit is pending. Private signature, HPKE, and
 epoch material never enters the TypeScript response.
@@ -162,7 +165,8 @@ storage wrapper such as Electron `safeStorage`. The adapter writes only the
 OS-protected key and authenticated ciphertext, atomically replaces ratchet
 state after each mutation, and locks the kernel after a persistence failure.
 Tests cover two-device message continuity, pending member commits, wrong keys,
-invalid manifests, and protected-key preservation across snapshot updates.
+invalid manifests, protected-key preservation across snapshot updates, and a
+remote Commit plus cursor surviving the same restart boundary.
 
 The desktop main process now owns an `EnterpriseMlsSessionManager` that binds
 the native scope to server, organization, account, and approved device IDs. Its
@@ -208,6 +212,19 @@ an acknowledgement persistence failure safely causes at-least-once
 re-delivery. Inbox item and byte limits fail closed before decryption. A cursor
 never moves backwards. Events for another local device are skipped without
 attempting to consume that device's Welcome material.
+
+For an established direct session, a remote self-update Commit is parsed,
+authenticated, merged, and cursor-advanced by one native operation before the
+resulting encrypted snapshot is replaced. The Commit must bind the current
+group, exact next epoch, peer account and sender device, retain the exact member
+set, include an authenticated update path, and contain no queued proposals.
+Replay, epoch skips, tampering, Add/Remove, identity replacement, and other
+membership changes fail closed; authenticated-but-unsupported changes and
+OpenMLS panic paths quarantine the conversation until an explicit security
+reset. The native client persists that quarantined state even though the RPC
+returns an error, so restart cannot resurrect the rejected ratchet or its
+pending records. This is epoch update plumbing only and is not a claim of
+message-level forward secrecy, Double Ratchet, or post-compromise security.
 
 The server now exposes an inactive `e2ee_mls_transport_v1` foundation in both
 SQLite development mode and the PostgreSQL clustered authority. It publishes
@@ -283,16 +300,19 @@ backoff. It may prefetch application plaintext only into the authenticated
 encrypted native inbox; it never acknowledges or discards those records. The
 future production chat integration must durably insert each returned message
 and then call the explicit inbox acknowledgement. Polling a later unsupported
-remote member Commit still fails closed and requires a security-state reset.
+membership-changing remote Commit still fails closed and requires a
+security-state reset; proposal-free peer self-update Commits advance the epoch
+through the atomic native path described above.
 
 This is still not the active chat protocol. No production server advertises
 `e2ee_mls_v1`. If a server does advertise that capability, the desktop refuses
 to read or send through the legacy envelope instead of silently downgrading.
 The initial handshake, polling, durable inbox and outbox coordinator are not yet
 connected to the production chat composer or history writer. Processing later
-remote member Commits, wiring durable inbox delivery/acknowledgement into chat,
-multi-device fan-out, user-visible safety-state reset, state recovery policy,
-multi-platform native packaging, and external review are still required. The
-release gate therefore keeps `desktopTransportSessionOrchestration` false.
+membership-changing Commits, wiring durable inbox delivery/acknowledgement into
+chat, multi-device fan-out, user-visible safety-state reset, state recovery
+policy, multi-platform native packaging, and external review are still
+required. The release gate therefore keeps
+`desktopTransportSessionOrchestration` false.
 Until those controls and an external audit pass the release gate, the
 production status remains `device-envelope-v1`.

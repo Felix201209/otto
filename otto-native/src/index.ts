@@ -1087,6 +1087,58 @@ export class OpenMlsNativeKernel {
     await this.persistState();
   }
 
+  async receiveTransportCommit(
+    conversationId: string,
+    peerAccountId: string,
+    commit: string,
+    sequence: number,
+    expectedGroupId: string,
+    expectedEpoch: number,
+    senderDeviceId: string,
+  ): Promise<MlsGroupState> {
+    await this.init();
+    const conversation = mlsConversationId(conversationId);
+    const peer = peerAccountId.trim();
+    if (
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(peer) ||
+      peer === this.scope.split('/')[2] ||
+      !isBase64(commit) ||
+      commit.length > 2 * 1024 * 1024 ||
+      !Number.isSafeInteger(sequence) ||
+      sequence < 1 ||
+      !isBase64(expectedGroupId) ||
+      !Number.isSafeInteger(expectedEpoch) ||
+      expectedEpoch < 1 ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(senderDeviceId)
+    ) {
+      throw new Error('MLS transport Commit parameters are invalid');
+    }
+    let result: unknown;
+    try {
+      result = await this.native.call('mls.commit.receive', {
+        device_scope: this.scope,
+        conversation_id: conversation,
+        peer_account_id: peer,
+        commit,
+        sequence,
+        expected_group_id: expectedGroupId,
+        expected_epoch: expectedEpoch,
+        sender_device_id: senderDeviceId,
+      });
+    } catch (error) {
+      // Authentication or policy failures can quarantine the conversation in
+      // native state. Persist that fail-closed transition before surfacing the
+      // error so a restart cannot resurrect the rejected ratchet.
+      await this.persistState();
+      throw error;
+    }
+    // The native operation advances both the MLS epoch and transport cursor;
+    // persisting once here makes that transition crash-resumable as one
+    // authenticated snapshot.
+    await this.persistState();
+    return validateGroupState(result, conversation);
+  }
+
   async listConversationPeers(): Promise<string[]> {
     await this.init();
     const result = await this.native.call('mls.conversation.list_peers', {

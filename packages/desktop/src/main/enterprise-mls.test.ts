@@ -127,6 +127,11 @@ function fakeKernel() {
     acknowledgePendingApplication: vi.fn(async () => undefined),
     transportCursor: vi.fn(async () => 0),
     acknowledgeTransportEvent: vi.fn(async () => undefined),
+    receiveTransportCommit: vi.fn(async (conversationId: string) => ({
+      ...groupState,
+      conversation_id: conversationId,
+      epoch: 2,
+    })),
     receiveTransportApplication: vi.fn(
       async (
         conversationId: string,
@@ -504,6 +509,10 @@ function coordinatorHarness(keyPackages: MlsKeyPackage[] = []) {
     acknowledgePendingApplication: vi.fn(async () => undefined),
     transportCursor: vi.fn(async () => 0),
     advanceTransportCursor: vi.fn(async () => undefined),
+    receiveTransportCommit: vi.fn(async () => ({
+      ...group,
+      epoch: group.epoch + 1,
+    })),
     receiveTransportApplication: vi.fn(
       async (
         _peerAccountId: string,
@@ -927,6 +936,65 @@ describe('EnterpriseMlsSessionCoordinator', () => {
         },
       ],
     });
+  });
+
+  it('processes a later remote Commit through the native atomic epoch transition', async () => {
+    const { group, sessions, transport } = coordinatorHarness();
+    sessions.transportCursor.mockResolvedValue(7);
+    sessions.inspectGroup.mockResolvedValue({
+      ...group,
+      pending_commit: false,
+      pending_invitation: null,
+    });
+    const commit = transportEvent({
+      sequence: 8,
+      eventId: `mls-${'8'.repeat(64)}`,
+      epoch: 2,
+      payload: 'dXBkYXRlLWNvbW1pdA==',
+    });
+    transport.listMlsTransportEvents.mockResolvedValue([commit]);
+    const coordinator = new EnterpriseMlsSessionCoordinator(
+      sessions,
+      transport,
+    );
+
+    await expect(coordinator.poll('account-b')).resolves.toMatchObject({
+      previousSequence: 7,
+      nextSequence: 8,
+      processedEvents: 1,
+      messages: [],
+    });
+    expect(sessions.receiveTransportCommit).toHaveBeenCalledWith(
+      'account-b',
+      commit.payload,
+      commit.sequence,
+      commit.groupId,
+      commit.epoch,
+      commit.senderDeviceId,
+    );
+    expect(sessions.advanceTransportCursor).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a remote Commit skips an epoch', async () => {
+    const { group, sessions, transport } = coordinatorHarness();
+    sessions.inspectGroup.mockResolvedValue({
+      ...group,
+      pending_commit: false,
+      pending_invitation: null,
+    });
+    transport.listMlsTransportEvents.mockResolvedValue([
+      transportEvent({ sequence: 2, epoch: 3 }),
+    ]);
+    const coordinator = new EnterpriseMlsSessionCoordinator(
+      sessions,
+      transport,
+    );
+
+    await expect(coordinator.poll('account-b')).rejects.toThrow(
+      'does not advance the next epoch',
+    );
+    expect(sessions.receiveTransportCommit).not.toHaveBeenCalled();
+    expect(sessions.advanceTransportCursor).not.toHaveBeenCalled();
   });
 
   it('re-delivers the encrypted native inbox until the consumer acknowledges it', async () => {

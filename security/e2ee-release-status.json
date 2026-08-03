@@ -8,6 +8,7 @@
     "desktopTransportSessionOrchestration": false,
     "desktopInitialSessionOrchestration": true,
     "crashSafeInitialHandshakeRecovery": true,
+    "crashSafeRemoteCommitProcessing": true,
     "durableTransportCursor": true,
     "durableApplicationOutbox": true,
     "backgroundOutboxRetry": true,

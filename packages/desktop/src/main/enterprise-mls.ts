@@ -186,6 +186,15 @@ export interface EnterpriseMlsKernel {
     conversationId: string,
     sequence: number,
   ): Promise<void>;
+  receiveTransportCommit(
+    conversationId: string,
+    peerAccountId: string,
+    commit: string,
+    sequence: number,
+    expectedGroupId: string,
+    expectedEpoch: number,
+    senderDeviceId: string,
+  ): Promise<MlsGroupState>;
   reset(): Promise<void>;
   close(): Promise<void>;
 }
@@ -692,6 +701,27 @@ export class EnterpriseMlsSessionManager {
     );
   }
 
+  receiveTransportCommit(
+    peerAccountId: string,
+    commit: string,
+    sequence: number,
+    expectedGroupId: string,
+    expectedEpoch: number,
+    senderDeviceId: string,
+  ): Promise<MlsGroupState> {
+    return this.withReadyKernel((active) =>
+      active.kernel.receiveTransportCommit(
+        this.conversationId(active, peerAccountId),
+        peerAccountId,
+        commit,
+        sequence,
+        expectedGroupId,
+        expectedEpoch,
+        senderDeviceId,
+      ),
+    );
+  }
+
   receiveTransportApplication(
     peerAccountId: string,
     eventId: string,
@@ -823,6 +853,14 @@ export interface EnterpriseMlsSessionOperations {
     peerAccountId: string,
     sequence: number,
   ): Promise<void>;
+  receiveTransportCommit(
+    peerAccountId: string,
+    commit: string,
+    sequence: number,
+    expectedGroupId: string,
+    expectedEpoch: number,
+    senderDeviceId: string,
+  ): Promise<MlsGroupState>;
   receiveTransportApplication(
     peerAccountId: string,
     eventId: string,
@@ -1088,23 +1126,40 @@ export class EnterpriseMlsSessionCoordinator {
           if (!ownEvent && !group && event.epoch !== 1) {
             throw new Error('initial remote MLS Commit must use epoch one');
           }
-          if (
-            !ownEvent &&
-            group &&
-            !(
-              !group.pending_commit &&
-              group.group_id === event.groupId &&
-              group.epoch >= event.epoch
-            )
-          ) {
-            throw new Error(
-              'remote MLS Commit processing is not implemented; security state reset is required',
+          if (!ownEvent && group) {
+            if (group.pending_commit || group.group_id !== event.groupId) {
+              throw new Error(
+                'remote MLS Commit does not match active group state',
+              );
+            }
+            if (event.epoch !== group.epoch + 1) {
+              throw new Error(
+                'remote MLS Commit does not advance the next epoch',
+              );
+            }
+            const updated = await this.sessions.receiveTransportCommit(
+              peerAccountId,
+              event.payload,
+              event.sequence,
+              event.groupId,
+              event.epoch,
+              event.senderDeviceId,
+            );
+            if (
+              updated.group_id !== event.groupId ||
+              updated.epoch !== event.epoch ||
+              updated.member_count !== group.member_count
+            ) {
+              throw new Error(
+                'remote MLS Commit result does not match transport bindings',
+              );
+            }
+          } else {
+            await this.sessions.advanceTransportCursor(
+              peerAccountId,
+              event.sequence,
             );
           }
-          await this.sessions.advanceTransportCursor(
-            peerAccountId,
-            event.sequence,
-          );
         } else if (event.eventType === 'welcome') {
           await this.processWelcome(peerAccountId, event, scope, ownEvent);
           await this.sessions.advanceTransportCursor(

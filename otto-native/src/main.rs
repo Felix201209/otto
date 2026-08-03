@@ -634,6 +634,38 @@ fn handle_request(
                 )?
             }))
         }
+        "mls.commit.receive" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            let conversation = p["conversation_id"]
+                .as_str()
+                .ok_or("Missing conversation_id")?;
+            let peer_account_id = p["peer_account_id"]
+                .as_str()
+                .ok_or("Missing peer_account_id")?;
+            let commit = p["commit"].as_str().ok_or("Missing commit")?;
+            let sequence = p["sequence"].as_u64().ok_or("Missing sequence")?;
+            let expected_group_id = p["expected_group_id"]
+                .as_str()
+                .ok_or("Missing expected_group_id")?;
+            let expected_epoch = p["expected_epoch"]
+                .as_u64()
+                .ok_or("Missing expected_epoch")?;
+            let sender_device_id = p["sender_device_id"]
+                .as_str()
+                .ok_or("Missing sender_device_id")?;
+            serde_json::to_value(mls_kernel.receive_transport_commit(
+                scope,
+                conversation,
+                peer_account_id,
+                commit,
+                sequence,
+                expected_group_id,
+                expected_epoch,
+                sender_device_id,
+            )?)
+            .map_err(|error| format!("MLS response serialization failed: {error}"))
+        }
         "mls.group.join" => {
             let p = params.ok_or("Missing params")?;
             let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
