@@ -385,11 +385,17 @@ export interface MlsDecryptedApplication {
   plaintext: Uint8Array;
 }
 
-export interface MlsPendingReceivedApplication extends MlsDecryptedApplication {
+export interface MlsStagedReceivedApplication
+  extends Omit<MlsDecryptedApplication, 'plaintext'> {
   eventId: string;
   peerAccountId: string;
   sequence: number;
   createdAt: string;
+}
+
+export interface MlsPendingReceivedApplication
+  extends MlsStagedReceivedApplication {
+  plaintext: Uint8Array;
 }
 
 export interface MlsStatePersistence {
@@ -697,6 +703,58 @@ function validatePendingReceivedApplication(
     epoch: received.epoch as number,
     senderDeviceScope: received.sender_device_scope,
     plaintext: new Uint8Array(plaintext),
+    createdAt: received.created_at,
+  };
+}
+
+function validateStagedReceivedApplication(
+  result: unknown,
+  conversationId: string,
+  peerAccountId: string,
+): MlsStagedReceivedApplication {
+  const received = result as {
+    protocol?: unknown;
+    event_id?: unknown;
+    conversation_id?: unknown;
+    peer_account_id?: unknown;
+    sequence?: unknown;
+    group_id?: unknown;
+    epoch?: unknown;
+    sender_device_scope?: unknown;
+    plaintext?: unknown;
+    created_at?: unknown;
+  };
+  if (
+    received.protocol !== 'mls10-openmls-0.8' ||
+    received.conversation_id !== conversationId ||
+    received.peer_account_id !== peerAccountId ||
+    typeof received.event_id !== 'string' ||
+    !/^mls-[0-9a-f]{64}$/.test(received.event_id) ||
+    !Number.isSafeInteger(received.sequence) ||
+    (received.sequence as number) < 1 ||
+    !isBase64(received.group_id) ||
+    !Number.isSafeInteger(received.epoch) ||
+    (received.epoch as number) < 0 ||
+    typeof received.sender_device_scope !== 'string' ||
+    !/^[^/\s]+\/[^/\s]+\/[^/\s]+\/[^/\s]+$/.test(
+      received.sender_device_scope,
+    ) ||
+    Object.prototype.hasOwnProperty.call(received, 'plaintext') ||
+    typeof received.created_at !== 'string' ||
+    received.created_at.length < 1 ||
+    received.created_at.length > 100
+  ) {
+    throw new Error('native MLS staged inbox response is invalid');
+  }
+  return {
+    protocol: 'mls10-openmls-0.8',
+    eventId: received.event_id,
+    conversationId,
+    peerAccountId,
+    sequence: received.sequence as number,
+    groupId: received.group_id as string,
+    epoch: received.epoch as number,
+    senderDeviceScope: received.sender_device_scope,
     createdAt: received.created_at,
   };
 }
@@ -1237,6 +1295,55 @@ export class OpenMlsNativeKernel {
     });
     await this.persistState();
     return validatePendingReceivedApplication(result, conversation, peer);
+  }
+
+  /** Background-only receive path whose native response must omit plaintext. */
+  async stageTransportApplication(
+    conversationId: string,
+    peerAccountId: string,
+    eventId: string,
+    ciphertext: string,
+    sequence: number,
+    expectedGroupId: string,
+    expectedEpoch: number,
+    senderDeviceId: string,
+    createdAt: string,
+  ): Promise<MlsStagedReceivedApplication> {
+    await this.init();
+    const conversation = mlsConversationId(conversationId);
+    const peer = peerAccountId.trim();
+    if (
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(peer) ||
+      peer === this.scope.split('/')[2] ||
+      !/^mls-[0-9a-f]{64}$/.test(eventId) ||
+      !isBase64(ciphertext) ||
+      ciphertext.length > 2 * 1024 * 1024 ||
+      !Number.isSafeInteger(sequence) ||
+      sequence < 1 ||
+      !isBase64(expectedGroupId) ||
+      !Number.isSafeInteger(expectedEpoch) ||
+      expectedEpoch < 0 ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(senderDeviceId) ||
+      typeof createdAt !== 'string' ||
+      createdAt.length < 1 ||
+      createdAt.length > 100
+    ) {
+      throw new Error('MLS transport application parameters are invalid');
+    }
+    const result = await this.native.call('mls.application.inbox.stage', {
+      device_scope: this.scope,
+      conversation_id: conversation,
+      peer_account_id: peer,
+      event_id: eventId,
+      ciphertext,
+      sequence,
+      expected_group_id: expectedGroupId,
+      expected_epoch: expectedEpoch,
+      sender_device_id: senderDeviceId,
+      created_at: createdAt,
+    });
+    await this.persistState();
+    return validateStagedReceivedApplication(result, conversation, peer);
   }
 
   async listPendingReceivedApplications(

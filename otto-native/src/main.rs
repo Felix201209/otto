@@ -205,27 +205,55 @@ mod tests {
         );
         assert_eq!(pending.as_array().unwrap().len(), 1);
         assert_eq!(pending[0]["event_id"], encrypted["event_id"]);
-        let decrypted = call_mls(
+        let stage_params = serde_json::json!({
+            "device_scope": bob_scope,
+            "conversation_id": conversation,
+            "peer_account_id": "alice",
+            "event_id": encrypted["event_id"],
+            "ciphertext": encrypted["ciphertext"],
+            "sequence": 1,
+            "expected_group_id": committed["group_id"],
+            "expected_epoch": committed["epoch"],
+            "sender_device_id": "alice-device",
+            "created_at": "2026-08-02T00:00:00.000Z"
+        });
+        let staged = call_mls(
             Request {
                 id: None,
-                method: "mls.application.inbox.receive".into(),
+                method: "mls.application.inbox.stage".into(),
+                params: Some(stage_params.clone()),
+            },
+            &mut bob,
+        );
+        assert!(staged.get("plaintext").is_none());
+        assert_eq!(staged["event_id"], encrypted["event_id"]);
+        let staged_again = call_mls(
+            Request {
+                id: None,
+                method: "mls.application.inbox.stage".into(),
+                params: Some(stage_params),
+            },
+            &mut bob,
+        );
+        assert!(staged_again.get("plaintext").is_none());
+        assert_eq!(staged_again, staged);
+        let received = call_mls(
+            Request {
+                id: None,
+                method: "mls.application.inbox.list".into(),
                 params: Some(serde_json::json!({
                     "device_scope": bob_scope,
                     "conversation_id": conversation,
-                    "peer_account_id": "alice",
-                    "event_id": encrypted["event_id"],
-                    "ciphertext": encrypted["ciphertext"],
-                    "sequence": 1,
-                    "expected_group_id": committed["group_id"],
-                    "expected_epoch": committed["epoch"],
-                    "sender_device_id": "alice-device",
-                    "created_at": "2026-08-02T00:00:00.000Z"
+                    "peer_account_id": "alice"
                 })),
             },
             &mut bob,
         );
+        assert_eq!(received.as_array().unwrap().len(), 1);
         assert_eq!(
-            BASE64.decode(decrypted["plaintext"].as_str().unwrap()).unwrap(),
+            BASE64
+                .decode(received[0]["plaintext"].as_str().unwrap())
+                .unwrap(),
             b"hello over rpc"
         );
         call_mls(
@@ -792,12 +820,48 @@ fn handle_request(
             let group_id = p["expected_group_id"]
                 .as_str()
                 .ok_or("Missing expected_group_id")?;
-            let epoch = p["expected_epoch"].as_u64().ok_or("Missing expected_epoch")?;
+            let epoch = p["expected_epoch"]
+                .as_u64()
+                .ok_or("Missing expected_epoch")?;
             let sender_device_id = p["sender_device_id"]
                 .as_str()
                 .ok_or("Missing sender_device_id")?;
             let created_at = p["created_at"].as_str().ok_or("Missing created_at")?;
             serde_json::to_value(mls_kernel.receive_transport_application(
+                scope,
+                conversation,
+                peer_account_id,
+                event_id,
+                ciphertext,
+                sequence,
+                group_id,
+                epoch,
+                sender_device_id,
+                created_at,
+            )?)
+            .map_err(|error| format!("MLS response serialization failed: {error}"))
+        }
+        "mls.application.inbox.stage" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            let conversation = p["conversation_id"]
+                .as_str()
+                .ok_or("Missing conversation_id")?;
+            let peer_account_id = p["peer_account_id"]
+                .as_str()
+                .ok_or("Missing peer_account_id")?;
+            let event_id = p["event_id"].as_str().ok_or("Missing event_id")?;
+            let ciphertext = p["ciphertext"].as_str().ok_or("Missing ciphertext")?;
+            let sequence = p["sequence"].as_u64().ok_or("Missing sequence")?;
+            let group_id = p["expected_group_id"]
+                .as_str()
+                .ok_or("Missing expected_group_id")?;
+            let epoch = p["expected_epoch"].as_u64().ok_or("Missing expected_epoch")?;
+            let sender_device_id = p["sender_device_id"]
+                .as_str()
+                .ok_or("Missing sender_device_id")?;
+            let created_at = p["created_at"].as_str().ok_or("Missing created_at")?;
+            serde_json::to_value(mls_kernel.stage_transport_application(
                 scope,
                 conversation,
                 peer_account_id,

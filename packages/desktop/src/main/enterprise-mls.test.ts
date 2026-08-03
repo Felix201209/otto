@@ -156,6 +156,29 @@ function fakeKernel() {
         createdAt,
       }),
     ),
+    stageTransportApplication: vi.fn(
+      async (
+        conversationId: string,
+        peerAccountId: string,
+        eventId: string,
+        _ciphertext: string,
+        sequence: number,
+        _expectedGroupId: string,
+        _expectedEpoch: number,
+        _senderDeviceId: string,
+        createdAt: string,
+      ) => ({
+        protocol: 'mls10-openmls-0.8' as const,
+        eventId,
+        conversationId,
+        peerAccountId,
+        sequence,
+        groupId: 'Z3JvdXA=',
+        epoch: 1,
+        senderDeviceScope: 'server/org-a/account-b/device-b',
+        createdAt,
+      }),
+    ),
     listPendingReceivedApplications: vi.fn(
       async (): Promise<MlsPendingReceivedApplication[]> => [],
     ),
@@ -363,6 +386,16 @@ describe('EnterpriseMlsSessionManager', () => {
       'device-b',
       '2026-08-02T00:02:00.000Z',
     );
+    await manager.stageTransportApplication(
+      'account-b',
+      `mls-${'c'.repeat(64)}`,
+      'Y2lwaGVydGV4dA==',
+      6,
+      'Z3JvdXA=',
+      1,
+      'device-b',
+      '2026-08-02T00:03:00.000Z',
+    );
     await manager.listPendingReceivedApplications('account-b');
     await manager.acknowledgeReceivedApplication(
       'account-b',
@@ -405,6 +438,17 @@ describe('EnterpriseMlsSessionManager', () => {
       1,
       'device-b',
       '2026-08-02T00:02:00.000Z',
+    );
+    expect(kernel.stageTransportApplication).toHaveBeenCalledWith(
+      conversationId,
+      'account-b',
+      `mls-${'c'.repeat(64)}`,
+      'Y2lwaGVydGV4dA==',
+      6,
+      'Z3JvdXA=',
+      1,
+      'device-b',
+      '2026-08-02T00:03:00.000Z',
     );
     expect(kernel.listPendingReceivedApplications).toHaveBeenCalledWith(
       conversationId,
@@ -575,6 +619,28 @@ function coordinatorHarness(keyPackages: MlsKeyPackage[] = []) {
         epoch: 1,
         senderDeviceScope: `${'f'.repeat(64)}/org-a/account-b/device-b`,
         plaintext: new Uint8Array([7, 8, 9]),
+        createdAt,
+      }),
+    ),
+    stageTransportApplication: vi.fn(
+      async (
+        _peerAccountId: string,
+        eventId: string,
+        _ciphertext: string,
+        sequence: number,
+        _expectedGroupId: string,
+        _expectedEpoch: number,
+        _senderDeviceId: string,
+        createdAt: string,
+      ) => ({
+        protocol: 'mls10-openmls-0.8' as const,
+        eventId,
+        conversationId: group.conversation_id,
+        peerAccountId: 'account-b',
+        sequence,
+        groupId: group.group_id,
+        epoch: 1,
+        senderDeviceScope: `${'f'.repeat(64)}/org-a/account-b/device-b`,
         createdAt,
       }),
     ),
@@ -1075,6 +1141,41 @@ describe('EnterpriseMlsSessionCoordinator', () => {
       'account-b',
       pending.eventId,
     );
+  });
+
+  it('stages background applications without exposing pending plaintext', async () => {
+    const { group, sessions, transport } = coordinatorHarness();
+    sessions.inspectGroup.mockResolvedValue({
+      ...group,
+      pending_commit: false,
+      pending_invitation: null,
+    });
+    const application = transportEvent({
+      sequence: 1,
+      eventId: `mls-${'5'.repeat(64)}`,
+      eventType: 'application',
+      payload: 'Y2lwaGVydGV4dA==',
+    });
+    transport.listMlsTransportEvents.mockResolvedValue([application]);
+    const coordinator = new EnterpriseMlsSessionCoordinator(
+      sessions,
+      transport,
+    );
+
+    await expect(coordinator.pollAllActiveSessions()).resolves.toBe(1);
+
+    expect(sessions.stageTransportApplication).toHaveBeenCalledWith(
+      'account-b',
+      application.eventId,
+      application.payload,
+      application.sequence,
+      application.groupId,
+      application.epoch,
+      application.senderDeviceId,
+      application.createdAt,
+    );
+    expect(sessions.receiveTransportApplication).not.toHaveBeenCalled();
+    expect(sessions.listPendingReceivedApplications).not.toHaveBeenCalled();
   });
 });
 

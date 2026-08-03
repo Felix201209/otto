@@ -109,6 +109,48 @@ pub struct ExportedPendingReceivedApplication {
     pub created_at: String,
 }
 
+#[derive(Clone, Debug, SerdeSerialize)]
+pub struct ExportedStagedReceivedApplication {
+    pub protocol: &'static str,
+    pub event_id: String,
+    pub conversation_id: String,
+    pub peer_account_id: String,
+    pub sequence: u64,
+    pub group_id: String,
+    pub epoch: u64,
+    pub sender_device_scope: String,
+    pub created_at: String,
+}
+
+impl ExportedPendingReceivedApplication {
+    fn into_staged(self) -> ExportedStagedReceivedApplication {
+        let Self {
+            protocol,
+            event_id,
+            conversation_id,
+            peer_account_id,
+            sequence,
+            group_id,
+            epoch,
+            sender_device_scope,
+            mut plaintext,
+            created_at,
+        } = self;
+        plaintext.zeroize();
+        ExportedStagedReceivedApplication {
+            protocol,
+            event_id,
+            conversation_id,
+            peer_account_id,
+            sequence,
+            group_id,
+            epoch,
+            sender_device_scope,
+            created_at,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct DecryptedApplicationMessage {
     pub group_id: String,
@@ -1540,6 +1582,36 @@ impl MlsKernel {
         }
         self.transport_cursors.insert(conversation_id, sequence);
         Ok(exported)
+    }
+
+    /// Store a verified application in the encrypted inbox without returning
+    /// its plaintext across the native RPC boundary.
+    pub fn stage_transport_application(
+        &mut self,
+        raw_scope: &str,
+        raw_conversation_id: &str,
+        raw_peer_account_id: &str,
+        raw_event_id: &str,
+        encoded_ciphertext: &str,
+        sequence: u64,
+        raw_expected_group_id: &str,
+        expected_epoch: u64,
+        raw_sender_device_id: &str,
+        raw_created_at: &str,
+    ) -> Result<ExportedStagedReceivedApplication, String> {
+        self.receive_transport_application(
+            raw_scope,
+            raw_conversation_id,
+            raw_peer_account_id,
+            raw_event_id,
+            encoded_ciphertext,
+            sequence,
+            raw_expected_group_id,
+            expected_epoch,
+            raw_sender_device_id,
+            raw_created_at,
+        )
+        .map(ExportedPendingReceivedApplication::into_staged)
     }
 
     pub fn list_pending_received_applications(

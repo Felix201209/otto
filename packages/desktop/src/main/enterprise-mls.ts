@@ -19,6 +19,7 @@ import {
   type MlsMemberInvitation,
   type MlsPendingApplication,
   type MlsPendingReceivedApplication,
+  type MlsStagedReceivedApplication,
   type MlsStatePersistence,
 } from '@otto/native';
 
@@ -172,6 +173,17 @@ export interface EnterpriseMlsKernel {
     senderDeviceId: string,
     createdAt: string,
   ): Promise<MlsPendingReceivedApplication>;
+  stageTransportApplication(
+    conversationId: string,
+    peerAccountId: string,
+    eventId: string,
+    ciphertext: string,
+    sequence: number,
+    expectedGroupId: string,
+    expectedEpoch: number,
+    senderDeviceId: string,
+    createdAt: string,
+  ): Promise<MlsStagedReceivedApplication>;
   listPendingReceivedApplications(
     conversationId: string,
     peerAccountId: string,
@@ -749,6 +761,31 @@ export class EnterpriseMlsSessionManager {
     );
   }
 
+  stageTransportApplication(
+    peerAccountId: string,
+    eventId: string,
+    ciphertext: string,
+    sequence: number,
+    expectedGroupId: string,
+    expectedEpoch: number,
+    senderDeviceId: string,
+    createdAt: string,
+  ): Promise<MlsStagedReceivedApplication> {
+    return this.withReadyKernel((active) =>
+      active.kernel.stageTransportApplication(
+        this.conversationId(active, peerAccountId),
+        peerAccountId,
+        eventId,
+        ciphertext,
+        sequence,
+        expectedGroupId,
+        expectedEpoch,
+        senderDeviceId,
+        createdAt,
+      ),
+    );
+  }
+
   listPendingReceivedApplications(
     peerAccountId: string,
   ): Promise<MlsPendingReceivedApplication[]> {
@@ -873,6 +910,16 @@ export interface EnterpriseMlsSessionOperations {
     senderDeviceId: string,
     createdAt: string,
   ): Promise<MlsPendingReceivedApplication>;
+  stageTransportApplication(
+    peerAccountId: string,
+    eventId: string,
+    ciphertext: string,
+    sequence: number,
+    expectedGroupId: string,
+    expectedEpoch: number,
+    senderDeviceId: string,
+    createdAt: string,
+  ): Promise<MlsStagedReceivedApplication>;
   listPendingReceivedApplications(
     peerAccountId: string,
   ): Promise<MlsPendingReceivedApplication[]>;
@@ -1098,6 +1145,23 @@ export class EnterpriseMlsSessionCoordinator {
   }
 
   poll(peerAccountId: string, limit = 100): Promise<EnterpriseMlsPollResult> {
+    return this.pollPeer(peerAccountId, limit, true);
+  }
+
+  private pollTransportOnly(
+    peerAccountId: string,
+    limit = 100,
+  ): Promise<EnterpriseMlsPollResult> {
+    // The background scheduler may stage ciphertext but must not materialize
+    // pending inbox plaintext in the Electron main process.
+    return this.pollPeer(peerAccountId, limit, false);
+  }
+
+  private pollPeer(
+    peerAccountId: string,
+    limit: number,
+    exposePendingPlaintext: boolean,
+  ): Promise<EnterpriseMlsPollResult> {
     return this.exclusive(this.peerOperations, peerAccountId, async () => {
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
         throw new Error('MLS poll limit is invalid');
@@ -1106,11 +1170,13 @@ export class EnterpriseMlsSessionCoordinator {
       const previousSequence =
         await this.sessions.transportCursor(peerAccountId);
       let nextSequence = previousSequence;
-      const messages = (
-        await this.sessions.listPendingReceivedApplications(peerAccountId)
-      ).map((pending) =>
-        this.receivedApplicationMessage(peerAccountId, pending),
-      );
+      const messages = exposePendingPlaintext
+        ? (
+            await this.sessions.listPendingReceivedApplications(peerAccountId)
+          ).map((pending) =>
+            this.receivedApplicationMessage(peerAccountId, pending),
+          )
+        : [];
       const events = await this.transport.listMlsTransportEvents(
         peerAccountId,
         previousSequence,
@@ -1185,30 +1251,42 @@ export class EnterpriseMlsSessionCoordinator {
               'MLS application event does not match active group state',
             );
           }
-          const received = await this.sessions.receiveTransportApplication(
-            peerAccountId,
-            event.eventId,
-            event.payload,
-            event.sequence,
-            event.groupId,
-            event.epoch,
-            event.senderDeviceId,
-            event.createdAt,
-          );
-          const message = this.receivedApplicationMessage(
-            peerAccountId,
-            received,
-          );
-          if (
-            received.groupId !== event.groupId ||
-            received.epoch !== event.epoch ||
-            message.senderAccountId !== event.senderAccountId ||
-            message.senderDeviceId !== event.senderDeviceId ||
-            message.createdAt !== event.createdAt
-          ) {
-            throw new Error('MLS application sender binding is invalid');
+          if (exposePendingPlaintext) {
+            const received = await this.sessions.receiveTransportApplication(
+              peerAccountId,
+              event.eventId,
+              event.payload,
+              event.sequence,
+              event.groupId,
+              event.epoch,
+              event.senderDeviceId,
+              event.createdAt,
+            );
+            this.assertReceivedApplicationBinding(
+              peerAccountId,
+              received,
+              event,
+            );
+            messages.push(
+              this.receivedApplicationMessage(peerAccountId, received),
+            );
+          } else {
+            const staged = await this.sessions.stageTransportApplication(
+              peerAccountId,
+              event.eventId,
+              event.payload,
+              event.sequence,
+              event.groupId,
+              event.epoch,
+              event.senderDeviceId,
+              event.createdAt,
+            );
+            this.assertReceivedApplicationBinding(
+              peerAccountId,
+              staged,
+              event,
+            );
           }
-          messages.push(message);
         }
         nextSequence = event.sequence;
       }
@@ -1236,7 +1314,7 @@ export class EnterpriseMlsSessionCoordinator {
     const failures: unknown[] = [];
     for (const peerAccountId of peers) {
       try {
-        processedEvents += (await this.poll(peerAccountId, limit))
+        processedEvents += (await this.pollTransportOnly(peerAccountId, limit))
           .processedEvents;
       } catch (error) {
         failures.push(error);
@@ -1310,22 +1388,50 @@ export class EnterpriseMlsSessionCoordinator {
     peerAccountId: string,
     received: MlsPendingReceivedApplication,
   ): EnterpriseMlsDecryptedTransportMessage {
+    const sender = this.receivedApplicationSender(peerAccountId, received);
+    return {
+      sequence: received.sequence,
+      eventId: received.eventId,
+      senderAccountId: sender.accountId,
+      senderDeviceId: sender.deviceId,
+      plaintext: received.plaintext,
+      createdAt: received.createdAt,
+    };
+  }
+
+  private assertReceivedApplicationBinding(
+    peerAccountId: string,
+    received: MlsStagedReceivedApplication,
+    event: EnterpriseMlsTransportEvent,
+  ): void {
+    const sender = this.receivedApplicationSender(peerAccountId, received);
+    if (
+      received.eventId !== event.eventId ||
+      received.sequence !== event.sequence ||
+      received.groupId !== event.groupId ||
+      received.epoch !== event.epoch ||
+      sender.accountId !== event.senderAccountId ||
+      sender.deviceId !== event.senderDeviceId ||
+      received.createdAt !== event.createdAt
+    ) {
+      throw new Error('MLS application sender binding is invalid');
+    }
+  }
+
+  private receivedApplicationSender(
+    peerAccountId: string,
+    received: MlsStagedReceivedApplication,
+  ): { accountId: string; deviceId: string } {
     const sender = received.senderDeviceScope.split('/');
     if (
       received.peerAccountId !== peerAccountId ||
       sender.length !== 4 ||
-      sender[2] !== peerAccountId
+      sender[2] !== peerAccountId ||
+      !sender[3]
     ) {
       throw new Error('MLS application sender binding is invalid');
     }
-    return {
-      sequence: received.sequence,
-      eventId: received.eventId,
-      senderAccountId: sender[2],
-      senderDeviceId: sender[3]!,
-      plaintext: received.plaintext,
-      createdAt: received.createdAt,
-    };
+    return { accountId: sender[2], deviceId: sender[3] };
   }
 
   private async flushPendingApplicationsUnlocked(

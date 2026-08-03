@@ -306,13 +306,15 @@ an active acknowledgement before closing or replacing the native MLS identity.
 
 A separate background receive scheduler polls every persistently bound peer at
 a five-second idle interval and uses the same bounded, jittered failure
-backoff. It may prefetch application plaintext only into the authenticated
-encrypted native inbox; it never acknowledges or discards those records. The
-future production chat integration must durably insert each returned message
-and then call the explicit inbox acknowledgement. Polling a later unsupported
-membership-changing remote Commit still fails closed and requires a
-security-state reset; proposal-free peer self-update Commits advance the epoch
-through the atomic native path described above.
+backoff. Its dedicated staging RPC decrypts and persists applications inside
+the authenticated encrypted native inbox but returns only event, sender,
+group, epoch and cursor bindings. It does not enumerate pending inbox records
+or return their plaintext to the JavaScript scheduler. Only an explicit future
+chat consumer may list those records; it must durably insert each returned
+message and then call the explicit inbox acknowledgement. Polling a later
+unsupported membership-changing remote Commit still fails closed and requires
+a security-state reset; proposal-free peer self-update Commits advance the
+epoch through the atomic native path described above.
 
 This is still not the active chat protocol. No production server advertises
 `e2ee_mls_v1`. If a server does advertise that capability, the desktop refuses
