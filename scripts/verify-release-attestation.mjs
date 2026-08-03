@@ -24,10 +24,13 @@ function fail(message) {
 const file = argument('--file');
 const version = argument('--version');
 const commit = argument('--commit');
-if (!file || !version || !commit) {
-  fail('usage: verify-release-attestation.mjs --file <path> --version <version> --commit <sha>');
-} else if (!/^[0-9a-f]{40}$/i.test(commit)) {
-  fail('commit must be an exact 40-character SHA');
+const sourceCommit = argument('--source-commit');
+if (!file || !version || !commit || !sourceCommit) {
+  fail('usage: verify-release-attestation.mjs --file <path> --version <version> --commit <sha> --source-commit <sha>');
+} else if (!/^[0-9a-f]{40}$/i.test(commit) || !/^[0-9a-f]{40}$/i.test(sourceCommit)) {
+  fail('commit and source commit must be exact 40-character SHAs');
+} else if (commit === sourceCommit) {
+  fail('release attestation commit and source commit must differ');
 } else {
   let attestation;
   try {
@@ -39,7 +42,7 @@ if (!file || !version || !commit) {
   if (attestation) {
     if (attestation.schemaVersion !== 1) fail('schemaVersion must be 1');
     if (attestation.version !== version) fail(`version must equal ${version}`);
-    if (attestation.sourceCommit !== commit) fail('sourceCommit must equal the release commit');
+    if (attestation.sourceCommit !== sourceCommit) fail('sourceCommit must equal the declared release source commit');
     if (typeof attestation.preparedBy !== 'string' || !attestation.preparedBy.trim()) fail('preparedBy is required');
     if (Number.isNaN(Date.parse(attestation.preparedAt ?? ''))) fail('preparedAt must be an ISO-8601 timestamp');
     if (typeof attestation.riskAssessment?.summary !== 'string' || !attestation.riskAssessment.summary.trim()) fail('riskAssessment.summary is required');

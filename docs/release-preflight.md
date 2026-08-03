@@ -6,7 +6,7 @@
 
 `.github/release-attestation.json` 是发布审批记录，不是可选模板。每次发版必须在提交中更新它，并且 Release workflow 会拒绝下列任一项缺失或不匹配的版本：
 
-- `version` 与本次 release 版本一致，`sourceCommit` 与触发 workflow 的 40 位 commit 一致。
+- `version` 与本次 release 版本一致，`sourceCommit` 与触发 workflow 的父提交（被本次审批记录覆盖的发布源码）的 40 位 commit 一致；审批记录本身必须是该父提交之后的独立提交。
 - 成功 CI 的 HTTPS 链接与产物校验说明。
 - 桌面实机 smoke、企业 canary、回滚准备、安全与高风险变更审核，全部标记为 `passed` 并附可追溯证据。
 - 风险摘要和高风险变更列表；无高风险变更时列表可以为空，但摘要仍必须明确说明。

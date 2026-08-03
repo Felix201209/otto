@@ -7,8 +7,9 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const commit = '0123456789abcdef0123456789abcdef01234567';
+const sourceCommit = 'fedcba9876543210fedcba9876543210fedcba98';
 
-function verify(attestation) {
+function verify(attestation, expectedSourceCommit = sourceCommit) {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'otto-release-attestation-'));
   const file = path.join(directory, 'attestation.json');
   writeFileSync(file, JSON.stringify(attestation));
@@ -16,6 +17,7 @@ function verify(attestation) {
     return spawnSync(process.execPath, [
       'scripts/verify-release-attestation.mjs', '--file', file,
       '--version', '1.9.10', '--commit', commit,
+      '--source-commit', expectedSourceCommit,
     ], { encoding: 'utf8' });
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -24,7 +26,7 @@ function verify(attestation) {
 
 function validAttestation() {
   return {
-    schemaVersion: 1, version: '1.9.10', sourceCommit: commit,
+    schemaVersion: 1, version: '1.9.10', sourceCommit,
     preparedBy: 'release-owner', preparedAt: '2026-08-02T00:00:00.000Z',
     riskAssessment: { summary: 'No unresolved release risks.', highRiskChanges: [] },
     automatedEvidence: { ciRunUrl: 'https://github.com/Felix201209/otto/actions/runs/1', artifactVerification: 'Checksums verified.' },
@@ -34,7 +36,7 @@ function validAttestation() {
 }
 
 describe('release attestation gate', () => {
-  it('accepts a complete attestation for the exact version and commit', () => {
+  it('accepts a complete attestation for the declared source commit', () => {
     const result = verify(validAttestation());
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('Release attestation verified.');
@@ -46,5 +48,11 @@ describe('release attestation gate', () => {
     const result = verify(attestation);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('enterprise-canary must be passed with evidence');
+  });
+
+  it('rejects an attestation whose source does not match the release parent', () => {
+    const result = verify(validAttestation(), 'f'.repeat(40));
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('sourceCommit must equal the declared release source commit');
   });
 });
