@@ -8,25 +8,47 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { verifySqlCipherNativeTarget } from '../verify-sqlcipher-native-assets.mjs';
+import {
+  REQUIRED_SQLCIPHER_TARGETS,
+  verifySqlCipherMatrixManifest,
+  verifySqlCipherNativeAssets,
+  verifySqlCipherNativeTarget,
+  writeSqlCipherMatrixManifest,
+} from '../verify-sqlcipher-native-assets.mjs';
 
 const directories = [];
 
 function fixture(input = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-native-assets-'));
-  directories.push(root);
+  const root =
+    input.root ?? fs.mkdtempSync(path.join(os.tmpdir(), 'otto-native-assets-'));
+  if (!input.root) directories.push(root);
   const target = input.target ?? 'linux-x64';
   const directory = path.join(root, target);
   fs.mkdirSync(directory, { recursive: true });
-  const binding =
-    input.binding ?? Buffer.from([0x7f, 0x45, 0x4c, 0x46, 1, 2, 3]);
-  fs.writeFileSync(path.join(directory, 'better_sqlite3.node'), binding);
   const [platform, arch] = target.split('-');
+  const nativeMagic =
+    platform === 'win32'
+      ? Buffer.from('MZ')
+      : platform === 'darwin'
+        ? Buffer.from('cffaedfe', 'hex')
+        : Buffer.from([0x7f, 0x45, 0x4c, 0x46]);
+  const binding =
+    input.binding ?? Buffer.concat([nativeMagic, Buffer.from([1, 2, 3])]);
+  fs.writeFileSync(path.join(directory, 'better_sqlite3.node'), binding);
+  const buildCommit = input.manifest?.buildCommit ?? 'a'.repeat(40);
+  const sourceRevision = input.manifest?.sourceRevision ?? 'b'.repeat(40);
   const sbom = {
     bomFormat: 'CycloneDX',
     specVersion: '1.5',
     version: 1,
     metadata: {
+      properties: [
+        { name: 'otto:target', value: target },
+        { name: 'otto:buildCommit', value: buildCommit },
+        { name: 'otto:sourceRevision', value: sourceRevision },
+        { name: 'otto:electronVersion', value: '43.1.0' },
+        { name: 'otto:electronModuleAbi', value: '145' },
+      ],
       component: {
         type: 'file',
         name: 'better_sqlite3.node',
@@ -46,8 +68,10 @@ function fixture(input = {}) {
   };
   const sbomBytes = Buffer.from(`${JSON.stringify(sbom, null, 2)}\n`);
   fs.writeFileSync(path.join(directory, 'sbom.cdx.json'), sbomBytes);
+  const notices = Buffer.from('SQLCipher BSD-3-Clause\n');
+  fs.writeFileSync(path.join(directory, 'THIRD_PARTY_NOTICES.md'), notices);
   const manifest = {
-    format: 2,
+    format: 3,
     target,
     platform,
     arch,
@@ -58,7 +82,20 @@ function fixture(input = {}) {
     cipherSelfTest: true,
     plainSqliteRejected: true,
     license: 'BSD-3-Clause',
+    source: 'https://github.com/sqlcipher/sqlcipher',
+    sourceRevision,
+    buildCommit,
+    toolchain: {
+      nodeVersion: '24.17.0',
+      electronVersion: '43.1.0',
+      electronModuleAbi: '145',
+      opensslVersion: '3.5.2',
+    },
     sha256: createHash('sha256').update(binding).digest('hex'),
+    notices: {
+      path: 'THIRD_PARTY_NOTICES.md',
+      sha256: createHash('sha256').update(notices).digest('hex'),
+    },
     sbom: {
       format: 'CycloneDX',
       path: 'sbom.cdx.json',
@@ -146,5 +183,88 @@ describe('SQLCipher native asset gate', () => {
     expect(() =>
       verifySqlCipherNativeTarget(tampered.root, tampered.target),
     ).toThrow(/SBOM checksum/i);
+  });
+
+  it('rejects mutable source identities and cross-commit asset substitution', () => {
+    const mutableSource = fixture({
+      manifest: { sourceRevision: 'v4.16.0' },
+    });
+    expect(() =>
+      verifySqlCipherNativeTarget(mutableSource.root, mutableSource.target),
+    ).toThrow(/immutable Git commit/i);
+
+    const wrongCommit = fixture();
+    expect(() =>
+      verifySqlCipherNativeTarget(wrongCommit.root, wrongCommit.target, {
+        expectedBuildCommit: 'c'.repeat(40),
+      }),
+    ).toThrow(/buildCommit must be/i);
+  });
+
+  it('writes and verifies an exact, same-commit five-target matrix manifest', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-native-matrix-'));
+    directories.push(root);
+    for (const target of REQUIRED_SQLCIPHER_TARGETS) {
+      fixture({ root, target });
+    }
+    const verified = verifySqlCipherNativeAssets(
+      root,
+      REQUIRED_SQLCIPHER_TARGETS,
+    );
+    writeSqlCipherMatrixManifest(root, verified);
+    expect(
+      verifySqlCipherMatrixManifest(root, verified).manifest,
+    ).toMatchObject({
+      buildCommit: 'a'.repeat(40),
+      sourceRevision: 'b'.repeat(40),
+      targets: REQUIRED_SQLCIPHER_TARGETS,
+    });
+
+    fs.appendFileSync(
+      path.join(root, 'linux-x64', 'better_sqlite3.node'),
+      'tampered',
+    );
+    expect(() => verifySqlCipherMatrixManifest(root, verified)).toThrow(
+      /does not match assets/i,
+    );
+  });
+
+  it('rejects a matrix assembled from different source commits', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-native-mixed-'));
+    directories.push(root);
+    for (const target of REQUIRED_SQLCIPHER_TARGETS) {
+      fixture({
+        root,
+        target,
+        manifest: {
+          buildCommit: target === 'win32-x64' ? 'c'.repeat(40) : 'a'.repeat(40),
+        },
+      });
+    }
+    expect(() =>
+      verifySqlCipherNativeAssets(root, REQUIRED_SQLCIPHER_TARGETS),
+    ).toThrow(/inconsistent buildCommit/i);
+  });
+
+  it('keeps CI source checkout and release consumption commit-bound', () => {
+    const nativeWorkflow = fs.readFileSync(
+      path.join(process.cwd(), '.github', 'workflows', 'sqlcipher-native.yml'),
+      'utf8',
+    );
+    const releaseWorkflow = fs.readFileSync(
+      path.join(process.cwd(), '.github', 'workflows', 'release.yml'),
+      'utf8',
+    );
+    expect(nativeWorkflow).toContain(
+      'SQLCIPHER_SOURCE_REVISION: e2a6040f2ae5cfff2b3e08eb3320007d93cdf3fc',
+    );
+    expect(nativeWorkflow).toContain('--write-matrix-manifest');
+    expect(nativeWorkflow).toContain(
+      'subject-path: native/sqlcipher/matrix-manifest.json',
+    );
+    expect(releaseWorkflow).toContain('--require-matrix-manifest');
+    expect(releaseWorkflow).toContain(
+      'gh attestation verify native/sqlcipher/matrix-manifest.json',
+    );
   });
 });

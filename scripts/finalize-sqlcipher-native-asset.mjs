@@ -18,6 +18,14 @@ function requiredArgument(name) {
   return value;
 }
 
+function requiredRevision(name) {
+  const value = process.env[name]?.trim();
+  if (!/^[0-9a-f]{40}$/.test(value ?? '')) {
+    throw new Error(`${name} must be an immutable 40-character Git commit`);
+  }
+  return value;
+}
+
 function rawKey(key) {
   return `"x'${key.toString('hex')}'"`;
 }
@@ -143,10 +151,33 @@ function main() {
       'utf8',
     ),
   );
+  const expectedElectronVersion = desktopPackage.build.electronVersion;
+  if (process.versions.electron !== expectedElectronVersion) {
+    throw new Error(
+      `asset must be finalized by Electron ${expectedElectronVersion}; got ${process.versions.electron ?? 'plain Node.js'}`,
+    );
+  }
   const bindingSha256 = createHash('sha256')
     .update(fs.readFileSync(outputBinding))
     .digest('hex');
-  const sourceRevision = process.env.SQLCIPHER_SOURCE_REVISION || 'unknown';
+  const sourceRevision = requiredRevision('SQLCIPHER_SOURCE_REVISION');
+  const buildCommit = requiredRevision('GITHUB_SHA');
+  const noticesSource = path.join(
+    process.cwd(),
+    'native',
+    'sqlcipher',
+    'THIRD_PARTY_NOTICES.md',
+  );
+  if (!fs.existsSync(noticesSource)) {
+    throw new Error(
+      `SQLCipher third-party notices are missing: ${noticesSource}`,
+    );
+  }
+  const noticesPath = path.join(targetDirectory, 'THIRD_PARTY_NOTICES.md');
+  fs.copyFileSync(noticesSource, noticesPath);
+  const noticesSha256 = createHash('sha256')
+    .update(fs.readFileSync(noticesPath))
+    .digest('hex');
   const sbom = {
     bomFormat: 'CycloneDX',
     specVersion: '1.5',
@@ -154,6 +185,13 @@ function main() {
     version: 1,
     metadata: {
       timestamp: new Date().toISOString(),
+      properties: [
+        { name: 'otto:target', value: target },
+        { name: 'otto:buildCommit', value: buildCommit },
+        { name: 'otto:sourceRevision', value: sourceRevision },
+        { name: 'otto:electronVersion', value: expectedElectronVersion },
+        { name: 'otto:electronModuleAbi', value: process.versions.modules },
+      ],
       component: {
         type: 'file',
         name: 'better_sqlite3.node',
@@ -187,12 +225,12 @@ function main() {
     mode: 0o600,
   });
   const manifest = {
-    format: 2,
+    format: 3,
     target,
     platform: targetMatch[1],
     arch: targetMatch[2],
     runtime: 'electron',
-    runtimeVersion: desktopPackage.build.electronVersion,
+    runtimeVersion: expectedElectronVersion,
     sqlcipherVersion: cipherVersion,
     betterSqlite3Version: serverPackage.dependencies['better-sqlite3'],
     cipherSelfTest: true,
@@ -200,8 +238,18 @@ function main() {
     license: 'BSD-3-Clause',
     source: 'https://github.com/sqlcipher/sqlcipher',
     sourceRevision,
-    buildCommit: process.env.GITHUB_SHA || 'local',
+    buildCommit,
+    toolchain: {
+      nodeVersion: process.versions.node,
+      electronVersion: process.versions.electron,
+      electronModuleAbi: process.versions.modules,
+      opensslVersion: process.versions.openssl,
+    },
     sha256: bindingSha256,
+    notices: {
+      path: 'THIRD_PARTY_NOTICES.md',
+      sha256: noticesSha256,
+    },
     sbom: {
       format: 'CycloneDX',
       path: 'sbom.cdx.json',

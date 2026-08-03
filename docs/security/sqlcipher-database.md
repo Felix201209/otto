@@ -73,14 +73,35 @@ specified in [server key management and rotation](key-management.md).
 
 ## Native release assets
 
-`.github/workflows/sqlcipher-native.yml` builds pinned official SQLCipher for
-Windows x64, macOS x64/arm64, and Linux x64/arm64. Each Electron-ABI artifact
-must pass correct-key, wrong-key, encrypted-header, ordinary-Python-SQLite
-rejection, and `cipher_integrity_check` behavior tests. Every target emits a
-checksummed CycloneDX 1.5 SBOM identifying SQLCipher and better-sqlite3. The
-matrix verifier checks the platform binary magic, manifest and SBOM SHA-256,
-then GitHub records build provenance for each binding. The release workflow
-verifies those attestations before copying the target binding outside
-`app.asar`; installer signing and packaged-runtime checks remain mandatory.
+`.github/workflows/sqlcipher-native.yml` builds official SQLCipher 4.16.0 from
+the immutable upstream commit
+`e2a6040f2ae5cfff2b3e08eb3320007d93cdf3fc` for Windows x64, macOS x64/arm64,
+and Linux x64/arm64. Each Electron-ABI artifact must pass correct-key,
+wrong-key, encrypted-header, ordinary-Python-SQLite rejection, and
+`cipher_integrity_check` behavior tests. Every target emits a checksummed
+CycloneDX 1.5 SBOM that binds the target, Otto source commit, SQLCipher source
+commit, Electron version and module ABI to SQLCipher and better-sqlite3.
+
+The aggregate `matrix-manifest.json` rejects missing, extra, cross-commit or
+version-inconsistent assets and records the binding, target manifest and SBOM
+digests. GitHub attests both every binding and this aggregate manifest. The
+release workflow accepts only the current run's matrix for the current source
+commit, verifies the attestations, and copies the matching target outside
+`app.asar`. Packaged-runtime checks revalidate the target, architecture,
+Electron version, source identities, notices, SBOM and binding digest.
+
+Formal installers fail closed unless Windows Authenticode, macOS Developer ID
+and Apple notarization credentials are present. The release validates the
+stapled notarization ticket and Gatekeeper status of each macOS application,
+the signed DMGs, both final macOS runtimes, and the Windows Authenticode chain
+before an installer can reach the update mirror or leave draft state. On a
+Windows runner the signed installer is then silently installed and its copied
+binding is loaded by the installed Electron runtime for a real encrypted
+create, reopen and integrity probe. The enterprise archive likewise requires
+an Ed25519 detached signature verified
+against the separately configured release public key; the formal workflow no
+longer enables the unsigned local-build override. A workflow definition alone
+is not delivery evidence: all five matrix jobs and the aggregate job must
+complete successfully for the release commit.
 
 Third-party notices are in `native/sqlcipher/THIRD_PARTY_NOTICES.md`.

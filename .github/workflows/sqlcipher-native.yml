@@ -8,19 +8,27 @@ on:
       - '.github/workflows/sqlcipher-native.yml'
       - 'package-lock.json'
       - 'packages/desktop/package.json'
+      - 'packages/desktop/scripts/after-pack.cjs'
+      - 'packages/desktop/scripts/probe-packaged-sqlcipher.mjs'
+      - 'packages/desktop/scripts/verify-packaged-runtime.mjs'
       - 'packages/server/package.json'
       - 'scripts/finalize-sqlcipher-native-asset.mjs'
       - 'scripts/verify-sqlcipher-native-assets.mjs'
       - 'scripts/tests/sqlcipher-native-assets.test.js'
+      - 'native/sqlcipher/THIRD_PARTY_NOTICES.md'
   push:
     paths:
       - '.github/workflows/sqlcipher-native.yml'
       - 'package-lock.json'
       - 'packages/desktop/package.json'
+      - 'packages/desktop/scripts/after-pack.cjs'
+      - 'packages/desktop/scripts/probe-packaged-sqlcipher.mjs'
+      - 'packages/desktop/scripts/verify-packaged-runtime.mjs'
       - 'packages/server/package.json'
       - 'scripts/finalize-sqlcipher-native-asset.mjs'
       - 'scripts/verify-sqlcipher-native-assets.mjs'
       - 'scripts/tests/sqlcipher-native-assets.test.js'
+      - 'native/sqlcipher/THIRD_PARTY_NOTICES.md'
 
 permissions:
   contents: read
@@ -28,8 +36,7 @@ permissions:
   attestations: write
 
 env:
-  SQLCIPHER_TAG: v4.16.0
-  SQLCIPHER_SOURCE_REVISION: v4.16.0
+  SQLCIPHER_SOURCE_REVISION: e2a6040f2ae5cfff2b3e08eb3320007d93cdf3fc
   ELECTRON_VERSION: 43.1.0
 
 jobs:
@@ -70,9 +77,14 @@ jobs:
       - name: Install locked JavaScript dependencies without registry native prebuilds
         run: npm ci --ignore-scripts
 
-      - name: Checkout pinned official SQLCipher source
+      - name: Checkout immutable official SQLCipher source
         shell: bash
-        run: git clone --depth 1 --branch "$SQLCIPHER_TAG" https://github.com/sqlcipher/sqlcipher.git .sqlcipher-source
+        run: |
+          git init .sqlcipher-source
+          git -C .sqlcipher-source remote add origin https://github.com/sqlcipher/sqlcipher.git
+          git -C .sqlcipher-source fetch --depth 1 origin "$SQLCIPHER_SOURCE_REVISION"
+          git -C .sqlcipher-source checkout --detach FETCH_HEAD
+          test "$(git -C .sqlcipher-source rev-parse HEAD)" = "$SQLCIPHER_SOURCE_REVISION"
 
       - name: Install Unix SQLCipher build prerequisites
         if: runner.os == 'Linux'
@@ -181,7 +193,11 @@ jobs:
             --binding node_modules/better-sqlite3/build/Release/better_sqlite3.node \
             --output-root native/sqlcipher \
             --target "${{ matrix.target }}"
-          node scripts/verify-sqlcipher-native-assets.mjs --target "${{ matrix.target }}"
+          node scripts/verify-sqlcipher-native-assets.mjs \
+            --target "${{ matrix.target }}" \
+            --expected-build-commit "$GITHUB_SHA" \
+            --expected-source-revision "$SQLCIPHER_SOURCE_REVISION" \
+            --expected-runtime-version "$ELECTRON_VERSION"
 
       - name: Run SQLCipher behavior tests and finalize Windows asset
         if: runner.os == 'Windows'
@@ -192,7 +208,11 @@ jobs:
             --binding node_modules\better-sqlite3\build\Release\better_sqlite3.node `
             --output-root native\sqlcipher `
             --target '${{ matrix.target }}'
-          node scripts/verify-sqlcipher-native-assets.mjs --target '${{ matrix.target }}'
+          node scripts/verify-sqlcipher-native-assets.mjs `
+            --target '${{ matrix.target }}' `
+            --expected-build-commit $env:GITHUB_SHA `
+            --expected-source-revision $env:SQLCIPHER_SOURCE_REVISION `
+            --expected-runtime-version $env:ELECTRON_VERSION
 
       - uses: actions/upload-artifact@v7
         with:
@@ -215,11 +235,27 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
-      - run: node scripts/verify-sqlcipher-native-assets.mjs
+      - name: Verify and lock the complete native matrix
+        shell: bash
+        run: |
+          node scripts/verify-sqlcipher-native-assets.mjs \
+            --expected-build-commit "$GITHUB_SHA" \
+            --expected-source-revision "$SQLCIPHER_SOURCE_REVISION" \
+            --expected-runtime-version "$ELECTRON_VERSION" \
+            --write-matrix-manifest
+          node scripts/verify-sqlcipher-native-assets.mjs \
+            --expected-build-commit "$GITHUB_SHA" \
+            --expected-source-revision "$SQLCIPHER_SOURCE_REVISION" \
+            --expected-runtime-version "$ELECTRON_VERSION" \
+            --require-matrix-manifest
       - name: Attest verified native bindings
         uses: actions/attest-build-provenance@v3
         with:
           subject-path: native/sqlcipher/*/better_sqlite3.node
+      - name: Attest the matrix manifest that binds metadata and SBOMs
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: native/sqlcipher/matrix-manifest.json
       - uses: actions/upload-artifact@v7
         with:
           name: sqlcipher-native-matrix

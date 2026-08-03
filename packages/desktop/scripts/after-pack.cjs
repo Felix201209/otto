@@ -26,17 +26,29 @@ function copySqlCipherNativeAsset(context) {
   const target = `${platform}-${arch}`;
   const repoRoot = path.resolve(__dirname, '../../..');
   const sourceRoot = path.join(repoRoot, 'native', 'sqlcipher');
-  execFileSync(
-    process.execPath,
-    [
-      path.join(repoRoot, 'scripts', 'verify-sqlcipher-native-assets.mjs'),
-      '--root',
-      sourceRoot,
-      '--target',
-      target,
-    ],
-    { stdio: 'inherit' },
-  );
+  const verifyArguments = [
+    path.join(repoRoot, 'scripts', 'verify-sqlcipher-native-assets.mjs'),
+    '--root',
+    sourceRoot,
+    '--target',
+    target,
+  ];
+  if (process.env.GITHUB_SHA) {
+    verifyArguments.push('--expected-build-commit', process.env.GITHUB_SHA);
+  }
+  if (process.env.SQLCIPHER_SOURCE_REVISION) {
+    verifyArguments.push(
+      '--expected-source-revision',
+      process.env.SQLCIPHER_SOURCE_REVISION,
+    );
+  }
+  if (context.packager.config.electronVersion) {
+    verifyArguments.push(
+      '--expected-runtime-version',
+      context.packager.config.electronVersion,
+    );
+  }
+  execFileSync(process.execPath, verifyArguments, { stdio: 'inherit' });
   const resourcesRoot =
     platform === 'darwin'
       ? path.join(
@@ -48,16 +60,17 @@ function copySqlCipherNativeAsset(context) {
       : path.join(context.appOutDir, 'resources');
   const destination = path.join(resourcesRoot, 'sqlcipher');
   mkdirSync(destination, { recursive: true });
-  for (const name of ['better_sqlite3.node', 'manifest.json', 'sbom.cdx.json']) {
+  for (const name of [
+    'better_sqlite3.node',
+    'manifest.json',
+    'sbom.cdx.json',
+    'THIRD_PARTY_NOTICES.md',
+  ]) {
     copyFileSync(
       path.join(sourceRoot, target, name),
       path.join(destination, name),
     );
   }
-  copyFileSync(
-    path.join(sourceRoot, 'THIRD_PARTY_NOTICES.md'),
-    path.join(destination, 'THIRD_PARTY_NOTICES.md'),
-  );
   console.log(`[after-pack] SQLCipher native asset copied: ${target}`);
 }
 
