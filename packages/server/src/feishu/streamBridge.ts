@@ -30,6 +30,7 @@
 
 import {
   ToolCallStatus,
+  type AskUserQuestion,
   type ServerToClient,
   type ToolCall,
 } from '../protocol.js';
@@ -59,6 +60,15 @@ export interface FeishuStreamSink {
     markdown: string,
     replyToMessageId?: string,
   ): Promise<string | null>;
+  waitForCardAction?(
+    chatId: string,
+    title: string,
+    content: string,
+    buttons: Array<{ label: string; value: string }>,
+    defaultValue: string,
+    timeoutMs?: number,
+    replyToMessageId?: string,
+  ): Promise<string>;
 }
 
 /** 飞书流式卡刷新节流间隔（对齐 cli 的 MIN_UPDATE_INTERVAL）。 */
@@ -151,6 +161,7 @@ export function bridgeSessionToFeishu(
   // 忽略 liveOutput 等高频字段变化，避免飞书消息刷屏。
   const toolSummaryPhase = new Map<string, 'working' | 'complete'>();
   const replyToByMessageId = new Map<string, string | undefined>();
+  const pendingConfirmations = new Set<string>();
 
   /**
    * 回推失败上报：向会话订阅者广播一帧 feishu_push_result(ok:false)，
@@ -195,6 +206,121 @@ export function bridgeSessionToFeishu(
     enqueueOutbound(s.messageId, fn);
   };
 
+  const resolveConfirmation = (
+    callId: string,
+    outcome: 'approved' | 'rejected',
+    payload?: { answers?: Record<string, string> },
+  ): void => {
+    store.getRuntime(sessionId)?.resolveToolConfirmation(callId, outcome, payload);
+  };
+
+  const askQuestion = async (
+    callId: string,
+    question: AskUserQuestion,
+    replyToMessageId: string | undefined,
+  ): Promise<string | null> => {
+    const wait = gateway.waitForCardAction;
+    if (!wait || question.options.length === 0) return null;
+    if (!question.multiSelect) {
+      const buttons = question.options.map((option, index) => ({
+        label: option.label,
+        value: `option:${index}`,
+      }));
+      buttons.push({ label: '取消', value: 'rejected' });
+      const result = await wait.call(
+        gateway,
+        feishuChatId,
+        question.header || '请选择',
+        `${question.question}\n\n请求编号：${callId}`,
+        buttons,
+        'rejected',
+        10 * 60_000,
+        replyToMessageId,
+      );
+      if (result === 'rejected') return null;
+      const index = Number(result.replace(/^option:/u, ''));
+      return question.options[index]?.label ?? null;
+    }
+
+    const selected = new Set<number>();
+    while (true) {
+      const buttons = question.options.map((option, index) => ({
+        label: `${selected.has(index) ? '✓ ' : ''}${option.label}`,
+        value: `toggle:${index}`,
+      }));
+      buttons.push({ label: '完成选择', value: 'done' });
+      buttons.push({ label: '取消', value: 'rejected' });
+      const result = await wait.call(
+        gateway,
+        feishuChatId,
+        question.header || '请选择',
+        `${question.question}\n\n可多选，选择后点击“完成选择”。请求编号：${callId}`,
+        buttons,
+        'rejected',
+        10 * 60_000,
+        replyToMessageId,
+      );
+      if (result === 'rejected') return null;
+      if (result === 'done') {
+        return [...selected].map((index) => question.options[index]!.label).join(', ');
+      }
+      const index = Number(result.replace(/^toggle:/u, ''));
+      if (!Number.isInteger(index) || !question.options[index]) return null;
+      if (selected.has(index)) selected.delete(index);
+      else selected.add(index);
+    }
+  };
+
+  const handleConfirmation = async (
+    callId: string,
+    toolCall: ToolCall,
+    replyToMessageId: string | undefined,
+  ): Promise<void> => {
+    const wait = gateway.waitForCardAction;
+    if (!wait) {
+      await gateway.sendMarkdown(
+        feishuChatId,
+        `⚠️ “${toolCall.displayName || toolCall.toolName}”需要确认，但当前飞书连接不支持安全确认，已拒绝执行。`,
+        replyToMessageId,
+      );
+      resolveConfirmation(callId, 'rejected');
+      return;
+    }
+    const details = toolCall.confirmationDetails;
+    const questions = details?.questions ?? [];
+    if (details?.type === 'question' && questions.length > 0) {
+      const answers: Record<string, string> = {};
+      for (const question of questions) {
+        const answer = await askQuestion(callId, question, replyToMessageId);
+        if (answer === null) {
+          resolveConfirmation(callId, 'rejected');
+          return;
+        }
+        answers[question.question] = answer;
+      }
+      resolveConfirmation(callId, 'approved', { answers });
+      return;
+    }
+
+    const name = toolCall.displayName?.trim() || toolCall.toolName;
+    const detail = details?.message || details?.reason || details?.command ||
+      '该操作会调用企业工具。请核对后决定是否只批准本次执行。';
+    const result = await wait.call(
+      gateway,
+      feishuChatId,
+      `确认执行：${name}`,
+      `${detail}\n\n请求编号：${callId}`,
+      [
+        { label: '仅批准本次', value: 'approved' },
+        { label: '取消', value: 'rejected' },
+      ],
+      'rejected',
+      10 * 60_000,
+      replyToMessageId,
+    );
+    resolveConfirmation(callId, result === 'approved' ? 'approved' : 'rejected');
+  };
+
   const handleFrame = (frame: ServerToClient): void => {
     switch (frame.type) {
       case 'message_start': {
@@ -226,6 +352,21 @@ export function bridgeSessionToFeishu(
             replyToMessageId ?? getReplyToMessageId(),
           );
           if (sent === null) reportPushFailure(summaryId, '飞书工具摘要发送失败');
+        });
+        return;
+      }
+
+      case 'tool_confirmation_request': {
+        const { sessionId: sid, callId, toolCall } = frame.payload;
+        if (sid !== sessionId || pendingConfirmations.has(callId)) return;
+        pendingConfirmations.add(callId);
+        const replyToMessageId = active?.replyToMessageId ?? getReplyToMessageId();
+        enqueueOutbound(callId, async () => {
+          try {
+            await handleConfirmation(callId, toolCall, replyToMessageId);
+          } finally {
+            pendingConfirmations.delete(callId);
+          }
         });
         return;
       }

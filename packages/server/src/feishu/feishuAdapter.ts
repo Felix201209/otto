@@ -30,6 +30,8 @@
  *   - 工具确认 / slash 命令分发（CommandService 等强 CLI 耦合）→ 暂不迁，留 TODO。
  */
 
+import { createHash } from 'node:crypto';
+
 import { loadCredentials, isSenderAuthorized } from './vendor/credentials.js';
 import type { FeishuCredentials } from './vendor/credentials.js';
 import { FeishuGateway, FeishuGatewayLockError } from './vendor/gateway.js';
@@ -49,6 +51,7 @@ import type {
   ServerToClient,
   SessionSummary,
 } from '../protocol.js';
+import { FeishuInboundQueue } from './inboundQueue.js';
 
 /**
  * adapter 实际用到的 gateway 能力子集（结构子类型）。
@@ -71,6 +74,16 @@ export interface FeishuGatewayLike extends FeishuStreamSink {
    * 视为未知」，探测方不得据此判死，避免误杀健康连接。
    */
   getConnectionHealth?(): { hasClient: boolean; socketOpen: boolean | null };
+  /** Interactive confirmation; the real gateway validates the card operator. */
+  waitForCardAction?(
+    chatId: string,
+    title: string,
+    content: string,
+    buttons: Array<{ label: string; value: string }>,
+    defaultValue: string,
+    timeoutMs?: number,
+    replyToMessageId?: string,
+  ): Promise<string>;
 }
 
 // ── 守护参数（连上一次之后就不允许永久断开：无限重连 + 心跳探活）──
@@ -126,6 +139,8 @@ export interface FeishuAdapterDeps {
   credentials?: FeishuCredentials | null;
   /** 可选 gateway 工厂（测试用）；缺省 new FeishuGateway。 */
   gatewayFactory?: FeishuGatewayFactory;
+  /** Durable inbound queue path. null keeps isolated tests in memory. */
+  inboundQueuePath?: string | null;
 }
 
 /**
@@ -145,6 +160,9 @@ export class FeishuAdapter {
   private connected = false;
   private readonly injectedCreds?: FeishuCredentials | null;
   private readonly gatewayFactory: FeishuGatewayFactory;
+  private readonly inboundQueue: FeishuInboundQueue;
+  private inboundDraining = false;
+  private inboundRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
   // ── 守护状态（重连循环 + 心跳 + 对外可见状态）──
   /** 用户主动 stop 过（有意停止后绝不自动重连；start 重新调用时恢复守护）。 */
@@ -175,15 +193,6 @@ export class FeishuAdapter {
   /** 当前真正执行轮的飞书消息 id；bridge 在 assistant message_start 时快照。 */
   private readonly replyTargets = new Map<string, string>();
   /**
-   * 每会话串行队列（sessionId → promise 链尾 + 在跑/排队轮数）。
-   * 同一飞书会话同一时刻只跑一轮 agent turn：streamBridge 一次只跟踪一条
-   * active assistant 流，并发两轮会互相踩踏导致第一轮回复半截丢失。
-   */
-  private readonly runQueues = new Map<
-    string,
-    { tail: Promise<void>; depth: number }
-  >();
-  /**
    * 会话淘汰监听取消句柄：会话被 store 容量淘汰时，连带摘除其回推桥。
    * 生命周期跟随 start()/stop()（而非构造器）——运行期 stop 后再 start
    * （守护恢复）时监听必须能重建，否则第二段生命周期里桥订阅会泄漏。
@@ -204,6 +213,7 @@ export class FeishuAdapter {
       deps.gatewayFactory ??
       ((creds) =>
         new FeishuGateway(creds.appId, creds.appSecret, creds.domain));
+    this.inboundQueue = new FeishuInboundQueue(deps.inboundQueuePath ?? null);
   }
 
   isConnected(): boolean {
@@ -218,6 +228,7 @@ export class FeishuAdapter {
    * SDK 内部自愈中。
    */
   getStatus(): FeishuHealthStatus {
+    const inbound = this.inboundQueue.summary();
     return {
       configured: this.creds !== null,
       running: this.gateway !== null && !this.stopped,
@@ -235,6 +246,7 @@ export class FeishuAdapter {
       reconnectAttempts: this.reconnectAttempts,
       nextRetryAt: this.nextRetryAt,
       lockHeldByOtherPid: this.lockHeldByOtherPid,
+      inboundQueue: inbound,
     };
   }
 
@@ -319,6 +331,7 @@ export class FeishuAdapter {
       this.handleConnected('SDK 内部重连成功，连接恢复');
 
     gateway.onMessage = (msg) => this.handleFeishuMessage(msg, creds);
+    this.scheduleInboundDrain();
 
     // 4) 心跳守护：僵尸探测 + 悬挂接管 + 兜底补排（详见 heartbeatTick）。
     this.heartbeatTimer = setInterval(
@@ -544,6 +557,13 @@ export class FeishuAdapter {
     //   slash 命令。server 版暂不迁这些强 CLI 耦合命令（它们依赖 CommandService /
     //   进程自重启），先让普通对话走通。命中这些前缀时当前按普通消息透传给 core。
 
+    const eventId = this.feishuEventId(msg);
+    const alreadyAccepted = this.inboundQueue.get(eventId);
+    if (alreadyAccepted) {
+      this.scheduleInboundDrain();
+      return null;
+    }
+
     // 映射飞书会话 → server 唯一会话源（source:'feishu'）。
     const previousSessionId = this.peekFeishuSessionId(msg.chatId);
     const session = this.getOrCreateSession(msg.chatId);
@@ -563,38 +583,37 @@ export class FeishuAdapter {
     // reply target 由 runTurn 在真正开跑时更新，bridge 会在 assistant 起始时快照。
     this.ensureBridge(session.sessionId, msg.chatId);
 
-    // 落库飞书用户消息 + 广播 message_start（app 实时看到飞书来的消息）。
+    // 用户消息先写穿透到 SessionStore，再把仅含路由 ID 的执行记录写进 durable
+    // inbox。若第二步失败，网关会要求飞书重推；确定性 message id 保证不会重复落库。
     const content: MessageContent = [{ type: 'text', value: text }];
-    const userMsg = this.store.appendMessage(session.sessionId, {
-      role: 'user',
-      content,
-      source: 'feishu',
-    });
-    this.broadcast(session.sessionId, {
-      type: 'message_start',
-      payload: { message: userMsg },
-    });
-
-    // 驱动 core 跑一轮 —— 经每会话串行队列：会话正忙（上一轮未结束）时把本轮
-    // 排到 promise 链尾，当前轮结束后依次跑，杜绝同一会话并发两轮 agent turn。
-    // 不 await 链尾：让 onMessage 尽快返回，core 流式经 store.publish 广播 +
-    // streamBridge 异步回推飞书。错误在 runTurn 内经 error 帧广播 + bridge 回推。
-    const queue = this.runQueues.get(session.sessionId) ?? {
-      tail: Promise.resolve(),
-      depth: 0,
-    };
-    const wasBusy = queue.depth > 0;
-    queue.depth += 1;
-    queue.tail = queue.tail
-      .then(() => this.runTurn(session.sessionId, content, msg.messageId))
-      .finally(() => {
-        queue.depth -= 1;
-        // 链上最后一轮跑完即摘除队列项，避免 Map 无界增长。
-        if (queue.depth === 0 && this.runQueues.get(session.sessionId) === queue) {
-          this.runQueues.delete(session.sessionId);
-        }
+    const sessionMessageId = `feishu_${createHash('sha256')
+      .update(eventId, 'utf8')
+      .digest('hex')}`;
+    let userMsg = this.store.getHistory(session.sessionId)
+      .find((item) => item.id === sessionMessageId);
+    if (!userMsg) {
+      userMsg = this.store.appendMessage(session.sessionId, {
+        id: sessionMessageId,
+        role: 'user',
+        content,
+        source: 'feishu',
       });
-    this.runQueues.set(session.sessionId, queue);
+    }
+    const wasBusy = this.inboundQueue.hasPendingForSession(session.sessionId);
+    const accepted = this.inboundQueue.enqueue({
+      eventId,
+      chatId: msg.chatId,
+      sessionId: session.sessionId,
+      sessionMessageId,
+      replyToMessageId: msg.messageId || null,
+    });
+    if (accepted.inserted) {
+      this.broadcast(session.sessionId, {
+        type: 'message_start',
+        payload: { message: userMsg },
+      });
+    }
+    this.scheduleInboundDrain();
 
     // 排队提示（best effort）：会话正忙时告知用户消息已收到、在上一轮结束后处理。
     if (wasBusy && this.gateway) {
@@ -610,6 +629,63 @@ export class FeishuAdapter {
     return null;
   }
 
+  private feishuEventId(msg: FeishuMessage): string {
+    const id = msg.messageId?.trim();
+    if (id) return id;
+    return `feishu_fallback_${createHash('sha256')
+      .update(`${msg.chatId}\0${msg.senderOpenId}\0${msg.createTime ?? ''}\0${msg.text}`, 'utf8')
+      .digest('hex')}`;
+  }
+
+  private scheduleInboundDrain(delayMs = 0): void {
+    if (this.stopped || this.inboundDraining) return;
+    if (this.inboundRetryTimer) clearTimeout(this.inboundRetryTimer);
+    this.inboundRetryTimer = setTimeout(() => {
+      this.inboundRetryTimer = null;
+      void this.drainInboundQueue();
+    }, Math.max(0, delayMs));
+    this.inboundRetryTimer.unref?.();
+  }
+
+  private async drainInboundQueue(): Promise<void> {
+    if (this.inboundDraining || this.stopped) return;
+    this.inboundDraining = true;
+    try {
+      while (!this.stopped) {
+        const record = this.inboundQueue.nextDue();
+        if (!record) break;
+        this.inboundQueue.markRunning(record.eventId);
+        this.ensureBridge(record.sessionId, record.chatId);
+        const message = this.store.getHistory(record.sessionId)
+          .find((item) => item.id === record.sessionMessageId);
+        if (!message) {
+          this.inboundQueue.markFailed(
+            record.eventId,
+            'Persistent Feishu session message is missing',
+            1,
+          );
+          continue;
+        }
+        const result = await this.runTurn(
+          record.sessionId,
+          message.content,
+          record.replyToMessageId ?? undefined,
+        );
+        if (result.ok) {
+          this.inboundQueue.markCompleted(record.eventId);
+        } else {
+          this.inboundQueue.markFailed(record.eventId, result.error);
+        }
+      }
+    } finally {
+      this.inboundDraining = false;
+      const retryAt = this.inboundQueue.nextRetryAt();
+      if (!this.stopped && retryAt !== null) {
+        this.scheduleInboundDrain(Math.max(0, retryAt - Date.now()));
+      }
+    }
+  }
+
   /**
    * 跑一轮 agent turn（串行队列的执行单元）：已有 runtime 直接复用，首条消息
    * 经 ensureRuntime 懒初始化；初始化失败诚实报错。仅显式 mock 模式走占位回复。
@@ -619,7 +695,7 @@ export class FeishuAdapter {
     sessionId: string,
     content: MessageContent,
     replyToMessageId: string | undefined,
-  ): Promise<void> {
+  ): Promise<{ ok: boolean; error?: string }> {
     // 排队轮真正开跑时才更新目标；bridge 会在每条 assistant message_start
     // 时把它快照进流状态，后续排队消息不会串改已开始的回复。
     if (replyToMessageId) this.replyTargets.set(sessionId, replyToMessageId);
@@ -638,14 +714,14 @@ export class FeishuAdapter {
           },
         });
         this.store.setStatus(sessionId, 'error');
-        return;
+        return { ok: false, error: errMsg(e) };
       }
     }
     if (!runtime) {
       if (this.mock) {
         // 只有显式测试/开发模式才能回 mock；生产链路永远不会静默伪装成功。
         await this.mockEcho(sessionId);
-        return;
+        return { ok: true };
       }
       // server.ensureRuntime 初始化失败时已经发布过具体错误并把状态设为 error；
       // 独立使用 adapter 且未注入初始化器时，补一条可行动的诚实错误。
@@ -660,11 +736,15 @@ export class FeishuAdapter {
         });
         this.store.setStatus(sessionId, 'error');
       }
-      return;
+      return { ok: false, error: 'Feishu session runtime is unavailable' };
     }
     this.store.setStatus(sessionId, 'thinking');
     try {
       await runtime.run(content, 'feishu');
+      if (this.store.getSession(sessionId)?.status === 'error') {
+        return { ok: false, error: 'Feishu agent turn finished in an error state' };
+      }
+      return { ok: true };
     } catch (e) {
       this.store.publish(sessionId, {
         type: 'error',
@@ -675,6 +755,7 @@ export class FeishuAdapter {
         },
       });
       this.store.setStatus(sessionId, 'error');
+      return { ok: false, error: errMsg(e) };
     }
   }
 
@@ -741,6 +822,10 @@ export class FeishuAdapter {
     // stopped 一律不再排重连——先清 timer 后立旗会留竞态窗口。
     this.stopped = true;
     this.clearReconnectTimer();
+    if (this.inboundRetryTimer) {
+      clearTimeout(this.inboundRetryTimer);
+      this.inboundRetryTimer = null;
+    }
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;

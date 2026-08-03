@@ -12,7 +12,7 @@
  * 以及 CardKit 可用路径不发提示、走流式卡 finalize。
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   bridgeSessionToFeishu,
   type FeishuStreamSink,
@@ -245,6 +245,82 @@ describe('bridgeSessionToFeishu', () => {
     expect(markdowns[0].text).toContain('正在处理 1 项操作：读取文件');
     expect(markdowns[1].text).toContain('本轮已处理 1 项操作：读取文件');
     expect(markdowns[1].text).toContain('成功 1 项');
+  });
+
+  it('高风险工具确认绑定原始飞书消息和 callId，确认后才唤醒 runtime', async () => {
+    const confirmations: Array<{ replyTo?: string; content: string }> = [];
+    const sink: FeishuStreamSink = {
+      ...makeNoCardSink(),
+      async waitForCardAction(
+        _chatId,
+        _title,
+        content,
+        _buttons,
+        _defaultValue,
+        _timeoutMs,
+        replyToMessageId,
+      ) {
+        confirmations.push({ replyTo: replyToMessageId, content });
+        return 'approved';
+      },
+    };
+    const sess = store.getOrCreateFeishuSession('oc_bridge_confirm');
+    const resolveToolConfirmation = vi.fn();
+    store.attachRuntime(sess.sessionId, {
+      async run() {},
+      cancel() {},
+      setModel() {},
+      getConfig() { return undefined; },
+      resolveToolConfirmation,
+      async dispose() {},
+    });
+    bridgeSessionToFeishu(
+      store,
+      sink,
+      sess.sessionId,
+      'oc_bridge_confirm',
+      () => 'om_original_request',
+    );
+    const assistant = store.appendMessage(sess.sessionId, {
+      role: 'assistant',
+      content: [{ type: 'text', value: '' }],
+      source: 'local',
+      isStreaming: true,
+    });
+    store.publish(sess.sessionId, {
+      type: 'message_start',
+      payload: { message: assistant },
+    });
+    store.publish(sess.sessionId, {
+      type: 'tool_confirmation_request',
+      payload: {
+        sessionId: sess.sessionId,
+        callId: 'call-dangerous-1',
+        toolCall: {
+          id: 'call-dangerous-1',
+          toolName: 'shell_command',
+          displayName: '运行命令',
+          parameters: {},
+          status: ToolCallStatus.WaitingForConfirmation,
+          confirmationDetails: {
+            type: 'exec',
+            riskLevel: 'high',
+            command: 'restricted command',
+          },
+        },
+      },
+    });
+    await flush();
+
+    expect(confirmations).toEqual([{
+      replyTo: 'om_original_request',
+      content: expect.stringContaining('call-dangerous-1'),
+    }]);
+    expect(resolveToolConfirmation).toHaveBeenCalledWith(
+      'call-dangerous-1',
+      'approved',
+      undefined,
+    );
   });
 
   it('不同 assistant 流共用回推队列，后一条不能越过前一条定稿', async () => {

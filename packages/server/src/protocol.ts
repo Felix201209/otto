@@ -1505,6 +1505,13 @@ export interface FeishuHealthStatus {
   lastDisconnectAt?: number | null;
   lastDisconnectReason?: string | null;
   reconnectAttempts: number;
+  inboundQueue?: {
+    queued: number;
+    running: number;
+    failed: number;
+    dead: number;
+    lastError: string | null;
+  };
 }
 
 /**

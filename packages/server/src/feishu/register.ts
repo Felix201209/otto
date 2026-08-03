@@ -25,6 +25,8 @@
  */
 
 import type { SessionRuntime, SessionStore } from '../sessions.js';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { FeishuHealthStatus, ServerToClient } from '../protocol.js';
 import { FeishuAdapter, type FeishuGatewayFactory } from './feishuAdapter.js';
 import type { FeishuCredentials } from './vendor/credentials.js';
@@ -51,6 +53,8 @@ export interface FeishuRegisterDeps {
   credentials?: FeishuCredentials | null;
   /** 可选 gateway 工厂（测试用）；缺省 new FeishuGateway。 */
   gatewayFactory?: FeishuGatewayFactory;
+  /** Override for tests or managed installations. */
+  inboundQueuePath?: string | null;
 }
 
 /** 注册结果句柄：供 server 查询连接态、回推飞书、启停。 */
@@ -92,6 +96,10 @@ export async function registerFeishu(
     mock: deps.mock,
     credentials: deps.credentials,
     gatewayFactory: deps.gatewayFactory,
+    inboundQueuePath: deps.inboundQueuePath ?? (
+      process.env['OTTO_FEISHU_INBOUND_QUEUE_PATH']?.trim() ||
+      join(homedir(), '.otto-user', 'feishu-inbound-queue.json')
+    ),
   });
 
   // start 内部 fail-soft：凭证缺失/连接失败只记录不抛错，句柄照常返回。
