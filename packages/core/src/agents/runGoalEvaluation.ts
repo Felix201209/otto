@@ -7,7 +7,7 @@
 import type { Content } from '@google/genai';
 import type { ContentGenerator } from '../core/contentGenerator.js';
 import type { CacheSafeParams } from '../services/cacheSafeParams.js';
-import { runForkedAgent, type RunForkedAgentResult } from './runForkedAgent.js';
+import { runForkedAgent } from './runForkedAgent.js';
 
 export interface RunGoalEvaluationOptions {
   contentGenerator: ContentGenerator;

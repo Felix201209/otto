@@ -1,6 +1,5 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import * as os from 'os';
 import type { CompanyRecord, LicenseRecord, OrgMemoryRecord, ProjectRecord, SkillRecord, TeamRecord, UsageRecord, UserProfileRecord } from './orgMemoryTypes.js';
 
 /** 简易文件锁：用 .lock 文件 + 原子写入实现互斥 */
@@ -16,13 +15,13 @@ async function acquireLock(lockPath: string, timeoutMs: number = 5000): Promise<
       await handle.write(Buffer.from(`${process.pid}\n${Date.now()}\n`));
       await handle.close();
       return;
-    } catch (err: any) {
-      if (err.code === 'EEXIST') {
+    } catch (err: unknown) {
+      if (err && typeof err === 'object' && (err as { code?: string }).code === 'EEXIST') {
         // 检查是否是陈旧锁（超过30秒）
         try {
           const content = await fs.readFile(lockPath, 'utf-8');
           const lines = content.split('\n');
-          const lockTime = parseInt(lines[1] || '0');
+          const lockTime = parseInt(lines[1] || '0', 10);
           if (Date.now() - lockTime > 30000) {
             // 陈旧锁，强制释放
             await fs.unlink(lockPath).catch(() => {});

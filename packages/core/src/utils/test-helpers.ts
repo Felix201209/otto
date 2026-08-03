@@ -46,11 +46,12 @@ export function createMockConfig(overrides?: MockConfigOverrides): Config {
  *   // tool calls execAsync -> receives mockExec
  */
 export function mockExecResult(output: { stdout: string; stderr?: string }) {
+  type ExecCallback = (error: Error | null, stdout?: string, stderr?: string) => void;
   const exec = vi.fn(
-    (_cmd: string, _opts?: any, _cb?: any) => {
+    (_cmd: string, _opts?: Record<string, unknown> | ExecCallback, _cb?: ExecCallback) => {
       const callback = typeof _opts === 'function' ? _opts : _cb;
       if (callback) {
-        callback(null, output, '');
+        callback(null, output.stdout, output.stderr ?? '');
       }
       const child = {
         stdout: { on: vi.fn() },
@@ -68,7 +69,7 @@ export function mockExecResult(output: { stdout: string; stderr?: string }) {
 /**
  * Simple helper to run the tool and assert basic success format.
  */
-export function assertToolSuccess(result: { llmContent: string; returnDisplay: string }, toolName: string) {
+export function assertToolSuccess(result: { llmContent: string; returnDisplay: string }, _toolName: string) {
   if (result.llmContent.includes('FAIL') || result.returnDisplay.includes('FAIL')) {
     throw new Error(`Expected success but got failure: ${result.llmContent}`);
   }

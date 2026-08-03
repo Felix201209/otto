@@ -1555,9 +1555,10 @@ export class EnterpriseClient {
     );
     return response.snapshot;
   }
-  async getOrganizationView(): Promise<EnterpriseOrganizationView> {
+  async getOrganizationView(organizationId?: string): Promise<EnterpriseOrganizationView> {
     if (!this.token) throw new Error('登录已失效，请重新登录');
-    return this.request('/enterprise/organization/view');
+    const query = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
+    return this.request(`/enterprise/organization/view${query}`);
   }
 
   async heartbeatPresence(clientId = 'desktop'): Promise<void> {

@@ -79,18 +79,39 @@ jobs:
       - name: 🔍 Typecheck (all workspaces, including desktop)
         run: npm run typecheck --workspaces --if-present
 
+      - name: 🧹 Lint all production packages
+        run: npm run lint:ci
+
+      - name: 🎯 Deterministic agent safety evaluations
+        run: npm run eval:deterministic
+
+      - name: 📎 Preserve deterministic evaluation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deterministic-agent-safety-evidence
+          path: |
+            packages/evals/artifacts/latest.json
+            packages/evals/artifacts/junit.xml
+          if-no-files-found: error
+
       - name: 🧪 Focused release regressions
         run: |
-          npx vitest run \
-            packages/core/src/config/lazy-heavy-tools.registration.test.ts \
-            packages/core/src/core/customModelAdapter.test.ts \
-            packages/desktop/src/main/enterprise-client.test.ts \
-            packages/desktop/scripts/packaging-contract.test.mjs \
-            packages/desktop/src/main/video-editor-resource.test.ts \
-            packages/server/src/enterprise/db.test.ts \
-            packages/server/src/enterprise/parkEndpoints.test.ts \
-            packages/server/src/server.test.ts \
-            packages/server/src/enterprise/server.test.ts
+          # Each workspace owns its Vitest configuration and mocks. Running all
+          # packages through the root runner leaks mocks between suites.
+          npm --workspace otto-core run test -- \
+            src/config/lazy-heavy-tools.registration.test.ts \
+            src/core/customModelAdapter.test.ts
+          npm --workspace otto-desktop run test -- \
+            src/main/enterprise-client.test.ts \
+            scripts/packaging-contract.test.mjs \
+            src/main/video-editor-resource.test.ts
+          # Server suites share SQLite fixtures and module mocks, so run each
+          # focused regression in a fresh worker process.
+          npm --workspace otto-server run test -- src/enterprise/db.test.ts
+          npm --workspace otto-server run test -- src/enterprise/parkEndpoints.test.ts
+          npm --workspace otto-server run test -- src/server.test.ts
+          npm --workspace otto-server run test -- src/enterprise/server.test.ts
 
       - name: 🧪 Test core
         run: npm run test --workspace=packages/core
@@ -100,3 +121,6 @@ jobs:
 
       - name: 🧪 Test desktop
         run: npm run test --workspace=packages/desktop
+
+      - name: 🧪 Test durable workflow and RPA runtime
+        run: npm run test --workspace=packages/workflow && npm run test --workspace=packages/rpa

@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import { VoiceBridgeTool } from './voice-bridge.js';
+import type { VoiceBridgeDependencyStatus } from './voice-bridge.js';
 import { createMockConfig } from '../utils/test-helpers.js';
 import {
   DoctorService,
@@ -41,7 +42,7 @@ function toolWithRuntimeStatus(status: Record<string, unknown>): VoiceBridgeTool
   return new VoiceBridgeTool(
     createMockConfig(),
     new DoctorService(makeRunner(new Set()), NO_MODULES, 'darwin', () => false),
-    async () => status as any,
+    async () => status as VoiceBridgeDependencyStatus,
   );
 }
 

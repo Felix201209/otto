@@ -13,7 +13,6 @@ import {
   beforeEach,
   type Mocked,
 } from 'vitest';
-import * as fs from 'fs';
 
 // MOCKS
 let callCount = 0;

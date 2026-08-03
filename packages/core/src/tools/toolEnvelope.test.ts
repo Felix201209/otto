@@ -4,12 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   createToolExecutionEnvelope,
   ToolExecutionEnvelope,
   ToolEnvelopeEntry,
-  SideEffectClass,
 } from './toolEnvelope.js';
 import { Tool, ToolResult, BaseTool, Icon } from './tools.js';
 import { Config } from '../config/config.js';

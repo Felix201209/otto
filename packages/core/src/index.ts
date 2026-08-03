@@ -24,6 +24,7 @@ export * from './config/config.js';
 export * from './config/agent-loop-context.js';
 export * from './policy/policy-engine.js';
 export * from './policy/policy-updater.js';
+export * from './policy/financialComputationPolicy.js';
 export * from './confirmation-bus/message-bus.js';
 export * from './config/projectSettings.js';
 export * from './config/messageRoles.js';

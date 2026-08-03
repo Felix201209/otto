@@ -62,18 +62,20 @@ function contentToText(content: Content): string {
 
   if (content.parts) {
     for (const part of content.parts) {
-      const p = part as any;
+      const p = part as Record<string, unknown>;
       if (typeof p.text === 'string') {
         parts.push(p.text);
       } else if (p.functionCall) {
         parts.push(JSON.stringify(p.functionCall));
       } else if (p.functionResponse) {
         // 工具响应可能很大，取其首段做估算
-        const response = p.functionResponse.response;
+        const functionResponse = p.functionResponse as { response?: unknown };
+        const response = functionResponse.response;
         if (typeof response === 'string') {
           parts.push(response);
         } else if (response && typeof response === 'object') {
-          const output = response.output || response.content || response.result;
+          const responseRecord = response as { output?: unknown; content?: unknown; result?: unknown };
+          const output = responseRecord.output ?? responseRecord.content ?? responseRecord.result;
           if (typeof output === 'string') {
             // 只取前 500 字符做估算（太长的工具输出用上限估算）
             parts.push(output.substring(0, 500));
@@ -82,7 +84,7 @@ function contentToText(content: Content): string {
           }
         }
       } else if (p.toolResult) {
-        const content = p.toolResult?.content;
+        const content = (p.toolResult as { content?: unknown })?.content;
         if (typeof content === 'string') {
           parts.push(content.substring(0, 500));
         } else if (content && typeof content === 'object') {

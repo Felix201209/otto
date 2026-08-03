@@ -2,9 +2,9 @@
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { EventEmitter } from 'node:events';
 import { DiagnoseSystemTool } from './diagnose-system.js';
 import { createMockConfig } from '../utils/test-helpers.js';
-import { ApprovalMode } from '../config/config.js';
 
 describe('DiagnoseSystemTool', () => {
   let tool: DiagnoseSystemTool;
@@ -35,7 +35,7 @@ describe('DiagnoseSystemTool', () => {
   it('validateToolParams returns null for all 13 actions', () => {
     const actions = ['system_info','disk_health','disk_usage','memory','network','processes','cleanup','battery','startup','bluetooth','printer','brew_doctor','repair_permissions'];
     for (const a of actions) {
-      expect(tool.validateToolParams({ action: a as any })).toBeNull();
+      expect(tool.validateToolParams({ action: a as unknown as Parameters<typeof tool.validateToolParams>[0]['action'] })).toBeNull();
     }
   });
 
@@ -60,10 +60,8 @@ describe('DiagnoseSystemTool', () => {
   // --- execute: integration tests (mock exec) ---
   describe('execute with mocked exec', () => {
     beforeEach(() => {
-      vi.mock('child_process', () => {
-        const EventEmitter = require('events').EventEmitter;
-        return {
-          exec: vi.fn((_cmd: string, _opts: any) => {
+      vi.mock('child_process', () => ({
+          exec: vi.fn((_cmd: string, _opts: unknown) => {
             const child = new EventEmitter();
             child.stdout = new EventEmitter();
             child.stderr = new EventEmitter();
@@ -74,11 +72,10 @@ describe('DiagnoseSystemTool', () => {
             });
             return child;
           }),
-          execFile: vi.fn((_file: string, _args: string[], _opts: any, cb: (error: Error | null, stdout?: string, stderr?: string) => void) => {
+          execFile: vi.fn((_file: string, _args: string[], _opts: unknown, cb: (error: Error | null, stdout?: string, stderr?: string) => void) => {
             setImmediate(() => cb(null, 'mock output', ''));
           }),
-        };
-      });
+      }));
     });
 
     it('execute system_info returns OK', async () => {

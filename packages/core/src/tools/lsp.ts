@@ -92,7 +92,7 @@ export class LspTool extends BaseTool<LspToolParams, ToolResult> {
 
     async execute(params: LspToolParams): Promise<ToolResult> {
         const manager = getLSPManager(this.config.getTargetDir());
-        let result: any = null;
+        let result: unknown = null;
 
         // Normalize file path for Windows compatibility
         // Some LSPs or URI converters (like vscode-uri) are sensitive to casing and separators
@@ -131,7 +131,7 @@ export class LspTool extends BaseTool<LspToolParams, ToolResult> {
                 if (params.operation === 'hover') {
                     // For hover, usually only one client responds or we just want the first valid one
                     // result is Hover[]
-                    const firstHover = result.find((r: any) => r && r.contents);
+                    const firstHover = result.find((r) => r && typeof r === 'object' && 'contents' in r);
                     normalizedResult = firstHover || null;
                 } else if (params.operation === 'goToDefinition') {
                     // result is (Location | Location[])[]
@@ -139,15 +139,14 @@ export class LspTool extends BaseTool<LspToolParams, ToolResult> {
                     const flattened = result.flat().filter(Boolean);
                     // If all definitions point to the same place, maybe dedup?
                     // For now just return all.
-                    normalizedResult = flattened;
-                    if (normalizedResult.length === 0) normalizedResult = null;
-                    else if (normalizedResult.length === 1) normalizedResult = normalizedResult[0];
+                    normalizedResult = flattened.length === 0 ? null : flattened.length === 1 ? flattened[0] : flattened;
                 } else {
                     // For lists (references, symbols), flatten the results from all clients
                     // result is List[] -> List (which is Array)
-                    normalizedResult = result.flat().filter(Boolean);
+                    const listResult = result.flat().filter(Boolean);
+                    normalizedResult = listResult;
                     // Ensure it's empty array if no results, not null, to match array logic
-                    if (normalizedResult.length === 0 && Array.isArray(result)) normalizedResult = [];
+                    if (listResult.length === 0 && Array.isArray(result)) normalizedResult = [];
                 }
             }
 
@@ -167,11 +166,11 @@ export class LspTool extends BaseTool<LspToolParams, ToolResult> {
         }
     }
 
-    private formatLspResult(result: any, operation: string, cwd: string): string {
+    private formatLspResult(result: unknown, operation: string, cwd: string): string {
         if (!result) return 'No result found.';
 
         // Helper to format a single location
-        const formatLocation = (uri: string, range: any) => {
+        const formatLocation = (uri: string, range: { start: { line: number; character: number }; end: { line: number; character: number } }) => {
             let filePath = uri;
             if (uri.startsWith('file://')) {
                 filePath = fileURLToPath(uri);
@@ -196,13 +195,14 @@ export class LspTool extends BaseTool<LspToolParams, ToolResult> {
             if (result.length === 0) return 'No results.';
 
             // Check content type based on first item
-            const first = result[0];
+            const first = result[0] as Record<string, unknown>;
 
             // Locations (References, Definitions)
-            if (first.uri || first.targetUri) { // Location or LocationLink
-                return result.map((item: any) => {
-                    const uri = item.uri || item.targetUri;
-                    const range = item.range || item.targetSelectionRange;
+            if (typeof first.uri === 'string' || typeof first.targetUri === 'string') { // Location or LocationLink
+                return result.map((item) => {
+                    const record = item as Record<string, unknown>;
+                    const uri = (record.uri || record.targetUri) as string;
+                    const range = (record.range || record.targetSelectionRange) as { start: { line: number; character: number }; end: { line: number; character: number } };
                     return `• ${formatLocation(uri, range)}`;
                 }).join('\n');
             }
@@ -210,24 +210,27 @@ export class LspTool extends BaseTool<LspToolParams, ToolResult> {
             // Symbols (DocumentSymbol, SymbolInformation)
             // SymbolInformation has { name, kind, location }
             // DocumentSymbol has { name, kind, range, children? }
-            if (first.name && (first.kind !== undefined)) {
-                return result.map((item: any) => {
+            if (typeof first.name === 'string' && first.kind !== undefined) {
+                return result.map((item) => {
+                    const record = item as Record<string, unknown>;
                     const kindMap: { [key: number]: string } = {
                         1: 'File', 2: 'Module', 3: 'Namespace', 4: 'Package', 5: 'Class',
                         6: 'Method', 7: 'Property', 8: 'Field', 9: 'Constructor', 10: 'Enum',
                         11: 'Interface', 12: 'Function', 13: 'Variable', 14: 'Constant', 15: 'String'
                     };
-                    const kind = kindMap[item.kind] || `Kind(${item.kind})`;
+                    const kindNumber = Number(record.kind);
+                    const kind = kindMap[kindNumber] || `Kind(${kindNumber})`;
                     let locStr = '';
-                    if (item.location) { // SymbolInformation
-                        locStr = formatLocation(item.location.uri, item.location.range);
-                    } else if (item.range) { // DocumentSymbol - usually implicitly current file if nested, but top level passed raw
+                    if (record.location && typeof record.location === 'object') { // SymbolInformation
+                        const location = record.location as Record<string, unknown>;
+                        locStr = formatLocation(String(location.uri), location.range as { start: { line: number; character: number }; end: { line: number; character: number } });
+                    } else if (record.range) { // DocumentSymbol - usually implicitly current file if nested, but top level passed raw
                         // DocumentSymbol doesn't have URI usually if nested, but here we might just show range
                         // However, for document symbols we typically just list them.
-                        const r = item.range;
+                        const r = record.range as { start: { line: number; character: number } };
                         locStr = `${r.start.line + 1}:${r.start.character + 1}`;
                     }
-                    return `• [${kind}] ${item.name} (${locStr})`;
+                    return `• [${kind}] ${String(record.name)} (${locStr})`;
                 }).join('\n');
             }
 
@@ -237,20 +240,21 @@ export class LspTool extends BaseTool<LspToolParams, ToolResult> {
 
         // Handle Single Object results
 
+        const resultRecord = result as Record<string, unknown>;
         // Hover
-        if (result.contents) {
-            if (typeof result.contents === 'string') return result.contents;
-            if (result.contents.value) return result.contents.value; // MarkupContent
-            if (Array.isArray(result.contents)) {
-                return result.contents.map((c: any) => typeof c === 'string' ? c : c.value).join('\n\n');
+        if (resultRecord.contents) {
+            if (typeof resultRecord.contents === 'string') return resultRecord.contents;
+            if (resultRecord.contents && typeof resultRecord.contents === 'object' && 'value' in resultRecord.contents) return String((resultRecord.contents as { value?: unknown }).value ?? ''); // MarkupContent
+            if (Array.isArray(resultRecord.contents)) {
+                return resultRecord.contents.map((c) => typeof c === 'string' ? c : String((c as { value?: unknown }).value ?? '')).join('\n\n');
             }
             return 'Hover content available.';
         }
 
         // Single Location (Definition)
-        if (result.uri || result.targetUri) {
-            const uri = result.uri || result.targetUri;
-            const range = result.range || result.targetSelectionRange;
+        if (typeof resultRecord.uri === 'string' || typeof resultRecord.targetUri === 'string') {
+            const uri = String(resultRecord.uri || resultRecord.targetUri);
+            const range = (resultRecord.range || resultRecord.targetSelectionRange) as { start: { line: number; character: number }; end: { line: number; character: number } };
             return formatLocation(uri, range);
         }
 

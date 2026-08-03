@@ -268,12 +268,10 @@ describe('adapter import boundary', () => {
       return;
     }
 
-    let totalAdapterFiles = 0;
     let filesWithCoreImports = 0;
     const filesWithoutCoreImports: string[] = [];
 
     for (const file of adapterFiles) {
-      totalAdapterFiles++;
       const source = fs.readFileSync(file, 'utf-8');
       const lines = source.split('\n');
       let hasCoreImport = false;

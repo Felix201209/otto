@@ -10,6 +10,15 @@ import { parseJSONSafe } from './customModelJson.js';
 import { cleanOpenAICompatibleSchema } from './customModelOpenAISchema.js';
 import { pairToolCallIds } from './customModelToolCallIds.js';
 
+type ResponsesRecord = Record<string, unknown>;
+type ResponsesPart = ResponsesRecord & {
+  text?: string;
+  functionCall?: { id?: string; name?: string; args?: unknown };
+  functionResponse?: { id?: string; name?: string; response?: unknown };
+  inlineData?: { mimeType?: string; data?: string };
+};
+type ResponsesContent = { role?: string; parts?: ResponsesPart[] };
+
 /**
  * OpenAI Responses API 格式转换工具
  * Responses API 使用 input/output 而非 messages/choices
@@ -23,8 +32,8 @@ export const OpenAIResponsesConverter = {
    * - 函数调用: { type: "function_call", call_id: "...", name: "...", arguments: "..." }
    * - 函数输出: { type: "function_call_output", call_id: "...", output: "..." }
    */
-  contentsToInput(contents: any[]): any[] {
-    const items: any[] = [];
+  contentsToInput(contents: ResponsesContent[]): ResponsesRecord[] {
+    const items: ResponsesRecord[] = [];
 
     // 🆕 与 Anthropic / Chat 路径一致：先做 tool_call ↔ tool_result 的 id 配对。
     // Responses API 同样强制 function_call_output.call_id 必须能在前文的
@@ -39,9 +48,9 @@ export const OpenAIResponsesConverter = {
 
       // 收集当前 content 的各类部分（保留 part 引用以便查权威配对 id）
       const textParts: string[] = [];
-      const functionCalls: Array<{ part: any; fc: any }> = [];
-      const functionResponses: Array<{ part: any; fr: any }> = [];
-      const imageParts: any[] = [];
+      const functionCalls: Array<{ part: ResponsesPart; fc: NonNullable<ResponsesPart['functionCall']> }> = [];
+      const functionResponses: Array<{ part: ResponsesPart; fr: NonNullable<ResponsesPart['functionResponse']> }> = [];
+      const imageParts: Array<{ mimeType?: string; data?: string }> = [];
 
       for (const part of parts) {
         if (part.functionCall) {
@@ -59,7 +68,7 @@ export const OpenAIResponsesConverter = {
       if (textParts.length > 0 || imageParts.length > 0) {
         if (imageParts.length > 0) {
           // 混合内容：文本 + 图片
-          const contentParts: any[] = [];
+          const contentParts: ResponsesRecord[] = [];
           for (const text of textParts) {
             contentParts.push({ type: 'input_text', text });
           }
@@ -106,11 +115,11 @@ export const OpenAIResponsesConverter = {
    * 注意：Responses API 的 schema 校验比 Chat Completions 更严格，
    * 必须将 Google GenAI 的大写类型转为小写
    */
-  toolsToResponsesTools(tools: any[]): any[] | undefined {
+  toolsToResponsesTools(tools: ResponsesRecord[]): ResponsesRecord[] | undefined {
     if (!tools || tools.length === 0) return undefined;
-    return tools.flatMap((tool: any) => {
+    return tools.flatMap((tool) => {
       if (tool.functionDeclarations && Array.isArray(tool.functionDeclarations)) {
-        return tool.functionDeclarations.map((fd: any) => ({
+        return (tool.functionDeclarations as ResponsesRecord[]).map((fd) => ({
           type: 'function',
           name: fd.name,
           description: fd.description,
@@ -136,8 +145,8 @@ export const OpenAIResponsesConverter = {
    * - message    → 内含 content[] 含 output_text，映射为 { text } parts
    * - function_call → 直接映射为 { functionCall } part
    */
-  outputToParts(output: any[]): any[] {
-    const parts: any[] = [];
+  outputToParts(output: ResponsesRecord[]): ResponsesPart[] {
+    const parts: ResponsesPart[] = [];
     if (!output || !Array.isArray(output)) return parts;
 
     for (const item of output) {
@@ -160,11 +169,13 @@ export const OpenAIResponsesConverter = {
           }
         }
       } else if (item.type === 'function_call') {
+        const name = typeof item.name === 'string' ? item.name : '';
+        const callId = typeof item.call_id === 'string' ? item.call_id : undefined;
         parts.push({
           functionCall: {
-            name: item.name?.trim() || item.name,
-            args: parseJSONSafe(item.arguments || '{}'),
-            id: item.call_id || item.id,
+            name: name.trim() || name,
+            args: parseJSONSafe(typeof item.arguments === 'string' ? item.arguments : '{}'),
+            id: callId,
           },
         });
       }

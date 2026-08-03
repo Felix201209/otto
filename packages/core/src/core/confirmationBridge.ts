@@ -5,11 +5,6 @@
  */
 
 
-import {
-  ToolCallConfirmationDetails,
-  ToolConfirmationOutcome,
-} from '../index.js';
-import { ToolExecutionContext } from './toolSchedulerAdapter.js';
 
 /**
  * 确认桥接器接口

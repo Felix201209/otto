@@ -450,7 +450,7 @@ export class SettingsManager {
     }
 
     // 创建过滤条件：保留不属于该 marketplace 的 plugins
-    const isNotFromMarketplace = ([pluginId]: [string, any]) =>
+    const isNotFromMarketplace = ([pluginId]: [string, unknown]) =>
       !pluginId.startsWith(`${marketplaceId}:`);
 
     // 从 enabledPlugins 中删除相关记录

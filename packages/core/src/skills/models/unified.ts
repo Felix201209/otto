@@ -81,7 +81,7 @@ export interface UnifiedComponent {
 
   // 内容
   content?: string;          // Raw content (Markdown, Code, etc.)
-  metadata?: Record<string, any>; // Parsed frontmatter/metadata
+  metadata?: Record<string, unknown>; // Parsed frontmatter/metadata
 
   // 执行相关
   executable: boolean;
@@ -154,7 +154,7 @@ export interface UnifiedPlugin {
   };
 
   // 原始配置 (保留以备参考)
-  rawConfig?: Record<string, any>;
+  rawConfig?: Record<string, unknown>;
 }
 
 /**

@@ -586,7 +586,7 @@ export class MCPOAuthProvider {
       if (updateOutput) {
         updateOutput(`✓ Browser opened. If it didn't open, please visit:\n${authUrl}`);
       }
-    } catch (error) {
+    } catch (_error) {
       if (updateOutput) {
         updateOutput(`⚠ Failed to open browser. Please visit this URL:\n${authUrl}`);
       }

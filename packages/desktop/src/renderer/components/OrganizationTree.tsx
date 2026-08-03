@@ -149,9 +149,7 @@ export function OrganizationTree({
   workspace: ProductWorkspaceSnapshot | null;
   schedules?: readonly ScheduleItemInfo[];
   enterpriseAccount?: EnterpriseAccount;
-  /** 右侧企业入口递增该值时，展开这里唯一的真实组织树。 */
   openRequest?: number;
-  /** 企业管理员提交成员/职位变化后递增，强制重读服务端组织目录。 */
   refreshRevision?: number;
   unreadCounts?: EnterpriseUnreadCounts;
   directChatOpenRequest?: EnterpriseDirectChatOpenRequest;
@@ -167,8 +165,6 @@ export function OrganizationTree({
   const handledDirectChatOpenRequest = useRef(0);
   const hasLocalEnterpriseWorkspace = workspace?.context.edition === 'enterprise';
   const hasAuthenticatedOrganization = isAuthenticatedEnterpriseAccount(enterpriseAccount);
-  // 真实中心账号以服务端目录为权威，不能被机器上残留的本机企业树覆盖。
-  // 只有没有真实中心账号时，才展示本机 ProductWorkspace 的组织框架。
   const organization = hasLocalEnterpriseWorkspace && !hasAuthenticatedOrganization
     ? workspace?.managerWorkspace?.organization
     : undefined;
@@ -222,11 +218,7 @@ export function OrganizationTree({
     if (openRequest > 0) setOpen(true);
   }, [openRequest]);
 
-  // 本地 workspace 没有管理员组织快照时，经 preload -> main 读取企业组织。
-  // 会话 token 始终只保留在 main 的 EnterpriseClient 内。
   useEffect(() => {
-    // 远程组织目录只允许真实企业账号触发；本机企业成员或内测假身份没有
-    // Bearer 会话时展示占位信息，不调用 IPC，也不产生无意义的 401。
     if (!hasAuthenticatedOrganization) return;
 
     let cancelled = false;
@@ -524,7 +516,6 @@ function directAttachmentTypeLabel(fileName: string, mimeType: string): string {
 }
 
 function directAttachmentMimeType(fileName: string): string {
-
   const extension = directAttachmentExtension(fileName);
   const map: Record<string, string> = {
     png: 'image/png',
@@ -574,8 +565,9 @@ function normalizeDirectAttachment(
   }
   if (!attachment.data) throw new Error('附件内容为空');
   return {
-    ...attachment,
     fileName,
+    size: attachment.size,
+    data: attachment.data,
     mimeType: directAttachmentMimeType(fileName),
   };
 }
@@ -638,26 +630,27 @@ function DirectMessageAttachmentCard({
     }
   }, [attachment.id, download]);
 
-  const saveAttachment = async (): Promise<void> => {
-    const next = await readAttachment().catch(() => null);
-    if (!next) return;
-    const link = document.createElement('a');
-    link.href = 'data:' + next.mimeType + ';base64,' + next.data;
-    link.download = next.fileName;
-    link.style.display = 'none';
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
+  const handleOpen = async (): Promise<void> => {
+    try {
+      const next = await readAttachment();
+      const href = `data:${next.mimeType};base64,${next.data}`;
+      const link = document.createElement('a');
+      link.href = href;
+      link.download = next.fileName;
+      link.rel = 'noopener';
+      link.click();
+    } catch {
+    }
   };
 
-  const previewUrl = image && download
-    ? 'data:' + download.mimeType + ';base64,' + download.data
-    : '';
-
   return (
-    <div className={'otto-direct-chat__attachment' + (image ? ' is-image' : '')}>
-      {previewUrl ? (
-        <img src={previewUrl} alt={attachment.fileName} />
+    <div className="otto-direct-chat__attachment-card">
+      {image && download ? (
+        <img
+          src={`data:${download.mimeType};base64,${download.data}`}
+          alt={attachment.fileName}
+          className="otto-direct-chat__attachment-preview"
+        />
       ) : (
         <span className="otto-direct-chat__attachment-icon" aria-hidden="true">
           {directAttachmentTypeLabel(attachment.fileName, attachment.mimeType)}
@@ -665,28 +658,21 @@ function DirectMessageAttachmentCard({
       )}
       <span className="otto-direct-chat__attachment-copy">
         <strong title={attachment.fileName}>{attachment.fileName}</strong>
-        <small>
-          {directAttachmentTypeLabel(attachment.fileName, attachment.mimeType)}
-          {' · '}
-          {formatDirectAttachmentSize(attachment.size)}
-        </small>
-        {attachmentError ? <em role="alert">{attachmentError}</em> : null}
+        <small>{formatDirectAttachmentSize(attachment.size)}</small>
+        {attachmentError ? (
+          <em role="alert">{attachmentError}</em>
+        ) : null}
       </span>
       <span className="otto-direct-chat__attachment-actions">
-        {image && !previewUrl ? (
-          <button
-            type="button"
-            disabled={loading}
-            onClick={() => void readAttachment().catch(() => undefined)}
-            aria-label={'预览 ' + attachment.fileName}
-          >
+        {image && !download ? (
+          <button type="button" onClick={() => void readAttachment()} disabled={loading}>
             {loading ? '读取中' : '预览'}
           </button>
         ) : null}
         <button
           type="button"
+          onClick={() => void handleOpen()}
           disabled={loading}
-          onClick={() => void saveAttachment()}
           aria-label={'下载 ' + attachment.fileName}
         >
           下载
@@ -696,10 +682,10 @@ function DirectMessageAttachmentCard({
   );
 }
 
-function DirectMessagePanel({
+export function DirectMessagePanel({
   member,
   currentAccount,
-  schedules,
+  schedules = [],
   initialPosition,
   stackOrder,
   onActivate,
@@ -708,7 +694,7 @@ function DirectMessagePanel({
 }: {
   member: EnterpriseOrganizationView['members'][number];
   currentAccount?: EnterpriseAccount;
-  schedules: readonly ScheduleItemInfo[];
+  schedules?: readonly ScheduleItemInfo[];
   initialPosition: { left: number; top: number };
   stackOrder: number;
   onActivate: () => void;
@@ -718,21 +704,18 @@ function DirectMessagePanel({
   const [messages, setMessages] = useState<EnterpriseDirectMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState<EnterpriseDirectMessageAttachmentUpload[]>([]);
-  const [attachmentError, setAttachmentError] = useState('');
-  const [attaching, setAttaching] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
-  const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
+  const [attaching, setAttaching] = useState(false);
+  const [attachmentError, setAttachmentError] = useState('');
+  const [error, setError] = useState('');
   const [askingOwnOtto, setAskingOwnOtto] = useState(false);
   const [askingPeerOtto, setAskingPeerOtto] = useState(false);
   const [collaborationMenuOpen, setCollaborationMenuOpen] = useState(false);
   const [consultOpen, setConsultOpen] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const [minimized, setMinimized] = useState(false);
   const [maximized, setMaximized] = useState(false);
   const [position, setPosition] = useState(initialPosition);
-  const knownMessageIds = useRef<Set<string> | null>(null);
-  const scrollPending = useRef(true);
-  const messagesEnd = useRef<HTMLDivElement | null>(null);
   const dragState = useRef<{
     pointerId: number;
     clientX: number;
@@ -740,20 +723,25 @@ function DirectMessagePanel({
     left: number;
     top: number;
   } | null>(null);
+  const messagesEnd = useRef<HTMLDivElement | null>(null);
+  const scrollPending = useRef(true);
+  const knownMessageIds = useRef<Set<string> | null>(null);
+  const fileInput = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    setDraft('');
-    setAttachments([]);
-    setAttachmentError('');
-    setError('');
-    setMessages([]);
-    knownMessageIds.current = null;
-    scrollPending.current = true;
-  }, [member.id]);
+    const handleClickOutside = (event: MouseEvent): void => {
+      if (!(event.target instanceof Element)) return;
+      if (!event.target.closest('.otto-direct-chat__a2a-menu')) {
+        setCollaborationMenuOpen(false);
+      }
+    };
+    document.addEventListener('pointerdown', handleClickOutside);
+    return () => document.removeEventListener('pointerdown', handleClickOutside);
+  }, []);
 
   useEffect(() => {
     let active = true;
-    const load = async () => {
+    const load = async (): Promise<void> => {
       try {
         const next = await window.otto.enterpriseMessagesList(member.id);
         if (active) {
@@ -834,25 +822,12 @@ function DirectMessagePanel({
     setAttachmentError(firstError);
   };
 
-  const pickAttachments = async (): Promise<void> => {
-    if (attaching) return;
+  const addBrowserFiles = async (files: readonly File[]): Promise<void> => {
+    if (files.length === 0) return;
     setAttaching(true);
-    setAttachmentError('');
     try {
-      const paths = await window.otto.selectFiles();
-      const remaining = DIRECT_MESSAGE_MAX_ATTACHMENTS - attachments.length;
-      const selected: EnterpriseDirectMessageAttachmentUpload[] = [];
-      for (const filePath of paths.slice(0, Math.max(0, remaining))) {
-        const file = await window.otto.readFilePath(filePath);
-        selected.push({
-          fileName: file.fileName,
-          mimeType: file.mimeType,
-          size: file.size,
-          data: file.data,
-        });
-      }
-      appendAttachments(selected);
-      if (paths.length > remaining) setAttachmentError('每条消息最多发送 6 个附件');
+      const loaded = await Promise.all(files.map((file) => browserFileToDirectAttachment(file)));
+      appendAttachments(loaded);
     } catch (reason) {
       setAttachmentError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -860,37 +835,26 @@ function DirectMessagePanel({
     }
   };
 
-  const addBrowserFiles = async (files: readonly File[]): Promise<void> => {
-    if (files.length === 0 || attaching) return;
+  const pickAttachments = async (): Promise<void> => {
     setAttaching(true);
-    setAttachmentError('');
-    const remaining = DIRECT_MESSAGE_MAX_ATTACHMENTS - attachments.length;
-    const selected: EnterpriseDirectMessageAttachmentUpload[] = [];
-    let firstError = '';
-    for (const file of files.slice(0, Math.max(0, remaining))) {
-      try {
-        selected.push(await browserFileToDirectAttachment(file));
-      } catch (reason) {
-        firstError ||= reason instanceof Error ? reason.message : String(reason);
-      }
+    try {
+      const paths = await window.otto.selectFiles();
+      if (paths.length === 0) return;
+      const picked = await Promise.all(paths.map((filePath) => window.otto.readFilePath(filePath)));
+      appendAttachments(picked);
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      if (message !== 'cancelled') setAttachmentError(message);
+    } finally {
+      setAttaching(false);
     }
-    appendAttachments(selected);
-    if (files.length > remaining) firstError ||= '每条消息最多发送 6 个附件';
-    if (firstError) setAttachmentError(firstError);
-    setAttaching(false);
   };
 
   const buildTranscriptContext = (): string => {
-    const myName = currentAccount?.name || '我';
-    const transcript = messages.slice(-40).map((message) => {
-      const speaker = message.senderAccountId === member.id ? member.name : myName;
-      const createdAt = message.createdAt
-        ? parseDirectMessageTimestamp(message.createdAt).toLocaleString(
-          'zh-CN',
-          { hour12: false },
-        )
-        : '';
-      const files = (message.attachments || []).map((item) => item.fileName);
+    const transcript = messages.slice(-20).map((message) => {
+      const speaker = message.senderAccountId === member.id ? member.name : '我';
+      const createdAt = formatDirectMessageTime(message.createdAt || '') || '未知时间';
+      const files = (message.attachments || []).map((item) => item.fileName).filter(Boolean);
       const fileSummary = files.length > 0 ? ' [附件：' + files.join('、') + ']' : '';
       return '- ' + createdAt + ' ' + speaker + ': ' + message.content + fileSummary;
     }).join('\n');
@@ -1292,6 +1256,17 @@ function DirectMessagePanel({
           </div>
           <button type="submit" disabled={!canSend}>{sending ? '发送中' : '发送'}</button>
         </div>
+        <input
+          ref={fileInput}
+          type="file"
+          multiple
+          hidden
+          onChange={(event) => {
+            const files = Array.from(event.target.files || []);
+            event.currentTarget.value = '';
+            void addBrowserFiles(files);
+          }}
+        />
       </form>
       {consultOpen && currentAccount ? (
         <AtoaConsultDialog
@@ -1310,6 +1285,7 @@ function DirectMessagePanel({
     </div>
   );
 }
+
 type Organization = NonNullable<
   ProductWorkspaceSnapshot['managerWorkspace']
 >['organization'];

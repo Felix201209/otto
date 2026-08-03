@@ -51,9 +51,9 @@ export interface SessionTokenData {
 export interface SessionData {
   sessionId: string;
   metadata: SessionMetadata;
-  history?: any[];
-  clientHistory?: any[];
-  checkpoints: any[];
+  history?: unknown[];
+  clientHistory?: unknown[];
+  checkpoints: unknown[];
   tokens: SessionTokenData;
 }
 
@@ -105,7 +105,7 @@ export class SessionManager {
     try {
       const content = await fs.readFile(this.indexPath, 'utf-8');
       return JSON.parse(content);
-    } catch (error) {
+    } catch {
       return {
         sessions: []
       };
@@ -237,8 +237,8 @@ export class SessionManager {
       // 尝试读取所有文件，缺失则创建
       let metadata: SessionMetadata;
       let tokens: SessionTokenData;
-      let history: any[];
-      let clientHistory: any[];
+      let history: unknown[];
+      let clientHistory: unknown[];
 
       // 读取或创建metadata
       try {
@@ -323,7 +323,7 @@ export class SessionManager {
   /**
    * 保存session历史
    */
-  async saveSessionHistory(sessionId: string, history: any[], clientHistory?: any[]): Promise<void> {
+  async saveSessionHistory(sessionId: string, history: unknown[], clientHistory?: unknown[]): Promise<void> {
     const sessionDir = this.getSessionDir(sessionId);
 
     await fs.writeFile(
@@ -345,8 +345,9 @@ export class SessionManager {
     if (history && history.length > 0) {
       // 查找第一条用户消息
       for (const item of history) {
-        if (item.type === 'user' && item.text) {
-          firstUserMessage = item.text.slice(0, 100); // 限制长度
+        const entry = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+        if (entry.type === 'user' && typeof entry.text === 'string' && entry.text) {
+          firstUserMessage = entry.text.slice(0, 100); // 限制长度
           break;
         }
       }
@@ -354,8 +355,9 @@ export class SessionManager {
       // 查找最后一条助手消息
       for (let i = history.length - 1; i >= 0; i--) {
         const item = history[i];
-        if (item.type === 'user' && item.text) {
-          lastAssistantMessage = item.text.slice(0, 100);
+        const entry = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+        if (entry.type === 'user' && typeof entry.text === 'string' && entry.text) {
+          lastAssistantMessage = entry.text.slice(0, 100);
           break;
         }
       }
@@ -373,16 +375,16 @@ export class SessionManager {
   /**
    * 保存session检查点（添加到列表中，不覆盖）
    */
-  async saveSessionCheckpoint(sessionId: string, checkpoint: any): Promise<void> {
+  async saveSessionCheckpoint(sessionId: string, checkpoint: unknown): Promise<void> {
     const sessionDir = this.getSessionDir(sessionId);
     const checkpointsFile = path.join(sessionDir, 'checkpoints.json');
 
     // 读取现有的checkpoints列表
-    let checkpoints: any[] = [];
+    let checkpoints: unknown[] = [];
     try {
       const content = await fs.readFile(checkpointsFile, 'utf-8');
       checkpoints = JSON.parse(content);
-    } catch (error) {
+    } catch {
       // 文件不存在或格式错误，使用空数组
       checkpoints = [];
     }
@@ -405,14 +407,14 @@ export class SessionManager {
   /**
    * 获取session的所有checkpoints
    */
-  async getSessionCheckpoints(sessionId: string): Promise<any[]> {
+  async getSessionCheckpoints(sessionId: string): Promise<unknown[]> {
     const sessionDir = this.getSessionDir(sessionId);
     const checkpointsFile = path.join(sessionDir, 'checkpoints.json');
 
     try {
       const content = await fs.readFile(checkpointsFile, 'utf-8');
       return JSON.parse(content);
-    } catch (error) {
+    } catch {
       return [];
     }
   }
@@ -681,9 +683,7 @@ export class SessionManager {
     }
 
     // 按lastActiveAt排序，最老的在前面
-    const sortedSessions = [...index.sessions].sort((a, b) => {
-      return new Date(a.lastActiveAt).getTime() - new Date(b.lastActiveAt).getTime();
-    });
+    const sortedSessions = [...index.sessions].sort((a, b) => new Date(a.lastActiveAt).getTime() - new Date(b.lastActiveAt).getTime());
 
     const sessionsToKeep: SessionMetadata[] = [];
     const sessionsToDelete: SessionMetadata[] = [];
@@ -735,7 +735,7 @@ export class SessionManager {
   async performSessionCleanup(maxSessions: number = 500, preserveLatestEmpty: boolean = false, excludeSessionId?: string): Promise<void> {
 
     if (excludeSessionId) {
-
+      // Exclusion is applied by cleanupMissingSessions below.
     }
 
     try {
@@ -835,17 +835,17 @@ export class SessionManager {
   /**
    * 更新session检查点
    */
-  async updateSessionCheckpoint(sessionId: string, checkpointId: string, updates: Partial<any>): Promise<void> {
+  async updateSessionCheckpoint(sessionId: string, checkpointId: string, updates: Partial<Record<string, unknown>>): Promise<void> {
     const sessionDir = this.getSessionDir(sessionId);
     const checkpointsFile = path.join(sessionDir, 'checkpoints.json');
 
     try {
       const content = await fs.readFile(checkpointsFile, 'utf-8');
-      let checkpoints: any[] = JSON.parse(content);
+      const checkpoints: unknown[] = JSON.parse(content);
 
-      const index = checkpoints.findIndex(cp => cp.id === checkpointId);
+      const index = checkpoints.findIndex(cp => cp && typeof cp === 'object' && (cp as Record<string, unknown>).id === checkpointId);
       if (index !== -1) {
-        checkpoints[index] = { ...checkpoints[index], ...updates };
+        checkpoints[index] = { ...(checkpoints[index] as Record<string, unknown>), ...updates };
         await fs.writeFile(checkpointsFile, JSON.stringify(checkpoints, null, 2));
       }
     } catch (error) {
@@ -860,11 +860,11 @@ export class SessionManager {
     timestamp: string;
     turn: number;
     request: {
-      history: any[];
-      messageParts: any[];
+      history: unknown[];
+      messageParts: unknown[];
     };
     response?: {
-      content: any;
+      content: unknown;
       tokenUsage?: {
         inputTokens: number;
         outputTokens: number;
@@ -940,7 +940,7 @@ export class SessionManager {
         await this.saveIndex(index);
         // console.log(`[SessionManager] 空会话已清理: ${sessionId}`);
       }
-    } catch (error) {
+    } catch (_error) {
       // 清理失败时静默处理，避免影响程序正常退出
       // console.warn(`[SessionManager] 清理空会话失败: ${sessionId}`, getErrorMessage(error));
     }

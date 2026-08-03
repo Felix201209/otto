@@ -172,7 +172,7 @@ Each todo object must have:
   /**
    * 执行工具操作
    */
-  async execute(params: TodoWriteParams, signal: AbortSignal): Promise<ToolResult> {
+  async execute(params: TodoWriteParams, _signal: AbortSignal): Promise<ToolResult> {
     const validationError = this.validateToolParams(params);
     if (validationError) {
       return {
@@ -194,14 +194,8 @@ Each todo object must have:
       todoStore.setTodos(todoItems);
       logger.info(`[TodoWriteTool] Updated todo list in memory, new count: ${todoItems.length}`);
 
-      const stats = {
-        total: todoItems.length,
-        pending: todoItems.filter(t => t.status === 'pending').length,
-        in_progress: todoItems.filter(t => t.status === 'in_progress').length,
-        completed: todoItems.filter(t => t.status === 'completed').length,
-      };
 
-      let output = `Todo List Updated Successfully\n\n`;
+      const output = `Todo List Updated Successfully\n\n`;
 
       // UI友好排序：已完成 > 进行中 > 待办
       const sortedTodos = [...todoItems].sort((a, b) => {

@@ -89,7 +89,7 @@ export function validateAndFixFunctionCall(
         }
         isValid = true;
         errors.pop(); // Remove the error since we fixed it
-      } catch (e) {
+      } catch (_e) {
         // If parsing fails, use empty object
         fixedCall.args = {};
         isValid = true;
@@ -123,7 +123,7 @@ export function validateAndFixFunctionCall(
           }
 
           // 尝试解析每个字符串为JSON对象
-          const fixedTodos = args.todos.map((item: any, index: number) => {
+          const fixedTodos = args.todos.map((item: unknown, index: number) => {
             if (typeof item === 'string') {
               try {
                 // 尝试解析为JSON

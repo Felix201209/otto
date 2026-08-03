@@ -38,6 +38,7 @@ import {
  * Parameters for the Edit tool
  */
 export interface EditToolParams {
+  _detectedLineEnding?: string;
   /**
    * The absolute path to the file to modify
    */
@@ -225,7 +226,7 @@ Expectation for required parameters:
       if (detectedLineEnding) {
         // Pass this down to _applyReplacement -> postProcessTextByLanguage
         // We'll need to store it in a variable accessible when calling _applyReplacement
-        (params as any)._detectedLineEnding = detectedLineEnding;
+        params._detectedLineEnding = detectedLineEnding;
       }
 
       // Normalize line endings to LF for consistent processing.
@@ -331,7 +332,7 @@ Expectation for required parameters:
       finalNewString,
       isNewFile,
       params.file_path,
-      (params as any)._detectedLineEnding,
+      params._detectedLineEnding,
     );
 
     return {
@@ -442,8 +443,8 @@ Expectation for required parameters:
   async execute(
     params: EditToolParams,
     signal: AbortSignal,
-    updateOutput?: (output: string) => void,
-    services?: ToolExecutionServices,
+    _updateOutput?: (output: string) => void,
+    _services?: ToolExecutionServices,
   ): Promise<ToolResult> {
     const validationError = this.validateToolParams(params);
     if (validationError) {
@@ -577,7 +578,7 @@ Expectation for required parameters:
             params.new_string,
             params.old_string === '' && currentContent === '',
             params.file_path,
-            (params as any)._detectedLineEnding,
+            params._detectedLineEnding,
           );
         } catch (err) {
           if (!isNodeError(err) || err.code !== 'ENOENT') throw err;

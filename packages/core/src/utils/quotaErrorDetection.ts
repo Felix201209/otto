@@ -132,7 +132,7 @@ export function isOttoQuotaError(error: unknown): boolean {
 
     // 检测402支付/配额错误（服务端统一使用402表示配额相关问题）
     if (gaxiosError.response?.status === 402 && gaxiosError.response.data) {
-      const data = gaxiosError.response.data as any;
+      const data = gaxiosError.response.data as Record<string, unknown>;
       if (data &&
           typeof data.error === 'string' &&
           (data.error === 'Quota limit exceeded' || data.error === 'No quota configuration') &&
@@ -143,7 +143,7 @@ export function isOttoQuotaError(error: unknown): boolean {
 
     // 🆕 检测500错误且message包含 quota exceeded (Otto Server)
     if (gaxiosError.response?.status === 500 && gaxiosError.response.data) {
-      const data = gaxiosError.response.data as any;
+      const data = gaxiosError.response.data as Record<string, unknown>;
       if (data && typeof data.message === 'string' && data.message.includes('quota exceeded')) {
         return true;
       }
@@ -170,7 +170,7 @@ export function isOttoQuotaError(error: unknown): boolean {
 
   // 检测结构化错误对象
   if (typeof error === 'object' && error !== null) {
-    const obj = error as any;
+    const obj = error as Record<string, unknown>;
 
     // 检查对象有message属性且包含Otto配额错误的情况
     if (obj.message && typeof obj.message === 'string') {
@@ -217,7 +217,7 @@ export function isOttoQuotaError(error: unknown): boolean {
 }
 
 export function getOttoQuotaErrorMessage(error: unknown): string | null {
-  let quotaError: OttoQuotaError | any = null;
+  let quotaError: OttoQuotaError | null = null;
 
   // 从HTTP响应中提取配额错误信息
   if (error && typeof error === 'object' && 'response' in error) {
@@ -233,13 +233,13 @@ export function getOttoQuotaErrorMessage(error: unknown): string | null {
       quotaError = gaxiosError.response.data as OttoQuotaError;
     } else if (gaxiosError.response?.status === 500 && gaxiosError.response.data) {
       // 🆕 处理 500 配额错误
-      const data = gaxiosError.response.data as any;
+      const data = gaxiosError.response.data as Record<string, unknown>;
       if (data && typeof data.message === 'string' && data.message.includes('quota exceeded')) {
-        quotaError = data;
+        quotaError = data as unknown as OttoQuotaError;
       }
     }
   } else if (typeof error === 'object' && error !== null) {
-    const obj = error as any;
+    const obj = error as Record<string, unknown>;
 
     // 处理对象有message属性且包含Otto配额错误的情况
     if (obj.message && typeof obj.message === 'string') {
@@ -252,9 +252,9 @@ export function getOttoQuotaErrorMessage(error: unknown): string | null {
         try {
           const jsonMatch = obj.message.match(/\{.*\}$/);
           if (jsonMatch) {
-            quotaError = JSON.parse(jsonMatch[0]) as any;
+            quotaError = JSON.parse(jsonMatch[0]) as OttoQuotaError;
           }
-        } catch (parseError) {
+        } catch (_parseError) {
           // JSON解析失败，继续其他检查
         }
       }
@@ -262,7 +262,7 @@ export function getOttoQuotaErrorMessage(error: unknown): string | null {
 
     // 如果还没找到，尝试直接对象检测
     if (!quotaError) {
-      quotaError = error as any;
+      quotaError = error as OttoQuotaError;
     }
   }
 
@@ -277,9 +277,9 @@ export function getOttoQuotaErrorMessage(error: unknown): string | null {
       try {
         const jsonMatch = error.message.match(/\{.*\}$/);
         if (jsonMatch) {
-          quotaError = JSON.parse(jsonMatch[0]) as any;
+          quotaError = JSON.parse(jsonMatch[0]) as OttoQuotaError;
         }
-      } catch (parseError) {
+      } catch (_parseError) {
         // 继续手动处理
       }
     }
@@ -296,7 +296,7 @@ export function getOttoQuotaErrorMessage(error: unknown): string | null {
 }
 
 // 格式化 Otto Server 500 配额错误
-function formatOttoServerQuotaError(errorData: any): string {
+function formatOttoServerQuotaError(errorData: { message?: string }): string {
   // 简单检测系统语言环境
   const isChineseEnvironment = (): boolean => {
     try {

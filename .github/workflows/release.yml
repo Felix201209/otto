@@ -142,6 +142,14 @@ jobs:
           npm run typecheck
           npm run test:ci
 
+      - name: Enforce release attestation
+        run: |
+          node scripts/verify-release-attestation.mjs \
+            --file .github/release-attestation.json \
+            --version "${{ steps.version.outputs.version }}" \
+            --commit "${GITHUB_SHA}" \
+            --source-commit "$(git rev-parse "${GITHUB_SHA}^")"
+
       - name: Focused regression tests
         run: |
           npx vitest run \
@@ -305,6 +313,7 @@ jobs:
           test -n "${{ secrets.DEPLOY_HOST }}"
           test -n "${{ secrets.DEPLOY_USER }}"
           test -n "${{ secrets.DEPLOY_SSH_KEY }}"
+          test -n "${{ secrets.DEPLOY_KNOWN_HOSTS }}"
 
       - name: Download release workflow artifact
         uses: actions/download-artifact@v4
@@ -340,7 +349,8 @@ jobs:
           chmod 700 ~/.ssh
           printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -p "${DEPLOY_PORT}" "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
       - name: Upload enterprise package
         shell: bash
@@ -398,6 +408,7 @@ jobs:
           test -n "${{ secrets.DEPLOY_HOST }}"
           test -n "${{ secrets.DEPLOY_USER }}"
           test -n "${{ secrets.DEPLOY_SSH_KEY }}"
+          test -n "${{ secrets.DEPLOY_KNOWN_HOSTS }}"
 
       - name: Download release workflow artifact
         uses: actions/download-artifact@v4
@@ -439,7 +450,8 @@ jobs:
           chmod 700 ~/.ssh
           printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -p "${DEPLOY_PORT}" "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
       - name: Upload and atomically publish mirror
         shell: bash

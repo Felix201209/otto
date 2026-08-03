@@ -56,7 +56,7 @@ export class SkillsContextBuilder {
   /**
    * Build complete skills context for AI
    */
-  public buildContext(): SkillsContext {
+  buildContext(): SkillsContext {
     try {
       const skills = this.getAvailableSkills();
 
@@ -216,7 +216,7 @@ export class SkillsContextBuilder {
           marketplaceId: pluginInfo.marketplaceId,
           description: pluginInfo.description || `Skill from ${pluginInfo.name}`,
           path: isFileComponent ? path.dirname(skillPath) : skillPath,
-          skillMdPath: skillMdPath,
+          skillMdPath,
           enabled: true,
         });
       }
@@ -460,7 +460,7 @@ export class SkillsContextBuilder {
   /**
    * Get detailed information about a specific skill
    */
-  public getSkillDetails(skillId: string): SkillInfo | null {
+  getSkillDetails(skillId: string): SkillInfo | null {
     const skills = this.getAvailableSkills();
     return skills.find((s) => s.id === skillId) || null;
   }
@@ -532,7 +532,7 @@ export class SkillsContextBuilder {
           marketplaceId: source,
           description,
           path: skillDir,
-          skillMdPath: skillMdPath,
+          skillMdPath,
           enabled: true,
         });
       }
@@ -576,7 +576,7 @@ export class SkillsContextBuilder {
 
     try {
       const marketplaceJson = JSON.parse(fs.readFileSync(marketplaceJsonPath, 'utf-8')) as MarketplaceManifest;
-      const plugin = marketplaceJson.plugins?.find((p: any) => p.name === pluginName);
+      const plugin = marketplaceJson.plugins?.find((p) => p.name === pluginName);
 
       if (!plugin?.source) {
         return null;
@@ -598,7 +598,7 @@ export class SkillsContextBuilder {
 
         return {
           pluginRoot: sourcePath,
-          skillsList: skillsList  // 可能是空数组，会触发自动发现
+          skillsList  // 可能是空数组，会触发自动发现
         };
       }
 
@@ -612,7 +612,7 @@ export class SkillsContextBuilder {
   /**
    * List all available skills (for tool use)
    */
-  public listSkills(): SkillInfo[] {
+  listSkills(): SkillInfo[] {
     return this.getAvailableSkills();
   }
 }

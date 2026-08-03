@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ReadManyFilesTool } from './read-many-files.js';
 import path from 'path';
 import fsp from 'fs/promises';
@@ -58,18 +58,18 @@ describe('ReadManyFilesTool', () => {
 
   describe('execute', () => {
     it('should read multiple text files', async () => {
-      const path1 = await createTestFile('file1.txt', 'content1');
-      const path2 = await createTestFile('file2.txt', 'content2');
+      await createTestFile('file1.txt', 'content1');
+      await createTestFile('file2.txt', 'content2');
 
       const params = { paths: ['*.txt'] };
       const result = await tool.execute(params, abortSignal);
 
       expect(Array.isArray(result.llmContent)).toBe(true);
-      expect((result.llmContent as any[]).length).toBe(2);
-      expect((result.llmContent as any[])[0]).toContain('file1.txt');
-      expect((result.llmContent as any[])[0]).toContain('content1');
-      expect((result.llmContent as any[])[1]).toContain('file2.txt');
-      expect((result.llmContent as any[])[1]).toContain('content2');
+      expect((result.llmContent as string[]).length).toBe(2);
+      expect((result.llmContent as string[])[0]).toContain('file1.txt');
+      expect((result.llmContent as string[])[0]).toContain('content1');
+      expect((result.llmContent as string[])[1]).toContain('file2.txt');
+      expect((result.llmContent as string[])[1]).toContain('content2');
       expect(result.returnDisplay).toContain('Successfully read');
       expect(result.returnDisplay).toContain('2 file(s)');
     });
@@ -82,9 +82,9 @@ describe('ReadManyFilesTool', () => {
       const result = await tool.execute(params, abortSignal);
 
       expect(Array.isArray(result.llmContent)).toBe(true);
-      expect((result.llmContent as any[]).length).toBe(2);
-      expect((result.llmContent as any[]).some((c: any) => c.includes('notes.txt'))).toBe(true);
-      expect((result.llmContent as any[]).some((c: any) => c.includes('Cannot display content of binary file'))).toBe(true);
+      expect((result.llmContent as string[]).length).toBe(2);
+      expect((result.llmContent as string[]).some((c: string) => c.includes('notes.txt'))).toBe(true);
+      expect((result.llmContent as string[]).some((c: string) => c.includes('Cannot display content of binary file'))).toBe(true);
       expect(result.returnDisplay).toContain('2 file(s)');
     });
 
@@ -97,7 +97,7 @@ describe('ReadManyFilesTool', () => {
       const result = await tool.execute(params, abortSignal);
 
       expect(Array.isArray(result.llmContent)).toBe(true);
-      expect((result.llmContent as any[]).length).toBe(2);
+      expect((result.llmContent as string[]).length).toBe(2);
       expect(result.returnDisplay).toContain('2 file(s)');
       expect(result.returnDisplay).toContain('main.ts');
       expect(result.returnDisplay).toContain('utils.ts');
@@ -112,8 +112,8 @@ describe('ReadManyFilesTool', () => {
       const result = await tool.execute(params, abortSignal);
 
       expect(Array.isArray(result.llmContent)).toBe(true);
-      expect((result.llmContent as any[]).length).toBe(1);
-      expect((result.llmContent as any[])[0]).toContain('file1.ts');
+      expect((result.llmContent as string[]).length).toBe(1);
+      expect((result.llmContent as string[])[0]).toContain('file1.ts');
       expect(result.returnDisplay).not.toContain('file2.test.ts');
     });
 

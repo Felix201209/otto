@@ -231,32 +231,6 @@ interface SaveMemoryParams {
   fact: string;
 }
 
-/**
- * Discovers context files in the current working directory (project directory)
- */
-async function discoverProjectContextFilenames(projectDir: string = process.cwd()): Promise<string[]> {
-  // Check if the project directory itself should be ignored
-  const shouldIgnoreProjectDir = COMMON_IGNORE_PATTERNS.some(ignorePattern => {
-    const cleanPattern = ignorePattern.replace('/**', '');
-    return projectDir.includes(`/${cleanPattern}/`) ||
-           projectDir.includes(`\\${cleanPattern}\\`) ||
-           projectDir.endsWith(`/${cleanPattern}`) ||
-           projectDir.endsWith(`\\${cleanPattern}`);
-  });
-
-  if (shouldIgnoreProjectDir) {
-    return []; // Don't search in ignored directories
-  }
-
-  const foundFiles = await findContextFilesInDirectory(projectDir, DEFAULT_CONTEXT_FILENAMES);
-
-  if (foundFiles.length > 0) {
-    return [path.basename(foundFiles[0])];
-  }
-
-  return [];
-}
-
 async function getProjectMemoryFilePath(config: Config): Promise<string> {
   // Always use project root directory OTTO.md for memory storage
   return path.join(config.getProjectRoot(), 'OTTO.md');
@@ -458,9 +432,10 @@ export class MemoryTool extends BaseTool<SaveMemoryParams, ToolResult> {
       try {
         const { getEnterpriseSync } = await import('../orchestration/enterpriseSync.js');
         const sync = getEnterpriseSync(this.config.getProjectRoot());
-        const userId = (this.config as any).getFeishuUser?.() || 'local';
+        const provider = this.config as Config & { getFeishuUser?: () => string };
+        const userId = provider.getFeishuUser?.() || 'local';
         // 个人记忆写入只需要 self:write，降级放行（企业未绑定时）
-        await sync.checkPermission(userId, 'memory:self:write' as any).catch(() => {});
+        await sync.checkPermission(userId, 'memory:self:write').catch(() => {});
       } catch { /* 企业未绑定降级放行 */ }
 
       // Use the static method with actual fs promises

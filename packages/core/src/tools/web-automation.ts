@@ -236,7 +236,6 @@ CROSS-PLATFORM: Works identically on macOS, Windows, Linux.`;
   }
 
   private buildPlaywrightScript(p: WebAutomationToolParams): string {
-    const browser = p.browser || 'chromium';
     const timeout = p.timeout_ms || 10000;
     const stateFile = path.join(os.tmpdir(), 'otto-web-state.json');
 

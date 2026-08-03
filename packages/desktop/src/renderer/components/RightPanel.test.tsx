@@ -203,7 +203,7 @@ function enterpriseWorkspace(): ProductWorkspaceSnapshot {
 }
 
 describe('RightPanel fixed Agent catalog', () => {
-  it('在右边栏创建、保存并立即启动自定义智能体，不混入固定 9 Agent', async () => {
+  it('在右边栏创建、保存并立即启动自定义专家，不混入固定 9 Agent', async () => {
     installBridge();
     const create = vi.fn();
     const launch = vi.fn();
@@ -227,9 +227,9 @@ describe('RightPanel fixed Agent catalog', () => {
     );
 
     expect(container.querySelectorAll('.otto-profile-card')).toHaveLength(9);
-    fireEvent.click(screen.getByRole('button', { name: '创建智能体' }));
-    expect(screen.getByRole('dialog', { name: '创建智能体' })).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('智能体名称'), {
+    fireEvent.click(screen.getByRole('button', { name: '创建专家' }));
+    expect(screen.getByRole('dialog', { name: '创建专家' })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('专家名称'), {
       target: { value: '客户成功助手' },
     });
     fireEvent.change(screen.getByLabelText('职责说明'), {
@@ -241,7 +241,7 @@ describe('RightPanel fixed Agent catalog', () => {
       name: '客户成功助手',
       instructions: '跟进客户风险与续费待办。',
     }));
-    expect(screen.queryByRole('dialog', { name: '创建智能体' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: '创建专家' })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: '启动招投标助手' }));
     expect(launch).toHaveBeenCalledWith(saved);
@@ -259,7 +259,7 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(screen.queryByText('会议 Agent')).toBeNull();
     expect(screen.queryByText('品牌营销文案')).toBeNull();
     expect(screen.queryByText('企业AI自主开发')).toBeNull();
-    expect(screen.queryByText('开发 AI 智能体')).toBeNull();
+    expect(screen.queryByText('开发 AI 专家')).toBeNull();
     expect(screen.queryByText('自主开发')).toBeNull();
     expect(screen.queryByText('CEO Agent')).toBeNull();
     expect(screen.queryByText('战略与竞争 Agent')).toBeNull();
@@ -397,12 +397,11 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(parkOpen).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the Feishu status and multi-channel shortcuts in the tools tab', () => {
+  it('keeps the Feishu status and multi-channel shortcuts in the agents tab', () => {
     installBridge();
     render(<RightPanel busy={false} />);
 
-    fireEvent.click(screen.getByRole('tab', { name: '工具' }));
-
+    // 工具命令已合入专家 tab，不需要切换。
     expect(screen.getByText('/feishu-status')).toBeTruthy();
     expect(screen.getByText('/multi-channel')).toBeTruthy();
     expect(screen.getByText('点击把命令填入输入框，回车执行')).toBeTruthy();
@@ -427,7 +426,6 @@ describe('RightPanel fixed Agent catalog', () => {
 
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
       '专家',
-      '工具',
       '文档',
       '工作日志',
     ]);
@@ -589,7 +587,7 @@ describe('RightPanel fixed Agent catalog', () => {
 
     await waitFor(() => {
       expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-        '专家', '工具', '文档', '企业记忆', '工作日志',
+        '专家', '文档', '企业记忆', '工作日志',
       ]);
     });
     fireEvent.click(screen.getByRole('button', { name: 'Skill 专区' }));
@@ -645,6 +643,7 @@ describe('RightPanel fixed Agent catalog', () => {
       />,
     );
 
+    // 企业记忆是独立 tab（含知识 / 沿革双视图）
     fireEvent.click(await screen.findByRole('tab', { name: '企业记忆' }));
 
     expect(await screen.findByText('客户部署必须先完成企业邀请码校验。')).toBeTruthy();
@@ -802,6 +801,7 @@ describe('RightPanel fixed Agent catalog', () => {
     );
 
     await waitFor(() => expect(bridge.enterpriseOrganizationFeaturesGet).toHaveBeenCalledOnce());
+    // 未启用知识功能时不显示企业记忆 tab
     expect(screen.queryByRole('tab', { name: '企业记忆' })).toBeNull();
     expect(bridge.enterpriseKnowledgeList).not.toHaveBeenCalled();
   });
@@ -816,6 +816,7 @@ describe('RightPanel fixed Agent catalog', () => {
       />,
     );
 
+    // 先切到企业记忆 tab 触发功能快照刷新
     const memoryTab = await screen.findByRole('tab', { name: '企业记忆' });
     bridge.enterpriseOrganizationFeaturesGet.mockRejectedValueOnce(
       new Error('组织功能快照暂时不可用'),
@@ -851,7 +852,7 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(screen.getByText('中心企业')).toBeTruthy();
     expect(screen.queryByText('宏创 AI')).toBeNull();
     expect(screen.getByText('成员与部门由中心组织树实时加载')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '打开企业组织树' }));
+    fireEvent.click(screen.getByRole('button', { name: '打开组织架构' }));
     expect(openOrganization).toHaveBeenCalledOnce();
   });
 

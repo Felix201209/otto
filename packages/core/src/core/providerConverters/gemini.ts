@@ -9,31 +9,36 @@ import { MESSAGE_ROLES } from '../../config/messageRoles.js';
 import { normaliseGeminiUsageMetadata } from '../customModelGeminiNative.js';
 import { addFunctionCallsGetter } from './shared.js';
 
+type GeminiRecord = Record<string, unknown>;
+
 export function mapGeminiGenerateContentResponse(
-  data: any,
+  data: GeminiRecord,
 ): GenerateContentResponse {
-  const cand = data.candidates?.[0];
-  const rawParts = cand?.content?.parts || [];
-  const parts: any[] = [];
+  const candidates = Array.isArray(data.candidates) ? data.candidates as GeminiRecord[] : [];
+  const cand = candidates[0];
+  const content = cand?.content && typeof cand.content === 'object' ? cand.content as GeminiRecord : undefined;
+  const rawParts = Array.isArray(content?.parts) ? content.parts as GeminiRecord[] : [];
+  const parts: GeminiRecord[] = [];
   for (const p of rawParts) {
     if (p?.thought === true && typeof p.text === 'string') {
-      const out: any = { reasoning: p.text };
+      const out: GeminiRecord = { reasoning: p.text };
       if (typeof p.thoughtSignature === 'string') {
         out.thoughtSignature = p.thoughtSignature;
       }
       parts.push(out);
     } else if (typeof p?.text === 'string') {
-      const out: any = { text: p.text };
+      const out: GeminiRecord = { text: p.text };
       if (typeof p.thoughtSignature === 'string') {
         out.thoughtSignature = p.thoughtSignature;
       }
       parts.push(out);
     } else if (p?.functionCall) {
-      const out: any = {
+      const functionCall = p.functionCall as GeminiRecord;
+      const out: GeminiRecord = {
         functionCall: {
-          name: p.functionCall.name?.trim() || p.functionCall.name,
-          args: p.functionCall.args || {},
-          id: p.functionCall.id,
+          name: typeof functionCall.name === 'string' ? functionCall.name.trim() || functionCall.name : undefined,
+          args: functionCall.args || {},
+          id: functionCall.id,
         },
       };
       if (typeof p.thoughtSignature === 'string') {
@@ -61,5 +66,5 @@ export function mapGeminiGenerateContentResponse(
     usageMetadata: normaliseGeminiUsageMetadata(data.usageMetadata),
   };
   addFunctionCallsGetter(result);
-  return result as any as GenerateContentResponse;
+  return result as unknown as GenerateContentResponse;
 }

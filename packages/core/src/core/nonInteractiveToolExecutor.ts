@@ -86,11 +86,11 @@ export async function executeToolCall(
       // For 'exec' type with warning = dangerous command
       if (
         confirmationDetails.type === 'exec' &&
-        (confirmationDetails as any).warning &&
+        confirmationDetails.warning &&
         !options?.explicitlyApproved
       ) {
-        const rootCmd = (confirmationDetails as any).rootCommand;
-        const warningMsg = (confirmationDetails as any).warning;
+        const rootCmd = confirmationDetails.rootCommand;
+        const warningMsg = confirmationDetails.warning;
         const error = new Error(
           `🚫 DANGEROUS COMMAND BLOCKED\n\nRule: ${rootCmd}\n${warningMsg}\n\nDangerous commands cannot be auto-executed in YOLO mode. Please run this command in interactive mode for confirmation.`,
         );

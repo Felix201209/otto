@@ -57,7 +57,7 @@ export function createContentGeneratorConfig(
   // BUG修复: 系统默认使用Claude模型，无需特殊处理
   // 修复策略: 直接使用配置的模型或默认模型（现在默认就是Claude）
   // ✅ 移除默认模型依赖 - 服务端内部决定模型
-  const effectiveModel = config.getModel() || 'auto'; // 使用auto让服务端决定
+  const _effectiveModel = config.getModel() || 'auto'; // 使用auto让服务端决定
 
   const contentGeneratorConfig: ContentGeneratorConfig = {
     //model: effectiveModel,
@@ -77,7 +77,7 @@ export function createContentGeneratorConfig(
 export async function createContentGenerator(
   config: ContentGeneratorConfig,
   gcConfig: Config,
-  sessionId?: string,
+  _sessionId?: string,
 ): Promise<ContentGenerator> {
   // NOTE: The Otto server path below (the only active path) builds its request
   // headers — including the User-Agent — via proxyAuthManager.getUserHeaders(),

@@ -17,7 +17,6 @@
 
 // Note: Using console.log instead of logger to avoid dependency issues
 import { getActiveProxyServerUrl } from '../config/proxyConfig.js';
-import { logIfNotSilent } from '../utils/logging.js';
 import { getSessionId } from '../utils/session.js';
 import { getUserAgent } from '../utils/userAgent.js';
 import * as fs from 'fs';
@@ -199,15 +198,6 @@ export class ProxyAuthManager {
       if (fs.existsSync(this.userInfoFilePath)) {
         const data = fs.readFileSync(this.userInfoFilePath, 'utf8');
         this.userInfo = JSON.parse(data);
-        // 简单的email掩码函数
-        const maskEmail = (email: string) => {
-          if (!email || !email.includes('@')) return email;
-          const [local, domain] = email.split('@');
-          if (local.length <= 2) return email;
-          const masked = local[0] + '*'.repeat(local.length - 2) + local[local.length - 1];
-          return `${masked}@${domain}`;
-        };
-
         // 用户信息已加载，不再打印欢迎信息（由 WelcomeScreen 组件显示）
       }
     } catch (error) {
@@ -242,8 +232,6 @@ export class ProxyAuthManager {
       if (fs.existsSync(this.jwtTokenFilePath)) {
         const data = fs.readFileSync(this.jwtTokenFilePath, 'utf8');
         this.jwtTokenData = JSON.parse(data) as JWTTokenData;
-
-        const now = Date.now();
 
         // 检查token是否过期
         if (this.isTokenExpired()) {
@@ -460,7 +448,7 @@ export class ProxyAuthManager {
       accessToken: tokenData.accessToken,
       refreshToken: tokenData.refreshToken,
       expiresIn: tokenData.expiresIn,
-      expiresAt: expiresAt,
+      expiresAt,
       savedAt: new Date().toISOString()
     };
     this.saveJwtToken();
@@ -486,8 +474,6 @@ export class ProxyAuthManager {
     const now = Date.now();
     const timeRemaining = this.jwtTokenData.expiresAt - now;
     const timeRemainingFormatted = this.formatTimeRemaining(timeRemaining);
-    const nextRefreshTime = this.jwtTokenData.expiresAt - TOKEN_REFRESH_THRESHOLD_SECONDS * 1000;
-    const nextRefreshFormatted = this.formatAbsoluteTime(nextRefreshTime);
 
     // 检查token是否即将过期（提前3天刷新的主要检查）
     if (this.isTokenNearExpiry()) {

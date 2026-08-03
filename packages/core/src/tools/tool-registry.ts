@@ -11,7 +11,6 @@ import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import { discoverMcpTools, syncMcpToolsToRegistry, syncMcpResourcesToRegistry, hasDiscoveredMcpTools, getMCPDiscoveryState, MCPDiscoveryState, waitForMCPDiscoveryComplete, isMCPDiscoveryTriggered } from './mcp-client.js';
 import { DiscoveredMCPTool } from './mcp-tool.js';
-import { ResourceRegistry } from '../resources/resource-registry.js';
 import { parse } from 'shell-quote';
 import { shouldUseTolerantMode } from '../config/modelCapabilities.js';
 import { createHash } from 'node:crypto';
@@ -40,7 +39,7 @@ export function sanitizeToolName(originalName: string): { name: string; wasModif
   }
 
   // Check if contains non-ASCII characters
-  const hasNonAscii = /[^\x00-\x7F]/.test(originalName);
+  const hasNonAscii = [...originalName].some(char => char.charCodeAt(0) > 0x7f);
 
   if (hasNonAscii) {
     // Use CRC32-like short hash for names with non-ASCII chars
@@ -654,16 +653,16 @@ function _sanitizeParameters(schema: Schema | undefined, visited: Set<Schema>, t
     // Make required fields more forgiving
     if (schema.required && Array.isArray(schema.required)) {
       // Keep only truly essential required fields in tolerant mode
-      schema.required = schema.required.filter(field => {
+      schema.required = schema.required.filter(field =>
         // Keep required fields that are likely essential
-        return ['name', 'id', 'path', 'pattern', 'content'].includes(field);
-      });
+         ['name', 'id', 'path', 'pattern', 'content'].includes(field)
+      );
     }
 
     // Be more forgiving with type constraints
     if (schema.type && schema.properties) {
       // Allow additional properties in tolerant mode
-      const schemaWithAdditional = schema as any;
+      const schemaWithAdditional = schema as Record<string, unknown>;
       if (schemaWithAdditional.additionalProperties === false) {
         schemaWithAdditional.additionalProperties = true;
       }

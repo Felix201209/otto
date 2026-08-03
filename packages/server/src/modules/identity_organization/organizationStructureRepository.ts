@@ -22,6 +22,7 @@ export interface OrganizationDepartmentView {
   id: string;
   organizationId: string;
   name: string;
+  parentDepartmentId: string | null;
   memberCount: number;
   positions: OrganizationPositionView[];
   createdAt: string;
@@ -32,6 +33,7 @@ interface OrganizationDepartmentRow {
   id: string;
   organization_id: string;
   name: string;
+  parent_department_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -59,12 +61,14 @@ export interface OrganizationStructureRepositoryStore {
 export interface CreateOrganizationDepartmentInput {
   organizationId: string;
   name: string;
+  parentDepartmentId?: string | null;
 }
 
 export interface UpdateOrganizationDepartmentInput {
   organizationId: string;
   departmentId: string;
   name: string;
+  parentDepartmentId?: string | null;
 }
 
 export interface DeleteOrganizationDepartmentInput {
@@ -181,6 +185,35 @@ function withImmediateTransaction<T>(
   }
 }
 
+function validateParentDepartment(
+  database: Database,
+  organizationId: string,
+  departmentId: string | null,
+  currentDepartmentId?: string,
+): void {
+  if (!departmentId) return;
+  if (currentDepartmentId && departmentId === currentDepartmentId) {
+    throw new Error('部门不能设置自己为上级部门');
+  }
+  const parent = database
+    .prepare('SELECT id, organization_id, parent_department_id FROM organization_departments WHERE id = ?')
+    .get(departmentId) as OrganizationDepartmentRow | undefined;
+  if (!parent || parent.organization_id !== organizationId) {
+    throw new Error('上级部门不存在或不属于当前企业');
+  }
+  if (!currentDepartmentId) return;
+  const visited = new Set<string>([currentDepartmentId]);
+  let cursor: string | null = departmentId;
+  while (cursor) {
+    if (visited.has(cursor)) throw new Error('部门层级不能形成循环');
+    visited.add(cursor);
+    const row = database
+      .prepare('SELECT parent_department_id FROM organization_departments WHERE id = ? AND organization_id = ?')
+      .get(cursor, organizationId) as { parent_department_id: string | null } | undefined;
+    cursor = row?.parent_department_id ?? null;
+  }
+}
+
 export function listOrganizationStructureFromRepository(
   store: OrganizationStructureRepositoryStore,
   organizationId: string,
@@ -213,6 +246,7 @@ export function listOrganizationStructureFromRepository(
     id: department.id,
     organizationId: department.organization_id,
     name: department.name,
+    parentDepartmentId: department.parent_department_id ?? null,
     memberCount: countByDepartment.get(department.id) ?? 0,
     positions: positions
       .filter((position) => position.department_id === department.id)
@@ -238,13 +272,15 @@ export function createOrganizationDepartmentInRepository(
     input.organizationId,
     normalizeAssignmentName(name),
   );
+  const parentDepartmentId = input.parentDepartmentId?.trim() || null;
+  validateParentDepartment(database, input.organizationId, parentDepartmentId);
   try {
     database
       .prepare(
-        `INSERT INTO organization_departments (id, organization_id, name)
-         VALUES (?, ?, ?)`,
+        `INSERT INTO organization_departments (id, organization_id, name, parent_department_id)
+         VALUES (?, ?, ?, ?)`,
       )
-      .run(id, input.organizationId, name);
+      .run(id, input.organizationId, name, parentDepartmentId);
   } catch (error) {
     if (isUniqueConstraintFor(error, 'organization_departments')) {
       throw new Error('部门名称已存在');
@@ -266,13 +302,20 @@ export function updateOrganizationDepartmentInRepository(
   const database = store.db();
   try {
     withImmediateTransaction(database, () => {
+      const parentDepartmentId = input.parentDepartmentId?.trim() || null;
+      validateParentDepartment(
+        database,
+        input.organizationId,
+        parentDepartmentId,
+        input.departmentId,
+      );
       const changed = database
         .prepare(
           `UPDATE organization_departments
-           SET name = ?, updated_at = datetime('now')
+           SET name = ?, parent_department_id = ?, updated_at = datetime('now')
            WHERE id = ? AND organization_id = ?`,
         )
-        .run(name, input.departmentId, input.organizationId);
+        .run(name, parentDepartmentId, input.departmentId, input.organizationId);
       if (Number(changed.changes) !== 1) throw new Error('部门不存在');
       database
         .prepare(

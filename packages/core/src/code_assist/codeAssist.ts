@@ -8,10 +8,10 @@ import { AuthType, ContentGenerator } from '../core/contentGenerator.js';
 import { Config } from '../config/config.js';
 
 export async function createCodeAssistContentGenerator(
-  httpOptions: any,
-  authType: AuthType,
-  config: Config,
-  sessionId?: string,
+  _httpOptions: unknown,
+  _authType: AuthType,
+  _config: Config,
+  _sessionId?: string,
 ): Promise<ContentGenerator> {
   // Code Assist Content Generator is no longer supported
   // Only Otto Server authentication is supported

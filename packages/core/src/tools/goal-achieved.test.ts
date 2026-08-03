@@ -227,7 +227,7 @@ describe('GoalAchievedTool', () => {
       });
     });
 
-    it('falls back to happy path (self-judgment) if runGoalEvaluation returns failed/error', async () => {
+    it('keeps the goal active if the independent evaluator fails', async () => {
       vi.mocked(runGoalEvaluation).mockResolvedValueOnce({
         status: 'failed',
         feedback: 'API error',
@@ -236,9 +236,21 @@ describe('GoalAchievedTool', () => {
       const result = await tool.execute({ reason: 'all criteria satisfied' }, abortSignal);
 
       expect(runGoalEvaluation).toHaveBeenCalledTimes(1);
-      expect(mockClient.clearGoalContext).toHaveBeenCalledTimes(1);
-      expect(mockClient._peek()).toBeNull(); // Cleared on fallback
-      expect(result.summary).toBe('goal achieved');
+      expect(mockClient.clearGoalContext).not.toHaveBeenCalled();
+      expect(mockClient._peek()).not.toBeNull();
+      expect(result.summary).toBe('goal completion rejected');
+      expect(String(result.llmContent)).toContain('API error');
+    });
+
+    it('keeps the goal active if the independent evaluator throws', async () => {
+      vi.mocked(runGoalEvaluation).mockRejectedValueOnce(new Error('network unavailable'));
+
+      const result = await tool.execute({ reason: 'all criteria satisfied' }, abortSignal);
+
+      expect(mockClient.clearGoalContext).not.toHaveBeenCalled();
+      expect(mockClient._peek()).not.toBeNull();
+      expect(result.summary).toBe('goal completion rejected');
+      expect(String(result.llmContent)).toContain('network unavailable');
     });
   });
 

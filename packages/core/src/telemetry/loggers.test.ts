@@ -7,16 +7,12 @@
 import {
   AuthType,
   CompletedToolCall,
-  ContentGeneratorConfig,
-  EditTool,
-  ErroredToolCall,
-  OttoClient,
   ToolConfirmationOutcome,
-  ToolRegistry,
 } from '../index.js';
 import { logs } from '@opentelemetry/api-logs';
-import { SemanticAttributes } from '@opentelemetry/semantic-conventions';
 import { Config, ApprovalMode } from '../config/config.js';
+import type { OttoClient } from '../core/client.js';
+import type { Tool } from '../tools/tools.js';
 import {
   EVENT_API_REQUEST,
   EVENT_API_RESPONSE,
@@ -365,7 +361,7 @@ describe('loggers', () => {
     const mockConfig = {
       getSessionId: () => 'test-session-id',
       getTargetDir: () => 'target-dir',
-      getOttoClient: () => ({}) as any,
+      getOttoClient: () => ({}) as unknown as OttoClient,
       getUsageStatisticsEnabled: () => true,
       getTelemetryEnabled: () => true,
       getTelemetryLogPromptsEnabled: () => true,
@@ -401,7 +397,7 @@ describe('loggers', () => {
           resultDisplay: undefined,
           error: undefined,
         },
-        tool: { name: 'test-function' } as any,
+        tool: { name: 'test-function' } as unknown as Tool,
         durationMs: 100,
         outcome: ToolConfirmationOutcome.ProceedOnce,
         agentContext: {

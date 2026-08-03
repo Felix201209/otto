@@ -8,8 +8,6 @@
 import {
   ToolCall,
   Tool,
-  ToolCallConfirmationDetails,
-  ToolConfirmationOutcome,
   CompletedToolCall,
   EditorType,
   PreToolExecutionHandler,
@@ -126,17 +124,22 @@ export class SubAgentAdapter implements ToolSchedulerAdapter {
     const argsDesc = this.formatToolArgs(toolCall.request.name, toolCall.request.args);
     const description = argsDesc || '';
     
-    const toolInfo: any = {
+    const startTime = (toolCall as unknown as { startTime?: number }).startTime;
+    const toolInfo: {
+      callId: string; toolName: string; description: string; status: string;
+      result?: string; error?: string; startTime?: number; durationMs?: number;
+    } = {
       callId,
       toolName: toolCall.request.name,
       description,
       status: uiStatus,
-      startTime: (toolCall as any).startTime,
+      startTime,
     };
 
     // 添加结果或错误信息
-    if (status === 'success' && (toolCall as any).response) {
-      const response = (toolCall as any).response;
+    const responseInfo = (toolCall as unknown as { response?: { resultDisplay?: unknown; error?: { message?: string } } }).response;
+    if (status === 'success' && responseInfo) {
+      const response = responseInfo;
       toolInfo.result = typeof response.resultDisplay === 'string' 
         ? response.resultDisplay 
         : '执行成功';
@@ -144,8 +147,8 @@ export class SubAgentAdapter implements ToolSchedulerAdapter {
       if (toolInfo.startTime) {
         toolInfo.durationMs = Date.now() - toolInfo.startTime;
       }
-    } else if (status === 'error' && (toolCall as any).response?.error) {
-      toolInfo.error = (toolCall as any).response.error.message || '执行失败';
+    } else if (status === 'error' && responseInfo?.error) {
+      toolInfo.error = responseInfo.error.message || '执行失败';
       
       if (toolInfo.startTime) {
         toolInfo.durationMs = Date.now() - toolInfo.startTime;
@@ -164,7 +167,7 @@ export class SubAgentAdapter implements ToolSchedulerAdapter {
       try {
         const tool = this.toolRegistry.getTool(toolName);
         if (tool && tool.getDescription) {
-          const description = tool.getDescription(args as any);
+          const description = tool.getDescription(args);
           // 从description中提取有用的参数信息，去掉工具名称前缀
           if (description && description.length > 0) {
             // 如果描述包含括号内的参数信息，提取它
@@ -207,7 +210,7 @@ export class SubAgentAdapter implements ToolSchedulerAdapter {
   onOutputUpdate(
     callId: string,
     output: string,
-    context: ToolExecutionContext,
+    _context: ToolExecutionContext,
   ): void {
     // 记录到内部日志
     this.log(`[${callId}] ${output}`);
@@ -226,7 +229,7 @@ export class SubAgentAdapter implements ToolSchedulerAdapter {
   /**
    * 获取首选编辑器类型 - SubAgent不需要编辑器
    */
-  getPreferredEditor(context: ToolExecutionContext): EditorType | undefined {
+  getPreferredEditor(_context: ToolExecutionContext): EditorType | undefined {
     return undefined;
   }
 
@@ -328,7 +331,7 @@ export class SubAgentAdapter implements ToolSchedulerAdapter {
         callId: call.request.callId,
         toolName: call.request.name,
         status: call.status,
-        durationMs: (call as any).durationMs,
+        durationMs: (call as unknown as { durationMs?: number }).durationMs,
       })),
       timestamp: Date.now(),
     };

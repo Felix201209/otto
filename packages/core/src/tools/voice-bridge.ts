@@ -29,7 +29,7 @@ interface PythonCommand {
   prefixArgs: string[];
 }
 
-interface VoiceBridgeDependencyStatus {
+export interface VoiceBridgeDependencyStatus {
   python?: string;
   python_version?: string;
   ffmpeg?: string | null;

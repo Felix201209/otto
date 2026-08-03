@@ -49,7 +49,7 @@ interface MarketplaceJson {
     version?: string;
     pluginRoot?: string;
   };
-  plugins: Array<MarketplacePluginEntry>;
+  plugins: MarketplacePluginEntry[];
 }
 
 interface MarketplacePluginEntry {
@@ -365,7 +365,7 @@ export class MarketplaceManager {
 
       const cloneCommand = `git ${baseArgs.join(' ')}`;
 
-      const { stdout, stderr } = await execAsync(cloneCommand, {
+      const { stderr } = await execAsync(cloneCommand, {
         maxBuffer: 10 * 1024 * 1024, // 10MB
         env: {
           ...process.env,
@@ -403,7 +403,7 @@ export class MarketplaceManager {
    */
   private async pullRepository(repoPath: string): Promise<void> {
     try {
-      const { stdout, stderr } = await execAsync('git pull', {
+      const { stderr } = await execAsync('git pull', {
         cwd: repoPath,
         maxBuffer: 10 * 1024 * 1024,
       });
@@ -443,8 +443,6 @@ export class MarketplaceManager {
     marketplacePath: string,
     options: { source: MarketplaceSource; url?: string; path?: string },
   ): Promise<Marketplace> {
-    const startTime = Date.now();
-
     try {
       // 读取 marketplace.json
       const configPath = path.join(marketplacePath, MARKETPLACE_CONFIG_FILE);

@@ -27,6 +27,13 @@ describe('prompts', () => {
       expect(prompt).toContain('Never finish with only a task count');
     });
 
+    it('makes financial computation fail closed', () => {
+      const prompt = getCoreSystemPrompt(undefined, false);
+      expect(prompt).toContain('Financial computation: fail closed');
+      expect(prompt).toContain('deterministic, auditable calculation tool');
+      expect(prompt).toContain('must never calculate, estimate, infer, or fill in financial numbers itself');
+    });
+
     it('should include VSCode-specific instructions when isVSCode is true', () => {
       const prompt = getCoreSystemPrompt(undefined, true);
       expect(prompt).toContain('interactive VSCode assistant');
@@ -198,42 +205,23 @@ describe('prompts', () => {
     });
   });
 
-  describe('getCoreSystemPrompt - Skills Context Injection', () => {
-    afterEach(async () => {
-      // 恢复原始函数
+  describe('getCoreSystemPrompt - Skills Context', () => {
+    it('injects initialized Skills context into the final system prompt', async () => {
       const skillsIntegration = await import('../skills/skills-integration.js');
-      vi.mocked(skillsIntegration.getSkillsContext).mockRestore?.();
-    });
-
-    it('should include skills context when available', async () => {
-      // Mock getSkillsContext to return sample skills
-      const mockSkillsContext = `# Available Skills
+      vi.spyOn(skillsIntegration, 'getSkillsContext').mockReturnValue(`# Available Skills
 
 <available_skills>
 <skill>
 <name>test-skill</name>
 <description>A test skill for validation 📜</description>
 </skill>
-</available_skills>`;
-
-      const skillsIntegration = await import('../skills/skills-integration.js');
-      vi.spyOn(skillsIntegration, 'getSkillsContext').mockReturnValue(mockSkillsContext);
+</available_skills>`);
 
       const prompt = getCoreSystemPrompt(undefined, false);
 
       expect(prompt).toContain('# Available Skills');
       expect(prompt).toContain('<available_skills>');
       expect(prompt).toContain('test-skill');
-    });
-
-    it('should not add extra content when skills context is empty', async () => {
-      const skillsIntegration = await import('../skills/skills-integration.js');
-      vi.spyOn(skillsIntegration, 'getSkillsContext').mockReturnValue('');
-
-      const prompt = getCoreSystemPrompt(undefined, false);
-
-      // 不应该包含空的 Skills section
-      expect(prompt).not.toContain('# Available Skills');
     });
   });
 

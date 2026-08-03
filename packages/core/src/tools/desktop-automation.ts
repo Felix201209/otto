@@ -242,7 +242,7 @@ DEPENDENCIES: macOS needs cliclick (brew install cliclick). Windows needs nothin
   private async macWindow(app: string, op: string): Promise<string> {
     const a=this.esc(app);
     const {w,h}=await this.macScreenSize();
-    const hw=Math.floor(w/2), hh=Math.floor(h/2), m=25;
+    const hw=Math.floor(w/2); const hh=Math.floor(h/2); const m=25;
     const scripts: Record<string,string> = {
       minimize: 'tell application "System Events" to set miniaturized of every window of process "'+a+'" to true',
       maximize: 'tell application "'+a+'" to activate',
@@ -293,7 +293,7 @@ DEPENDENCIES: macOS needs cliclick (brew install cliclick). Windows needs nothin
     await execAsync('cliclick dd:'+x+','+y);
     const steps=Math.max(Math.ceil(dur/30),5);
     for(let i=1;i<=steps;i++){
-      const cx=x+Math.round((tx-x)*i/steps), cy=y+Math.round((ty-y)*i/steps);
+      const cx=x+Math.round((tx-x)*i/steps); const cy=y+Math.round((ty-y)*i/steps);
       await execAsync('cliclick dm:'+cx+','+cy);
       await new Promise(r=>setTimeout(r,Math.floor(dur/steps)));
     }
@@ -413,7 +413,7 @@ $h=$t.MainWindowHandle; if($h -eq [IntPtr]::Zero){throw "No main window: ${this.
   }
   private async winClick(x:number,y:number,b:string,ct:string): Promise<string> {
     const f: Record<string,string>={left:'0x0002',right:'0x0008',middle:'0x0020'};
-    const d=f[b]||'0x0002'; const u=(parseInt(d)*2).toString();
+    const d=f[b]||'0x0002'; const u=(parseInt(d, 16)*2).toString();
     const clicks=ct==='double'?2:1;
     await this.ps(`[Win32Api]::SetCursorPos(${x},${y});1..${clicks}|%{[Win32Api]::mouse_event(${d},0,0,0,[UIntPtr]::Zero);Start-Sleep -ms 20;[Win32Api]::mouse_event(${u},0,0,0,[UIntPtr]::Zero);Start-Sleep -ms 30}`);
     return 'Click '+b+' '+ct+' at ('+x+','+y+')';
@@ -463,7 +463,7 @@ $h=$t.MainWindowHandle; if($h -eq [IntPtr]::Zero){throw "No main window: ${this.
   }
   private async winWaitForApp(app: string, timeout: number): Promise<string> {
     try {
-      const o=await this.ps('$d='+timeout+';$sw=[Diagnostics.Stopwatch]::StartNew();'+
+      await this.ps('$d='+timeout+';$sw=[Diagnostics.Stopwatch]::StartNew();'+
       'while($sw.ElapsedMilliseconds -lt $d){$p=Get-Process "'+this.pe(this.wpn(app))+'" -ErrorAction SilentlyContinue;if($p){$p.ProcessName;exit}}'+
       'throw "timeout"');
           return 'App running: '+app;

@@ -106,7 +106,7 @@ export class ReadLintsTool extends BaseTool<ReadLintsParams, ToolResult> {
   /**
    * 执行工具操作
    */
-  async execute(params: ReadLintsParams, signal: AbortSignal): Promise<ToolResult> {
+  async execute(params: ReadLintsParams, _signal: AbortSignal): Promise<ToolResult> {
     const validationError = this.validateToolParams(params);
     if (validationError) {
       return {

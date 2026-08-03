@@ -205,7 +205,7 @@ export class ReadFileTool extends BaseTool<ReadFileToolParams, ToolResult> {
 
     if (
       typeof result.llmContent === 'string' &&
-      result.llmContent.length == 0
+      result.llmContent.length === 0
     ) {
       result.llmContent = 'ReadFile Success, but Content is empty!';
     }

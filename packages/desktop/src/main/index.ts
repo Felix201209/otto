@@ -2218,9 +2218,9 @@ function registerIpc(): void {
     }
     return enterpriseClient.listKnowledgeRevisions(body.id);
   });
-  ipcMain.handle(IPC.enterpriseOrganizationView, async () => {
+  ipcMain.handle(IPC.enterpriseOrganizationView, async (_event, organizationId: unknown) => {
     loadEnterpriseSession();
-    return enterpriseClient.getOrganizationView();
+    return enterpriseClient.getOrganizationView(typeof organizationId === 'string' ? organizationId : undefined);
   });
   ipcMain.handle(IPC.enterprisePresenceHeartbeat, async () => {
     loadEnterpriseSession();

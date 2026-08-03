@@ -10,7 +10,6 @@ import { Config } from '../config/config.js';
 import { SchemaValidator } from '../utils/schemaValidator.js';
 import { todoStore } from './todo-store.js';
 import { runGoalEvaluation } from '../agents/runGoalEvaluation.js';
-import { SceneType } from '../core/sceneManager.js';
 
 /**
  * Parameters for the GoalAchievedTool.
@@ -194,7 +193,7 @@ export class GoalAchievedTool extends BaseTool<GoalAchievedParams, ToolResult> {
           model: 'deepseek-v4-flash',
           task: activeGoalContext.task || '',
           criteria: activeGoalContext.criteria || '',
-          reason: reason,
+          reason,
           cacheSafeSnapshot: snapshot,
           signal: _signal,
         });
@@ -206,14 +205,16 @@ export class GoalAchievedTool extends BaseTool<GoalAchievedParams, ToolResult> {
           evaluationPassed = false;
           feedback = verdict.feedback;
         } else {
-          // 降级：评估运行失败（可能网络/额度），回退到自觉完成模式
-          console.warn(`[GoalAchievedTool] Evaluator run failed, falling back to self-judgment: ${verdict.feedback}`);
-          evaluationPassed = true;
+          // A configured independent evaluator is a safety boundary. If it is
+          // unavailable, only an explicit user /goal clear may release the contract.
+          console.warn(`[GoalAchievedTool] Evaluator run failed; keeping goal active: ${verdict.feedback}`);
+          evaluationPassed = false;
+          feedback = verdict.feedback || 'Independent evaluator was unavailable.';
         }
       } catch (err) {
-        // 降级：发生异常时回退到自觉完成模式
-        console.warn(`[GoalAchievedTool] Error during evaluation run, falling back to self-judgment:`, err);
-        evaluationPassed = true;
+        console.warn(`[GoalAchievedTool] Error during evaluation run; keeping goal active:`, err);
+        evaluationPassed = false;
+        feedback = err instanceof Error ? err.message : String(err);
       }
     }
 
@@ -237,7 +238,7 @@ export class GoalAchievedTool extends BaseTool<GoalAchievedParams, ToolResult> {
         llmContent: rejectLlmContent,
         returnDisplay: {
           type: 'goal_rejected_display',
-          feedback: feedback,
+          feedback,
         },
         summary: 'goal completion rejected',
       };

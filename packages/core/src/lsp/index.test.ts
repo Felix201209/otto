@@ -10,11 +10,13 @@ import * as os from 'node:os';
 import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import { PassThrough } from 'node:stream';
+/* eslint-disable import/no-internal-modules -- test must mirror the production Node transport. */
 import {
   createMessageConnection,
   StreamMessageReader,
   StreamMessageWriter,
 } from 'vscode-jsonrpc/node.js';
+/* eslint-enable import/no-internal-modules */
 import { LSPManager } from './index.js';
 
 function createDuplexTransport() {
@@ -60,26 +62,22 @@ describe('LSPManager robustness', () => {
     const { fakeProcess, serverConnection } = createDuplexTransport();
 
     // Override servers with a fake .py server.
-    (manager as any).servers = [
+    (manager as unknown as { servers: unknown[] }).servers = [
       {
         id: 'pyright',
         displayName: 'Fake Pyright',
         extensions: ['.py'],
         root: async () => tempRootDir,
-        spawn: async () => ({ process: fakeProcess as any }),
+        spawn: async () => ({ process: fakeProcess as unknown as import('node:child_process').ChildProcess }),
       },
     ];
 
-    serverConnection.onRequest('initialize', async () => {
-      return { capabilities: {} };
-    });
+    serverConnection.onRequest('initialize', async () => ({ capabilities: {} }));
 
     // Never resolve hover -> simulate server stuck.
-    serverConnection.onRequest('textDocument/hover', async () => {
-      return await new Promise(() => {
+    serverConnection.onRequest('textDocument/hover', async () => await new Promise(() => {
         // intentionally never resolves
-      });
-    });
+      }));
 
     serverConnection.listen();
 

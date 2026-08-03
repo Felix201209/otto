@@ -152,6 +152,29 @@ describe('ToolCalls · 空正文的确定性总结', () => {
     expect(screen.getByText('代码文件：client.ts')).toBeTruthy();
   });
 
+  it('把 RPA 的未知结果明确展示为需要人工接管，而不是已完成', () => {
+    render(
+      <ToolCallsCard
+        toolCalls={[{
+          id: 'rpa-1',
+          toolName: 'rpa_run',
+          parameters: { action: 'recover', run_id: 'rpa-00000000-0000-0000-0000-000000000000' },
+          status: 'success' as ToolCall['status'],
+          result: {
+            success: true,
+            data: 'rpa_run OK: {"state":"unknown_outcome"}',
+            executionTime: 10,
+            toolName: 'rpa_run',
+          },
+        }]}
+      />,
+    );
+
+    expect(screen.getByText('网页自动化流程')).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toContain('不会自动重试');
+    expect(screen.queryByText('已完成：网页自动化流程')).toBeNull();
+  });
+
   it('Bash 结果提供可用的复制按钮并写入系统剪贴板', async () => {
     const writeClipboard = vi.fn(async () => true);
     Object.defineProperty(window, 'otto', {

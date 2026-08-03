@@ -14,13 +14,11 @@ import type { ContentGenerator } from '../core/contentGenerator.js';
 
 function makeStreamingGen(textChunks: string[]): ContentGenerator {
   return {
-    generateContentStream: vi.fn(async () => {
-      return (async function* () {
+    generateContentStream: vi.fn(async () => (async function* () {
         for (const t of textChunks) {
           yield { candidates: [{ content: { parts: [{ text: t }] } }] } as never;
         }
-      })();
-    }),
+      })()),
     generateContent: vi.fn(),
   } as unknown as ContentGenerator;
 }

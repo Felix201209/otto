@@ -7,7 +7,7 @@
 /**
  * 左侧栏。以会话列表为主体：
  *   品牌 otto✦ / + 新建对话 / 今天·昨天分组会话列表（flex:1 主体）/
- *   查看全部对话 / 设置与诊断中心（左下角常驻入口）。
+ *   底部账号区（辅助入口与当前账号）。
  *   常用工具（企业专家入口、全部智能体）已迁往右侧 RightPanel。
  *
  * 会话项支持 hover 溢出菜单（⋯ → 重命名 / 删除）：
@@ -17,25 +17,14 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import type {
-  ProductWorkspaceSnapshot,
-  ScheduleItemInfo,
-  SessionSummary,
-} from 'otto-server';
+import type { SessionSummary } from 'otto-server';
 import { type SessionGroup } from '../state/useOttoStore.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
-import { SourceBadge } from './SourceBadge.js';
 import {
   IconPlus,
-  IconList,
   IconChevronDown,
-  IconSettings,
   IconUserAvatar,
 } from './icons.js';
-import {
-  OrganizationTree,
-  type EnterpriseDirectChatOpenRequest,
-} from './OrganizationTree.js';
 import { LogoutConfirmDialog } from './LogoutConfirmDialog.js';
 import { JoinEnterpriseDialog } from './JoinEnterpriseDialog.js';
 import type { EnterpriseAccount } from '../../preload/index.js';
@@ -84,25 +73,22 @@ function relativeSessionGroups(groups: SessionGroup[]): SessionGroup[] {
 interface SidebarProps {
   groups: SessionGroup[];
   activeSessionId: string | null;
-  /** 当前是否停在「设置与诊断中心」页（高亮该入口）。 */
+  /** 当前是否停在「设置」页（高亮该入口）。 */
   hubActive?: boolean;
+  /** 当前主内容区视图，用于导航高亮。 */
+  activeView?: string;
   accountManagementActive?: boolean;
   /** 静默检查发现新版 → 设置入口亮一个不打扰的小圆点（无弹窗）。 */
   updateBadge?: boolean;
-  productWorkspace?: ProductWorkspaceSnapshot | null;
-  productSchedules?: readonly ScheduleItemInfo[];
   enterpriseAccount?: EnterpriseAccount;
-  organizationOpenRequest?: number;
-  organizationRefreshRevision?: number;
   enterpriseUnreadCounts?: EnterpriseUnreadCounts;
-  enterpriseDirectChatOpenRequest?: EnterpriseDirectChatOpenRequest;
   onSelect: (id: string) => void;
   onNewChat: () => void;
   onOpenHub: () => void;
   onOpenAccounts?: () => void;
+  onNavigate?: (view: 'chat' | 'organization' | 'inbox' | 'work' | 'hub') => void;
   onJoinEnterprise?: (input: { inviteCode: string }) => Promise<void>;
   onLogout?: () => void | Promise<void>;
-  onEnterpriseMessageRead?: (peerAccountId: string) => void;
   onViewAll: () => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
@@ -113,24 +99,16 @@ interface SidebarProps {
 export function Sidebar({
   groups,
   activeSessionId,
-  hubActive = false,
+  activeView = 'chat',
   accountManagementActive = false,
-  updateBadge = false,
-  productWorkspace = null,
-  productSchedules = [],
   enterpriseAccount,
-  organizationOpenRequest = 0,
-  organizationRefreshRevision = 0,
   enterpriseUnreadCounts = {},
-  enterpriseDirectChatOpenRequest,
   onSelect,
   onNewChat,
-  onOpenHub,
   onOpenAccounts,
+  onNavigate,
   onJoinEnterprise,
   onLogout,
-  onEnterpriseMessageRead,
-  onViewAll,
   onRename,
   onDelete,
   unreadSessions,
@@ -175,29 +153,48 @@ export function Sidebar({
         新建对话
       </button>
 
-      <div className="otto-sidebar__workspace">
-        <OrganizationTree
-          workspace={productWorkspace}
-          schedules={productSchedules}
-          enterpriseAccount={enterpriseAccount?.accountType === 'personal'
-            ? undefined
-            : enterpriseAccount}
-          openRequest={organizationOpenRequest}
-          refreshRevision={organizationRefreshRevision}
-          unreadCounts={enterpriseUnreadCounts}
-          directChatOpenRequest={enterpriseDirectChatOpenRequest}
-          onMessageRead={onEnterpriseMessageRead}
-        />
+      {/* 主导航：五个一级入口，各自映射到主内容区的完整页面。 */}
+      {onNavigate ? (
+        <nav className="otto-sidebar__nav" aria-label="主导航">
+          {([
+            { key: 'chat', label: '工作台', view: 'chat' },
+            { key: 'organization', label: '组织架构', view: 'organization' },
+            { key: 'inbox', label: '我的消息', view: 'inbox' },
+            { key: 'work', label: '我的工作', view: 'work' },
+            { key: 'hub', label: '设置', view: 'hub' },
+          ] as const).map((item) => {
+            const isActive = activeView === item.view;
+            const unread = item.key === 'inbox'
+              ? Object.values(enterpriseUnreadCounts).reduce((s, c) => s + c, 0)
+              : 0;
+            return (
+              <button
+                key={item.key}
+                type="button"
+                className={`otto-sidebar__navitem${isActive ? ' is-active' : ''}`}
+                aria-current={isActive ? 'page' : undefined}
+                onClick={() => onNavigate(item.view)}
+              >
+                <span>{item.label}</span>
+                {unread > 0 ? (
+                  <b role="status" aria-label={`${unread} 条未读`}>{unread > 99 ? '99+' : unread}</b>
+                ) : null}
+              </button>
+            );
+          })}
+        </nav>
+      ) : null}
 
-        <section className="otto-conversations" aria-label="对话任务">
+      <div className="otto-sidebar__workspace">
+        <section className="otto-conversations" aria-label="任务">
           <button
             type="button"
             className="otto-conversations__toggle"
             onClick={() => setSessionsOpen((value) => !value)}
             aria-expanded={sessionsOpen}
-            aria-label={`对话任务（${sessionCount}）`}
+            aria-label={`任务（${sessionCount}）`}
           >
-            <span>对话任务（{sessionCount}）</span>
+            <span>任务（{sessionCount}）</span>
             <IconChevronDown
               size={13}
               className={'otto-conversations__chevron' + (sessionsOpen ? '' : ' is-collapsed')}
@@ -246,29 +243,6 @@ export function Sidebar({
             CEO 管理
           </button>
         ) : null}
-        <button type="button" className="otto-viewall" onClick={onViewAll}>
-          <IconList size={16} />
-          查看全部对话
-        </button>
-        {/* 设置与诊断中心常驻入口：常见任务区已迁右面板，设置类入口按惯例落左下角。 */}
-        <button
-          type="button"
-          className={'otto-viewall otto-viewall--hub' + (hubActive ? ' is-active' : '')}
-          onClick={onOpenHub}
-          aria-current={hubActive ? 'page' : undefined}
-          title="设置与诊断中心"
-        >
-          <IconSettings size={16} />
-          设置与诊断
-          {updateBadge ? (
-            <span
-              className="otto-viewall__dot"
-              role="status"
-              aria-label="有可用更新"
-              title="发现新版本，进入「软件更新」查看"
-            />
-          ) : null}
-        </button>
         {enterpriseAccount?.accountType === 'personal' && onJoinEnterprise ? (
           <button
             type="button"
@@ -478,14 +452,6 @@ function SessionItem({
           <IconMoreDots />
         </button>
       </div>
-      {session.lastMessagePreview ? (
-        <div className="otto-session__preview">{session.lastMessagePreview}</div>
-      ) : null}
-      {session.source !== 'local' ? (
-        <div className="otto-session__meta">
-          <SourceBadge source={session.source} />
-        </div>
-      ) : null}
 
       {mode === 'menu' ? (
         <div

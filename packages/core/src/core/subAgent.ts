@@ -5,7 +5,7 @@
  */
 
 
-import { PartListUnion } from '@google/genai';
+import { PartListUnion, Part, type GenerateContentResponseUsageMetadata } from '@google/genai';
 import { Content } from '../types/extendedContent.js';
 import { Config } from '../config/config.js';
 import { MESSAGE_ROLES } from '../config/messageRoles.js';
@@ -14,7 +14,7 @@ import { ToolRegistry } from '../tools/tool-registry.js';
 import { OttoClient } from './client.js';
 import { OttoChat } from './ottoChat.js';
 import { ToolCallRequestInfo } from './turn.js';
-import { ToolExecutionEngine, ToolExecutionContext } from './toolExecutionEngine.js';
+import { ToolExecutionEngine, ToolExecutionContext, type CompletedEngineToolCall } from './toolExecutionEngine.js';
 import { SubAgentAdapter } from './subAgentAdapter.js';
 // TaskStateManager 已移除，简化状态管理
 import { TaskPrompts } from './taskPrompts.js';
@@ -97,7 +97,7 @@ export class SubAgent {
   private toolExecutionContext: ToolExecutionContext;
 
   // 用于等待工具完成回调的Promise resolver
-  private toolCompletionResolver?: (results: any[]) => void;
+  private toolCompletionResolver?: (results: CompletedEngineToolCall[]) => void;
   // 工具完成超时 timer ID，正常完成时 clearTimeout 防止泄漏
   private toolCompletionTimeoutId?: ReturnType<typeof setTimeout>;
 
@@ -314,10 +314,10 @@ export class SubAgent {
   private countToolCalls(response: Content): number {
     if (!response.parts) return 0;
 
-    return response.parts.filter(part => {
+    return response.parts.filter(part =>
       // 检查Gemini格式的functionCall
-      return !!part.functionCall;
-    }).length;
+       !!part.functionCall
+    ).length;
   }
 
   /**
@@ -358,7 +358,7 @@ export class SubAgent {
     }
 
     // 然后修改系统指令
-    (this.subAgentChat as any).generationConfig.systemInstruction = this.buildSystemPrompt();
+    this.subAgentChat.setSystemInstruction({ text: this.buildSystemPrompt() });
 
     // 设置子agent专用的工具
     const toolDeclarations = this.getSubAgentToolDeclarations();
@@ -499,7 +499,7 @@ export class SubAgent {
     // 正常完成时 clearTimeout 防止 timer 泄漏
     try {
       // 创建Promise等待工具完成回调，附加超时保护
-      const toolCompletionPromise = new Promise<any[]>((resolve, reject) => {
+      const toolCompletionPromise = new Promise<CompletedEngineToolCall[]>((resolve, reject) => {
         this.toolCompletionResolver = resolve;
         this.toolCompletionTimeoutId = setTimeout(() => {
           if (this.toolCompletionResolver) {
@@ -535,7 +535,7 @@ export class SubAgent {
       this.log(`Received ${completedCalls.length} tool call results via callback`);
 
       // 将工具结果转换为function responses并存储到pendingToolResults
-      completedCalls.forEach((call: any) => {
+      completedCalls.forEach((call) => {
         this.pendingToolResults.push(call.response?.responseParts);
       });
 
@@ -569,7 +569,7 @@ export class SubAgent {
 
     // 智能消息处理：第一轮发送任务描述，后续轮次合并工具结果和继续消息
     const isFirstTurn = this.context.currentTurn === 1;
-    let messageParts: any[] = [];
+    let messageParts: Part[] = [];
 
     if (isFirstTurn) {
       // 第一轮：发送完整任务描述（带轮数预算提醒）
@@ -580,9 +580,9 @@ export class SubAgent {
         // 将待处理的工具结果添加到消息开头
         this.pendingToolResults.forEach(result => {
           if (Array.isArray(result)) {
-            messageParts.push(...result);
+            messageParts.push(...result.filter((part): part is Part => typeof part === 'object' && part !== null));
           } else {
-            messageParts.push(result);
+            if (result && typeof result === 'object' && !Array.isArray(result)) messageParts.push(result as Part);
           }
         });
         this.pendingToolResults = [];
@@ -651,8 +651,8 @@ export class SubAgent {
       outputTokens: 0,
       totalTokens: 0
     };
-    const allParts: any[] = [];
-    let lastUsageMetadata: any = null;
+    const allParts: Part[] = [];
+    let lastUsageMetadata: GenerateContentResponseUsageMetadata | null = null;
     let chunkCount = 0;
     let firstChunkMs: number | undefined;
     let turnTimedOut = false;
@@ -686,7 +686,7 @@ export class SubAgent {
         if (content?.parts) {
           for (const part of content.parts) {
             // thought 不进入最终 Content（与主 Agent 行为一致）
-            if ((part as any).thought === true) continue;
+            if (part.thought === true) continue;
             allParts.push(part);
           }
         }
@@ -749,7 +749,7 @@ export class SubAgent {
   /**
    * 处理工具完成回调
    */
-  private handleToolsComplete(completedCalls: any[]): void {
+  private handleToolsComplete(completedCalls: CompletedEngineToolCall[]): void {
     if (this.toolCompletionResolver) {
       this.toolCompletionResolver(completedCalls);
       this.toolCompletionResolver = undefined;
@@ -930,7 +930,7 @@ export class SubAgent {
   /**
    * 发送状态变化通知
    */
-  private sendStatusChange(status: string, details?: any): void {
+  private sendStatusChange(status: string, details?: Record<string, unknown>): void {
     const statusEvent = {
       type: 'status_change',
       agentId: this.context.agentId,

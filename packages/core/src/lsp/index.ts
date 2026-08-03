@@ -8,13 +8,13 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { LSPClient, LSPServer } from './types.js';
+import type { LSPClientInfo, LSPServerInfo } from './types.js';
 import { createLSPClient, stopLSPClient } from './client.js';
 import { DefaultServers } from './server.js';
 
 export class LSPManager {
-  private clients: Map<string, LSPClient.Info> = new Map(); // key: serverID + root
-  private servers: LSPServer.Info[];
+  private clients: Map<string, LSPClientInfo> = new Map(); // key: serverID + root
+  private servers: LSPServerInfo[];
   private projectRoot: string;
   private openedFiles: Set<string> = new Set();
   private fileVersions: Map<string, number> = new Map();
@@ -29,11 +29,11 @@ export class LSPManager {
   /**
    * 获取或创建一个匹配文件的 LSP Client
    */
-  async getClientsForFile(file: string): Promise<LSPClient.Info[]> {
+  async getClientsForFile(file: string): Promise<LSPClientInfo[]> {
     const ext = path.extname(file).toLowerCase();
     const matchingServers = this.servers.filter(s => s.extensions.includes(ext));
 
-    const results: LSPClient.Info[] = [];
+    const results: LSPClientInfo[] = [];
     for (const serverInfo of matchingServers) {
       const root = await serverInfo.root(file);
       const key = `${serverInfo.id}:${root}`;
@@ -54,21 +54,21 @@ export class LSPManager {
           this.freshClients.add(client.serverID); // 🎯 标记为新客户端
           results.push(client);
         } catch (e) {
+          const err = e instanceof Error ? e as Error & { code?: unknown; errno?: unknown; syscall?: unknown; path?: unknown } : undefined;
           const errorDetails = e instanceof Error ? {
             message: e.message,
             stack: e.stack,
-            code: (e as any).code,
-            errno: (e as any).errno,
-            syscall: (e as any).syscall,
-            path: (e as any).path
+            code: err?.code,
+            errno: err?.errno,
+            syscall: err?.syscall,
+            path: err?.path
           } : String(e);
           console.error(`[LSP] Failed to start ${serverInfo.id}:`, errorDetails);
 
           // 🎯 Windows errno -4094 通常表示二进制文件损坏或格式不对
           // 此时应该删除坏的二进制文件并提示用户重新初始化
-          const err = e as any;
-          if (err.errno === -4094 || err.code === 'UNKNOWN') {
-            console.error(`[LSP] Binary file may be corrupted (errno=${err.errno}). Suggest deleting ${serverInfo.id} cache and reinitializing.`);
+          if (err?.errno === -4094 || err?.code === 'UNKNOWN') {
+            console.error(`[LSP] Binary file may be corrupted (errno=${err?.errno}). Suggest deleting ${serverInfo.id} cache and reinitializing.`);
           }
         }
       }
@@ -79,7 +79,7 @@ export class LSPManager {
   /**
    * 确保文档在服务端已打开并同步
    */
-  async syncDocument(client: LSPClient.Info, file: string) {
+  async syncDocument(client: LSPClientInfo, file: string) {
     const uri = this.getUri(file);
     const key = `${client.serverID}:${uri}`;
     const content = fs.readFileSync(file, 'utf8');
@@ -152,7 +152,7 @@ export class LSPManager {
    */
   async run<T>(
     file: string,
-    task: (client: LSPClient.Info) => Promise<T>,
+    task: (client: LSPClientInfo) => Promise<T>,
     options?: { timeoutMs?: number; operationName?: string },
   ): Promise<T[]> {
     const debug =
@@ -255,10 +255,10 @@ export class LSPManager {
         position: { line, character },
         context: { includeDeclaration: true }
       };
-      let result = await client.connection.sendRequest('textDocument/references', params);
+      let result: unknown = await client.connection.sendRequest('textDocument/references', params);
 
       // 🎯 重试逻辑：如果是空结果，可能是索引尚未完成
-      if (!result || result.length === 0) {
+      if (!Array.isArray(result) || result.length === 0) {
         console.log(`[LSP][${client.serverID}] No references found, retrying in 3s...`);
         await new Promise(resolve => setTimeout(resolve, 3000));
         result = await client.connection.sendRequest('textDocument/references', params);
@@ -273,10 +273,10 @@ export class LSPManager {
         textDocument: { uri: this.getUri(file) },
         position: { line, character }
       };
-      let result = await client.connection.sendRequest('textDocument/implementation', params);
+      let result: unknown = await client.connection.sendRequest('textDocument/implementation', params);
 
       // 🎯 重试逻辑：如果是空结果，可能是索引尚未完成
-      if (!result || result.length === 0) {
+      if (!Array.isArray(result) || result.length === 0) {
         console.log(`[LSP][${client.serverID}] No implementation found, retrying in 3s...`);
         await new Promise(resolve => setTimeout(resolve, 3000));
         result = await client.connection.sendRequest('textDocument/implementation', params);
@@ -336,15 +336,15 @@ export class LSPManager {
     for (const client of this.clients.values()) {
       try {
         // 🎯 泛化重试逻辑：所有具备索引性质的服务器在冷启动时都可能返回空
-        let symbols = await client.connection.sendRequest('workspace/symbol', { query });
-        if (!symbols || symbols.length === 0) {
+        let symbols: unknown = await client.connection.sendRequest('workspace/symbol', { query });
+        if (!Array.isArray(symbols) || symbols.length === 0) {
           console.log(`[LSP][${client.serverID}] No symbols yet, retrying in 3s...`);
           await new Promise(resolve => setTimeout(resolve, 3000));
           symbols = await client.connection.sendRequest('workspace/symbol', { query });
         }
 
-        console.log(`[LSP][${client.serverID}] Found ${symbols?.length || 0} symbols`);
-        if (symbols) results.push(symbols);
+        console.log(`[LSP][${client.serverID}] Found ${Array.isArray(symbols) ? symbols.length : 0} symbols`);
+        if (Array.isArray(symbols)) results.push(symbols);
       } catch (err) {
         console.error(`[LSP][${client.serverID}] Workspace symbols failed:`, err);
       }
@@ -352,7 +352,7 @@ export class LSPManager {
     return results;
   }
 
-  async getDiagnostics(file: string) {
+  async getDiagnostics(_file: string) {
     // 诊断通常由服务端主动推送，这里演示如何手动触发（如果支持）或获取缓存
     // 实际实现应监听 'textDocument/publishDiagnostics'
     return [];

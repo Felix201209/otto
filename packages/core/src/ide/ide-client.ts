@@ -37,7 +37,7 @@ export class IdeClient {
   connectionStatus: IDEConnectionStatus = IDEConnectionStatus.Disconnected;
 
   constructor() {
-    this.connectToMcpServer().catch((err) => {
+    this.connectToMcpServer().catch(() => {
       // 静默处理连接失败，避免抛出异常
       // 常见情况：IDE插件未安装或已卸载
       this.connectionStatus = IDEConnectionStatus.Disconnected;
@@ -89,7 +89,7 @@ export class IdeClient {
         },
       );
       
-      this.client.onerror = (error) => {
+      this.client.onerror = () => {
         // 静默处理运行时错误
         this.connectionStatus = IDEConnectionStatus.Disconnected;
         ideContext.clearOpenFilesContext();

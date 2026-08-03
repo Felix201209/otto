@@ -212,8 +212,8 @@ export class SemanticRetention {
   private extractText(msg: Content): string {
     if (!msg.parts || msg.parts.length === 0) return '';
     return msg.parts
-      .filter((p: any) => typeof p.text === 'string')
-      .map((p: any) => p.text)
+      .filter((p) => typeof p.text === 'string')
+      .map((p) => p.text as string)
       .join('\n');
   }
 
@@ -340,8 +340,8 @@ export class SemanticRetention {
   private isToolOutput(msg: Content): boolean {
     if (!msg.parts || msg.parts.length === 0) return false;
 
-    return msg.parts.some((p: any) =>
-      p.functionResponse || p.toolResult
+    return msg.parts.some((p) =>
+      p.functionResponse || (p as { toolResult?: unknown }).toolResult
     );
   }
 }
@@ -361,8 +361,8 @@ export function extractRetentionContext(
     if (!msg.parts) continue;
 
     for (const part of msg.parts) {
-      const p = part as any;
-      const text = p.text as string | undefined;
+      const p = part as { text?: unknown };
+      const text = typeof p.text === 'string' ? p.text : undefined;
       if (!text) continue;
 
       const textLower = text.toLowerCase();

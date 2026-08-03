@@ -8,8 +8,6 @@
 import {
   ToolCall,
   Tool,
-  ToolCallConfirmationDetails,
-  ToolConfirmationOutcome,
   CompletedToolCall,
   EditorType,
   PreToolExecutionHandler,
@@ -44,10 +42,10 @@ export class MainAgentAdapter implements ToolSchedulerAdapter {
    * 对于主Agent，我们通过onToolCallsUpdate来通知整个工具调用列表的变化
    */
   onToolStatusChanged(
-    callId: string,
-    newStatus: string,
-    toolCall: ToolCall,
-    context: ToolExecutionContext,
+    _callId: string,
+    _newStatus: string,
+    _toolCall: ToolCall,
+    _context: ToolExecutionContext,
   ): void {
     // 主Agent通过onToolCallsUpdate统一处理状态变化
     // 这里不需要单独处理状态变化
@@ -60,7 +58,7 @@ export class MainAgentAdapter implements ToolSchedulerAdapter {
   onOutputUpdate(
     callId: string,
     output: string,
-    context: ToolExecutionContext,
+    _context: ToolExecutionContext,
   ): void {
     this.outputUpdateHandler?.(callId, output);
   }
@@ -73,7 +71,7 @@ export class MainAgentAdapter implements ToolSchedulerAdapter {
    * 获取首选编辑器类型
    * 直接转发给现有的getPreferredEditor函数
    */
-  getPreferredEditor(context: ToolExecutionContext): EditorType | undefined {
+  getPreferredEditor(_context: ToolExecutionContext): EditorType | undefined {
     return this.preferredEditorGetter?.();
   }
 
@@ -81,7 +79,7 @@ export class MainAgentAdapter implements ToolSchedulerAdapter {
    * 获取状态更新回调函数
    * MainAgent不需要向父Agent同步状态，返回undefined
    */
-  getStatusUpdateCallback(): ((toolCalls: any[], context: any) => void) | undefined {
+  getStatusUpdateCallback(): ((toolCalls: ToolCall[], context: ToolExecutionContext) => void) | undefined {
     return undefined;
   }
 
@@ -93,7 +91,7 @@ export class MainAgentAdapter implements ToolSchedulerAdapter {
     callId: string,
     tool: Tool,
     args: Record<string, unknown>,
-    context: ToolExecutionContext,
+    _context: ToolExecutionContext,
   ): Promise<void> {
     if (this.preToolExecutionHandler) {
       await this.preToolExecutionHandler({
@@ -110,7 +108,7 @@ export class MainAgentAdapter implements ToolSchedulerAdapter {
    */
   onAllToolsComplete(
     completedCalls: CompletedToolCall[],
-    context: ToolExecutionContext,
+    _context: ToolExecutionContext,
   ): void {
     this.allToolCallsCompleteHandler?.(completedCalls);
   }
@@ -121,7 +119,7 @@ export class MainAgentAdapter implements ToolSchedulerAdapter {
    */
   onToolCallsUpdate(
     toolCalls: ToolCall[],
-    context: ToolExecutionContext,
+    _context: ToolExecutionContext,
   ): void {
     this.toolCallsUpdateHandler?.(toolCalls);
   }

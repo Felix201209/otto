@@ -9,7 +9,6 @@ import { BaseTool, Icon, ToolResult, ToolExecutionServices } from './tools.js';
 import { Config } from '../config/config.js';
 import { Type } from '@google/genai';
 import { SchemaValidator } from '../utils/schemaValidator.js';
-import { t } from '../utils/simpleI18n.js';
 
 interface BatchToolParams {
     tool_calls: Array<{
@@ -79,7 +78,7 @@ Example (when appropriate - 5+ independent file reads):
      * 1. Stringified JSON objects (LLM hallucination)
      * 2. Property aliases (tool vs name vs function)
      */
-    private normalizeToolCalls(toolCalls: any[]): Array<{ tool: string; parameters: Record<string, unknown> }> {
+    private normalizeToolCalls(toolCalls: unknown[]): Array<{ tool: string; parameters: Record<string, unknown> }> {
         if (!Array.isArray(toolCalls)) return [];
 
         return toolCalls.map(call => {
@@ -88,7 +87,7 @@ Example (when appropriate - 5+ independent file reads):
             if (typeof call === 'string') {
                 try {
                     callObj = JSON.parse(call);
-                } catch (e) {
+                } catch (_e) {
                     console.warn('[BatchTool] Failed to parse stringified tool call:', call);
                     return { tool: 'unknown', parameters: {} };
                 }
@@ -99,10 +98,13 @@ Example (when appropriate - 5+ independent file reads):
             }
 
             // Handle property aliases
-            const toolName = callObj.tool || callObj.name || callObj.function || callObj.tool_name || 'unknown';
-            const parameters = callObj.parameters || callObj.args || callObj.arguments || {};
+            const record = callObj as Record<string, unknown>;
+            const toolName = [record.tool, record.name, record.function, record.tool_name]
+              .find((candidate): candidate is string => typeof candidate === 'string' && candidate.length > 0)
+              ?? 'unknown';
+            const parameters = record.parameters ?? record.args ?? record.arguments;
 
-            return { tool: toolName, parameters };
+            return { tool: toolName, parameters: parameters && typeof parameters === 'object' ? parameters as Record<string, unknown> : {} };
         });
     }
 
@@ -171,7 +173,7 @@ Example (when appropriate - 5+ independent file reads):
                     await services.onPreToolExecution({
                         callId: `batch-sub-${Date.now()}-${Math.random().toString(16).slice(2)}`,
                         tool,
-                        args: call.parameters as any
+                        args: call.parameters
                     });
                 } catch (preExecError) {
                     console.warn(`[BatchTool] Pre-execution hook failed for ${call.tool}:`, preExecError);
@@ -179,7 +181,7 @@ Example (when appropriate - 5+ independent file reads):
             }
 
             try {
-                const result = await tool.execute(call.parameters as any, signal, updateOutput, services);
+                const result = await tool.execute(call.parameters, signal, updateOutput, services);
                 const resultContent = typeof result.llmContent === 'string'
                     ? result.llmContent
                     : JSON.stringify(result.llmContent);

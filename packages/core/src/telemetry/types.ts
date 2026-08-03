@@ -8,7 +8,6 @@ import { GenerateContentResponseUsageMetadata } from '@google/genai';
 import { Config } from '../config/config.js';
 import { CompletedToolCall } from '../core/coreToolScheduler.js';
 import { ToolConfirmationOutcome } from '../tools/tools.js';
-import { AuthType } from '../core/contentGenerator.js';
 
 export interface AgentContext {
   type: 'main' | 'sub';
@@ -125,7 +124,7 @@ export class UserPromptEvent {
 /**
  * 计算响应内容的字符长度
  */
-export function calculateResponseLength(responseParts: any): number {
+export function calculateResponseLength(responseParts: unknown): number {
   if (!responseParts) return 0;
 
   let totalLength = 0;
@@ -135,13 +134,14 @@ export function calculateResponseLength(responseParts: any): number {
 
   for (const part of parts) {
     if (part && typeof part === 'object') {
+      const record = part as Record<string, unknown>;
       // 处理文本内容
-      if (part.text && typeof part.text === 'string') {
-        totalLength += part.text.length;
+      if (typeof record.text === 'string') {
+        totalLength += record.text.length;
       }
       // 处理JSON内容
-      else if (part.functionResponse) {
-        totalLength += JSON.stringify(part.functionResponse).length;
+      else if (record.functionResponse) {
+        totalLength += JSON.stringify(record.functionResponse).length;
       }
       // 处理其他可能的内容类型
       else if (typeof part === 'string') {

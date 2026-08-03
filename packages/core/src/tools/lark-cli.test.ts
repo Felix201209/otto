@@ -21,12 +21,10 @@ import path from 'node:path';
 
 // Mock child_process. We stream output through spawn, and probe the global
 // binary via spawnSync (synchronous --version check).
-vi.mock('node:child_process', () => {
-  return {
+vi.mock('node:child_process', () => ({
     spawn: vi.fn(),
     spawnSync: vi.fn(),
-  };
-});
+  }));
 
 /**
  * A controllable fake child process for driving spawn-based streaming tests.

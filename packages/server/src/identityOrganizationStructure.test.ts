@@ -21,6 +21,7 @@ function createDatabase(): Database {
       id TEXT PRIMARY KEY,
       organization_id TEXT NOT NULL,
       name TEXT NOT NULL COLLATE NOCASE,
+      parent_department_id TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE(organization_id, name)

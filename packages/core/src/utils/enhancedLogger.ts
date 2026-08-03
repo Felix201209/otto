@@ -49,7 +49,7 @@ export class EnhancedLogger {
     }
   }
 
-  private formatMessage(level: string, message: string, ...args: any[]): string {
+  private formatMessage(level: string, message: string, ...args: unknown[]): string {
     const timestamp = new Date().toISOString();
     const formattedArgs = args.map(arg => 
       typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
@@ -93,7 +93,7 @@ export class EnhancedLogger {
       }
     } catch (error) {
       // 文件不存在时忽略错误
-      if ((error as any).code !== 'ENOENT') {
+      if (!(error && typeof error === 'object' && (error as { code?: string }).code === 'ENOENT')) {
         console.error('日志轮转失败:', error);
       }
     }
@@ -130,7 +130,7 @@ export class EnhancedLogger {
     }
   }
 
-  private log(level: LogLevel, levelName: string, message: string, ...args: any[]): void {
+  private log(level: LogLevel, levelName: string, message: string, ...args: unknown[]): void {
     if (level < this.config.level) return;
 
     const formattedMessage = this.formatMessage(levelName, message, ...args);
@@ -147,24 +147,24 @@ export class EnhancedLogger {
     }
   }
 
-  debug(message: string, ...args: any[]): void {
+  debug(message: string, ...args: unknown[]): void {
     this.log(LogLevel.DEBUG, 'DEBUG', message, ...args);
   }
 
-  info(message: string, ...args: any[]): void {
+  info(message: string, ...args: unknown[]): void {
     this.log(LogLevel.INFO, 'INFO', message, ...args);
   }
 
-  warn(message: string, ...args: any[]): void {
+  warn(message: string, ...args: unknown[]): void {
     this.log(LogLevel.WARN, 'WARN', message, ...args);
   }
 
-  error(message: string, ...args: any[]): void {
+  error(message: string, ...args: unknown[]): void {
     this.log(LogLevel.ERROR, 'ERROR', message, ...args);
   }
 
   // API调用专用日志方法
-  logApiRequest(endpoint: string, requestData: any): void {
+  logApiRequest(endpoint: string, requestData: unknown): void {
     this.debug('API请求', {
       endpoint,
       timestamp: new Date().toISOString(),
@@ -174,7 +174,7 @@ export class EnhancedLogger {
     });
   }
 
-  logApiResponse(endpoint: string, responseData: any): void {
+  logApiResponse(endpoint: string, responseData: unknown): void {
     this.debug('API响应', {
       endpoint,
       timestamp: new Date().toISOString(),

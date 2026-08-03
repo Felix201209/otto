@@ -40,7 +40,7 @@ export class ImageGeneratorAdapter {
 
   private constructor() {}
 
-  public static getInstance(): ImageGeneratorAdapter {
+  static getInstance(): ImageGeneratorAdapter {
     if (!ImageGeneratorAdapter.instance) {
       ImageGeneratorAdapter.instance = new ImageGeneratorAdapter();
     }
@@ -181,7 +181,7 @@ export class ImageGeneratorAdapter {
         headers: {
           'Content-Type': contentType,
         },
-        body: fileBuffer as any,
+        body: fileBuffer as unknown as BodyInit,
       });
 
       if (!response.ok) {
@@ -204,7 +204,7 @@ export class ImageGeneratorAdapter {
     logger.debug('[ImageGenerator] Submitting task', { prompt, size, fromImgUrl, imageSize, imageUrlsCount: imageUrls?.length });
 
     try {
-      const body: any = {
+      const body: Record<string, unknown> = {
         prompt,
         size,
       };

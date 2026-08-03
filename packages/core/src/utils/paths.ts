@@ -231,14 +231,14 @@ function copyFolderRecursiveSync(source: string, target: string) {
     if (!fs.existsSync(target)) {
       fs.mkdirSync(target, { recursive: true });
     }
-  } catch (err) {
+  } catch {
     return;
   }
 
   let files: string[] = [];
   try {
     files = fs.readdirSync(source);
-  } catch (err) {
+  } catch {
     return;
   }
 
@@ -254,17 +254,17 @@ function copyFolderRecursiveSync(source: string, target: string) {
         try {
           const symlinkTarget = fs.readlinkSync(curSource);
           fs.symlinkSync(symlinkTarget, curTarget);
-        } catch (symlinkErr) {
+        } catch {
           // Suppress symlink creation privilege errors in win32
         }
       } else {
         try {
           fs.copyFileSync(curSource, curTarget);
-        } catch (copyErr) {
+        } catch {
           // Suppress locks / EBUSY / EPERM on individual files in win32
         }
       }
-    } catch (statErr) {
+    } catch {
       // Suppress individual stat lookup errors
     }
   }
@@ -356,7 +356,7 @@ function isDirWithoutRealData(dirPath: string): boolean {
       }
     }
     return true;
-  } catch (err) {
+  } catch {
     return true;
   }
 }
@@ -423,7 +423,7 @@ export function migrateLegacyDirectories(projectRoot: string, onStart?: (type: '
         if (onStart) onStart(unit.type);
         copyFolderRecursiveSync(unit.legacyDir, unit.newDir);
         safeRemoveFolderSync(unit.legacyDir);
-      } catch (err) {
+      } catch {
         // Ignore errors
       }
     }

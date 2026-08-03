@@ -7,7 +7,6 @@
 import { diag } from '@opentelemetry/api';
 import type { Config } from '../config/config.js';
 import { SERVICE_NAME } from './constants.js';
-import { initializeMetrics } from './metrics.js';
 
 let sdk: { start: () => Promise<void> | void; shutdown: () => Promise<void> | void } | undefined;
 let telemetryInitialized = false;

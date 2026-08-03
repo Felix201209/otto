@@ -17,6 +17,7 @@
  */
 
 import { Content } from '../types/extendedContent.js';
+import type { Part } from '@google/genai';
 
 /**
  * 可被微压缩清理的工具名称集合
@@ -179,7 +180,7 @@ export class MicroCompactService {
       if (!msg.parts) continue;
 
       for (let j = 0; j < msg.parts.length; j++) {
-        const part = msg.parts[j] as any;
+        const part = msg.parts[j] as typeof msg.parts[number] & { functionResponse?: { name?: string; response?: unknown; id?: string } };
         if (part.functionResponse) {
           const toolName = part.functionResponse.name;
           if (toolName && COMPACTABLE_TOOLS.has(toolName)) {
@@ -205,7 +206,7 @@ export class MicroCompactService {
     // 执行清除
     let clearedCount = 0;
     for (const { msgIndex, partIndex, toolName } of toClear) {
-      const part = history[msgIndex].parts![partIndex] as any;
+      const part = history[msgIndex].parts![partIndex] as Part & { functionResponse: { name: string; response: unknown; id?: string } };
       // 替换响应内容为占位符
       part.functionResponse = {
         name: toolName,
@@ -227,13 +228,14 @@ export class MicroCompactService {
   /**
    * 检查 functionResponse 内容是否已被清除过
    */
-  private isAlreadyCleared(response: any): boolean {
+  private isAlreadyCleared(response: unknown): boolean {
     if (!response) return false;
     if (typeof response === 'string') {
       return response === CLEARED_TOOL_RESULT_MARKER;
     }
     if (typeof response === 'object') {
-      const output = response.output || response.content || response.result;
+      const record = response as Record<string, unknown>;
+      const output = record.output || record.content || record.result;
       if (typeof output === 'string') {
         return output === CLEARED_TOOL_RESULT_MARKER;
       }

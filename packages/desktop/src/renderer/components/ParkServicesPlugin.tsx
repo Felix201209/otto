@@ -370,7 +370,7 @@ function baseDefaultServices(park: string): ParkService[] {
       ],
     },
     {
-      id: 'network-phone', icon: IconWrench, name: '网络与电话', desc: '宽带、固话开通与调试',
+      id: 'network-phone', icon: IconWrench, name: '网络与固话', desc: '宽带、固话开通与调试',
       prompt: `帮我提交${park}网络或固话业务申请。公司名称：；房间号：；业务类型：；工位或号码数量：；期望开通日期：；联系人：；联系电话：`,
       demoSubject: 'A 座 1203 室企业网络开通申请',
       steps: [

@@ -5,7 +5,7 @@
  */
 
 
-import { Part, FunctionResponse } from '@google/genai';
+import { Part } from '@google/genai';
 import { ContentGenerator } from '../core/contentGenerator.js';
 import { Config } from '../config/config.js';
 import { tokenLimit } from '../core/tokenLimits.js';
@@ -163,7 +163,7 @@ export class MCPResponseGuard {
         currentDir = parentDir;
         depth++;
       }
-    } catch (error) {
+    } catch (_error) {
       // 如果查找失败，继续使用备选方案
     }
 
@@ -285,7 +285,7 @@ export class MCPResponseGuard {
     parts: Part[],
     toolName: string,
     originalSize: number,
-    estimatedRemainingTokens: number,
+    _estimatedRemainingTokens: number,
     contentGenerator: ContentGenerator | undefined,
     config: Config
   ): Promise<MCPResponseGuardResult> {
@@ -294,7 +294,7 @@ export class MCPResponseGuard {
       parts,
       toolName,
       originalSize,
-      estimatedRemainingTokens,
+      _estimatedRemainingTokens,
       contentGenerator,
       config,
       true // forceTruncateGuidance
@@ -470,7 +470,7 @@ export class MCPResponseGuard {
     targetSize: number,
     reason: string,
     originalSize: number,
-    estimatedRemainingTokens: number
+    _estimatedRemainingTokens: number
   ): MCPResponseGuardResult {
     const truncatedParts = this.truncateParts(parts, targetSize);
     const processedSize = JSON.stringify(truncatedParts).length;
@@ -511,21 +511,21 @@ export class MCPResponseGuard {
     if (isHtml) {
       // 对于HTML文件的搜索示例
       searchExamples = `- Find all div elements: \`pattern: "<div[^>]*>"\`
-- Find elements with specific class: \`pattern: "class=\\\"[^\\\"]*button[^\\\"]*\\\""\`
-- Find all links: \`pattern: "<a\\s+[^>]*href=\\\"([^\\\"]*)\\\""\`
+- Find elements with specific class: \`pattern: "class="[^"]*button[^"]*""\`
+- Find all links: \`pattern: "<a\\s+[^>]*href="([^"]*)""\`
 - Find text content inside tags: \`pattern: ">([^<]+)</"\`
-- Find specific attribute values: \`pattern: "data-id=\\\"([^\\\"]*)\\\""\`
-- Find style attributes: \`pattern: "style=\\\"([^\\\"]*)\\\""\``;
+- Find specific attribute values: \`pattern: "data-id="([^"]*)""\`
+- Find style attributes: \`pattern: "style="([^"]*)""\``;
     } else if (isPlainText) {
       // 对于其他纯文本内容的搜索示例
       searchExamples = `- Find all div elements: \`pattern: "<div[^>]*>"\`
-- Find elements with specific class: \`pattern: "class=\\"[^\"]*button[^\"]*\\""\`
-- Find all links: \`pattern: "<a\\s+[^>]*href=\\"([^\\"]*)\\""\`
+- Find elements with specific class: \`pattern: "class="[^"]*button[^"]*""\`
+- Find all links: \`pattern: "<a\\s+[^>]*href="([^"]*)""\`
 - Find text content: \`pattern: ">([^<]+)</"\`
-- Find specific attribute: \`pattern: "data-id=\\"([^\"]*)\\""\``;
+- Find specific attribute: \`pattern: "data-id attribute"\``;
     } else {
       // 对于JSON结构化内容的搜索示例
-      searchExamples = `- Search for specific filename: \`pattern: "\.ts$"\` or \`pattern: "component"\`
+      searchExamples = `- Search for specific filename: \`pattern: ".ts$"\` or \`pattern: "component"\`
 - Search for errors: \`pattern: "error|Error|ERROR"\`
 - Search for specific function: \`pattern: "function.*myFunction"\`
 - Search for imports: \`pattern: "^import|^from"\``;
@@ -621,9 +621,9 @@ read_file(
           if (typeof contentItem === 'string') {
             allTextContents.push(contentItem);
           } else if (contentItem && typeof contentItem === 'object' && 'text' in contentItem) {
-            const text = (contentItem as any).text;
+            const text = (contentItem as { text?: unknown }).text;
             if (text) {
-              allTextContents.push(text);
+              allTextContents.push(String(text));
             }
           }
         }
@@ -712,7 +712,7 @@ read_file(
           if (typeof contentItem === 'string') {
             textToCheck = contentItem;
           } else if (contentItem && typeof contentItem === 'object' && 'text' in contentItem) {
-            textToCheck = (contentItem as any).text;
+            textToCheck = String((contentItem as { text?: unknown }).text ?? '');
           }
 
           if (textToCheck) {
@@ -774,7 +774,7 @@ read_file(
       // 用引号包装使其成为有效的JSON字符串
       const jsonStr = '"' + text + '"';
       return JSON.parse(jsonStr);
-    } catch (e) {
+  } catch {
       // 如果JSON.parse失败，使用手动转义处理
       let result = text;
 
@@ -846,7 +846,7 @@ read_file(
     let indentLevel = 0;
     const indentedLines: string[] = [];
 
-    for (let line of lines) {
+    for (const line of lines) {
       const trimmed = line.trim();
 
       if (!trimmed) {
@@ -895,7 +895,7 @@ read_file(
             if (typeof item === 'string') {
               textContent.push(item);
             } else if (item && typeof item === 'object' && 'text' in item) {
-              textContent.push((item as any).text);
+              textContent.push(String((item as { text?: unknown }).text ?? ''));
             }
           }
         }

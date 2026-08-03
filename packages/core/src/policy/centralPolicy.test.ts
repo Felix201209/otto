@@ -4,7 +4,7 @@
  * Tests for CentralPolicy — the single policy decision boundary.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { CentralPolicy, PolicyDecision, ExecutionContext } from './centralPolicy.js';
 import { Config, ApprovalMode } from '../config/config.js';
 
@@ -82,6 +82,15 @@ describe('CentralPolicy', () => {
   });
 
   describe('feature flag → deny', () => {
+    it('denies RPA execution until the dedicated feature is enabled', () => {
+      policy = new CentralPolicy(makeMockConfig({ approvalMode: ApprovalMode.YOLO }));
+
+      const result = policy.canExecute('rpa_run', makeContext());
+
+      expect(result.decision).toBe(PolicyDecision.Deny);
+      expect(result.reason).toContain('rpa');
+    });
+
     it('should deny execution when a required feature flag is disabled', () => {
       policy = new CentralPolicy(
         makeMockConfig({

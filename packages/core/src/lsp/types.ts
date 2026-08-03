@@ -6,22 +6,19 @@
 
 
 import { ChildProcess } from 'node:child_process';
+import type { MessageConnection } from 'vscode-jsonrpc';
 
-export namespace LSPServer {
-  export interface Info {
+export interface LSPServerInfo {
     id: string;
     displayName: string;
     extensions: string[];
     root: (file: string) => Promise<string>;
     spawn: (root: string) => Promise<{ process: ChildProcess }>;
-  }
 }
 
-export namespace LSPClient {
-  export interface Info {
+export interface LSPClientInfo {
     serverID: string;
     root: string;
-    connection: any; // We'll use vscode-jsonrpc's MessageConnection
-    capabilities: any;
-  }
+    connection: MessageConnection;
+    capabilities: unknown;
 }

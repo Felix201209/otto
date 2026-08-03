@@ -81,7 +81,7 @@ export function isOurAuthError(errorText: string | undefined | null): boolean {
       errorObj.error === 'Unauthorized' &&
       errorObj.errorCode === 'AUTHENTICATION_FAILED'
     );
-  } catch (e) {
+  } catch (_e) {
     return false;
   }
 }

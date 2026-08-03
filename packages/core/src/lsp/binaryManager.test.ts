@@ -13,6 +13,7 @@ import { EventEmitter } from 'node:events';
 import JSZip from 'jszip';
 import { BinaryManager } from './binaryManager.js';
 import { spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 
 // Mock undici request for GitHub API
 vi.mock('undici', () => ({
@@ -73,7 +74,7 @@ describe('BinaryManager.githubInstaller (zip extraction)', () => {
     // Mock curl execution
     spawnMock.mockImplementation((command, args) => {
       // Create a mock ChildProcess
-      const cp = new EventEmitter() as any;
+      const cp = new EventEmitter() as unknown as ChildProcess;
       cp.stdout = new EventEmitter();
       cp.stderr = new EventEmitter();
 
@@ -125,7 +126,7 @@ describe('BinaryManager.githubInstaller (zip extraction)', () => {
 
     // Mock curl execution
     spawnMock.mockImplementation((command, args) => {
-      const cp = new EventEmitter() as any;
+      const cp = new EventEmitter() as unknown as ChildProcess;
       cp.stdout = new EventEmitter();
       cp.stderr = new EventEmitter();
 

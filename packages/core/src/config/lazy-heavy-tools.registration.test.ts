@@ -16,6 +16,8 @@ const HEAVY_STATIC_IMPORTS = [
   '../tools/generate-document.js',
   '../tools/analyze-data.js',
   '../tools/web-automation.js',
+  '../tools/rpa-run.js',
+  '../tools/durable-workflow.js',
   '../tools/multi-channel.js',
   '../tools/memory-manager.js',
   '../tools/feishu-project-collab.js',
@@ -59,5 +61,19 @@ describe('Config lazy heavy tool registration', () => {
     const registry = await config.createToolRegistry();
 
     expect(registry.getAllTools().map((tool) => tool.name)).toEqual(['enterprise_collaboration']);
+  });
+
+  it('registers the durable RPA and workflow tool entries without eager imports', async () => {
+    const config = new Config({
+      sessionId: 'lazy-durable-tools',
+      cwd: process.cwd(),
+      targetDir: process.cwd(),
+      debugMode: false,
+      coreTools: ['rpa_run', 'durable_workflow'],
+    });
+
+    const registry = await config.createToolRegistry();
+
+    expect(registry.getAllTools().map((tool) => tool.name)).toEqual(['durable_workflow', 'rpa_run']);
   });
 });

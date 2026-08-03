@@ -1,6 +1,6 @@
 {
   "name": "otto-ai",
-  "version": "1.9.10",
+  "version": "1.10.0",
   "engines": {
     "node": ">=22.16.0"
   },
@@ -8,7 +8,10 @@
   "workspaces": [
     "packages/core",
     "packages/server",
-    "packages/desktop"
+    "packages/desktop",
+    "packages/evals",
+    "packages/workflow",
+    "packages/rpa"
   ],
   "repository": {
     "type": "git",
@@ -42,6 +45,7 @@
     "size:source:check": "node scripts/source-size-report.mjs --check",
     "validate:boundaries": "node scripts/validate-boundaries.mjs",
     "benchmark:low-resource-agents": "node scripts/low-resource-multi-agent-benchmark.mjs",
+    "eval:deterministic": "vitest run --config packages/evals/vitest.config.ts",
     "build": "node scripts/build.js",
     "build:packages": "npm run build --workspace=packages/core && npm run build --workspace=packages/server",
     "build:sandbox": "node scripts/build_sandbox.js --skip-npm-install-build",
@@ -55,7 +59,7 @@
     "pack:prod": "cross-env ENABLE_CHECKPOINTING=true npm run bundle:cross-platform:prod && cross-env BUILD_ENV=production ENABLE_CHECKPOINTING=true node scripts/newpack.js",
     "pack:prod:ci": "cross-env ENABLE_CHECKPOINTING=true npm run bundle:cross-platform:prod && cross-env BUILD_ENV=production ENABLE_CHECKPOINTING=true node scripts/newpack.js -- --no-version-bump",
     "test": "npm run test --workspace=packages/core && npm run test --workspace=packages/server && npm run test --workspace=packages/desktop",
-    "test:ci": "npm run test:ci --workspace=packages/core --if-present && npm run test:ci --workspace=packages/server --if-present && npm run test --workspace=packages/desktop && npm run test:scripts",
+    "test:ci": "npm run test:ci --workspace=packages/core --if-present && npm run test:ci --workspace=packages/server --if-present && npm run test --workspace=packages/desktop && npm run test:scripts && npm run eval:deterministic && npm run test --workspace=packages/workflow && npm run test --workspace=packages/rpa",
     "test:scripts": "vitest run --config ./scripts/tests/vitest.config.ts",
     "test:e2e": "npm run test:integration:sandbox:none -- --verbose --keep-output",
     "test:integration:all": "npm run test:integration:sandbox:none && npm run test:integration:sandbox:docker && npm run test:integration:sandbox:podman",
@@ -67,7 +71,7 @@
     "lint:core:legacy": "eslint packages/core/src --ext .ts,.tsx",
     "lint:ci": "eslint packages/server/src packages/desktop/src otto-native/src/index.ts scripts deployment/enterprise-oneclick start-enterprise.cjs \"packages/desktop/*.{js,mjs,cjs}\" --ext .ts,.tsx,.js,.mjs,.cjs --max-warnings 0",
     "format": "prettier --write .",
-    "typecheck": "npm run typecheck --workspace=packages/core --if-present && npm run typecheck --workspace=packages/server --if-present && npm run typecheck --workspace=packages/desktop --if-present",
+    "typecheck": "npm run typecheck --workspace=packages/core --if-present && npm run typecheck --workspace=packages/server --if-present && npm run typecheck --workspace=packages/desktop --if-present && npm run typecheck --workspace=packages/evals --if-present && npm run typecheck --workspace=packages/workflow --if-present && npm run typecheck --workspace=packages/rpa --if-present",
     "preflight": "npm run clean && npm ci && npm run format && npm run lint:ci && npm run build && npm run typecheck && npm run test:ci",
     "prepare:package": "node scripts/prepare-package.js",
     "postinstall": "node -e \"const fs = require('fs'); const path = 'bundle/fix-binary-permissions.js'; if (fs.existsSync(path)) { require('child_process').execSync('node ' + path + ' --all', {stdio: 'inherit'}); } else { console.log('⏭️  Skipping binary permissions fix (bundle not built yet)'); }\"",
