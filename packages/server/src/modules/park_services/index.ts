@@ -33,3 +33,7 @@ export * from './parkTicketTypes.js';
 export * from './parkUsageStatisticsRepository.js';
 export * from './parkServicesComposition.js';
 export * from './simpleParkCompatibilityFacade.js';
+export * from './ticketEscalationTypes.js';
+export * from './ticketEscalationRepository.js';
+export * from './ticketEscalationFacade.js';
+export * from './ticketEscalationSchema.js';
