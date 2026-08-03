@@ -96,6 +96,7 @@ Otto 的发布链路分成三段：先检查异常，再构建 GitHub Release �
 - `DEPLOY_HOST`
 - `DEPLOY_USER`
 - `DEPLOY_SSH_KEY`
+- `DEPLOY_KNOWN_HOSTS`（目标服务器的固定 OpenSSH known_hosts 条目；不得使用运行时 ssh-keyscan）
 
 可选：
 

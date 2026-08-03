@@ -22,6 +22,7 @@ import {
   serviceFormFields,
 } from './ParkServicesPlugin.js';
 import type { EnterpriseAccount, EnterpriseParkPublication, EnterpriseRepairTicket } from '../../preload/index.js';
+import { parkISODate } from '../parkBusinessTime.js';
 
 afterEach(() => {
   cleanup();
@@ -256,7 +257,7 @@ describe('ParkServicesPlugin', () => {
     expect(Array.from(document.querySelectorAll('.otto-park-service__name')).slice(0, 2).map((node) => node.textContent)).toEqual(['园区公告', '满意度调查']);
   });
 
-  it('园区窗口支持最小化、最大化还原和拖动', () => {
+  it('园区窗口支持最小化、最大化还原和拖动', async () => {
     render(<ParkServicesPlugin />);
     openDialog();
 
@@ -287,6 +288,7 @@ describe('ParkServicesPlugin', () => {
       fireEvent(header, pointerEvent('pointerup', 145, 125));
     });
     expect(dialog.getAttribute('style')).toContain('translate(45px, 25px)');
+    await act(async () => { await Promise.resolve(); });
   });
 
   it('可以同时打开多个园区服务窗口，并分别最小化和继续办理', () => {
@@ -572,13 +574,7 @@ describe('ParkServicesPlugin', () => {
 
   it('会议室同日可选，22:00–23:00 完整显示两个 30 分钟时段，黄色时段可再次点击取消', async () => {
     installRepairBridge('reporter');
-    const tomorrowDate = new Date();
-    tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-    const tomorrow = [
-      tomorrowDate.getFullYear(),
-      String(tomorrowDate.getMonth() + 1).padStart(2, '0'),
-      String(tomorrowDate.getDate()).padStart(2, '0'),
-    ].join('-');
+    const tomorrow = parkISODate(new Date(), 1);
     const keys = ['22:00', '22:30'];
     Object.assign(window.otto, {
       enterpriseParkResources: vi.fn(async () => ({
@@ -599,12 +595,7 @@ describe('ParkServicesPlugin', () => {
     openDialog();
     fireEvent.click(await screen.findByText('会议室预约'));
     fireEvent.change(await screen.findByLabelText('会议室名称'), { target: { value: 'room-1' } });
-    const todayDate = new Date();
-    const today = [
-      todayDate.getFullYear(),
-      String(todayDate.getMonth() + 1).padStart(2, '0'),
-      String(todayDate.getDate()).padStart(2, '0'),
-    ].join('-');
+    const today = parkISODate(new Date());
     expect((screen.getByLabelText('使用日期') as HTMLInputElement).min).toBe(today);
     fireEvent.change(screen.getByLabelText('使用日期'), { target: { value: tomorrow } });
 
@@ -622,13 +613,7 @@ describe('ParkServicesPlugin', () => {
 
   it('会议预约冲突后立即刷新资源，避免继续显示已失效的绿色时段', async () => {
     installRepairBridge('reporter');
-    const date = new Date();
-    date.setDate(date.getDate() + 1);
-    const tomorrow = [
-      date.getFullYear(),
-      String(date.getMonth() + 1).padStart(2, '0'),
-      String(date.getDate()).padStart(2, '0'),
-    ].join('-');
+    const tomorrow = parkISODate(new Date(), 1);
     const resources = vi.fn(async () => ({
       settings: { parkingTotal: 10, parkingNote: null, updatedAt: tomorrow },
       meetingRooms: [{
@@ -697,6 +682,7 @@ describe('ParkServicesPlugin', () => {
     render(<ParkServicesPlugin />);
     openDialog();
     fireEvent.click(await screen.findByText('停车办理'));
+    await waitFor(() => expect(window.otto.enterpriseTicketList).toHaveBeenCalled());
     const form = await screen.findByLabelText('停车办理申请表');
     await waitFor(() => expect((screen.getByLabelText('公司名称') as HTMLInputElement).value).toBe('测试企业'));
     fireEvent.change(screen.getByLabelText('申请内容'), { target: { value: 'underground-fixed' } });

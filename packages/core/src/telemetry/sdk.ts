@@ -4,12 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { DiagConsoleLogger, DiagLogLevel, diag } from '@opentelemetry/api';
+import { diag } from '@opentelemetry/api';
 import type { Config } from '../config/config.js';
 import { SERVICE_NAME } from './constants.js';
-
-// For troubleshooting, set the log level to DiagLogLevel.DEBUG
-diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.INFO);
 
 let sdk: { start: () => Promise<void> | void; shutdown: () => Promise<void> | void } | undefined;
 let telemetryInitialized = false;
@@ -64,7 +61,7 @@ async function initializeOtlpTelemetry(
       { OTLPMetricExporter },
       { NodeSDK },
       { SemanticResourceAttributes },
-      { Resource },
+      { resourceFromAttributes },
       { BatchLogRecordProcessor },
       { PeriodicExportingMetricReader },
       { HttpInstrumentation },
@@ -86,7 +83,7 @@ async function initializeOtlpTelemetry(
       }),
     });
     sdk = new NodeSDK({
-      resource: new Resource({
+      resource: resourceFromAttributes({
         [SemanticResourceAttributes.SERVICE_NAME]: SERVICE_NAME,
         'session.id': config.getSessionId(),
       }),
@@ -94,11 +91,11 @@ async function initializeOtlpTelemetry(
         url: `${otlpEndpoint}/v1/traces`,
       }),
       metricReader: metricReader as never,
-      logRecordProcessor: new BatchLogRecordProcessor(
-        new OTLPLogExporter({
+      logRecordProcessor: new BatchLogRecordProcessor({
+        exporter: new OTLPLogExporter({
           url: `${otlpEndpoint}/v1/logs`,
         }),
-      ),
+      }),
       instrumentations: [new HttpInstrumentation()],
     });
 

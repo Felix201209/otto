@@ -5,6 +5,8 @@
  * 企业服务器，也永远拿不到会话令牌。
  */
 
+import { randomUUID } from 'node:crypto';
+
 export interface EnterpriseAccount {
   id: string;
   organizationId: string;
@@ -949,6 +951,9 @@ export class EnterpriseClient {
       const headers: Record<string, string> = {
         accept: 'application/json',
         ...(init.body ? { 'content-type': 'application/json' } : {}),
+        ...((init.method ?? 'GET').toUpperCase() === 'GET'
+          ? {}
+          : { 'x-otto-idempotency-key': `desktop:${randomUUID()}` }),
         ...(requestToken && !behavior.omitAuthorization
           ? { authorization: `Bearer ${requestToken}` }
           : {}),

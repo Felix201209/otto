@@ -104,9 +104,6 @@ export async function dispatchEnterpriseRoute({
       apiVersion,
       capabilities,
       deploymentInfo,
-      smsConfigured: smsSender !== null,
-      repairSmsConfigured: repairSmsSender !== null,
-      repairFeishuConfigured: repairFeishuSender !== null,
       sendJSON,
     })
   ) {

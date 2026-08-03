@@ -56,6 +56,36 @@ function setup() {
 }
 
 describe('private deployment license repository', () => {
+  it('treats an expired signed License as restricted at the execution layer', () => {
+    const { database, control, privateKey } = setup();
+    try {
+      const now = Date.now();
+      const payload = {
+        id: 'lic-expired',
+        deploymentId: control.getDeploymentId(),
+        organizationId: 'org-licensed',
+        machineFingerprint: control.getMachineFingerprint(),
+        customerName: 'Expired customer',
+        plan: 'enterprise',
+        expiresAtMs: now - 60_000,
+        seatLimit: 20,
+        modules: ['enterprise_tree'],
+        offline: true,
+        telemetryAllowed: false,
+        issuedAtMs: now - 24 * 60 * 60 * 1000,
+      };
+      expect(control.importDeploymentLicense({
+        license: payload,
+        signature: signEd25519Envelope(payload, privateKey),
+      })).toMatchObject({ status: 'expired' });
+      expect(control.isLicenseRestricted()).toBe(true);
+      expect(control.isLicenseUsableForOrganizationFeature('enterprise_tree'))
+        .toBe(false);
+    } finally {
+      database.close();
+    }
+  });
+
   it('queues content-free module usage and retries it with License-bound billing credentials', async () => {
     const { database, control, privateKey } = setup();
     try {

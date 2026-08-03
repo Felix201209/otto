@@ -29,7 +29,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: '22.13.0'
+  NODE_VERSION: '22.23.1'
   RELEASES_REPO: Felix201209/otto-releases
   UPDATE_MIRROR_ASSET_BASE_URL: 'https://59.110.154.44:7777/downloads'
   UPDATE_MIRROR_MANIFEST_URL: 'https://59.110.154.44:7777/otto-releases/latest.json'
@@ -62,7 +62,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
         env:
           PYTHON: python3.11
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -138,6 +138,7 @@ jobs:
       - name: Release quality gates
         run: |
           npm run lint:ci
+          npm run build
           npm run typecheck
           npm run test:ci
 
@@ -311,6 +312,7 @@ jobs:
           test -n "${{ secrets.DEPLOY_HOST }}"
           test -n "${{ secrets.DEPLOY_USER }}"
           test -n "${{ secrets.DEPLOY_SSH_KEY }}"
+          test -n "${{ secrets.DEPLOY_KNOWN_HOSTS }}"
 
       - name: Download release workflow artifact
         uses: actions/download-artifact@v4
@@ -346,7 +348,8 @@ jobs:
           chmod 700 ~/.ssh
           printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -p "${DEPLOY_PORT}" "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
       - name: Upload enterprise package
         shell: bash
@@ -404,6 +407,7 @@ jobs:
           test -n "${{ secrets.DEPLOY_HOST }}"
           test -n "${{ secrets.DEPLOY_USER }}"
           test -n "${{ secrets.DEPLOY_SSH_KEY }}"
+          test -n "${{ secrets.DEPLOY_KNOWN_HOSTS }}"
 
       - name: Download release workflow artifact
         uses: actions/download-artifact@v4
@@ -445,7 +449,8 @@ jobs:
           chmod 700 ~/.ssh
           printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -p "${DEPLOY_PORT}" "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
       - name: Upload and atomically publish mirror
         shell: bash

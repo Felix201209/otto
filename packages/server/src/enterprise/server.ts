@@ -26,7 +26,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from 'node:http';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -45,6 +45,7 @@ import {
   type AdminPrincipal,
 } from './enterpriseRouteDispatcher.js';
 import {
+  commercialFeatureForEnterpriseRoute,
   FEATURE_ADMIN_PREFIX,
   isAdminRoute,
   isLicenseMaintenanceRoute,
@@ -62,7 +63,11 @@ import {
   type LoginRateLimiter,
   type PasswordLoginRateLimitOptions,
 } from './enterpriseHttpSecurity.js';
-import { startPrivateDeploymentRuntime } from '../modules/commercial_control/index.js';
+import {
+  BillingAdmissionError,
+  commercialBillingOperationForRoute,
+  startPrivateDeploymentRuntime,
+} from '../modules/commercial_control/index.js';
 
 export { adminAccountsHTML } from './adminAccountsPage.js';
 export {
@@ -101,6 +106,8 @@ export interface EnterpriseServerOptions {
   appVersion?: string;
   /** 构建提交；不传则读 OTTO_BUILD_COMMIT / GITHUB_SHA。 */
   buildCommit?: string;
+  /** Test seam for the signed commercial-control billing channel. */
+  billingFetch?: typeof fetch;
   /** 密码登录限流参数；生产使用安全默认值，测试可注入时钟和较小阈值。 */
   loginRateLimit?: PasswordLoginRateLimitOptions;
 }
@@ -213,6 +220,7 @@ function makeHandler(
   deploymentInfo: DeploymentInfo,
   localAgentPairingEnabled: boolean,
   featureFlags?: FeatureFlagManager,
+  billingFetch: typeof fetch = fetch,
 ) {
   // 同一账号可能在多台桌面端同时在线。服务端对现有 direct_messages 队列做
   // 短租约 claim，保证一条 A2A 请求同一时刻只交给一个客户端；进程异常后
@@ -354,17 +362,143 @@ function makeHandler(
           return;
         }
       }
+      const commercialOrganizationId =
+        memberAccount?.organizationId ?? adminPrincipal?.organizationId ?? null;
+      const commercialActorId = memberAccount?.id ?? (
+        adminPrincipal?.kind === 'account' ? adminPrincipal.account.id : null
+      );
+      const auditCommercialDecision = (
+        event: string,
+        detail: Record<string, unknown>,
+      ) => {
+        try {
+          db.logAudit(
+            event,
+            commercialActorId,
+            JSON.stringify({ method, path, ...detail }),
+            commercialOrganizationId ?? db.DEFAULT_ORGANIZATION_ID,
+          );
+        } catch (error) {
+          console.error('[Otto Enterprise] commercial decision audit failed', {
+            event,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      };
       if (
         (isAdminRoute(path) || isMemberRoute(path)) &&
         !isLicenseMaintenanceRoute(path) &&
         db.isLicenseRestricted()
       ) {
+        auditCommercialDecision('commercial_license_denied', {
+          code: 'deployment_license_inactive',
+        });
         sendJSON(res, 402, licenseBlockedPayload());
         return;
       }
       if (isPublicSimplePark && db.isLicenseRestricted()) {
+        auditCommercialDecision('commercial_license_denied', {
+          code: 'deployment_license_inactive',
+        });
         sendJSON(res, 402, licenseBlockedPayload());
         return;
+      }
+      const commercialFeature = commercialFeatureForEnterpriseRoute(path);
+      if (
+        commercialFeature &&
+        !db.isLicenseUsableForOrganizationFeature(commercialFeature)
+      ) {
+        auditCommercialDecision('commercial_module_denied', {
+          code: 'commercial_module_not_entitled',
+          feature: commercialFeature,
+        });
+        sendJSON(res, 402, {
+          error: 'commercial module is not entitled',
+          code: 'commercial_module_not_entitled',
+          feature: commercialFeature,
+        });
+        return;
+      }
+      if (
+        commercialFeature &&
+        commercialOrganizationId &&
+        !db.isOrganizationFeatureEnabled(
+          commercialOrganizationId,
+          commercialFeature,
+        )
+      ) {
+        auditCommercialDecision('commercial_module_denied', {
+          code: 'organization_feature_disabled',
+          feature: commercialFeature,
+        });
+        sendJSON(res, 403, {
+          error:
+            commercialFeature === 'knowledge'
+              ? '企业知识功能已由管理员关闭'
+              : 'organization feature is disabled',
+          code: 'organization_feature_disabled',
+          feature: commercialFeature,
+        });
+        return;
+      }
+
+      const billingOperation = commercialBillingOperationForRoute(path, method);
+      if (billingOperation) {
+        const rawIdempotencyKey = req.headers['x-otto-idempotency-key'];
+        const idempotencyKey = Array.isArray(rawIdempotencyKey)
+          ? rawIdempotencyKey[0] ?? ''
+          : rawIdempotencyKey ?? '';
+        const referenceId = `op_${createHash('sha256')
+          .update(`${method}\0${path}\0${idempotencyKey}`, 'utf8')
+          .digest('hex')}`;
+        try {
+          const admission = await db.authorizeBillingOperation(
+            { ...billingOperation, idempotencyKey, referenceId },
+            billingFetch,
+          );
+          if (admission.required) {
+            auditCommercialDecision('commercial_billing_admitted', {
+              module: billingOperation.module,
+              referenceId,
+              holdId: admission.holdId,
+            });
+            res.setHeader('X-Otto-Billing-Admission', admission.holdId ?? 'required');
+            res.once('finish', () => {
+              const outcome = res.statusCode >= 200 && res.statusCode < 400
+                ? 'capture'
+                : 'release';
+              auditCommercialDecision('commercial_billing_finalization_queued', {
+                module: billingOperation.module,
+                referenceId,
+                outcome,
+              });
+              void db.finalizeBillingOperation(
+                admission,
+                outcome,
+                billingFetch,
+              ).catch((error: unknown) => {
+                console.error('[Otto Enterprise] billing finalization failed', {
+                  code: outcome,
+                  message: error instanceof Error ? error.message : String(error),
+                });
+              });
+            });
+          }
+        } catch (error) {
+          if (error instanceof BillingAdmissionError) {
+            auditCommercialDecision('commercial_billing_denied', {
+              module: billingOperation.module,
+              code: error.code,
+            });
+            sendJSON(res, error.statusCode, {
+              error: error.message,
+              code: error.code,
+              module: billingOperation.module,
+            });
+            return;
+          }
+          throw error;
+        }
       }
 
       if (
@@ -500,6 +634,7 @@ export function createEnterpriseServer(opts: EnterpriseServerOptions = {}): {
       },
       opts.localAgentPairingEnabled === true,
       featureFlags,
+      opts.billingFetch,
     ),
   );
   return { server, host, port, publicBaseUrl, adminToken, generatedToken };

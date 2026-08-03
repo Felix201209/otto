@@ -34,6 +34,9 @@ jobs:
     timeout-minutes: 30
 
     steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
       - name: Resolve version
         id: version
         shell: bash
@@ -55,6 +58,8 @@ jobs:
           test -n "${{ secrets.DEPLOY_HOST }}"
           test -n "${{ secrets.DEPLOY_USER }}"
           test -n "${{ secrets.DEPLOY_SSH_KEY }}"
+          test -n "${{ secrets.DEPLOY_KNOWN_HOSTS }}"
+          test -n "${{ secrets.OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY }}"
 
       - name: Download enterprise release asset
         env:
@@ -67,9 +72,16 @@ jobs:
             --repo "${RELEASES_REPO}" \
             --pattern "otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz" \
             --pattern "otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz.sha256" \
+            --pattern "otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz.sig" \
             --dir release-download
           cd release-download
           sha256sum -c ./*.sha256
+          ARCHIVE="$(find . -type f -name 'otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz' -print -quit)"
+          SIGNATURE="${ARCHIVE}.sig"
+          test -n "$ARCHIVE"
+          test -f "$SIGNATURE"
+          OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY="${{ secrets.OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY }}" \
+            node ../scripts/verify-enterprise-package-signature.mjs "$ARCHIVE" "$SIGNATURE"
           ls -lh
 
       - name: Configure SSH
@@ -80,7 +92,8 @@ jobs:
           chmod 700 ~/.ssh
           printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -p "${DEPLOY_PORT}" "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
       - name: Upload enterprise package
         shell: bash

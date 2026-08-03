@@ -97,7 +97,7 @@ otto enterprise sync → 拉取部门树 + 人员 → OrgMemoryStore
 
 ## 技术栈
 
-- TypeScript 5.x + Node.js 22.13+（企业服务端依赖无 flag 的 `node:sqlite`）
+- TypeScript 5.x + Node.js 22.16+（企业服务端依赖 `node:sqlite` 在线备份 API）
 - React 18（桌面端）
 - esbuild（构建）/ Vitest（测试）
 - Electron 33（桌面端）

@@ -7,6 +7,7 @@ import { createFeishuAutoReplyFacade } from './feishuAutoReplyFacade.js';
 
 export interface IntegrationAdaptersCompositionOptions {
   listFeishuAccountBindings(openId: string): readonly FeishuAccountBinding[];
+  isLicenseUsableForOrganizationFeature(feature: 'feishu_auto_reply'): boolean;
   isOrganizationFeatureEnabled(
     organizationId: string,
     feature: 'feishu_auto_reply',
@@ -20,6 +21,7 @@ export function createIntegrationAdaptersComposition(
   return createFeishuAutoReplyFacade({
     listAccountBindings: options.listFeishuAccountBindings,
     isOrganizationFeatureEnabled: (organizationId) =>
+      options.isLicenseUsableForOrganizationFeature('feishu_auto_reply') &&
       options.isOrganizationFeatureEnabled(organizationId, 'feishu_auto_reply'),
   });
 }

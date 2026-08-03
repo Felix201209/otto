@@ -133,10 +133,10 @@ describe('private deployment schema contributor', () => {
              WHERE type = 'table'
                AND name IN ('deployment_settings', 'deployment_license',
                             'deployment_license_leases', 'telemetry_events',
-                            'billing_usage_outbox')`,
+                            'billing_usage_outbox', 'billing_admission_outbox')`,
           )
           .get(),
-      ).toEqual({ count: 5 });
+      ).toEqual({ count: 6 });
     } finally {
       database.close();
     }

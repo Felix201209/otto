@@ -16,6 +16,7 @@ describe('integration adapters composition', () => {
           organizationActive: true,
         },
       ],
+      isLicenseUsableForOrganizationFeature: () => true,
       isOrganizationFeatureEnabled: featureCheck,
     });
 
@@ -23,6 +24,26 @@ describe('integration adapters composition', () => {
       true,
     );
     expect(featureCheck).toHaveBeenCalledWith('org-a', 'feishu_auto_reply');
+  });
+
+  it('rejects Feishu auto-reply when the signed License omits the module', () => {
+    const featureCheck = vi.fn(() => true);
+    const integrations = createIntegrationAdaptersComposition({
+      listFeishuAccountBindings: () => [
+        {
+          organizationId: 'org-a',
+          accountActive: true,
+          organizationActive: true,
+        },
+      ],
+      isLicenseUsableForOrganizationFeature: () => false,
+      isOrganizationFeatureEnabled: featureCheck,
+    });
+
+    expect(integrations.isFeishuAutoReplyEnabledForOpenId('ou_member')).toBe(
+      false,
+    );
+    expect(featureCheck).not.toHaveBeenCalled();
   });
 
   it('keeps integration access fail-closed when authorization fails', () => {
@@ -34,6 +55,7 @@ describe('integration adapters composition', () => {
           organizationActive: true,
         },
       ],
+      isLicenseUsableForOrganizationFeature: () => true,
       isOrganizationFeatureEnabled: () => {
         throw new Error('authorization unavailable');
       },

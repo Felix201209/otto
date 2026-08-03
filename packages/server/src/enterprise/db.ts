@@ -390,6 +390,9 @@ export const {
   flushTelemetryQueue,
   queueBillingUsage,
   flushBillingUsageQueue,
+  authorizeBillingOperation,
+  finalizeBillingOperation,
+  flushBillingAdmissionQueue,
   ingestTelemetryBatch,
   ensureDeploymentLicenseSecretsEncrypted,
   getPrivateDeploymentStatus,
@@ -817,6 +820,7 @@ export type AccountPresenceView = CollaborationAccountPresenceView;
 
 const integrationAdapters = createIntegrationAdaptersComposition({
   listFeishuAccountBindings,
+  isLicenseUsableForOrganizationFeature,
   isOrganizationFeatureEnabled,
 });
 
