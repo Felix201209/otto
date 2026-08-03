@@ -200,6 +200,16 @@ snapshot, and their event IDs are deterministic so a lost response can be
 replayed through the server's idempotency check. The desktop publishes one
 recoverable KeyPackage after approved-device activation.
 
+When the deterministic receiving account explicitly opens or establishes a
+direct session, the coordinator now releases its establishment lock, performs
+one plaintext-free transport poll, and then rechecks the native group under
+the same peer lock. A pending Commit/Welcome can therefore complete in one
+call without a recursive-lock deadlock; any accompanying application remains
+only in the encrypted native inbox. An empty poll remains a waiting state and
+transport or binding failures are not hidden. This does not yet discover a
+never-opened inbound conversation automatically, and it is not multi-device
+session orchestration.
+
 Each device keeps its per-conversation transport cursor inside the same
 authenticated native snapshot as the OpenMLS ratchet. Initial Commit and
 Welcome events can therefore resume after restart, and application-message

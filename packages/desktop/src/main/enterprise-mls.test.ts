@@ -624,23 +624,23 @@ function coordinatorHarness(keyPackages: MlsKeyPackage[] = []) {
     ),
     stageTransportApplication: vi.fn(
       async (
-        _peerAccountId: string,
+        peerAccountId: string,
         eventId: string,
         _ciphertext: string,
         sequence: number,
-        _expectedGroupId: string,
-        _expectedEpoch: number,
-        _senderDeviceId: string,
+        expectedGroupId: string,
+        expectedEpoch: number,
+        senderDeviceId: string,
         createdAt: string,
       ) => ({
         protocol: 'mls10-openmls-0.8' as const,
         eventId,
         conversationId: group.conversation_id,
-        peerAccountId: 'account-b',
+        peerAccountId,
         sequence,
-        groupId: group.group_id,
-        epoch: 1,
-        senderDeviceScope: `${'f'.repeat(64)}/org-a/account-b/device-b`,
+        groupId: expectedGroupId,
+        epoch: expectedEpoch,
+        senderDeviceScope: `${'f'.repeat(64)}/org-a/${peerAccountId}/${senderDeviceId}`,
         createdAt,
       }),
     ),
@@ -820,6 +820,113 @@ describe('EnterpriseMlsSessionCoordinator', () => {
     await expect(
       coordinator.establishDirectSession('account-a'),
     ).resolves.toEqual({ state: 'waiting-for-peer-commit', group: null });
+    expect(sessions.createGroup).not.toHaveBeenCalled();
+    expect(transport.claimMlsKeyPackage).not.toHaveBeenCalled();
+    expect(transport.listMlsTransportEvents).toHaveBeenCalledWith(
+      'account-a',
+      0,
+      100,
+    );
+  });
+
+  it('lets the deterministic receiver consume a pending handshake without exposing application plaintext', async () => {
+    const { group, sessions, transport } = coordinatorHarness();
+    sessions.activeScope.mockReturnValue({
+      serverUrl: 'https://enterprise.example.test',
+      organizationId: 'org-a',
+      accountId: 'account-b',
+      deviceId: 'device-b',
+    });
+    const readyGroup: MlsGroupInspection = {
+      ...group,
+      pending_commit: false,
+      pending_invitation: null,
+    };
+    sessions.inspectGroup
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(readyGroup)
+      .mockResolvedValueOnce(readyGroup);
+    const commit = transportEvent({
+      sequence: 1,
+      senderAccountId: 'account-a',
+      senderDeviceId: 'device-a',
+    });
+    const welcome = transportEvent({
+      sequence: 2,
+      eventId: 'welcome-2',
+      eventType: 'welcome',
+      senderAccountId: 'account-a',
+      senderDeviceId: 'device-a',
+      recipientAccountId: 'account-b',
+      recipientDeviceId: 'device-b',
+      keyPackageReference: 'a'.repeat(64),
+      payload: 'd2VsY29tZQ==',
+    });
+    const application = transportEvent({
+      sequence: 3,
+      eventId: `mls-${'6'.repeat(64)}`,
+      eventType: 'application',
+      senderAccountId: 'account-a',
+      senderDeviceId: 'device-a',
+      payload: 'Y2lwaGVydGV4dA==',
+    });
+    transport.listMlsTransportEvents.mockResolvedValue([
+      commit,
+      welcome,
+      application,
+    ]);
+    const coordinator = new EnterpriseMlsSessionCoordinator(
+      sessions,
+      transport,
+    );
+
+    await expect(
+      coordinator.establishDirectSession('account-a'),
+    ).resolves.toEqual({ state: 'ready', group: readyGroup });
+
+    expect(sessions.joinGroup).toHaveBeenCalledWith(
+      'account-a',
+      'a'.repeat(64),
+      group.group_id,
+      'd2VsY29tZQ==',
+    );
+    expect(sessions.stageTransportApplication).toHaveBeenCalledWith(
+      'account-a',
+      application.eventId,
+      application.payload,
+      application.sequence,
+      application.groupId,
+      application.epoch,
+      application.senderDeviceId,
+      application.createdAt,
+    );
+    expect(sessions.receiveTransportApplication).not.toHaveBeenCalled();
+    expect(sessions.listPendingReceivedApplications).not.toHaveBeenCalled();
+    expect(sessions.createGroup).not.toHaveBeenCalled();
+    expect(transport.claimMlsKeyPackage).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the deterministic receiver cannot poll its handshake', async () => {
+    const { sessions, transport } = coordinatorHarness();
+    sessions.activeScope.mockReturnValue({
+      serverUrl: 'https://enterprise.example.test',
+      organizationId: 'org-a',
+      accountId: 'account-b',
+      deviceId: 'device-b',
+    });
+    transport.listMlsTransportEvents.mockRejectedValue(
+      new Error('transport offline'),
+    );
+    const coordinator = new EnterpriseMlsSessionCoordinator(
+      sessions,
+      transport,
+    );
+
+    await expect(
+      coordinator.establishDirectSession('account-a'),
+    ).rejects.toThrow('transport offline');
     expect(sessions.createGroup).not.toHaveBeenCalled();
     expect(transport.claimMlsKeyPackage).not.toHaveBeenCalled();
   });

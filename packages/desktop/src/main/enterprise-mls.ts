@@ -967,7 +967,38 @@ export class EnterpriseMlsSessionCoordinator {
     });
   }
 
-  establishDirectSession(
+  async establishDirectSession(
+    peerAccountId: string,
+  ): Promise<EnterpriseMlsSessionEstablishment> {
+    const establishment = await this.establishDirectSessionOnce(peerAccountId);
+    if (establishment.state !== 'waiting-for-peer-commit') {
+      return establishment;
+    }
+
+    // Poll only after releasing the establishment lock: pollTransportOnly()
+    // serializes on the same peer key and would otherwise deadlock.
+    await this.pollTransportOnly(peerAccountId);
+    return this.exclusive<EnterpriseMlsSessionEstablishment>(
+      this.peerOperations,
+      peerAccountId,
+      async () => {
+        const group = await this.sessions.inspectGroup(peerAccountId);
+        if (!group) return establishment;
+        if (
+          group.pending_commit ||
+          group.pending_invitation ||
+          group.member_count < 2
+        ) {
+          throw new Error(
+            'MLS received handshake did not establish a ready direct session',
+          );
+        }
+        return { state: 'ready', group };
+      },
+    );
+  }
+
+  private establishDirectSessionOnce(
     peerAccountId: string,
   ): Promise<EnterpriseMlsSessionEstablishment> {
     return this.exclusive(this.peerOperations, peerAccountId, async () => {
