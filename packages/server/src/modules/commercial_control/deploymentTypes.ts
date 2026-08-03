@@ -6,6 +6,7 @@ import type {
   OrganizationFeatureKey,
   ProductModuleId,
 } from '../../productModules.js';
+import type { BillingExecutionReceiptKeyView } from './billingUsageRepository.js';
 
 export type DeploymentLicenseStatus =
   | 'active'
@@ -94,7 +95,13 @@ export interface PrivateDeploymentStatus {
       discarded: number;
       lastError: string | null;
     };
-    evidenceTrust: 'customer_server_reported';
+    executionReceipt: {
+      protocol: 'execution_receipt_v2';
+      key: BillingExecutionReceiptKeyView | null;
+      registrationRequired: boolean;
+      error: string | null;
+    };
+    evidenceTrust: 'signed_execution_receipt_v2';
   };
   dataBoundary: {
     uploadsContentByDefault: false;

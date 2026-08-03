@@ -297,6 +297,24 @@ License 验签支持多把 Ed25519 公钥并行。`OTTO_LICENSE_PUBLIC_KEYS` 可
 控制面检查签名密钥状态；离线 License 无法实时接收吊销，必须使用较短有效期并由交付
 流程同步吊销清单。
 
+### 签名执行收据与积分结算
+
+在线商业部署不再向旧的 `/v1/billing/usage/consume` 发送无签名用量。Otto Server 会为
+每个部署生成独立 Ed25519 执行收据密钥，私钥使用字段加密密钥进行 AES-256-GCM 加密，
+只保存在客户服务器；Control 只登记公钥。管理员可从
+`/enterprise/deployment/status` 的 `billing.executionReceipt.key` 读取 key ID 和公钥，
+再由两名具备 `billing.manage` 权限的 Control 管理员完成登记审批。
+
+每条收费任务会先写入 `billing_usage_outbox`，再按部署连续序号上传到
+`/v1/billing/execution-receipts`。第一条失败时后续收据不会越过它；服务重启或网络恢复后
+仍按原顺序补传，相同任务和相同收据不会重复扣费。收据只包含部署、组织、模块、模型、
+计量单位和不透明任务 ID，不包含提示词、回复、聊天、文件名、会议内容或个人身份信息。
+升级时尚未发送的旧用量会在本地转换为 v2 收据，已经结算的历史记录不会重复转换。
+
+收据有效期最长七天。持续离线超过七天会让队首收据进入需人工对账状态，不能通过跳号
+绕过；正式交付应对 `billing.failed` 和 `billing.lastError` 配置告警。字段加密密钥必须与
+数据库一起备份，丢失该密钥将无法继续使用原收据签名身份。
+
 ## 十、常见问题
 
 ### Caddy 证书申请失败
