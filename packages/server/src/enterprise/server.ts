@@ -166,6 +166,7 @@ const ENTERPRISE_CAPABILITIES = [
   'signed_update_policy_v1',
   'account_data_sync_v1',
   'enterprise_skill_market_v1',
+  'federation_gateway_v1',
 ] as const;
 
 export interface DeploymentInfo {
@@ -755,11 +756,20 @@ export function startEnterpriseServer(
         error,
       ),
   });
+  let stopFederationRuntime: () => void;
+  try {
+    stopFederationRuntime = db.startFederationRuntime();
+  } catch (error) {
+    stopPrivateDeploymentRuntime();
+    server.close();
+    throw error;
+  }
   let stopDataProtectionRuntime: () => void;
   try {
     stopDataProtectionRuntime = db.startDataProtectionRuntime();
   } catch (error) {
     stopPrivateDeploymentRuntime();
+    stopFederationRuntime();
     server.close();
     throw error;
   }
@@ -783,6 +793,7 @@ export function startEnterpriseServer(
     clearImmediate(initialMlsCleanup);
     clearInterval(mlsCleanupTimer);
     stopPrivateDeploymentRuntime();
+    stopFederationRuntime();
     stopDataProtectionRuntime();
   });
   return server;

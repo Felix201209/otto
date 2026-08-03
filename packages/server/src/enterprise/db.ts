@@ -41,6 +41,10 @@ import {
 } from '../modules/enterprise_skill_market/index.js';
 import { createIntegrationAdaptersComposition } from '../modules/integration_adapters/index.js';
 import {
+  createFederationComposition,
+  FEDERATION_GATEWAY_SCHEMA_CONTRIBUTOR,
+} from '../modules/federation_gateway/index.js';
+import {
   createModelGatewayComposition,
   MODEL_GATEWAY_SCHEMA_CONTRIBUTOR,
 } from '../modules/model_gateway/index.js';
@@ -189,6 +193,14 @@ export type {
   TicketHistoryEntry,
   TicketView,
 } from '../modules/park_services/index.js';
+export type {
+  FederationDirectoryEntry,
+  FederationInboxMessageView,
+  FederationMessageType,
+  FederationProvisioningManifest,
+  FederationQueueInput,
+  FederationRoutingMetadata,
+} from '../modules/federation_gateway/index.js';
 export { PARK_SERVICE_IDS } from '../modules/park_services/index.js';
 
 const DATA_DIR =
@@ -231,7 +243,7 @@ const PRIVACY_DELETION_LEDGER_KEY_PATH = path.join(
 );
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
-export const ENTERPRISE_SCHEMA_VERSION = 21;
+export const ENTERPRISE_SCHEMA_VERSION = 22;
 export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
@@ -274,6 +286,7 @@ function initSchema(d: Database): void {
     PERSONAL_INTELLIGENCE_SCHEMA_CONTRIBUTOR,
     DATA_GOVERNANCE_SCHEMA_CONTRIBUTOR,
     PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR,
+    FEDERATION_GATEWAY_SCHEMA_CONTRIBUTOR,
     createAuditLogSchemaContributor({
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
     }),
@@ -504,6 +517,41 @@ export const {
     Number(process.env.OTTO_TELEMETRY_RETENTION_DAYS || 90),
   fieldCipher,
   databaseReadiness: getDatabaseReadiness,
+});
+
+export const {
+  getFederationStatus,
+  getFederationProvisioningManifest,
+  lookupFederationDeployment,
+  queueFederationMessage,
+  listFederationInbox,
+  consumeFederationInbox,
+  createFederationA2aGrant,
+  revokeFederationA2aGrant,
+  blockFederationDeployment,
+  unblockFederationDeployment,
+  listFederationBlocks,
+  runFederationCycle,
+  startFederationRuntime,
+} = createFederationComposition({
+  db: getDB,
+  fieldCipher,
+  deploymentId: getDeploymentId,
+  dataDirectory: DATA_DIR,
+  enabled: () => process.env.OTTO_FEDERATION_ENABLED === 'true',
+  gatewayUrl: () => process.env.OTTO_FEDERATION_GATEWAY_URL?.trim() || null,
+  publicOrigin: () => process.env.OTTO_ENTERPRISE_PUBLIC_URL?.trim() || null,
+  displayName: () =>
+    process.env.OTTO_FEDERATION_DISPLAY_NAME?.trim() ||
+    process.env.OTTO_DEFAULT_ORGANIZATION_NAME?.trim() ||
+    'Otto private deployment',
+  signingKeyPath: () =>
+    process.env.OTTO_FEDERATION_SIGNING_KEY_FILE?.trim() || null,
+  pollIntervalMs: () =>
+    Number(process.env.OTTO_FEDERATION_POLL_INTERVAL_MS || 10_000),
+  allowInsecureLoopback:
+    process.env.NODE_ENV === 'test' &&
+    process.env.OTTO_FEDERATION_ALLOW_INSECURE_LOOPBACK === 'true',
 });
 
 export type OrganizationView = OrganizationDirectoryView;

@@ -205,6 +205,23 @@ export const PRODUCT_MODULES = [
     updateComponents: ['commercial_control'],
   },
   {
+    id: 'federation_gateway',
+    nameZh: '联邦协作网关',
+    description: 'Owns signed cross-deployment ciphertext delivery, durable cursors, receipts, blocks and one-time A2A grants.',
+    layer: 'integration',
+    runtimeSurfaces: ['server'],
+    dependencies: ['collaboration', 'authorization', 'commercial_control', 'data_platform'],
+    dataOwnership: [
+      'federation outbox',
+      'federation inbox cursor',
+      'delivery receipts',
+      'deployment blocks',
+      'A2A grant consumption',
+    ],
+    licenseCapabilities: [],
+    updateComponents: ['federation_gateway'],
+  },
+  {
     id: 'data_governance',
     nameZh: '数据治理与合规中心',
     description: 'Owns legal document versions, consent evidence, processing inventory, data export, deletion and retention controls.',

@@ -782,7 +782,7 @@ describe('受保护 vs 公开路由边界', () => {
     await expect(backup.json()).resolves.toMatchObject({
       lastError: null,
       backupCount: 1,
-      latestSchemaVersion: 21,
+      latestSchemaVersion: 22,
     });
 
     const telemetry = await fetch(`${base}/enterprise/deployment/telemetry`, {

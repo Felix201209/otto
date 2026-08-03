@@ -101,6 +101,9 @@ describe('authorization module boundary', () => {
     ).toBe(true);
     expect(authorization.isLicenseMaintenanceRoute('/enterprise/auth/login')).toBe(true);
     expect(authorization.isLicenseMaintenanceRoute('/enterprise/messages/member-1')).toBe(false);
+    expect(authorization.isAdminRoute('/enterprise/federation/admin/status')).toBe(true);
+    expect(authorization.isMemberRoute('/enterprise/federation/messages')).toBe(true);
+    expect(authorization.isMemberRoute('/enterprise/federation/admin/status')).toBe(false);
   });
 
   it('keeps legacy paths as aliases of the module implementation', () => {
