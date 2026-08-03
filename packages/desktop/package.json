@@ -53,6 +53,12 @@
     "ws": "^8.21.1"
   },
   "build": {
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://59.110.154.44:7777/downloads"
+      }
+    ],
     "appId": "ai.otto.desktop",
     "productName": "Otto",
     "copyright": "Copyright © 2025 Otto",
