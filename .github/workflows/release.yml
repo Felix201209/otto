@@ -114,6 +114,7 @@ jobs:
         run: |
           npm run doctor
           git diff --check
+          npm run validate:integration-baseline
           npm run validate:boundaries
           npm run size:source:check
 

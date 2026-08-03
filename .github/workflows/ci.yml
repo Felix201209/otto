@@ -24,6 +24,8 @@ jobs:
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # packages/server/src/sqlite-compat.ts 用 Node 内置 `node:sqlite`（企业服务端
       # 存储层，零原生依赖）。该模块 v22.5 引入且需要 --experimental-sqlite flag，
@@ -62,6 +64,15 @@ jobs:
         run: |
           npm run doctor
           git diff --check
+          git fetch --no-tags origin \
+            '+refs/heads/internal:refs/remotes/origin/internal' \
+            '+refs/heads/codex/sqlcipher:refs/remotes/origin/codex/sqlcipher' \
+            '+refs/heads/codex/e2ee-openmls:refs/remotes/origin/codex/e2ee-openmls' \
+            '+refs/heads/agent/e2ee-internal:refs/remotes/origin/agent/e2ee-internal' \
+            '+refs/heads/codex/mature-agent-safety-controls:refs/remotes/origin/codex/mature-agent-safety-controls' \
+            '+refs/heads/uiux-preview:refs/remotes/origin/uiux-preview' \
+            '+refs/heads/codex/release-1.10.0:refs/remotes/origin/codex/release-1.10.0'
+          npm run validate:integration-baseline -- --verify-git-refs
           npm run validate:boundaries
           npm run size:source:check
 

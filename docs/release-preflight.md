@@ -2,6 +2,13 @@
 
 这份文档是 Otto 的发布检查规范。Release workflow 以自动质量、签名和部署校验为准；人工 smoke、canary、回滚与安全审核建议记录在发布说明或变更单中，但不再阻断发版。
 
+## 唯一集成基线
+
+- 正式发布源码必须来自最新 `origin/internal`；功能分支、旧 tag 或仅在 PR 中的提交不得直接发布。
+- `docs/server-integration-baseline.json` 必须与根/桌面版本、Enterprise API、数据库 schema、公开 capabilities 和产品模块注册表一致。
+- 发布前必须运行 `npm run validate:integration-baseline`；失败时只能更新真实台账或源码，不能绕过门禁。
+- SQLCipher、PostgreSQL、E2EE、S3/Redis 等实验分支只能按台账中的 `integrate` / `rewrite` / `drop` 决策处理，禁止整体 merge 覆盖当前园区、商业和 UI 实现。
+
 ## 0. 发布原则
 
 - 发布源必须是 `origin/internal` 上的明确 commit；不要从本地脏树、过期 tag 或临时构建目录发版。

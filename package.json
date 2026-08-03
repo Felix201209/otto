@@ -44,6 +44,7 @@
     "size:source": "node scripts/source-size-report.mjs",
     "size:source:check": "node scripts/source-size-report.mjs --check",
     "validate:boundaries": "node scripts/validate-boundaries.mjs",
+    "validate:integration-baseline": "node scripts/validate-server-integration-baseline.mjs",
     "benchmark:low-resource-agents": "node scripts/low-resource-multi-agent-benchmark.mjs",
     "eval:deterministic": "vitest run --config packages/evals/vitest.config.ts",
     "build": "node scripts/build.js",
