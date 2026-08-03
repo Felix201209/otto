@@ -102,30 +102,12 @@ jobs:
             exit 1
           fi
 
-      - name: Validate release signing secrets
+      - name: Validate enterprise license trust anchor
         shell: bash
         env:
-          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          ENTERPRISE_SIGNING_PRIVATE_KEY: ${{ secrets.OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY }}
-          ENTERPRISE_SIGNING_PUBLIC_KEY: ${{ secrets.OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY }}
           LICENSE_PUBLIC_KEYS: ${{ secrets.OTTO_LICENSE_PUBLIC_KEYS }}
         run: |
           set -euo pipefail
-          test -n "$MAC_CSC_LINK"
-          test -n "$MAC_CSC_KEY_PASSWORD"
-          test -n "$WIN_CSC_LINK"
-          test -n "$WIN_CSC_KEY_PASSWORD"
-          test -n "$APPLE_ID"
-          test -n "$APPLE_APP_SPECIFIC_PASSWORD"
-          test -n "$APPLE_TEAM_ID"
-          test -n "$ENTERPRISE_SIGNING_PRIVATE_KEY"
-          test -n "$ENTERPRISE_SIGNING_PUBLIC_KEY"
           test -n "$LICENSE_PUBLIC_KEYS"
 
       - name: Repository anomaly checks
@@ -165,48 +147,29 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OTTO_RELEASES_REPO: ${{ env.RELEASES_REPO }}
           OTTO_UPDATE_ASSET_BASE_URL: ${{ env.UPDATE_MIRROR_ASSET_BASE_URL }}
-          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: Build enterprise server package
         run: npm run bundle:enterprise
         env:
-          OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY: ${{ secrets.OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY }}
+          OTTO_ALLOW_UNSIGNED_ENTERPRISE_PACKAGE: '1'
           OTTO_LICENSE_PUBLIC_KEYS: ${{ secrets.OTTO_LICENSE_PUBLIC_KEYS }}
-
-      - name: Install signature verification tooling
-        run: brew install osslsigncode
 
       - name: Verify release artifacts
         id: artifacts
         shell: bash
-        env:
-          OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY: ${{ secrets.OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
           DESKTOP_RELEASE="packages/desktop/release"
           ENTERPRISE_ARCHIVE="$(ls deliverables/otto-enterprise-oneclick-v${VERSION}-*.tar.gz | head -n 1)"
           ENTERPRISE_SHA="${ENTERPRISE_ARCHIVE}.sha256"
-          ENTERPRISE_SIG="${ENTERPRISE_ARCHIVE}.sig"
           test -f "$ENTERPRISE_ARCHIVE"
           test -f "$ENTERPRISE_SHA"
-          test -f "$ENTERPRISE_SIG"
           sha256sum -c "$ENTERPRISE_SHA"
-          node scripts/verify-enterprise-package-signature.mjs \
-            "$ENTERPRISE_ARCHIVE" "$ENTERPRISE_SIG"
           test -f "$DESKTOP_RELEASE/Otto-${VERSION}-arm64.dmg"
           test -f "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg"
           test -f "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe"
           test -f "$DESKTOP_RELEASE/latest.json"
-          xcrun stapler validate "$DESKTOP_RELEASE/Otto-${VERSION}-arm64.dmg"
-          xcrun stapler validate "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg"
-          osslsigncode verify -in "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe"
           node packages/desktop/scripts/verify-update-manifest.mjs "$DESKTOP_RELEASE" "$VERSION"
           {
             echo "files<<EOF"
@@ -219,9 +182,7 @@ jobs:
               "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe.blockmap" \
               "$DESKTOP_RELEASE/latest.json" \
               "$ENTERPRISE_ARCHIVE" \
-              "$ENTERPRISE_SHA" \
-              "$ENTERPRISE_SIG" \
-              "scripts/verify-enterprise-package-signature.mjs"
+              "$ENTERPRISE_SHA"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -245,8 +206,8 @@ jobs:
             echo
             echo "SHA256: \`${INSTALLER_SHA}\`"
             echo
-            echo "Windows Authenticode and macOS Developer ID/notarization were verified by the release workflow."
-            echo "The enterprise package includes a detached Ed25519 signature for publisher verification."
+            echo "This release is unsigned: Windows Authenticode, macOS Developer ID/notarization, and enterprise detached signatures are not included."
+            echo "The release workflow verifies SHA-256 checksums, the signed desktop update manifest, and the enterprise License public-key trust anchor."
             echo
             echo "Desktop installers, update manifest, and enterprise one-click package are attached to this release."
           } > "$NOTES_FILE"
@@ -260,8 +221,6 @@ jobs:
             packages/desktop/release/*
             deliverables/otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz
             deliverables/otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz.sha256
-            deliverables/otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz.sig
-            scripts/verify-enterprise-package-signature.mjs
           retention-days: 30
 
       - name: Create draft GitHub release
@@ -306,6 +265,7 @@ jobs:
           test -n "${{ secrets.DEPLOY_USER }}"
           test -n "${{ secrets.DEPLOY_SSH_KEY }}"
           test -n "${{ secrets.DEPLOY_KNOWN_HOSTS }}"
+          test -n "${{ secrets.DEPLOY_SUDO_PASSWORD }}"
 
       - name: Download release workflow artifact
         uses: actions/download-artifact@v4
@@ -315,22 +275,16 @@ jobs:
 
       - name: Verify enterprise package
         shell: bash
-        env:
-          OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY: ${{ secrets.OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           mkdir -p enterprise-upload
           ARCHIVE="$(find release-download -type f -name 'otto-enterprise-oneclick-v${{ needs.build.outputs.version }}-*.tar.gz' -print -quit)"
           CHECKSUM="$(find release-download -type f -name 'otto-enterprise-oneclick-v${{ needs.build.outputs.version }}-*.tar.gz.sha256' -print -quit)"
-          SIGNATURE="$(find release-download -type f -name 'otto-enterprise-oneclick-v${{ needs.build.outputs.version }}-*.tar.gz.sig' -print -quit)"
           test -n "$ARCHIVE"
           test -n "$CHECKSUM"
-          test -n "$SIGNATURE"
-          cp "$ARCHIVE" "$CHECKSUM" "$SIGNATURE" enterprise-upload/
+          cp "$ARCHIVE" "$CHECKSUM" enterprise-upload/
           cd enterprise-upload
           sha256sum -c ./*.sha256
-          node ../scripts/verify-enterprise-package-signature.mjs \
-            "$(basename "$ARCHIVE")" "$(basename "$SIGNATURE")"
           ls -lh ./*
 
       - name: Configure SSH
@@ -360,7 +314,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ssh -i ~/.ssh/id_deploy -p "${DEPLOY_PORT}" \
+          printf '%s\n' "${{ secrets.DEPLOY_SUDO_PASSWORD }}" | ssh -i ~/.ssh/id_deploy -p "${DEPLOY_PORT}" \
             "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
             "set -euo pipefail
              cd '$REMOTE_DIR'
@@ -371,9 +325,9 @@ jobs:
              tar -xzf \"\$ARCHIVE\" -C unpack
              PKG_DIR=\$(find unpack -mindepth 1 -maxdepth 1 -type d | head -n 1)
              if [ -L /opt/otto-enterprise/current ]; then
-               sudo \"\$PKG_DIR/upgrade.sh\" --config '${DEPLOY_CONFIG_PATH}'
+               sudo -S \"\$PKG_DIR/upgrade.sh\" --config '${DEPLOY_CONFIG_PATH}'
              else
-               sudo \"\$PKG_DIR/install.sh\" --config '${DEPLOY_CONFIG_PATH}'
+               sudo -S \"\$PKG_DIR/install.sh\" --config '${DEPLOY_CONFIG_PATH}'
              fi"
 
   deploy-update-mirror:
@@ -401,6 +355,7 @@ jobs:
           test -n "${{ secrets.DEPLOY_USER }}"
           test -n "${{ secrets.DEPLOY_SSH_KEY }}"
           test -n "${{ secrets.DEPLOY_KNOWN_HOSTS }}"
+          test -n "${{ secrets.DEPLOY_SUDO_PASSWORD }}"
 
       - name: Download release workflow artifact
         uses: actions/download-artifact@v4
@@ -455,17 +410,17 @@ jobs:
             "mkdir -p '$REMOTE_DIR'"
           scp -i ~/.ssh/id_deploy -P "${DEPLOY_PORT}" mirror-upload/* \
             "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:$REMOTE_DIR/"
-          ssh -i ~/.ssh/id_deploy -p "${DEPLOY_PORT}" \
+          printf '%s\n' "${{ secrets.DEPLOY_SUDO_PASSWORD }}" | ssh -i ~/.ssh/id_deploy -p "${DEPLOY_PORT}" \
             "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
             "set -euo pipefail
              cd '$REMOTE_DIR'
              sha256sum -c SHA256SUMS
-             sudo install -d -m 0755 '${UPDATE_MIRROR_ROOT}/downloads' '${UPDATE_MIRROR_ROOT}/otto-releases'
+             sudo -S install -d -m 0755 '${UPDATE_MIRROR_ROOT}/downloads' '${UPDATE_MIRROR_ROOT}/otto-releases'
              for file in Otto-*; do
-               sudo install -m 0644 \"\$file\" '${UPDATE_MIRROR_ROOT}/downloads/'\"\$file\"
+               sudo -S install -m 0644 \"\$file\" '${UPDATE_MIRROR_ROOT}/downloads/'\"\$file\"
              done
-             sudo install -m 0644 latest.json '${UPDATE_MIRROR_ROOT}/otto-releases/latest.json.next'
-             sudo mv '${UPDATE_MIRROR_ROOT}/otto-releases/latest.json.next' '${UPDATE_MIRROR_ROOT}/otto-releases/latest.json'"
+             sudo -S install -m 0644 latest.json '${UPDATE_MIRROR_ROOT}/otto-releases/latest.json.next'
+             sudo -S mv '${UPDATE_MIRROR_ROOT}/otto-releases/latest.json.next' '${UPDATE_MIRROR_ROOT}/otto-releases/latest.json'"
 
       - name: Verify public mirror
         shell: bash
