@@ -31,18 +31,16 @@ export function handleHealthRoute({
   }
 
   try {
-    const readiness = db.getDatabaseReadiness();
+    db.getDatabaseReadiness();
     sendJSON(res, 200, {
       status: 'ok',
       service: 'otto-enterprise',
       apiVersion,
       version: deploymentInfo.version,
-      // appVersion 作为旧调用方的可读别名保留；新版客户端使用 version。
+      // appVersion remains as a compatibility alias. Detailed build and storage
+      // diagnostics are available only from authenticated deployment routes.
       appVersion: deploymentInfo.version,
-      buildCommit: deploymentInfo.buildCommit,
-      schemaVersion: readiness.schemaVersion,
       capabilities: [...capabilities],
-      db: 'connected',
     });
   } catch {
     sendJSON(res, 503, {
@@ -51,10 +49,7 @@ export function handleHealthRoute({
       apiVersion,
       version: deploymentInfo.version,
       appVersion: deploymentInfo.version,
-      buildCommit: deploymentInfo.buildCommit,
-      schemaVersion: null,
       capabilities: [...capabilities],
-      db: 'unavailable',
       error: 'enterprise database unavailable',
     });
   }

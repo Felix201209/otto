@@ -7,6 +7,7 @@ import {
   createPrivateKey,
   createPublicKey,
   generateKeyPairSync,
+  randomUUID,
 } from 'node:crypto';
 
 import type {
@@ -40,6 +41,7 @@ export interface DeploymentBillingCredentials {
   organizationId: string;
   machineFingerprint: string;
   endpoint: string;
+  keyRegistrationEndpoint: string;
   holdEndpoint: string;
   enforcement: 'disabled' | 'enforce';
   leaseToken: string;
@@ -333,7 +335,7 @@ function migrateUnsignedRows(
   for (const row of rows) {
     if (
       row.deployment_id !== credentials.deploymentId ||
-      row.organization_id !== credentials.organizationId ||
+      !IDENTIFIER.test(row.organization_id) ||
       !DEPLOYMENT_BILLING_MODULES.includes(row.module) ||
       !IDENTIFIER.test(row.reference_id)
     ) {
@@ -392,10 +394,11 @@ export function queueBillingUsage(
   now = Date.now(),
 ): boolean {
   const credentials = store.credentials();
-  if (!credentials || credentials.organizationId !== input.organizationId) {
-    return false;
-  }
+  if (!credentials) return false;
   if (credentials.enforcement !== 'enforce') return false;
+  if (!IDENTIFIER.test(input.organizationId)) {
+    throw new Error('billing organization is invalid');
+  }
   if (!DEPLOYMENT_BILLING_MODULES.includes(input.module)) {
     throw new Error('unsupported billing module');
   }
@@ -527,6 +530,42 @@ function receiptPayload(row: BillingUsageQueueRow): ExecutionReceiptV2Payload | 
   };
 }
 
+async function ensureExecutionReceiptKeyRegistered(
+  credentials: DeploymentBillingCredentials,
+  signer: BillingReceiptSigner,
+  fetchImpl: typeof fetch,
+  now: number,
+): Promise<void> {
+  const claim = {
+    version: 1 as const,
+    licenseId: credentials.licenseId,
+    deploymentId: credentials.deploymentId,
+    organizationId: credentials.organizationId,
+    machineFingerprint: credentials.machineFingerprint,
+    keyId: signer.keyId,
+    publicKeyPem: signer.publicKeyPem,
+    issuedAtMs: now,
+    expiresAtMs: now + 365 * 24 * 60 * 60 * 1000,
+    nonce: randomUUID(),
+  };
+  const response = await fetchImpl(credentials.keyRegistrationEndpoint, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${credentials.leaseToken}`,
+      'content-type': 'application/json',
+      'user-agent': 'Otto-Private-Deployment/2',
+    },
+    body: JSON.stringify({
+      ...claim,
+      signature: signEd25519Envelope(claim, signer.privateKeyPem),
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) {
+    throw new Error(`execution receipt key bootstrap returned ${response.status}`);
+  }
+}
+
 export async function flushBillingUsageQueue(
   store: BillingUsageRepositoryStore,
   fetchImpl: typeof fetch = fetch,
@@ -548,11 +587,14 @@ export async function flushBillingUsageQueue(
   if (credentials.enforcement !== 'enforce') {
     return { ...result, skippedReason: 'billing_enforcement_disabled' };
   }
+  let signer: BillingReceiptSigner;
   try {
-    withTransaction(store.db(), () => {
+    signer = withTransaction(store.db(), () => {
       const signer = loadOrCreateReceiptSigner(store, now);
       migrateUnsignedRows(store, signer, credentials, now);
+      return signer;
     });
+    await ensureExecutionReceiptKeyRegistered(credentials, signer, fetchImpl, now);
   } catch (error) {
     return {
       ...result,
@@ -581,7 +623,7 @@ export async function flushBillingUsageQueue(
     const receipt = receiptPayload(row);
     if (
       !receipt || row.deployment_id !== credentials.deploymentId ||
-      row.organization_id !== credentials.organizationId ||
+      !IDENTIFIER.test(row.organization_id) ||
       !DEPLOYMENT_BILLING_MODULES.includes(row.module) ||
       !Number.isSafeInteger(row.units) || row.units < 1
     ) {

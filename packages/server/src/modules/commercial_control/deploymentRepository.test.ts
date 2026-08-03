@@ -148,6 +148,17 @@ describe('private deployment license repository', () => {
       let uploaded: Record<string, unknown> = {};
       let attempt = 0;
       const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        if (String(url).includes('/execution-receipt-keys/bootstrap')) {
+          const bootstrap = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          expect(bootstrap).toMatchObject({
+            licenseId: licensePayload.id,
+            deploymentId: licensePayload.deploymentId,
+            organizationId: licensePayload.organizationId,
+            machineFingerprint: licensePayload.machineFingerprint,
+            signature: expect.stringMatching(/^ed25519:/u),
+          });
+          return Response.json({ replayed: attempt > 0 }, { status: attempt > 0 ? 200 : 201 });
+        }
         expect(String(url)).toBe(
           'https://control.otto.example/v1/billing/execution-receipts',
         );
@@ -350,7 +361,12 @@ describe('private deployment license repository', () => {
       database.exec(`
         INSERT INTO accounts (id, organization_id) VALUES
           ('account-1', 'org-licensed'),
-          ('account-2', 'org-licensed');
+          ('account-2', 'org-licensed'),
+          ('account-3', 'org-tenant-beta');
+        INSERT INTO accounts (id, organization_id, account_type) VALUES
+          ('personal-account', 'personal-space', 'personal');
+        INSERT INTO accounts (id, organization_id, status) VALUES
+          ('disabled-account', 'org-tenant-beta', 'disabled');
       `);
       const now = Date.now();
       const licensePayload = {
@@ -381,7 +397,7 @@ describe('private deployment license repository', () => {
         ...licensePayload,
         revision: 2,
         expiresAtMs: now + 365 * 24 * 60 * 60 * 1000,
-        seatLimit: 1,
+        seatLimit: 2,
         seatEnforcement: 'enforce',
       };
       const leasePayload = {
@@ -392,8 +408,8 @@ describe('private deployment license repository', () => {
         licenseRevision: 2,
         issuedAtMs: now,
         expiresAtMs: now + 10 * 60 * 1000,
-        seatLimit: 1,
-        activeSeatCount: 2,
+        seatLimit: 2,
+        activeSeatCount: 3,
         seatStatus: 'overage_grace',
         graceReasons: ['seat_overage'],
         graceExpiresAtMs: now + 7 * 24 * 60 * 60 * 1000,
@@ -414,18 +430,18 @@ describe('private deployment license repository', () => {
       await expect(control.refreshDeploymentLicenseLease(fetchImpl)).resolves.toMatchObject({
         refreshed: true,
       });
-      expect(requestBody).toMatchObject({ activeSeatCount: 2 });
+      expect(requestBody).toMatchObject({ activeSeatCount: 3 });
       expect(control.getDeploymentLicense()).toMatchObject({
         revision: 2,
-        seatLimit: 1,
+        seatLimit: 2,
         gracePeriodMs: 7 * 24 * 60 * 60 * 1000,
         seatEnforcement: 'enforce',
-        activeSeatCount: 2,
+        activeSeatCount: 3,
         seatLimitExceeded: true,
         status: 'active',
         lease: {
           status: 'active',
-          activeSeatCount: 2,
+          activeSeatCount: 3,
           seatStatus: 'overage_grace',
           graceReasons: ['seat_overage'],
         },
@@ -470,6 +486,37 @@ describe('private deployment license repository', () => {
         eventType: 'agent_runtime',
         payload: { calls: 3, latencyMs: 120, errorCode: null },
       });
+      control.recordTelemetryEvent({
+        eventType: 'agent_runtime',
+        payload: { calls: 1, prompt: 'must not be queued' },
+      });
+      expect(
+        database.prepare("SELECT COUNT(*) AS count FROM telemetry_events WHERE status = 'queued'")
+          .get(),
+      ).toEqual({ count: 1 });
+      const preexistingSensitivePayload = {
+        deploymentId,
+        organizationId: null,
+        eventType: 'agent_runtime',
+        createdAtMs: now,
+        payload: { calls: 1, response: 'must not be transmitted' },
+      };
+      database.prepare(
+        `INSERT INTO telemetry_events
+           (id, deployment_id, organization_id, event_type, payload_json,
+            signature, status, created_at_ms)
+         VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)`,
+      ).run(
+        'tel_preexisting_sensitive',
+        deploymentId,
+        null,
+        'agent_runtime',
+        JSON.stringify(preexistingSensitivePayload),
+        `sha256:${createHash('sha256')
+          .update(canonicalJson(preexistingSensitivePayload))
+          .digest('base64url')}`,
+        now,
+      );
       database.prepare(
         `INSERT INTO telemetry_events
            (id, deployment_id, organization_id, event_type, payload_json,
@@ -494,10 +541,15 @@ describe('private deployment license repository', () => {
         return new Response('{}', { status: 202 });
       }) as unknown as typeof fetch;
       await expect(control.flushTelemetryQueue(fetchImpl)).resolves.toMatchObject({
-        attempted: 1,
+        attempted: 2,
         sent: 1,
+        discarded: 1,
         failed: 0,
       });
+      expect(
+        database.prepare('SELECT status FROM telemetry_events WHERE id = ?')
+          .get('tel_preexisting_sensitive'),
+      ).toEqual({ status: 'discarded' });
       expect(control.getTelemetryQueueSummary()).toMatchObject({ sent: 1 });
       expect(
         database.prepare('SELECT 1 FROM telemetry_events WHERE id = ?')

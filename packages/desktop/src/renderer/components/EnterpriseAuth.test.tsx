@@ -54,7 +54,7 @@ describe('登录页能力打字机', () => {
 });
 
 describe('专业登录入口', () => {
-  it('在登录和注册提交前醒目显示当前企业服务器主机', () => {
+  it('在登录和注册提交前允许填写企业服务器地址', () => {
     render(
       <EnterpriseLoginPage
         initialServerUrl="https://59.110.154.44:7777/company"
@@ -75,13 +75,14 @@ describe('专业登录入口', () => {
       />,
     );
 
-    const serverBanner = screen.getByLabelText('当前企业服务器');
-    expect(serverBanner.textContent).toContain('59.110.154.44:7777');
+    const serverInput = screen.getByLabelText('企业服务器地址') as HTMLInputElement;
+    expect(serverInput.value).toBe('https://59.110.154.44:7777/company');
+    expect(screen.getByText('59.110.154.44:7777')).toBeTruthy();
     expect(screen.getByRole('button', { name: '进入 Otto' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: '普通注册' }));
-    expect(screen.getByLabelText('当前企业服务器').textContent)
-      .toContain('59.110.154.44:7777');
+    expect((screen.getByLabelText('企业服务器地址') as HTMLInputElement).value)
+      .toBe('https://59.110.154.44:7777/company');
     expect(screen.getByRole('button', { name: '创建账号并进入' })).toBeTruthy();
   });
 
@@ -106,8 +107,7 @@ describe('专业登录入口', () => {
       />,
     );
 
-    expect(screen.queryByText('连接设置')).toBeNull();
-    expect(screen.queryByLabelText('企业服务器')).toBeNull();
+    expect(screen.getByLabelText('企业服务器地址')).toBeTruthy();
     expect(screen.getByLabelText('登录手机号')).toBeTruthy();
     expect(screen.getByLabelText('登录验证码')).toBeTruthy();
     expect(screen.queryByLabelText('密码')).toBeNull();
@@ -125,6 +125,43 @@ describe('专业登录入口', () => {
     expect(screen.getByLabelText('确认登录密码')).toBeTruthy();
     expect(screen.getByLabelText('短信验证码')).toBeTruthy();
     expect(screen.getByText(/普通注册不需要企业邀请码/)).toBeTruthy();
+  });
+
+  it('登录请求只发送到用户当前填写的服务器地址', async () => {
+    const onPasswordLogin = vi.fn(async () => undefined);
+    render(
+      <EnterpriseLoginPage
+        initialServerUrl="https://old.enterprise.test"
+        busy={false}
+        error={null}
+        onPasswordLogin={onPasswordLogin}
+        onRequestRegistrationCode={async () => ({
+          challengeId: 'unused', message: 'unused', retryAfterSeconds: 60,
+          organization: null,
+          legalDocuments: LEGAL_DOCUMENTS,
+        })}
+        onRegister={async () => undefined}
+        onClearError={() => undefined}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText('企业服务器地址'), {
+      target: { value: 'https://new.enterprise.test' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '密码登录' }));
+    fireEvent.change(screen.getByLabelText('账号或手机号'), {
+      target: { value: 'ceo@example.test' },
+    });
+    fireEvent.change(screen.getByLabelText('密码'), {
+      target: { value: 'strong-password' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '进入 Otto' }));
+
+    await waitFor(() => expect(onPasswordLogin).toHaveBeenCalledWith({
+      serverUrl: 'https://new.enterprise.test',
+      identifier: 'ceo@example.test',
+      password: 'strong-password',
+    }));
   });
 
   it('普通注册请求不携带邀请码', async () => {

@@ -450,6 +450,13 @@ function makeHandler(
 
       const billingOperation = commercialBillingOperationForRoute(path, method);
       if (billingOperation) {
+        if (!commercialOrganizationId) {
+          sendJSON(res, 401, {
+            error: 'authenticated organization is required for billing',
+            code: 'billing_organization_required',
+          });
+          return;
+        }
         const rawIdempotencyKey = req.headers['x-otto-idempotency-key'];
         const idempotencyKey = Array.isArray(rawIdempotencyKey)
           ? rawIdempotencyKey[0] ?? ''
@@ -459,7 +466,12 @@ function makeHandler(
           .digest('hex')}`;
         try {
           const admission = await db.authorizeBillingOperation(
-            { ...billingOperation, idempotencyKey, referenceId },
+            {
+              ...billingOperation,
+              organizationId: commercialOrganizationId,
+              idempotencyKey,
+              referenceId,
+            },
             billingFetch,
           );
           if (admission.required) {

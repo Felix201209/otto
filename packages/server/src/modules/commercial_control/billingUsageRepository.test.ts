@@ -24,6 +24,8 @@ function setup() {
     organizationId: ORGANIZATION_ID,
     machineFingerprint: 'a'.repeat(64),
     endpoint: 'https://control.example/v1/billing/execution-receipts',
+    keyRegistrationEndpoint:
+      'https://control.example/v1/billing/execution-receipt-keys/bootstrap',
     holdEndpoint: 'https://control.example/v1/billing/holds',
     enforcement: 'enforce' as const,
     leaseToken: 'test-lease-token-long-enough-for-receipt-upload',
@@ -62,7 +64,10 @@ describe('signed execution receipt outbox', () => {
       }, now + 1)).toBe(true);
 
       const firstAttemptSequences: number[] = [];
-      const unavailable = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const unavailable = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        if (String(url).includes('execution-receipt-keys/bootstrap')) {
+          return Response.json({ replayed: false }, { status: 201 });
+        }
         const body = JSON.parse(String(init?.body)) as {
           envelope: { receipt: { sequence: number } };
         };
@@ -83,7 +88,10 @@ describe('signed execution receipt outbox', () => {
         'UPDATE billing_usage_outbox SET next_attempt_at_ms = NULL',
       ).run();
       const deliveredSequences: number[] = [];
-      const available = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const available = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        if (String(url).includes('execution-receipt-keys/bootstrap')) {
+          return Response.json({ replayed: true });
+        }
         const body = JSON.parse(String(init?.body)) as {
           envelope: { receipt: { sequence: number } };
         };
@@ -168,10 +176,17 @@ describe('signed execution receipt outbox', () => {
         idempotencyKey: 'usage:current-after-legacy',
       }, 2_000)).toBe(true);
 
-      const fetchImpl = vi.fn() as unknown as typeof fetch;
+      const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+        if (String(url).includes('execution-receipt-keys/bootstrap')) {
+          return Response.json({ replayed: false }, { status: 201 });
+        }
+        throw new Error('receipt delivery must not run');
+      }) as unknown as typeof fetch;
       await expect(flushBillingUsageQueue(store, fetchImpl, 3_000)).resolves
         .toMatchObject({ attempted: 1, sent: 0, failed: 1 });
-      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(String(fetchImpl.mock.calls[0]?.[0]))
+        .toContain('/execution-receipt-keys/bootstrap');
       expect(database.prepare(
         `SELECT receipt_id, status, last_error
          FROM billing_usage_outbox WHERE id = 'bil_legacy_attempted'`,
@@ -200,6 +215,61 @@ describe('signed execution receipt outbox', () => {
         'SELECT * FROM billing_usage_outbox',
       ).all();
       const serialized = JSON.stringify(rows);
+      expect(serialized).not.toContain('prompt');
+      expect(serialized).not.toContain('message');
+      expect(serialized).not.toContain('filename');
+      expect(serialized).not.toContain('reply');
+    } finally {
+      database.close();
+    }
+  });
+
+  it('attributes usage to each enterprise sharing the same deployment', async () => {
+    const { database, store } = setup();
+    try {
+      const now = Date.parse('2026-08-03T08:00:00.000Z');
+      expect(queueBillingUsage(store, {
+        organizationId: 'org_tenant_alpha',
+        module: 'model_gateway',
+        units: 1_200,
+        model: 'deepseek-v3',
+        referenceId: 'task_tenant_alpha',
+        idempotencyKey: 'usage:tenant-alpha',
+      }, now)).toBe(true);
+      expect(queueBillingUsage(store, {
+        organizationId: 'org_tenant_beta',
+        module: 'meeting_agent',
+        units: 800,
+        model: 'local-whisper',
+        referenceId: 'task_tenant_beta',
+        idempotencyKey: 'usage:tenant-beta',
+      }, now + 1)).toBe(true);
+
+      const uploadedOrganizations: string[] = [];
+      let bootstrapBody: Record<string, unknown> | null = null;
+      const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        if (String(url).includes('execution-receipt-keys/bootstrap')) {
+          bootstrapBody = body;
+          return Response.json({ replayed: false }, { status: 201 });
+        }
+        const envelope = body.envelope as {
+          receipt: { organizationId: string };
+        };
+        uploadedOrganizations.push(envelope.receipt.organizationId);
+        return Response.json({ replayed: false }, { status: 201 });
+      }) as unknown as typeof fetch;
+
+      await expect(flushBillingUsageQueue(store, fetchImpl, now + 2)).resolves
+        .toMatchObject({ attempted: 2, sent: 2, failed: 0 });
+      expect(uploadedOrganizations).toEqual(['org_tenant_alpha', 'org_tenant_beta']);
+      expect(bootstrapBody).toMatchObject({
+        deploymentId: DEPLOYMENT_ID,
+        organizationId: ORGANIZATION_ID,
+        machineFingerprint: 'a'.repeat(64),
+        signature: expect.stringMatching(/^ed25519:/u),
+      });
+      const serialized = JSON.stringify(fetchImpl.mock.calls);
       expect(serialized).not.toContain('prompt');
       expect(serialized).not.toContain('message');
       expect(serialized).not.toContain('filename');

@@ -12,10 +12,18 @@
   },
   "keyAdministration": {
     "publicKeySource": "/enterprise/deployment/status",
+    "bootstrap": "/v1/billing/execution-receipt-keys/bootstrap",
     "controlList": "/v1/admin/deployments/{deploymentId}/execution-receipt-keys",
     "controlRegister": "/v1/admin/deployments/{deploymentId}/execution-receipt-keys",
     "controlRevoke": "/v1/admin/deployments/{deploymentId}/execution-receipt-keys/{keyId}/revoke",
+    "firstKeyRequiresPossessionProof": true,
+    "replacementRequiresDualApproval": true,
     "dualApproval": true
+  },
+  "tenantAttribution": {
+    "multipleOrganizationsPerDeployment": true,
+    "creditOwner": "deployment_customer",
+    "organizationIdIsCredential": false
   },
   "receiptFields": [
     "version",
@@ -33,6 +41,7 @@
   ],
   "privacyBoundary": {
     "unknownFieldsRejected": true,
+    "businessContentAccepted": false,
     "prohibited": [
       "prompt",
       "response",
