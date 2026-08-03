@@ -46,7 +46,7 @@ export interface ConversationItem {
 export function InboxPage({
   enterpriseAccount,
   enterpriseUnreadCounts = {},
-  onOpenDirectChat,
+  onOpenDirectChat: _onOpenDirectChat,
   onMessageRead,
   onBack,
 }: InboxPageProps): React.JSX.Element {
@@ -99,7 +99,6 @@ export function InboxPage({
     // 从未读通知构建
     for (const notif of notifications) {
       const member = memberMap.get(notif.senderAccountId);
-      const existing = convMap.get(notif.senderAccountId);
       const unreadKey = `enterprise:message:${notif.senderAccountId}`;
       const unread = enterpriseUnreadCounts[unreadKey] ?? 0;
       convMap.set(notif.senderAccountId, {

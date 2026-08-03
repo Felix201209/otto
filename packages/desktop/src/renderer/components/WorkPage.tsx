@@ -46,7 +46,7 @@ export interface WorkPageProps {
 export function WorkPage({
   schedules,
   selectedDate,
-  onSelectDate,
+  onSelectDate: _onSelectDate,
   onCreateSchedule,
   onDeleteSchedule,
   onBack,

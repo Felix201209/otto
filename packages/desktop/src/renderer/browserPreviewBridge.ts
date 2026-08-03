@@ -46,7 +46,7 @@ if (!previewWindow.otto) {
     { id: 'preview-tenant-logistics', name: '远达供应链', slug: 'yuanda-logistics', parkId: 'preview-park', status: 'active', industry: '现代物流', employeeCount: 18, departmentCount: 3, onlineCount: 5, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
   ];
   let previewTickets: Array<Record<string, unknown>> = [];
-  let previewParkPublications: Array<Record<string, unknown>> = [
+  const previewParkPublications: Array<Record<string, unknown>> = [
     {
       id: 'preview-publication-announcement',
       kind: 'announcement',
@@ -227,14 +227,14 @@ if (!previewWindow.otto) {
     notificationShow: () => Promise.resolve(),
     notificationMarkRead: () => Promise.resolve(),
     notificationGetUnread: () => Promise.resolve([]),
-    appVersion: () => Promise.resolve('1.9.10-browser-preview'),
+    appVersion: () => Promise.resolve('1.10.0-browser-preview'),
     openExternal: () => Promise.resolve(), openPath: () => Promise.resolve(),
     inspectLocalPath: () => Promise.resolve({ exists: false, kind: 'missing' as const, canOpen: false }),
     activateLocalPath: () => Promise.resolve({ ok: false, error: '浏览器预览不支持打开本地文件' }),
     saveTextFile: () => Promise.resolve(null),
     getPathForFile: (file: File) => (file as File & { path?: string }).path || file.name,
     readClipboardText: () => navigator.clipboard?.readText?.() ?? Promise.resolve(''),
-    updateCheck: () => Promise.resolve({ status: 'up-to-date', currentVersion: '1.9.10', latestVersion: null }),
+    updateCheck: () => Promise.resolve({ status: 'up-to-date', currentVersion: '1.10.0', latestVersion: null }),
     updateDownload: () => Promise.resolve({ ok: false, error: '浏览器预览不支持更新' }), updateCancel: () => Promise.resolve(), updateInstall: () => Promise.resolve({ ok: false, message: '浏览器预览不支持安装' }),
     themeGet: () => Promise.resolve('dark'), themeSet: () => Promise.resolve('dark'),
     enterpriseSession: () => Promise.resolve({

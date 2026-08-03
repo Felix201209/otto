@@ -565,8 +565,9 @@ function normalizeDirectAttachment(
   }
   if (!attachment.data) throw new Error('附件内容为空');
   return {
-    ...attachment,
     fileName,
+    size: attachment.size,
+    data: attachment.data,
     mimeType: directAttachmentMimeType(fileName),
   };
 }
@@ -684,7 +685,7 @@ function DirectMessageAttachmentCard({
 export function DirectMessagePanel({
   member,
   currentAccount,
-  schedules,
+  schedules = [],
   initialPosition,
   stackOrder,
   onActivate,
@@ -835,20 +836,18 @@ export function DirectMessagePanel({
   };
 
   const pickAttachments = async (): Promise<void> => {
-    if (window.otto.enterpriseMessageAttachmentPick) {
-      setAttaching(true);
-      try {
-        const picked = await window.otto.enterpriseMessageAttachmentPick();
-        appendAttachments(picked);
-      } catch (reason) {
-        const message = reason instanceof Error ? reason.message : String(reason);
-        if (message !== 'cancelled') setAttachmentError(message);
-      } finally {
-        setAttaching(false);
-      }
-      return;
+    setAttaching(true);
+    try {
+      const paths = await window.otto.selectFiles();
+      if (paths.length === 0) return;
+      const picked = await Promise.all(paths.map((filePath) => window.otto.readFilePath(filePath)));
+      appendAttachments(picked);
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      if (message !== 'cancelled') setAttachmentError(message);
+    } finally {
+      setAttaching(false);
     }
-    fileInput.current?.click();
   };
 
   const buildTranscriptContext = (): string => {

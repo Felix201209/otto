@@ -279,6 +279,14 @@ export function OrganizationPage({
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [hasAuth, enterpriseAccount?.organizationId, enterpriseAccount?.updatedAt, organizationRefreshRevision, selectedOrganizationId]);
 
+  const openChat = useCallback((member: EnterpriseOrganizationView['members'][number]) => {
+    onMessageRead?.(member.id);
+    setChatMembers((current) => [
+      ...current.filter((candidate) => candidate.id !== member.id),
+      member,
+    ]);
+  }, [onMessageRead]);
+
   useEffect(() => {
     const isParkAdmin = Boolean(
       !selectedOrganizationId && enterpriseAccount?.isAdmin && orgView?.park?.isAdminOrganization,
@@ -313,15 +321,7 @@ export function OrganizationPage({
     if (!member) return;
     handledChatRequest.current = enterpriseDirectChatOpenRequest.requestId;
     openChat(member);
-  }, [enterpriseDirectChatOpenRequest, orgView, enterpriseAccount?.id]);
-
-  const openChat = useCallback((member: EnterpriseOrganizationView['members'][number]) => {
-    onMessageRead?.(member.id);
-    setChatMembers((current) => [
-      ...current.filter((candidate) => candidate.id !== member.id),
-      member,
-    ]);
-  }, [onMessageRead]);
+  }, [enterpriseDirectChatOpenRequest, orgView, enterpriseAccount?.id, openChat]);
 
   const closeChat = useCallback((memberId: string) => {
     setChatMembers((current) => current.filter((candidate) => candidate.id !== memberId));
@@ -347,21 +347,6 @@ export function OrganizationPage({
     [orgView],
   );
 
-  if (!hasAuth) {
-    return (
-      <div className="otto-org-page" role="region" aria-label="组织架构">
-        <header className="otto-org-page__header">
-          <div>
-            <h1>组织架构</h1>
-            <p>需要企业账号登录后查看</p>
-          </div>
-          <button type="button" onClick={onBack}>返回</button>
-        </header>
-        <div className="otto-org-page__empty">当前账号未关联企业组织。</div>
-      </div>
-    );
-  }
-
   const organizationName = orgView?.organization?.name ?? '组织架构';
   const isParkAdmin = Boolean(
     !selectedOrganizationId && enterpriseAccount?.isAdmin && orgView?.park?.isAdminOrganization,
@@ -379,11 +364,26 @@ export function OrganizationPage({
       if (currentDepartment.parentDepartmentId) keys.add(currentDepartment.parentDepartmentId);
     }
     return keys;
-  }, [enterpriseAccount?.department, enterpriseAccount?.departmentId, flatDepartments]);
+  }, [departments, enterpriseAccount?.department, enterpriseAccount?.departmentId, flatDepartments]);
   const visibleDepartments = useMemo(
     () => departments.filter((department) => departmentMatchesQuery(department, normalizedQuery)),
     [departments, normalizedQuery],
   );
+
+  if (!hasAuth) {
+    return (
+      <div className="otto-org-page" role="region" aria-label="组织架构">
+        <header className="otto-org-page__header">
+          <div>
+            <h1>组织架构</h1>
+            <p>需要企业账号登录后查看</p>
+          </div>
+          <button type="button" onClick={onBack}>返回</button>
+        </header>
+        <div className="otto-org-page__empty">当前账号未关联企业组织。</div>
+      </div>
+    );
+  }
   const backFromCurrentView = (): void => {
     if (selectedOrganizationId) {
       setSelectedOrganizationId(null);
