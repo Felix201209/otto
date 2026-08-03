@@ -23,6 +23,8 @@ function setup(enforcement: 'disabled' | 'enforce' = 'enforce') {
     organizationId: 'org-commercial',
     machineFingerprint: 'a'.repeat(64),
     endpoint: 'https://control.example/v1/billing/usage',
+    keyRegistrationEndpoint:
+      'https://control.example/v1/billing/execution-receipt-keys/bootstrap',
     holdEndpoint: 'https://control.example/v1/billing/holds',
     enforcement,
     leaseToken: 'lease-token',
@@ -133,6 +135,53 @@ describe('billing admission repository', () => {
         units: 1,
         referenceId: operation.referenceId,
         idempotencyKey: `capture:${operation.idempotencyKey}`,
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it('binds admission and finalization to the authenticated tenant organization', async () => {
+    const { database, store } = setup();
+    try {
+      const payloads: Array<Record<string, unknown>> = [];
+      const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        payloads.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        if (String(url).endsWith('/holds')) {
+          return Response.json({ hold: { id: 'hold_tenantbeta' } }, { status: 201 });
+        }
+        return Response.json({ replayed: false }, { status: 200 });
+      }) as unknown as typeof fetch;
+      const tenantOperation = {
+        ...operation,
+        organizationId: 'org_tenant_beta',
+        idempotencyKey: 'request:park:tenant-beta',
+        referenceId: 'op_park_tenant_beta',
+      };
+
+      const admission = await authorizeBillingOperation(
+        store,
+        tenantOperation,
+        fetchImpl,
+        1_000,
+      );
+      await expect(finalizeBillingOperation(
+        store,
+        admission,
+        'capture',
+        fetchImpl,
+        2_000,
+      )).resolves.toBeUndefined();
+
+      expect(payloads).toHaveLength(2);
+      expect(payloads[0]).toMatchObject({ organizationId: 'org_tenant_beta' });
+      expect(payloads[1]).toMatchObject({ organizationId: 'org_tenant_beta' });
+      expect(database.prepare(
+        `SELECT organization_id, status FROM billing_admission_outbox
+         WHERE idempotency_key = ?`,
+      ).get(tenantOperation.idempotencyKey)).toEqual({
+        organization_id: 'org_tenant_beta',
+        status: 'finalized',
       });
     } finally {
       database.close();

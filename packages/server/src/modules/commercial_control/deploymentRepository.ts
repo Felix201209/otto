@@ -181,6 +181,110 @@ function telemetryIntegrityHash(payload: unknown): string {
   return `sha256:${createHash('sha256').update(canonicalJson(payload)).digest('base64url')}`;
 }
 
+const TELEMETRY_ALLOWED_PAYLOAD_KEYS: Readonly<Record<string, ReadonlySet<string>>> = {
+  agent_runtime: new Set(['calls', 'latencyMs', 'errorCode']),
+  license_imported: new Set(['licenseId', 'plan', 'status', 'moduleCount']),
+  module_update_published: new Set(['module', 'version', 'rollout']),
+  runtime_health: new Set([
+    'uptimeSec',
+    'nodeVersion',
+    'memoryRssMb',
+    'memoryHeapUsedMb',
+    'cpuUserMs',
+    'cpuSystemMs',
+    'activeOrganizations',
+    'activeAccounts',
+    'auditErrorCount',
+    'auditCrashCount',
+    'agentCallCount',
+    'tokenTotal',
+    'successRate',
+    'avgLatencyMs',
+    'licenseStatus',
+  ]),
+};
+
+const FORBIDDEN_TELEMETRY_KEYS = new Set([
+  'message',
+  'messages',
+  'content',
+  'text',
+  'body',
+  'request',
+  'response',
+  'reply',
+  'query',
+  'file',
+  'files',
+  'filename',
+  'filepath',
+  'attachment',
+  'attachments',
+  'audio',
+  'meetingaudio',
+  'transcript',
+  'prompt',
+  'completion',
+  'conversation',
+  'chat',
+  'document',
+  'documents',
+  'knowledge',
+  'memory',
+  'worklog',
+]);
+
+function telemetryContainsContent(value: unknown, depth = 0): boolean {
+  if (depth > 8) return true;
+  if (Array.isArray(value))
+    return value.some((item) => telemetryContainsContent(item, depth + 1));
+  if (!value || typeof value !== 'object') return false;
+  return Object.entries(value as Record<string, unknown>).some(
+    ([key, item]) =>
+      FORBIDDEN_TELEMETRY_KEYS.has(key.toLowerCase().replace(/[_-]/g, '')) ||
+      telemetryContainsContent(item, depth + 1),
+  );
+}
+
+function telemetryPayloadIsOperational(
+  eventType: string,
+  payload: Record<string, unknown>,
+): boolean {
+  const allowedKeys = TELEMETRY_ALLOWED_PAYLOAD_KEYS[eventType];
+  if (!allowedKeys) return false;
+  return Object.entries(payload).every(([key, value]) => {
+    if (!allowedKeys.has(key)) return false;
+    if (value === null || typeof value === 'boolean') return true;
+    if (typeof value === 'number') return Number.isFinite(value);
+    return typeof value === 'string' && value.length <= 256;
+  });
+}
+
+function telemetryEnvelopeIsOperational(
+  value: unknown,
+  eventType: string,
+): boolean {
+  const envelope = safeJsonObject(value);
+  const allowedEnvelopeKeys = new Set([
+    'deploymentId',
+    'organizationId',
+    'eventType',
+    'createdAtMs',
+    'payload',
+  ]);
+  if (Object.keys(envelope).some((key) => !allowedEnvelopeKeys.has(key))) return false;
+  if (envelope.eventType !== eventType) return false;
+  if (typeof envelope.deploymentId !== 'string') return false;
+  if (envelope.organizationId !== null && typeof envelope.organizationId !== 'string')
+    return false;
+  if (
+    typeof envelope.createdAtMs !== 'number' ||
+    !Number.isFinite(envelope.createdAtMs)
+  ) return false;
+  const payload = safeJsonObject(envelope.payload);
+  return telemetryPayloadIsOperational(eventType, payload);
+}
+
 const TELEMETRY_REQUEST_SIGNATURE_PREFIX = 'hmac-sha256:';
 const TELEMETRY_REQUEST_MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
@@ -414,7 +518,7 @@ function toDeploymentLicenseView(
     if (leaseStatus === 'expired') status = 'lease_expired';
     if (leaseStatus === 'revoked') status = 'revoked';
   }
-  const seats = activeSeatCount(store, row.organization_id);
+  const seats = activeSeatCount(store, null);
   return {
     id: row.id,
     revision: row.revision,
@@ -767,7 +871,7 @@ export async function refreshDeploymentLicenseLease(
         organizationId: license.organizationId,
         machineFingerprint: getMachineFingerprint(),
         nonce: randomUUID(),
-        activeSeatCount: activeSeatCount(store, license.organizationId),
+        activeSeatCount: activeSeatCount(store, null),
       }),
       signal: AbortSignal.timeout(15_000),
     });
@@ -843,6 +947,10 @@ export function recordTelemetryEvent(
   const license = getDeploymentLicense(store);
   const settings = getTelemetrySettings(store);
   if (!settings.enabled || !license.telemetryAllowed) return;
+  if (
+    telemetryContainsContent(input.payload) ||
+    !telemetryPayloadIsOperational(input.eventType, input.payload)
+  ) return;
   const payload = {
     deploymentId: getDeploymentId(store),
     organizationId: input.organizationId ?? null,
@@ -978,11 +1086,15 @@ export function getDeploymentBillingCredentials(
   const leaseToken = payload.leaseToken;
   if (typeof leaseToken !== 'string' || leaseToken.length < 32) return null;
   let endpoint: URL;
+  let keyRegistrationEndpoint: URL;
   let holdEndpoint: URL;
   try {
     endpoint = typeof payload.executionReceiptEndpoint === 'string'
       ? new URL(payload.executionReceiptEndpoint)
       : new URL('/v1/billing/execution-receipts', license.lease.endpoint);
+    keyRegistrationEndpoint = typeof payload.executionReceiptKeyEndpoint === 'string'
+      ? new URL(payload.executionReceiptKeyEndpoint)
+      : new URL('/v1/billing/execution-receipt-keys/bootstrap', license.lease.endpoint);
     holdEndpoint = typeof payload.billingHoldEndpoint === 'string'
       ? new URL(payload.billingHoldEndpoint)
       : new URL('/v1/billing/holds', license.lease.endpoint);
@@ -990,9 +1102,10 @@ export function getDeploymentBillingCredentials(
     return null;
   }
   if (
-    endpoint.protocol !== 'https:' || holdEndpoint.protocol !== 'https:' ||
-    endpoint.username || endpoint.password || holdEndpoint.username ||
-    holdEndpoint.password
+    endpoint.protocol !== 'https:' || keyRegistrationEndpoint.protocol !== 'https:' ||
+    holdEndpoint.protocol !== 'https:' || endpoint.username || endpoint.password ||
+    keyRegistrationEndpoint.username || keyRegistrationEndpoint.password ||
+    holdEndpoint.username || holdEndpoint.password
   ) return null;
   return {
     licenseId: license.id,
@@ -1000,6 +1113,7 @@ export function getDeploymentBillingCredentials(
     organizationId: license.organizationId,
     machineFingerprint: getMachineFingerprint(),
     endpoint: endpoint.toString(),
+    keyRegistrationEndpoint: keyRegistrationEndpoint.toString(),
     holdEndpoint: holdEndpoint.toString(),
     enforcement: license.billingEnforcement,
     leaseToken,
@@ -1136,6 +1250,20 @@ export async function flushTelemetryQueue(
         result.discarded += 1;
         continue;
       }
+      if (
+        telemetryContainsContent(payload) ||
+        !telemetryEnvelopeIsOperational(payload, row.event_type)
+      ) {
+        store.db()
+          .prepare(
+            `UPDATE telemetry_events
+             SET status = 'discarded', last_error = ?, updated_at = datetime('now')
+             WHERE id = ?`,
+          )
+          .run('local telemetry schema is not approved', row.id);
+        result.discarded += 1;
+        continue;
+      }
       events.push({
         id: row.id,
         organizationId: row.organization_id,
@@ -1216,35 +1344,6 @@ export async function flushTelemetryQueue(
     result.failed = validRows.length;
   }
   return result;
-}
-
-const FORBIDDEN_TELEMETRY_KEYS = new Set([
-  'message',
-  'messages',
-  'content',
-  'file',
-  'files',
-  'attachment',
-  'attachments',
-  'audio',
-  'meetingaudio',
-  'transcript',
-  'prompt',
-  'completion',
-  'document',
-  'documents',
-]);
-
-function telemetryContainsContent(value: unknown, depth = 0): boolean {
-  if (depth > 8) return true;
-  if (Array.isArray(value))
-    return value.some((item) => telemetryContainsContent(item, depth + 1));
-  if (!value || typeof value !== 'object') return false;
-  return Object.entries(value as Record<string, unknown>).some(
-    ([key, item]) =>
-      FORBIDDEN_TELEMETRY_KEYS.has(key.toLowerCase().replace(/[_-]/g, '')) ||
-      telemetryContainsContent(item, depth + 1),
-  );
 }
 
 function bearerToken(authorization: string | undefined): string {
@@ -1335,6 +1434,8 @@ export function ingestTelemetryBatch(
         throw new Error('telemetry event timestamp invalid');
       if (telemetryContainsContent(event.payload))
         throw new Error('telemetry content payload forbidden');
+      if (!telemetryEnvelopeIsOperational(event.payload, eventType))
+        throw new Error('telemetry payload schema is not approved');
       if (telemetryIntegrityHash(event.payload) !== integrity)
         throw new Error('telemetry event integrity invalid');
       const info = insert.run(

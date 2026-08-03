@@ -33,6 +33,7 @@ export interface BillingAdmission {
   required: boolean;
   outboxId: string | null;
   holdId: string | null;
+  organizationId: string;
   module: DeploymentBillingModule;
   units: number;
   idempotencyKey: string;
@@ -109,15 +110,17 @@ function safeErrorMessage(error: unknown): string {
   return message.replace(/[\r\n]+/g, ' ').slice(0, 300);
 }
 
-function binding(store: BillingUsageRepositoryStore) {
+function binding(store: BillingUsageRepositoryStore, organizationId?: string) {
   const credentials = store.credentials();
   if (!credentials) return null;
+  const resolvedOrganizationId = organizationId ?? credentials.organizationId;
+  if (!IDEMPOTENCY_KEY.test(resolvedOrganizationId)) return null;
   return {
     credentials,
     body: {
       licenseId: credentials.licenseId,
       deploymentId: credentials.deploymentId,
-      organizationId: credentials.organizationId,
+      organizationId: resolvedOrganizationId,
       machineFingerprint: credentials.machineFingerprint,
     },
   };
@@ -128,7 +131,7 @@ function persistAuthorizedAdmission(
   admission: Omit<BillingAdmission, 'required' | 'outboxId'> & { holdId: string },
   now: number,
 ): string {
-  const bound = binding(store);
+  const bound = binding(store, admission.organizationId);
   if (!bound) throw new Error('billing admission credentials disappeared');
   const id = `badm_${createHash('sha256')
     .update(`${bound.credentials.deploymentId}\0${admission.idempotencyKey}`, 'utf8')
@@ -141,7 +144,7 @@ function persistAuthorizedAdmission(
   ).run(
     id,
     bound.credentials.deploymentId,
-    bound.credentials.organizationId,
+    admission.organizationId,
     admission.holdId,
     admission.module,
     admission.units,
@@ -160,7 +163,7 @@ function persistAuthorizedAdmission(
   if (
     !existing ||
     existing.deployment_id !== bound.credentials.deploymentId ||
-    existing.organization_id !== bound.credentials.organizationId ||
+    existing.organization_id !== admission.organizationId ||
     existing.hold_id !== admission.holdId ||
     existing.module !== admission.module ||
     existing.units !== admission.units ||
@@ -178,6 +181,7 @@ function persistAuthorizedAdmission(
 export async function authorizeBillingOperation(
   store: BillingUsageRepositoryStore,
   input: {
+    organizationId?: string;
     module: DeploymentBillingModule;
     units: number;
     idempotencyKey: string;
@@ -186,9 +190,19 @@ export async function authorizeBillingOperation(
   fetchImpl: typeof fetch = fetch,
   now = Date.now(),
 ): Promise<BillingAdmission> {
-  const bound = binding(store);
-  if (!bound || bound.credentials.enforcement === 'disabled') {
-    return { required: false, outboxId: null, holdId: null, ...input };
+  const credentials = store.credentials();
+  const organizationId = input.organizationId ?? credentials?.organizationId ?? '';
+  const operation = { ...input, organizationId };
+  const bound = binding(store, organizationId);
+  if (!credentials || credentials.enforcement === 'disabled') {
+    return { required: false, outboxId: null, holdId: null, ...operation };
+  }
+  if (!bound) {
+    throw new BillingAdmissionError(
+      'billing_policy_unavailable',
+      503,
+      'billing organization binding is invalid',
+    );
   }
   if (!IDEMPOTENCY_KEY.test(input.idempotencyKey)) {
     throw new BillingAdmissionError(
@@ -247,10 +261,10 @@ export async function authorizeBillingOperation(
     }
     const outboxId = persistAuthorizedAdmission(
       store,
-      { holdId, ...input },
+      { holdId, ...operation },
       now,
     );
-    return { required: true, outboxId, holdId, ...input };
+    return { required: true, outboxId, holdId, ...operation };
   } catch (error) {
     if (error instanceof BillingAdmissionError) throw error;
     throw new BillingAdmissionError(
@@ -267,11 +281,11 @@ async function deliverBillingAdmission(
   fetchImpl: typeof fetch,
   now: number,
 ): Promise<'captured' | 'released' | 'discarded' | 'failed'> {
-  const bound = binding(store);
+  const bound = binding(store, row.organization_id);
   if (!bound || bound.credentials.enforcement !== 'enforce') return 'failed';
   if (
     row.deployment_id !== bound.credentials.deploymentId ||
-    row.organization_id !== bound.credentials.organizationId
+    row.organization_id !== bound.body.organizationId
   ) {
     store.db().prepare(
       `UPDATE billing_admission_outbox

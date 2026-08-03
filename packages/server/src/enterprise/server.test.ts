@@ -517,19 +517,15 @@ describe('受保护 vs 公开路由边界', () => {
     process.env.OTTO_APP_VERSION = '1.8.4-test';
     process.env.OTTO_BUILD_COMMIT = 'abc123def456';
     const { base } = await startIsolated(ADMIN_TOKEN);
-    const database: DatabaseModule = await import('./db.js');
     const res = await fetch(`${base}/enterprise/health`);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toMatchObject({
       status: 'ok',
-      db: 'connected',
       service: 'otto-enterprise',
       apiVersion: 4,
       version: '1.8.4-test',
       appVersion: '1.8.4-test',
-      buildCommit: 'abc123def456',
-      schemaVersion: database.ENTERPRISE_SCHEMA_VERSION,
     });
     for (const privateField of [
       'dataGovernance',
@@ -538,6 +534,9 @@ describe('受保护 vs 公开路由边界', () => {
       'repairNotifications',
       'runtimeVersion',
       'sms',
+      'buildCommit',
+      'schemaVersion',
+      'db',
       'startedAt',
       'uptime',
     ]) {
