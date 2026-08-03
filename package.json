@@ -61,6 +61,7 @@
     "test": "npm run test --workspace=packages/core && npm run test --workspace=packages/server && npm run test --workspace=packages/desktop",
     "test:ci": "npm run test:ci --workspace=packages/core --if-present && npm run test:ci --workspace=packages/server --if-present && npm run test --workspace=packages/desktop && npm run test:scripts && npm run eval:deterministic && npm run test --workspace=packages/workflow && npm run test --workspace=packages/rpa",
     "test:scripts": "vitest run --config ./scripts/tests/vitest.config.ts",
+    "test:federation:staging": "node scripts/smoke-federation-staging.mjs",
     "test:e2e": "npm run test:integration:sandbox:none -- --verbose --keep-output",
     "test:integration:all": "npm run test:integration:sandbox:none && npm run test:integration:sandbox:docker && npm run test:integration:sandbox:podman",
     "test:integration:sandbox:none": "GEMINI_SANDBOX=false node integration-tests/run-tests.js",

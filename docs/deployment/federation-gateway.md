@@ -71,3 +71,24 @@ PEM 私钥；该路径必须位于备份策略覆盖之外，并由客户的 KMS
 正式启用前至少使用两个独立测试部署验证：密文消息与加密附件、断网恢复、重复领取、回执重试、
 部署吊销、本地屏蔽、密钥轮换，以及 A2A 授权越权和重复消费。验收记录应包含部署 ID、构建提交、
 测试时间和脱敏后的 Control 审计事件，不能包含聊天明文、附件原文、私钥或 claim token。
+
+两台 staging Otto Server 和 staging Control Federation 网关准备好后，可以运行黑盒验收：
+
+```bash
+export OTTO_FEDERATION_SMOKE_CONFIRM=STAGING_ONLY
+export OTTO_FEDERATION_SMOKE_GATEWAY_URL=https://federation-staging.example.com
+export OTTO_FEDERATION_SMOKE_GATEWAY_ADMIN_TOKEN='<control-admin-token>'
+export OTTO_FEDERATION_SMOKE_SERVER_A_URL=https://otto-a-staging.example.com
+export OTTO_FEDERATION_SMOKE_SERVER_A_ADMIN_TOKEN='<server-a-admin-session>'
+export OTTO_FEDERATION_SMOKE_SERVER_A_MEMBER_TOKEN='<server-a-member-session>'
+export OTTO_FEDERATION_SMOKE_SERVER_B_URL=https://otto-b-staging.example.com
+export OTTO_FEDERATION_SMOKE_SERVER_B_ADMIN_TOKEN='<server-b-admin-session>'
+export OTTO_FEDERATION_SMOKE_SERVER_B_MEMBER_TOKEN='<server-b-member-session>'
+export OTTO_FEDERATION_SMOKE_SOURCE_COMMIT="$(git rev-parse HEAD)"
+npm run test:federation:staging > federation-staging-evidence.json
+```
+
+脚本会登记两个部署和当前公钥，验证目录、密文消息/附件载荷、持久收件箱回执、单次 scoped
+A2A grant 和部署停用 fail-closed。它会短暂把部署 A 设置为 `disabled` 后恢复为 `active`，因此
+必须使用隔离 staging 部署；需要设置 `STAGING_ONLY` 确认值，避免误操作生产环境。输出证据只包含
+部署 ID、公钥 ID、时间和测试结论，不包含 Token、密文、claim token 或用户内容。
