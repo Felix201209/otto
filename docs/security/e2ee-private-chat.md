@@ -253,6 +253,16 @@ coordination, forward secrecy, post-compromise security, or external audit.
 `security/e2ee-release-status.json` therefore records transport session history
 and reset separately while `safetyStateReset` remains false.
 
+Clearing the desktop's local MLS security state is also deliberately
+fail-closed. A successful clear destroys the native identity, private keys,
+conversation state, inbox and outbox, closes the native process, and changes
+the desktop manager from `ready` to `inactive`. No KeyPackage, polling, send or
+receive operation can continue until an approved device identity explicitly
+reactivates a newly created native kernel. A clear failure closes the kernel
+and leaves the manager `blocked`; it never resumes the old state. This local
+lifecycle control is not a server conversation-generation reset and therefore
+does not satisfy the production `safetyStateReset` gate by itself.
+
 MLS transport resource governance is enforced by both authorities. The default
 policy allows at most 100 unclaimed KeyPackages per device and 10,000 per
 organization, 60 new KeyPackage publications per device per minute, and 300

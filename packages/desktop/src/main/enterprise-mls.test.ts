@@ -417,7 +417,54 @@ describe('EnterpriseMlsSessionManager', () => {
     );
   });
 
-  it('resets only an active MLS security state and fails closed on reset errors', async () => {
+  it('closes a cleared MLS kernel and requires explicit reactivation', async () => {
+    const kernel = fakeKernel();
+    const replacementKernel = fakeKernel();
+    const kernelFactory = vi
+      .fn()
+      .mockReturnValueOnce(kernel)
+      .mockReturnValueOnce(replacementKernel);
+    const manager = new EnterpriseMlsSessionManager({
+      stateDirectory: await temporaryDirectory(),
+      secureStorage: {
+        assertAvailable: vi.fn(),
+        protect: vi.fn((value) => value),
+        unprotect: vi.fn((value) => value),
+      },
+      kernelFactory,
+    });
+
+    await expect(manager.resetSecurityState()).rejects.toThrow('not ready');
+    await manager.activate(identity());
+    await expect(manager.resetSecurityState()).resolves.toBeUndefined();
+    expect(kernel.reset).toHaveBeenCalledOnce();
+    expect(kernel.close).toHaveBeenCalledOnce();
+    expect(manager.status()).toEqual({
+      state: 'inactive',
+      protocol: 'mls10-openmls-0.8',
+    });
+    await expect(manager.createKeyPackage()).rejects.toThrow('not ready');
+    await expect(
+      manager.encryptTransportApplication(
+        'account-b',
+        new TextEncoder().encode('must not send'),
+      ),
+    ).rejects.toThrow('not ready');
+    await expect(manager.transportCursor('account-b')).rejects.toThrow(
+      'not ready',
+    );
+
+    await expect(manager.activate(identity())).resolves.toMatchObject({
+      state: 'ready',
+    });
+    expect(kernelFactory).toHaveBeenCalledTimes(2);
+    expect(replacementKernel.init).toHaveBeenCalledOnce();
+    await manager.createKeyPackage();
+    expect(replacementKernel.createKeyPackage).toHaveBeenCalledOnce();
+    expect(kernel.createKeyPackage).not.toHaveBeenCalled();
+  });
+
+  it('blocks the MLS lifecycle when security-state reset fails', async () => {
     const kernel = fakeKernel();
     const manager = new EnterpriseMlsSessionManager({
       stateDirectory: await temporaryDirectory(),
@@ -429,12 +476,7 @@ describe('EnterpriseMlsSessionManager', () => {
       kernelFactory: vi.fn(() => kernel),
     });
 
-    await expect(manager.resetSecurityState()).rejects.toThrow('not ready');
     await manager.activate(identity());
-    await expect(manager.resetSecurityState()).resolves.toBeUndefined();
-    expect(kernel.reset).toHaveBeenCalledOnce();
-    expect(manager.status().state).toBe('ready');
-
     kernel.reset.mockRejectedValueOnce(new Error('state clear failed'));
     await expect(manager.resetSecurityState()).rejects.toThrow(
       'state clear failed',

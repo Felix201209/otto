@@ -666,6 +666,8 @@ export class EnterpriseMlsSessionManager {
       const active = this.requireReadyKernel();
       try {
         await active.kernel.reset();
+        await this.closeActive();
+        this.currentStatus = { state: 'inactive', protocol: PROTOCOL };
       } catch (error) {
         await this.closeActive().catch(() => undefined);
         this.currentStatus = {
