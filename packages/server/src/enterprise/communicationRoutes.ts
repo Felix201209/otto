@@ -335,6 +335,32 @@ export async function handleCommunicationRoute({
     return true;
   }
 
+  if (
+    path === '/enterprise/e2ee/mls/inbound-conversations' &&
+    method === 'GET'
+  ) {
+    try {
+      const peerAccountIds = db.listMlsInboundConversationPeers({
+        organizationId: memberAccount.organizationId,
+        accountId: memberAccount.id,
+        deviceId: url.searchParams.get('deviceId') || '',
+        afterPeerAccountId:
+          url.searchParams.get('afterPeerAccountId') || undefined,
+        limit: Number(url.searchParams.get('limit') || 100),
+      });
+      res.setHeader('Cache-Control', 'no-store');
+      sendJSON(res, 200, { peerAccountIds });
+    } catch (error) {
+      sendJSON(res, mlsErrorStatus(error), {
+        error:
+          error instanceof Error
+            ? error.message
+            : 'MLS inbound conversation discovery failed',
+      });
+    }
+    return true;
+  }
+
   const mlsEventsMatch = path.match(
     /^\/enterprise\/e2ee\/mls\/conversations\/([^/]+)\/events$/,
   );

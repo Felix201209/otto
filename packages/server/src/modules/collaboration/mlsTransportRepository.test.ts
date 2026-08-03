@@ -66,6 +66,7 @@ function createHarness(options: {
   };
   addDevice('alice', 'alice-1');
   addDevice('bob', 'bob-1');
+  addDevice('bob', 'bob-2');
   addDevice('bob', 'bob-pending', 'pending');
   addDevice('carol', 'carol-1');
 
@@ -205,6 +206,134 @@ describe('MLS ciphertext transport repository', () => {
           .prepare('SELECT payload FROM mls_transport_events WHERE id = ?')
           .get('welcome-1'),
       ).toEqual({ payload: opaque('welcome') });
+    } finally {
+      database.close();
+    }
+  });
+
+  it('discovers only active unexpired Welcome peers for the exact approved device', () => {
+    const { database, facade, advanceTime } = createHarness({
+      nowMs: Date.parse('2026-08-03T00:00:00.000Z'),
+    });
+    const appendWelcome = (
+      senderAccountId: 'alice' | 'carol',
+      senderDeviceId: 'alice-1' | 'carol-1',
+      suffix: string,
+    ) => {
+      const published = facade.publishMlsKeyPackage({
+        organizationId: 'org-a',
+        accountId: 'bob',
+        deviceId: 'bob-1',
+        ciphersuite: MLS_SUITE,
+        reference: suffix.repeat(64),
+        keyPackage: opaque(`key-package-${suffix}`),
+      });
+      facade.claimMlsKeyPackage({
+        organizationId: 'org-a',
+        requesterAccountId: senderAccountId,
+        requesterDeviceId: senderDeviceId,
+        recipientAccountId: 'bob',
+      });
+      const groupId = opaque(`group-${suffix}`);
+      facade.appendMlsTransportEvent({
+        organizationId: 'org-a',
+        senderAccountId,
+        peerAccountId: 'bob',
+        senderDeviceId,
+        eventId: `commit-${suffix}`,
+        eventType: 'commit',
+        epoch: 1,
+        groupId,
+        payload: opaque(`commit-${suffix}`),
+      });
+      facade.appendMlsTransportEvent({
+        organizationId: 'org-a',
+        senderAccountId,
+        peerAccountId: 'bob',
+        senderDeviceId,
+        recipientDeviceId: 'bob-1',
+        keyPackageReference: published.reference,
+        eventId: `welcome-${suffix}`,
+        eventType: 'welcome',
+        epoch: 1,
+        groupId,
+        payload: opaque(`welcome-${suffix}`),
+      });
+    };
+    try {
+      appendWelcome('carol', 'carol-1', 'c');
+      appendWelcome('alice', 'alice-1', 'a');
+
+      expect(
+        facade.listMlsInboundConversationPeers({
+          organizationId: 'org-a',
+          accountId: 'bob',
+          deviceId: 'bob-1',
+        }),
+      ).toEqual(['alice', 'carol']);
+      expect(
+        (
+          database.prepare('PRAGMA index_list(mls_transport_events)').all() as
+            Array<{ name: string }>
+        ).map((index) => index.name),
+      ).toContain('idx_mls_transport_events_inbound_welcome');
+      expect(
+        facade.listMlsInboundConversationPeers({
+          organizationId: 'org-a',
+          accountId: 'bob',
+          deviceId: 'bob-1',
+          limit: 1,
+        }),
+      ).toEqual(['alice']);
+      expect(
+        facade.listMlsInboundConversationPeers({
+          organizationId: 'org-a',
+          accountId: 'bob',
+          deviceId: 'bob-1',
+          afterPeerAccountId: 'alice',
+        }),
+      ).toEqual(['carol']);
+      expect(
+        facade.listMlsInboundConversationPeers({
+          organizationId: 'org-a',
+          accountId: 'bob',
+          deviceId: 'bob-2',
+        }),
+      ).toEqual([]);
+      expect(() =>
+        facade.listMlsInboundConversationPeers({
+          organizationId: 'org-a',
+          accountId: 'bob',
+          deviceId: 'bob-pending',
+        }),
+      ).toThrow(/active and approved/i);
+
+      database
+        .prepare(
+          `UPDATE mls_conversations SET active_generation = 2
+           WHERE organization_id = 'org-a'
+             AND 'alice' IN (
+               participant_a_account_id,
+               participant_b_account_id
+             )`,
+        )
+        .run();
+      expect(
+        facade.listMlsInboundConversationPeers({
+          organizationId: 'org-a',
+          accountId: 'bob',
+          deviceId: 'bob-1',
+        }),
+      ).toEqual(['carol']);
+
+      advanceTime(91 * 24 * 60 * 60 * 1_000);
+      expect(
+        facade.listMlsInboundConversationPeers({
+          organizationId: 'org-a',
+          accountId: 'bob',
+          deviceId: 'bob-1',
+        }),
+      ).toEqual([]);
     } finally {
       database.close();
     }

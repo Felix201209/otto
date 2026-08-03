@@ -2547,6 +2547,81 @@ export function createPostgresEnterpriseCoreRepository(input: {
     return events.rows.map(mlsEventView);
   }
 
+  async function listMlsInboundConversationPeers(raw: {
+    organizationId: string;
+    accountId: string;
+    deviceId: string;
+    afterPeerAccountId?: string;
+    limit?: number;
+  }): Promise<string[]> {
+    const organizationId = requiredIdentifier(
+      raw.organizationId,
+      'organization id',
+    );
+    const accountId = requiredIdentifier(raw.accountId, 'account id');
+    const deviceId = requiredIdentifier(raw.deviceId, 'device id');
+    const afterPeerAccountId = raw.afterPeerAccountId
+      ? requiredIdentifier(raw.afterPeerAccountId, 'peer account cursor')
+      : '';
+    const limit = raw.limit ?? 100;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
+      throw new Error('MLS inbound conversation limit is invalid');
+    }
+    const account = await input.pool.query(
+      `SELECT 1 FROM accounts AS account
+       JOIN organizations AS organization
+         ON organization.id = account.organization_id
+       WHERE account.organization_id = $1 AND account.id = $2
+         AND account.status = 'active' AND account.deleted_at IS NULL
+         AND organization.status = 'active'`,
+      [organizationId, accountId],
+    );
+    if (!account.rows[0]) {
+      throw new Error('MLS participant is not active in organization');
+    }
+    await requirePostgresMlsDevice(
+      input.pool,
+      organizationId,
+      accountId,
+      deviceId,
+    );
+    const peers = await input.pool.query<
+      { peer_account_id: string } & Record<string, unknown>
+    >(
+      `SELECT DISTINCT
+         event.sender_account_id COLLATE "C" AS peer_account_id
+       FROM mls_transport_events AS event
+       JOIN mls_conversations AS conversation
+         ON conversation.organization_id = event.organization_id
+        AND conversation.conversation_id = event.conversation_id
+        AND conversation.active_generation = event.session_generation
+       JOIN accounts AS peer
+         ON peer.organization_id = event.organization_id
+        AND peer.id = event.sender_account_id
+        AND peer.status = 'active' AND peer.deleted_at IS NULL
+       WHERE event.organization_id = $1
+         AND event.event_type = 'welcome'
+         AND event.recipient_account_id = $2
+         AND event.recipient_device_id = $3
+         AND event.expires_at > $4::timestamptz
+         AND event.sender_account_id COLLATE "C" > $5
+         AND event.sender_account_id <> $2
+       ORDER BY peer_account_id
+       LIMIT $6`,
+      [
+        organizationId,
+        accountId,
+        deviceId,
+        mlsNow().iso,
+        afterPeerAccountId,
+        limit,
+      ],
+    );
+    return peers.rows.map((row) =>
+      requiredIdentifier(row.peer_account_id, 'peer account id'),
+    );
+  }
+
   async function cleanupExpiredMlsResources(
     raw: { before?: string; limit?: number } = {},
   ): Promise<MlsResourceCleanupResult> {
@@ -3275,6 +3350,7 @@ export function createPostgresEnterpriseCoreRepository(input: {
     claimMlsKeyPackage,
     appendMlsTransportEvent,
     listMlsTransportEvents,
+    listMlsInboundConversationPeers,
     cleanupExpiredMlsResources,
     sendE2eeDirectMessage,
     listE2eeDirectMessages,

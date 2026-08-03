@@ -258,7 +258,10 @@ describe('EnterpriseClient', () => {
       .mockResolvedValueOnce(jsonResponse(201, { keyPackage: published }))
       .mockResolvedValueOnce(jsonResponse(200, { keyPackage: claimed }))
       .mockResolvedValueOnce(jsonResponse(201, { event }))
-      .mockResolvedValueOnce(jsonResponse(200, { events: [event] }));
+      .mockResolvedValueOnce(jsonResponse(200, { events: [event] }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, { peerAccountIds: ['acc_other', 'acc_peer'] }),
+      );
     const client = new EnterpriseClient(fetchMock as typeof fetch);
     await client.loginWithPassword(
       'https://enterprise.otto.test',
@@ -292,12 +295,16 @@ describe('EnterpriseClient', () => {
     await expect(
       client.listMlsTransportEvents('acc_peer', 0, 25),
     ).resolves.toEqual([event]);
+    await expect(
+      client.listMlsInboundConversationPeers('device-1'),
+    ).resolves.toEqual(['acc_other', 'acc_peer']);
 
     expect(fetchMock.mock.calls.slice(2).map(([url]) => url)).toEqual([
       'https://enterprise.otto.test/enterprise/e2ee/mls/key-packages',
       'https://enterprise.otto.test/enterprise/e2ee/mls/key-packages/claim',
       'https://enterprise.otto.test/enterprise/e2ee/mls/conversations/acc_peer/events',
       'https://enterprise.otto.test/enterprise/e2ee/mls/conversations/acc_peer/events?afterSequence=0&limit=25',
+      'https://enterprise.otto.test/enterprise/e2ee/mls/inbound-conversations?deviceId=device-1&limit=500',
     ]);
     expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toMatchObject({
       keyPackageReference,
@@ -345,7 +352,10 @@ describe('EnterpriseClient', () => {
           expiresAt: '2099-01-01',
         }),
       )
-      .mockResolvedValueOnce(jsonResponse(200, { events: [event] }));
+      .mockResolvedValueOnce(jsonResponse(200, { events: [event] }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, { peerAccountIds: ['acc_peer', 'acc_peer'] }),
+      );
     const client = new EnterpriseClient(fetchMock as typeof fetch);
     await client.loginWithPassword(
       'https://enterprise.otto.test',
@@ -356,6 +366,51 @@ describe('EnterpriseClient', () => {
     await expect(
       client.listMlsTransportEvents('acc_peer', 3, 100),
     ).rejects.toThrow('binding is invalid');
+    await expect(
+      client.listMlsInboundConversationPeers('device-1'),
+    ).rejects.toThrow('inbound conversation list is invalid');
+  });
+
+  it('paginates sorted inbound MLS peers with an opaque account cursor', async () => {
+    const firstPage = Array.from(
+      { length: 500 },
+      (_, index) => `peer-${String(index).padStart(4, '0')}`,
+    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          ...API_V2_HEALTH,
+          capabilities: [
+            ...API_V2_HEALTH.capabilities,
+            'e2ee_mls_transport_v1',
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          account: ACCOUNT,
+          token: 'session-token',
+          expiresAt: '2099-01-01',
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(200, { peerAccountIds: firstPage }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, { peerAccountIds: ['peer-0500'] }),
+      );
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(
+      client.listMlsInboundConversationPeers('device-1'),
+    ).resolves.toEqual([...firstPage, 'peer-0500']);
+    expect(fetchMock.mock.calls.at(-1)?.[0]).toBe(
+      'https://enterprise.otto.test/enterprise/e2ee/mls/inbound-conversations?deviceId=device-1&limit=500&afterPeerAccountId=peer-0499',
+    );
   });
 
   it('treats an empty peer KeyPackage inventory as a recoverable transport state', async () => {

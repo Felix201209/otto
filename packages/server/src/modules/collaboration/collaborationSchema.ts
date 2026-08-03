@@ -456,6 +456,17 @@ export const COLLABORATION_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor = {
         ON mls_transport_events(expires_at, sequence);
       CREATE INDEX IF NOT EXISTS idx_mls_transport_events_inventory
         ON mls_transport_events(organization_id, conversation_id, expires_at);
+      CREATE INDEX IF NOT EXISTS idx_mls_transport_events_inbound_welcome
+        ON mls_transport_events(
+          organization_id,
+          recipient_account_id,
+          recipient_device_id,
+          event_type,
+          sender_account_id,
+          expires_at,
+          conversation_id,
+          session_generation
+        );
       CREATE INDEX IF NOT EXISTS idx_mls_rate_buckets_expiry
         ON mls_resource_rate_buckets(bucket_started_at_ms);
     `);

@@ -2528,6 +2528,15 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         })
       ).status,
     ).toBe(201);
+    const inboundBeforeReset = await fetch(
+      `${base}/enterprise/e2ee/mls/inbound-conversations?deviceId=${encodeURIComponent(bobDevice.deviceId)}&limit=100`,
+      { headers: { authorization: `Bearer ${bobToken}` } },
+    );
+    expect(inboundBeforeReset.status).toBe(200);
+    expect(inboundBeforeReset.headers.get('cache-control')).toBe('no-store');
+    await expect(inboundBeforeReset.json()).resolves.toEqual({
+      peerAccountIds: [alice.id],
+    });
     expect(
       (
         await append({
@@ -2562,6 +2571,15 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         })
       ).status,
     ).toBe(201);
+
+    const inboundAfterReset = await fetch(
+      `${base}/enterprise/e2ee/mls/inbound-conversations?deviceId=${encodeURIComponent(bobDevice.deviceId)}&limit=100`,
+      { headers: { authorization: `Bearer ${bobToken}` } },
+    );
+    expect(inboundAfterReset.status).toBe(200);
+    await expect(inboundAfterReset.json()).resolves.toEqual({
+      peerAccountIds: [],
+    });
 
     const events = await fetch(
       `${base}/enterprise/e2ee/mls/conversations/${encodeURIComponent(alice.id)}/events`,

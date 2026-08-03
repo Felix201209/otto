@@ -691,6 +691,7 @@ function coordinatorHarness(keyPackages: MlsKeyPackage[] = []) {
     listMlsTransportEvents: vi.fn(
       async (): Promise<EnterpriseMlsTransportEvent[]> => [],
     ),
+    listMlsInboundConversationPeers: vi.fn(async (): Promise<string[]> => []),
   } satisfies EnterpriseMlsTransportClient;
   return { group, sessions, transport };
 }
@@ -1283,6 +1284,61 @@ describe('EnterpriseMlsSessionCoordinator', () => {
     );
     expect(sessions.receiveTransportApplication).not.toHaveBeenCalled();
     expect(sessions.listPendingReceivedApplications).not.toHaveBeenCalled();
+  });
+
+  it('polls an inbound Welcome peer before the local conversation is opened', async () => {
+    const { group, sessions, transport } = coordinatorHarness();
+    sessions.listConversationPeers.mockResolvedValue([]);
+    sessions.inspectGroup
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        ...group,
+        pending_commit: false,
+        pending_invitation: null,
+      });
+    transport.listMlsInboundConversationPeers.mockResolvedValue(['account-b']);
+    transport.listMlsTransportEvents.mockResolvedValue([
+      transportEvent({ sequence: 1, eventId: 'commit-discovered' }),
+      transportEvent({
+        sequence: 2,
+        eventId: 'welcome-discovered',
+        eventType: 'welcome',
+        recipientAccountId: 'account-a',
+        recipientDeviceId: 'device-a',
+        keyPackageReference: 'a'.repeat(64),
+        payload: 'd2VsY29tZQ==',
+      }),
+      transportEvent({
+        sequence: 3,
+        eventId: `mls-${'6'.repeat(64)}`,
+        eventType: 'application',
+        payload: 'Y2lwaGVydGV4dA==',
+      }),
+    ]);
+    const coordinator = new EnterpriseMlsSessionCoordinator(
+      sessions,
+      transport,
+    );
+
+    await expect(coordinator.pollAllActiveSessions()).resolves.toBe(3);
+
+    expect(transport.listMlsInboundConversationPeers).toHaveBeenCalledWith(
+      'device-a',
+    );
+    expect(transport.listMlsTransportEvents).toHaveBeenCalledWith(
+      'account-b',
+      0,
+      100,
+    );
+    expect(sessions.joinGroup).toHaveBeenCalledWith(
+      'account-b',
+      'a'.repeat(64),
+      group.group_id,
+      'd2VsY29tZQ==',
+    );
+    expect(sessions.stageTransportApplication).toHaveBeenCalledOnce();
+    expect(sessions.receiveTransportApplication).not.toHaveBeenCalled();
   });
 });
 

@@ -88,6 +88,7 @@ export interface EnterpriseMlsTransportClient {
     afterSequence?: number,
     limit?: number,
   ): Promise<EnterpriseMlsTransportEvent[]>;
+  listMlsInboundConversationPeers(deviceId: string): Promise<string[]>;
 }
 
 export interface EnterpriseMlsDecryptedTransportMessage {
@@ -403,6 +404,27 @@ export function parseEnterpriseMlsTransportEvent(
     throw new Error('enterprise MLS transport event binding is invalid');
   }
   return { ...event } as EnterpriseMlsTransportEvent;
+}
+
+export function parseEnterpriseMlsInboundConversationPeerPage(
+  value: unknown,
+  afterPeerAccountId = '',
+): string[] {
+  if (!Array.isArray(value) || value.length > 500) {
+    throw new Error('enterprise MLS inbound conversation list is invalid');
+  }
+  let previous = afterPeerAccountId;
+  return value.map((peerAccountId) => {
+    if (
+      typeof peerAccountId !== 'string' ||
+      !IDENTIFIER.test(peerAccountId) ||
+      peerAccountId <= previous
+    ) {
+      throw new Error('enterprise MLS inbound conversation list is invalid');
+    }
+    previous = peerAccountId;
+    return peerAccountId;
+  });
 }
 
 function isMlsReference(value: unknown): value is string {
@@ -1340,7 +1362,12 @@ export class EnterpriseMlsSessionCoordinator {
   }
 
   async pollAllActiveSessions(limit = 100): Promise<number> {
-    const peers = await this.sessions.listConversationPeers();
+    const scope = this.sessions.activeScope();
+    const [localPeers, inboundPeers] = await Promise.all([
+      this.sessions.listConversationPeers(),
+      this.transport.listMlsInboundConversationPeers(scope.deviceId),
+    ]);
+    const peers = [...new Set([...localPeers, ...inboundPeers])].sort();
     let processedEvents = 0;
     const failures: unknown[] = [];
     for (const peerAccountId of peers) {

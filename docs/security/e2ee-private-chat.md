@@ -206,9 +206,10 @@ one plaintext-free transport poll, and then rechecks the native group under
 the same peer lock. A pending Commit/Welcome can therefore complete in one
 call without a recursive-lock deadlock; any accompanying application remains
 only in the encrypted native inbox. An empty poll remains a waiting state and
-transport or binding failures are not hidden. This does not yet discover a
-never-opened inbound conversation automatically, and it is not multi-device
-session orchestration.
+transport or binding failures are not hidden. The background path can now
+discover a never-opened inbound conversation through the device-scoped lookup
+described below, but this remains single-device invitation handling rather
+than multi-device session orchestration.
 
 Each device keeps its per-conversation transport cursor inside the same
 authenticated native snapshot as the OpenMLS ratchet. Initial Commit and
@@ -316,15 +317,26 @@ an active acknowledgement before closing or replacing the native MLS identity.
 
 A separate background receive scheduler polls every persistently bound peer at
 a five-second idle interval and uses the same bounded, jittered failure
-backoff. Its dedicated staging RPC decrypts and persists applications inside
-the authenticated encrypted native inbox but returns only event, sender,
-group, epoch and cursor bindings. It does not enumerate pending inbox records
-or return their plaintext to the JavaScript scheduler. Only an explicit future
-chat consumer may list those records; it must durably insert each returned
-message and then call the explicit inbox acknowledgement. Polling a later
-unsupported membership-changing remote Commit still fails closed and requires
-a security-state reset; proposal-free peer self-update Commits advance the
-epoch through the atomic native path described above.
+backoff. Before each pass it also asks the server for unexpired Welcome peers
+addressed to the exact authenticated account and approved device. The query is
+strictly paginated, joins only the active conversation generation, excludes
+inactive peer accounts, and returns sorted peer account IDs only. It exposes no
+ciphertext, KeyPackage, group ID, epoch, key material, or other conversation
+metadata. The desktop validates ordering, uniqueness, identifier syntax,
+self-binding and a hard discovery ceiling before merging those peers with the
+native encrypted route list.
+
+The scheduler's dedicated staging RPC decrypts and persists applications
+inside the authenticated encrypted native inbox but returns only event,
+sender, group, epoch and cursor bindings. It does not enumerate pending inbox
+records or return their plaintext to the JavaScript scheduler. Only an explicit
+future chat consumer may list those records; it must durably insert each
+returned message and then call the explicit inbox acknowledgement. Polling a
+later unsupported membership-changing remote Commit still fails closed and
+requires a security-state reset; proposal-free peer self-update Commits advance
+the epoch through the atomic native path described above. Device-scoped Welcome
+discovery does not implement invitation fanout or recovery for the user's
+other devices and does not activate the production MLS gate.
 
 This is still not the active chat protocol. No production server advertises
 `e2ee_mls_v1`. If a server does advertise that capability, the desktop refuses

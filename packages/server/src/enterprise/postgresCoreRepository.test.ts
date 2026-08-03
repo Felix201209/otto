@@ -216,6 +216,22 @@ describe('PostgreSQL enterprise core authority', () => {
     expect(migration!.sql).toContain('mls_group_sessions_active');
   });
 
+  it('indexes exact-device inbound Welcome discovery without indexing payloads', () => {
+    const migration = ENTERPRISE_POSTGRES_MIGRATIONS.find(
+      (candidate) => candidate.version === 11,
+    );
+    expect(migration).toMatchObject({
+      version: 11,
+      name: 'mls-inbound-welcome-discovery-index',
+    });
+    expect(migration!.sql).toContain(
+      'mls_transport_events_inbound_welcome',
+    );
+    expect(migration!.sql).toContain('recipient_device_id');
+    expect(migration!.sql).toContain("WHERE event_type = 'welcome'");
+    expect(migration!.sql).not.toContain('payload');
+  });
+
   it('checks for a recoverable claim before locking a new KeyPackage', async () => {
     const statements: Array<{ sql: string; values: readonly unknown[] }> = [];
     const packageRow = {
@@ -291,6 +307,59 @@ describe('PostgreSQL enterprise core authority', () => {
       expect.arrayContaining(['BEGIN', 'COMMIT']),
     );
     expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it('discovers PostgreSQL Welcome peers only through the active device generation', async () => {
+    const statements: Array<{ sql: string; values: readonly unknown[] }> = [];
+    const pool: PostgresPoolLike = {
+      connect: vi.fn(),
+      query: vi.fn(async (sql: string, values: readonly unknown[] = []) => {
+        statements.push({ sql, values });
+        if (sql.includes('SELECT 1 FROM accounts AS account')) {
+          return result([{ available: 1 }]);
+        }
+        if (sql.includes('SELECT 1 FROM e2ee_devices')) {
+          return result([{ available: 1 }]);
+        }
+        if (sql.includes('SELECT DISTINCT')) {
+          return result([
+            { peer_account_id: 'acc_alice' },
+            { peer_account_id: 'acc_carol' },
+          ]);
+        }
+        return result();
+      }),
+      end: vi.fn(),
+    };
+    const repository = createPostgresEnterpriseCoreRepository({ pool });
+
+    await expect(
+      repository.listMlsInboundConversationPeers({
+        organizationId: 'org_default',
+        accountId: 'acc_bob',
+        deviceId: 'bob-device',
+        afterPeerAccountId: 'acc_aaron',
+        limit: 25,
+      }),
+    ).resolves.toEqual(['acc_alice', 'acc_carol']);
+
+    const discovery = statements.find((statement) =>
+      statement.sql.includes('SELECT DISTINCT'),
+    );
+    expect(discovery?.sql).toContain(
+      'conversation.active_generation = event.session_generation',
+    );
+    expect(discovery?.sql).toContain("event.event_type = 'welcome'");
+    expect(discovery?.sql).toContain('event.recipient_device_id = $3');
+    expect(discovery?.sql).toContain('event.expires_at > $4::timestamptz');
+    expect(discovery?.values).toEqual([
+      'org_default',
+      'acc_bob',
+      'bob-device',
+      expect.any(String),
+      'acc_aaron',
+      25,
+    ]);
   });
 
   it('stores an initial PostgreSQL MLS Commit as opaque bytes at epoch one', async () => {

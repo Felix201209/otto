@@ -20,6 +20,7 @@ import {
 import {
   ENTERPRISE_MLS_CIPHERSUITE,
   enterpriseMlsDirectConversationId,
+  parseEnterpriseMlsInboundConversationPeerPage,
   parseEnterpriseMlsPublishedKeyPackage,
   parseEnterpriseMlsTransportEvent,
   type EnterpriseMlsAppendTransportEventInput,
@@ -1226,6 +1227,53 @@ export class EnterpriseClient {
       previousSequence = event.sequence;
       return event;
     });
+  }
+
+  async listMlsInboundConversationPeers(deviceId: string): Promise<string[]> {
+    const account = await this.requireMlsTransportAccount();
+    const pageLimit = 500;
+    const maximumPeers = 1_000;
+    const peerAccountIds: string[] = [];
+    let afterPeerAccountId = '';
+    while (peerAccountIds.length < maximumPeers) {
+      const query = new URLSearchParams({
+        deviceId,
+        limit: String(pageLimit),
+      });
+      if (afterPeerAccountId) {
+        query.set('afterPeerAccountId', afterPeerAccountId);
+      }
+      const response = await this.request<{ peerAccountIds: unknown }>(
+        `/enterprise/e2ee/mls/inbound-conversations?${query.toString()}`,
+      );
+      const page = parseEnterpriseMlsInboundConversationPeerPage(
+        response.peerAccountIds,
+        afterPeerAccountId,
+      );
+      if (page.some((peerAccountId) => peerAccountId === account.id)) {
+        throw new Error('enterprise MLS inbound conversation binding is invalid');
+      }
+      peerAccountIds.push(...page);
+      if (page.length < pageLimit) return peerAccountIds;
+      afterPeerAccountId = page.at(-1)!;
+    }
+    const overflowQuery = new URLSearchParams({
+      deviceId,
+      afterPeerAccountId,
+      limit: '1',
+    });
+    const overflow = await this.request<{ peerAccountIds: unknown }>(
+      `/enterprise/e2ee/mls/inbound-conversations?${overflowQuery.toString()}`,
+    );
+    if (
+      parseEnterpriseMlsInboundConversationPeerPage(
+        overflow.peerAccountIds,
+        afterPeerAccountId,
+      ).length > 0
+    ) {
+      throw new Error('enterprise MLS inbound conversation limit exceeded');
+    }
+    return peerAccountIds;
   }
 
   private async requireMlsTransportAccount(): Promise<EnterpriseAccount> {

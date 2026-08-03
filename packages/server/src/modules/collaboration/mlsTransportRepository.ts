@@ -129,6 +129,14 @@ export interface MlsTransportEventView {
   expiresAt: string;
 }
 
+export interface ListMlsInboundConversationPeersInput {
+  organizationId: string;
+  accountId: string;
+  deviceId: string;
+  afterPeerAccountId?: string;
+  limit?: number;
+}
+
 interface KeyPackageRow {
   key_package_reference: string;
   account_id: string;
@@ -1167,6 +1175,64 @@ export function listMlsTransportEventsInRepository(
   ).map(eventView);
 }
 
+export function listMlsInboundConversationPeersInRepository(
+  store: MlsTransportStore,
+  raw: ListMlsInboundConversationPeersInput,
+): string[] {
+  const organizationId = requireMlsIdentifier(
+    raw.organizationId,
+    'organization id',
+  );
+  const accountId = requireMlsIdentifier(raw.accountId, 'account id');
+  const deviceId = requireMlsIdentifier(raw.deviceId, 'device id');
+  const afterPeerAccountId = raw.afterPeerAccountId
+    ? requireMlsIdentifier(raw.afterPeerAccountId, 'peer account cursor')
+    : '';
+  const limit = raw.limit ?? 100;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
+    throw new Error('MLS inbound conversation limit is invalid');
+  }
+  if (!store.getActiveAccountInOrganization(accountId, organizationId)) {
+    throw new Error('MLS participant is not active in organization');
+  }
+  const database = store.db();
+  requireActiveApprovedDevice(database, organizationId, accountId, deviceId);
+  const rows = database
+    .prepare(
+      `SELECT DISTINCT event.sender_account_id AS peer_account_id
+       FROM mls_transport_events AS event
+       JOIN mls_conversations AS conversation
+         ON conversation.organization_id = event.organization_id
+        AND conversation.conversation_id = event.conversation_id
+        AND conversation.active_generation = event.session_generation
+       JOIN accounts AS peer
+         ON peer.organization_id = event.organization_id
+        AND peer.id = event.sender_account_id
+        AND peer.status = 'active'
+       WHERE event.organization_id = ?
+         AND event.event_type = 'welcome'
+         AND event.recipient_account_id = ?
+         AND event.recipient_device_id = ?
+         AND event.expires_at > ?
+         AND event.sender_account_id > ?
+         AND event.sender_account_id <> ?
+       ORDER BY peer_account_id
+       LIMIT ?`,
+    )
+    .all(
+      organizationId,
+      accountId,
+      deviceId,
+      isoTime(storeNow(store)),
+      afterPeerAccountId,
+      accountId,
+      limit,
+    ) as Array<{ peer_account_id: string }>;
+  return rows.map((row) =>
+    requireMlsIdentifier(row.peer_account_id, 'peer account id'),
+  );
+}
+
 export function cleanupExpiredMlsResourcesInRepository(
   store: MlsTransportStore,
   input: { beforeMs?: number; limit?: number } = {},
@@ -1318,6 +1384,9 @@ export function createMlsTransportFacade(store: MlsTransportStore) {
     listMlsTransportEvents: (
       input: Parameters<typeof listMlsTransportEventsInRepository>[1],
     ) => listMlsTransportEventsInRepository(store, input),
+    listMlsInboundConversationPeers: (
+      input: ListMlsInboundConversationPeersInput,
+    ) => listMlsInboundConversationPeersInRepository(store, input),
     cleanupExpiredMlsResources: (
       input?: Parameters<typeof cleanupExpiredMlsResourcesInRepository>[1],
     ) => cleanupExpiredMlsResourcesInRepository(store, input),

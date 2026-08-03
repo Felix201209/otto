@@ -759,6 +759,20 @@ CREATE INDEX mls_group_sessions_retired
   WHERE status = 'retired';
 `,
   },
+  {
+    version: 11,
+    name: 'mls-inbound-welcome-discovery-index',
+    sql: `
+CREATE INDEX mls_transport_events_inbound_welcome
+  ON mls_transport_events (
+    organization_id,
+    recipient_account_id,
+    recipient_device_id,
+    sender_account_id COLLATE "C"
+  ) INCLUDE (expires_at, conversation_id, session_generation)
+  WHERE event_type = 'welcome';
+`,
+  },
 ];
 
 export const ENTERPRISE_POSTGRES_SCHEMA_VERSION =
