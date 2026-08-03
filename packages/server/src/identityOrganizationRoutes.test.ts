@@ -90,6 +90,7 @@ describe('identity_organization route service boundary', () => {
     expect(services.createOrganizationDepartment).toHaveBeenCalledWith({
       organizationId: 'org-safe',
       name: 'Engineering',
+      parentDepartmentId: null,
     });
   });
 

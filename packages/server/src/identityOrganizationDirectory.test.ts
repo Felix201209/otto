@@ -18,6 +18,7 @@ function createDatabase(): Database {
       slug TEXT NOT NULL UNIQUE,
       invite_secret TEXT NOT NULL,
       park_id TEXT,
+      industry TEXT,
       park_address TEXT,
       park_room_number TEXT,
       status TEXT NOT NULL DEFAULT 'active',
@@ -47,21 +48,23 @@ function insertOrganization(
     parkId?: string | null;
     address?: string | null;
     roomNumber?: string | null;
+    industry?: string | null;
     status?: 'active' | 'disabled';
   },
 ): void {
   database
     .prepare(
       `INSERT INTO organizations
-       (id, name, slug, invite_secret, park_id, park_address, park_room_number,
+       (id, name, slug, invite_secret, park_id, industry, park_address, park_room_number,
         status, created_at, updated_at)
-       VALUES (?, ?, ?, 'secret', ?, ?, ?, ?, '2026-01-01', '2026-01-02')`,
+       VALUES (?, ?, ?, 'secret', ?, ?, ?, ?, ?, '2026-01-01', '2026-01-02')`,
     )
     .run(
       input.id,
       input.name,
       input.slug,
       input.parkId ?? null,
+      input.industry ?? null,
       input.address ?? null,
       input.roomNumber ?? null,
       input.status ?? 'active',
@@ -100,6 +103,7 @@ describe('identity_organization organization directory kernel', () => {
       parkId: 'park-1',
       address: '创新路 1 号',
       roomNumber: 'A-101',
+      industry: '软件服务',
       status: 'disabled',
     });
     insertOrganization(database, {
@@ -119,6 +123,7 @@ describe('identity_organization organization directory kernel', () => {
         name: 'Zeta',
         slug: 'zeta',
         parkId: 'park-1',
+        industry: '软件服务',
         parkAddress: '创新路 1 号',
         parkRoomNumber: 'A-101',
         status: 'disabled',
@@ -130,6 +135,7 @@ describe('identity_organization organization directory kernel', () => {
         parkId: null,
         parkAddress: null,
         parkRoomNumber: null,
+        industry: null,
       });
     } finally {
       database.close();
