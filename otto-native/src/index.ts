@@ -1153,6 +1153,8 @@ export class OpenMlsNativeKernel {
     expectedGroupId: string,
     expectedEpoch: number,
     senderDeviceId: string,
+    expectedAddedDeviceId: string | null = null,
+    expectedAddedKeyPackageReference: string | null = null,
   ): Promise<MlsGroupState> {
     await this.init();
     const conversation = mlsConversationId(conversationId);
@@ -1167,7 +1169,13 @@ export class OpenMlsNativeKernel {
       !isBase64(expectedGroupId) ||
       !Number.isSafeInteger(expectedEpoch) ||
       expectedEpoch < 1 ||
-      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(senderDeviceId)
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(senderDeviceId) ||
+      (expectedAddedDeviceId === null) !==
+        (expectedAddedKeyPackageReference === null) ||
+      (expectedAddedDeviceId !== null &&
+        !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(expectedAddedDeviceId)) ||
+      (expectedAddedKeyPackageReference !== null &&
+        !/^[0-9a-f]{64}$/.test(expectedAddedKeyPackageReference))
     ) {
       throw new Error('MLS transport Commit parameters are invalid');
     }
@@ -1182,6 +1190,8 @@ export class OpenMlsNativeKernel {
         expected_group_id: expectedGroupId,
         expected_epoch: expectedEpoch,
         sender_device_id: senderDeviceId,
+        expected_added_device_id: expectedAddedDeviceId,
+        expected_added_key_package_reference: expectedAddedKeyPackageReference,
       });
     } catch (error) {
       // Authentication or policy failures can quarantine the conversation in

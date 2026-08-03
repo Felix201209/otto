@@ -9,7 +9,10 @@ import {
   Database,
 } from '../data_platform/index.js';
 import { COLLABORATION_SCHEMA_CONTRIBUTOR } from './collaborationSchema.js';
-import { createMlsTransportFacade } from './mlsTransportRepository.js';
+import {
+  createMlsTransportFacade,
+  parseMlsMemberAddCommitEnvelope,
+} from './mlsTransportRepository.js';
 import type { MlsResourceGovernancePolicy } from './mlsTransportRepository.js';
 
 const MLS_SUITE = 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519' as const;
@@ -18,10 +21,12 @@ function opaque(value: string): string {
   return Buffer.from(value.repeat(24), 'utf8').toString('base64');
 }
 
-function createHarness(options: {
-  policy?: Partial<MlsResourceGovernancePolicy>;
-  nowMs?: number;
-} = {}) {
+function createHarness(
+  options: {
+    policy?: Partial<MlsResourceGovernancePolicy>;
+    nowMs?: number;
+  } = {},
+) {
   let nowMs = options.nowMs ?? Date.now();
   const database = new Database(':memory:');
   database.exec(`
@@ -238,8 +243,9 @@ describe('MLS ciphertext transport repository', () => {
       ).toThrow(/active and approved/i);
       expect(
         (
-          database.prepare('PRAGMA index_list(mls_key_packages)').all() as
-            Array<{ name: string }>
+          database
+            .prepare('PRAGMA index_list(mls_key_packages)')
+            .all() as Array<{ name: string }>
         ).map((index) => index.name),
       ).toContain('idx_mls_key_packages_device_inventory');
 
@@ -273,7 +279,7 @@ describe('MLS ciphertext transport repository', () => {
         recipientAccountId: 'bob',
       });
       const groupId = opaque('group');
-      facade.appendMlsTransportEvent({
+      const commit = facade.appendMlsTransportEvent({
         organizationId: 'org-a',
         senderAccountId: 'alice',
         peerAccountId: 'bob',
@@ -283,6 +289,19 @@ describe('MLS ciphertext transport repository', () => {
         epoch: 1,
         groupId,
         payload: opaque('commit'),
+        recipientDeviceId: 'bob-1',
+        keyPackageReference: published.reference,
+      });
+      expect(commit).toMatchObject({
+        eventType: 'commit',
+        recipientAccountId: null,
+        recipientDeviceId: null,
+        keyPackageReference: null,
+      });
+      expect(parseMlsMemberAddCommitEnvelope(commit.payload)).toEqual({
+        commit: opaque('commit'),
+        recipientDeviceId: 'bob-1',
+        keyPackageReference: published.reference,
       });
       const welcome = facade.appendMlsTransportEvent({
         organizationId: 'org-a',
@@ -351,6 +370,8 @@ describe('MLS ciphertext transport repository', () => {
         epoch: 1,
         groupId,
         payload: opaque(`commit-${suffix}`),
+        recipientDeviceId: 'bob-1',
+        keyPackageReference: published.reference,
       });
       facade.appendMlsTransportEvent({
         organizationId: 'org-a',
@@ -379,8 +400,9 @@ describe('MLS ciphertext transport repository', () => {
       ).toEqual(['alice', 'carol']);
       expect(
         (
-          database.prepare('PRAGMA index_list(mls_transport_events)').all() as
-            Array<{ name: string }>
+          database
+            .prepare('PRAGMA index_list(mls_transport_events)')
+            .all() as Array<{ name: string }>
         ).map((index) => index.name),
       ).toContain('idx_mls_transport_events_inbound_welcome');
       expect(

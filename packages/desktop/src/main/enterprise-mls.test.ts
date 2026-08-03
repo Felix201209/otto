@@ -16,6 +16,7 @@ import {
   EnterpriseMlsSessionManager,
   EnterpriseMlsOutboxRetryScheduler,
   enterpriseMlsDirectConversationId,
+  parseEnterpriseMlsTransportEvent,
   type EnterpriseMlsKeyPackageInventory,
   type EnterpriseMlsSessionOperations,
   type EnterpriseMlsTransportClient,
@@ -110,13 +111,13 @@ function fakeKernel() {
     })),
     encryptTransportApplication: vi.fn(
       async (conversationId: string, peerAccountId: string) => ({
-      protocol: 'mls10-openmls-0.8' as const,
-      event_id: `mls-${'a'.repeat(64)}`,
-      conversation_id: conversationId,
-      peer_account_id: peerAccountId,
-      group_id: 'Z3JvdXA=',
-      epoch: 1,
-      ciphertext: 'Y2lwaGVydGV4dA==',
+        protocol: 'mls10-openmls-0.8' as const,
+        event_id: `mls-${'a'.repeat(64)}`,
+        conversation_id: conversationId,
+        peer_account_id: peerAccountId,
+        group_id: 'Z3JvdXA=',
+        epoch: 1,
+        ciphertext: 'Y2lwaGVydGV4dA==',
       }),
     ),
     listPendingApplications: vi.fn(
@@ -364,10 +365,7 @@ describe('EnterpriseMlsSessionManager', () => {
 
     await manager.createGroup('account-b');
     await manager.inspectGroup('account-b');
-    await manager.encryptTransportApplication(
-      'account-b',
-      new Uint8Array([2]),
-    );
+    await manager.encryptTransportApplication('account-b', new Uint8Array([2]));
     await manager.listPendingApplications('account-b');
     await manager.listPendingApplicationPeers();
     await manager.listConversationPeers();
@@ -596,10 +594,23 @@ function coordinatorHarness(keyPackages: MlsKeyPackage[] = []) {
     acknowledgePendingApplication: vi.fn(async () => undefined),
     transportCursor: vi.fn(async () => 0),
     advanceTransportCursor: vi.fn(async () => undefined),
-    receiveTransportCommit: vi.fn(async () => ({
-      ...group,
-      epoch: group.epoch + 1,
-    })),
+    receiveTransportCommit: vi.fn(
+      async (
+        _peerAccountId: string,
+        _commit: string,
+        _sequence: number,
+        _expectedGroupId: string,
+        _expectedEpoch: number,
+        _senderDeviceId: string,
+        _expectedAddedDeviceId?: string | null,
+        expectedAddedKeyPackageReference?: string | null,
+      ) => ({
+        ...group,
+        epoch: group.epoch + 1,
+        member_count:
+          group.member_count + (expectedAddedKeyPackageReference ? 1 : 0),
+      }),
+    ),
     receiveTransportApplication: vi.fn(
       async (
         _peerAccountId: string,
@@ -680,12 +691,18 @@ function coordinatorHarness(keyPackages: MlsKeyPackage[] = []) {
       senderAccountId: 'account-a',
       senderDeviceId: input.senderDeviceId,
       recipientAccountId: input.eventType === 'welcome' ? peerAccountId : null,
-      recipientDeviceId: input.recipientDeviceId ?? null,
+      recipientDeviceId:
+        input.eventType === 'welcome'
+          ? (input.recipientDeviceId ?? null)
+          : null,
       eventType: input.eventType,
       epoch: input.epoch,
       groupId: input.groupId,
       payload: input.payload,
-      keyPackageReference: input.keyPackageReference ?? null,
+      keyPackageReference:
+        input.eventType === 'welcome'
+          ? (input.keyPackageReference ?? null)
+          : null,
       createdAt: '2026-08-02T00:02:00.000Z',
       expiresAt: '2026-10-31T00:02:00.000Z',
     })),
@@ -730,6 +747,32 @@ function transportEvent(
     ...overrides,
   };
 }
+
+describe('parseEnterpriseMlsTransportEvent', () => {
+  it('unwraps a server-verified member-add Commit without changing delivery fields', () => {
+    const commit = 'bWVtYmVyc2hpcC1jb21taXQ=';
+    const payload = Buffer.from(
+      'otto:mls:member-add:v1:' +
+        JSON.stringify({
+          commit,
+          recipientDeviceId: 'device-a-2',
+          keyPackageReference: 'c'.repeat(64),
+        }),
+      'utf8',
+    ).toString('base64');
+
+    expect(
+      parseEnterpriseMlsTransportEvent(transportEvent({ payload })),
+    ).toMatchObject({
+      payload: commit,
+      recipientAccountId: null,
+      recipientDeviceId: null,
+      keyPackageReference: null,
+      memberAddDeviceId: 'device-a-2',
+      memberAddKeyPackageReference: 'c'.repeat(64),
+    });
+  });
+});
 
 describe('EnterpriseMlsSessionCoordinator', () => {
   it('reuses server inventory and replaces only unavailable local KeyPackages', async () => {
@@ -1240,8 +1283,50 @@ describe('EnterpriseMlsSessionCoordinator', () => {
       commit.groupId,
       commit.epoch,
       commit.senderDeviceId,
+      null,
+      null,
     );
     expect(sessions.advanceTransportCursor).not.toHaveBeenCalled();
+  });
+
+  it('passes a verified KeyPackage target into a remote membership Commit', async () => {
+    const { group, sessions, transport } = coordinatorHarness();
+    sessions.transportCursor.mockResolvedValue(7);
+    sessions.inspectGroup.mockResolvedValue({
+      ...group,
+      pending_commit: false,
+      pending_invitation: null,
+    });
+    const commit = transportEvent({
+      sequence: 8,
+      eventId: `mls-${'6'.repeat(64)}`,
+      epoch: 2,
+      payload: 'bWVtYmVyc2hpcC1jb21taXQ=',
+      memberAddDeviceId: 'device-a-2',
+      memberAddKeyPackageReference: 'c'.repeat(64),
+    });
+    transport.listMlsTransportEvents.mockResolvedValue([commit]);
+    const coordinator = new EnterpriseMlsSessionCoordinator(
+      sessions,
+      transport,
+    );
+
+    await expect(coordinator.poll('account-b')).resolves.toMatchObject({
+      previousSequence: 7,
+      nextSequence: 8,
+      processedEvents: 1,
+      messages: [],
+    });
+    expect(sessions.receiveTransportCommit).toHaveBeenCalledWith(
+      'account-b',
+      commit.payload,
+      commit.sequence,
+      commit.groupId,
+      commit.epoch,
+      commit.senderDeviceId,
+      'device-a-2',
+      'c'.repeat(64),
+    );
   });
 
   it('fails closed when a remote Commit skips an epoch', async () => {

@@ -22,6 +22,8 @@ import {
   MLS_CIPHERSUITE,
   MLS_KEY_PACKAGE_MAX_BYTES,
   MLS_TRANSPORT_PAYLOAD_MAX_BYTES,
+  encodeMlsMemberAddCommitEnvelope,
+  parseMlsMemberAddCommitEnvelope,
   resolveMlsResourceGovernancePolicy,
   e2eeDeviceApprovalSignaturePayload,
   e2eeDeviceKeyFingerprint,
@@ -2247,32 +2249,46 @@ export function createPostgresEnterpriseCoreRepository(input: {
     }
     const epoch = requireMlsEpoch(raw.epoch);
     const groupId = requireMlsBase64(raw.groupId, 'MLS group id', 255);
-    const payload = requireMlsBase64(
+    const rawPayload = requireMlsBase64(
       raw.payload,
       'MLS transport payload',
       MLS_TRANSPORT_PAYLOAD_MAX_BYTES,
     );
-    const recipientDeviceId =
-      raw.eventType === 'welcome'
-        ? requiredIdentifier(raw.recipientDeviceId ?? '', 'recipient device id')
-        : null;
-    const keyPackageReference =
-      raw.eventType === 'welcome'
-        ? requireMlsKeyPackageReference(raw.keyPackageReference ?? '')
-        : null;
-    const resetFromGroupId = raw.resetFromGroupId
-      ? requireMlsBase64(
-          raw.resetFromGroupId,
-          'MLS reset source group id',
-          255,
-        )
-      : null;
+    const hasSuppliedKeyPackageTarget =
+      raw.recipientDeviceId != null || raw.keyPackageReference != null;
     if (
-      raw.eventType !== 'welcome' &&
-      (raw.recipientDeviceId || raw.keyPackageReference)
+      (raw.recipientDeviceId == null) !== (raw.keyPackageReference == null) ||
+      (raw.eventType === 'welcome' && !hasSuppliedKeyPackageTarget) ||
+      (raw.eventType === 'application' && hasSuppliedKeyPackageTarget)
     ) {
-      throw new Error('only MLS Welcome may target a KeyPackage device');
+      throw new Error('MLS KeyPackage target binding is invalid');
     }
+    const targetDeviceId = hasSuppliedKeyPackageTarget
+      ? requiredIdentifier(raw.recipientDeviceId ?? '', 'recipient device id')
+      : null;
+    const targetKeyPackageReference = hasSuppliedKeyPackageTarget
+      ? requireMlsKeyPackageReference(raw.keyPackageReference ?? '')
+      : null;
+    const isMemberAddCommit =
+      raw.eventType === 'commit' && hasSuppliedKeyPackageTarget;
+    const payload = isMemberAddCommit
+      ? requireMlsBase64(
+          encodeMlsMemberAddCommitEnvelope({
+            commit: rawPayload,
+            recipientDeviceId: targetDeviceId!,
+            keyPackageReference: targetKeyPackageReference!,
+          }),
+          'MLS member-add Commit envelope',
+          MLS_TRANSPORT_PAYLOAD_MAX_BYTES,
+        )
+      : rawPayload;
+    const recipientDeviceId =
+      raw.eventType === 'welcome' ? targetDeviceId : null;
+    const keyPackageReference =
+      raw.eventType === 'welcome' ? targetKeyPackageReference : null;
+    const resetFromGroupId = raw.resetFromGroupId
+      ? requireMlsBase64(raw.resetFromGroupId, 'MLS reset source group id', 255)
+      : null;
     if (
       resetFromGroupId &&
       (raw.eventType !== 'commit' ||
@@ -2393,11 +2409,7 @@ export function createPostgresEnterpriseCoreRepository(input: {
       } else {
         sessionGeneration = Number(conversation.active_generation);
         if (conversation.group_id !== groupId) {
-          if (
-            raw.eventType !== 'commit' ||
-            epoch !== 1 ||
-            !resetFromGroupId
-          ) {
+          if (raw.eventType !== 'commit' || epoch !== 1 || !resetFromGroupId) {
             throw new Error(
               'a new MLS group requires an explicit MLS session reset',
             );
@@ -2420,12 +2432,7 @@ export function createPostgresEnterpriseCoreRepository(input: {
              WHERE organization_id = $1 AND conversation_id = $2
                AND generation = $3 AND status = 'active'
              RETURNING *`,
-            [
-              organizationId,
-              direct.conversationId,
-              sessionGeneration,
-              now.iso,
-            ],
+            [organizationId, direct.conversationId, sessionGeneration, now.iso],
           );
           if (!retired.rows[0]) {
             throw new Error('MLS active group session state is inconsistent');
@@ -2481,17 +2488,10 @@ export function createPostgresEnterpriseCoreRepository(input: {
                WHERE organization_id = $1 AND conversation_id = $2
                  AND generation = $3 AND status = 'active'
                RETURNING *`,
-              [
-                organizationId,
-                direct.conversationId,
-                sessionGeneration,
-                epoch,
-              ],
+              [organizationId, direct.conversationId, sessionGeneration, epoch],
             );
             if (!sessionUpdated.rows[0]) {
-              throw new Error(
-                'MLS active group session state is inconsistent',
-              );
+              throw new Error('MLS active group session state is inconsistent');
             }
           } else if (epoch !== Number(conversation.current_epoch)) {
             throw new Error('MLS event must use the current epoch');
@@ -2499,33 +2499,66 @@ export function createPostgresEnterpriseCoreRepository(input: {
         }
       }
 
-      if (raw.eventType === 'welcome') {
+      if (isMemberAddCommit || raw.eventType === 'welcome') {
         await requirePostgresMlsDevice(
           client,
           organizationId,
           peerAccountId,
-          recipientDeviceId!,
+          targetDeviceId!,
         );
         const claimed = await client.query<MlsKeyPackageRow>(
           `SELECT * FROM mls_key_packages
            WHERE organization_id = $1 AND key_package_reference = $2
            FOR UPDATE`,
-          [organizationId, keyPackageReference],
+          [organizationId, targetKeyPackageReference],
         );
         const packageRow = claimed.rows[0];
         if (
           !packageRow ||
           packageRow.account_id !== peerAccountId ||
-          packageRow.device_id !== recipientDeviceId ||
+          packageRow.device_id !== targetDeviceId ||
           packageRow.claimed_by_account_id !== senderAccountId ||
           packageRow.claimed_by_device_id !== senderDeviceId ||
           !packageRow.claimed_at ||
-          packageRow.welcome_event_id ||
+          (isMemberAddCommit
+            ? packageRow.welcome_event_id !== null
+            : packageRow.welcome_event_id === null) ||
           iso(packageRow.expires_at)! <= now.iso
         ) {
           throw new Error(
-            'MLS Welcome does not match an unused KeyPackage claim for this device',
+            'MLS event does not match the verified KeyPackage claim for this device',
           );
+        }
+        if (raw.eventType === 'welcome') {
+          const membershipCommit = await client.query<MlsEventRow>(
+            `SELECT * FROM mls_transport_events
+             WHERE organization_id = $1 AND id = $2
+               AND conversation_id = $3 AND session_generation = $4
+               AND sender_account_id = $5 AND sender_device_id = $6
+               AND event_type = 'commit' AND epoch = $7 AND group_id = $8`,
+            [
+              organizationId,
+              packageRow.welcome_event_id,
+              direct.conversationId,
+              sessionGeneration,
+              senderAccountId,
+              senderDeviceId,
+              epoch,
+              groupId,
+            ],
+          );
+          const envelope = membershipCommit.rows[0]
+            ? parseMlsMemberAddCommitEnvelope(membershipCommit.rows[0].payload)
+            : null;
+          if (
+            !envelope ||
+            envelope.recipientDeviceId !== targetDeviceId ||
+            envelope.keyPackageReference !== targetKeyPackageReference
+          ) {
+            throw new Error(
+              'MLS Welcome is missing its verified membership Commit',
+            );
+          }
         }
       }
 
@@ -2558,11 +2591,11 @@ export function createPostgresEnterpriseCoreRepository(input: {
           ).toISOString(),
         ],
       );
-      if (raw.eventType === 'welcome') {
+      if (isMemberAddCommit || raw.eventType === 'welcome') {
         await client.query(
           `UPDATE mls_key_packages SET welcome_event_id = $3
            WHERE organization_id = $1 AND key_package_reference = $2`,
-          [organizationId, keyPackageReference, eventId],
+          [organizationId, targetKeyPackageReference, eventId],
         );
       }
       return mlsEventView(inserted.rows[0]!);

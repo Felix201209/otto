@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 
 import { currentLegalDocumentReferences } from '../modules/data_governance/index.js';
+import { parseMlsMemberAddCommitEnvelope } from '../modules/collaboration/index.js';
 import { ENTERPRISE_POSTGRES_MIGRATIONS } from './postgresMigrations.js';
 import {
   createPostgresEnterpriseCoreRepository,
@@ -481,10 +482,15 @@ describe('PostgreSQL enterprise core authority', () => {
     expect(client.release).toHaveBeenCalledOnce();
   });
 
-  it('stores an initial PostgreSQL MLS Commit as opaque bytes at epoch one', async () => {
+  it('binds an initial PostgreSQL MLS Commit and Welcome to one KeyPackage claim', async () => {
     const statements: Array<{ sql: string; values: readonly unknown[] }> = [];
     const groupId = Buffer.from('group').toString('base64');
     const payload = Buffer.from('commit').toString('base64');
+    const welcomePayload = Buffer.from('welcome').toString('base64');
+    const keyPackageReference = 'a'.repeat(64);
+    let conversationCreated = false;
+    let reservedEventId: string | null = null;
+    let storedCommitPayload = '';
     const client: PostgresClientLike = {
       query: vi.fn(async (sql: string, values: readonly unknown[] = []) => {
         statements.push({ sql, values });
@@ -495,6 +501,27 @@ describe('PostgreSQL enterprise core authority', () => {
           return result([{ available: 1 }]);
         }
         if (sql.includes('SELECT * FROM mls_transport_events')) {
+          if (sql.includes("event_type = 'commit'")) {
+            return result([
+              {
+                sequence: 1,
+                id: 'commit-1',
+                conversation_id: 'b'.repeat(64),
+                session_generation: 1,
+                sender_account_id: 'acc_alice',
+                sender_device_id: 'alice-device',
+                recipient_account_id: null,
+                recipient_device_id: null,
+                event_type: 'commit',
+                epoch: 1,
+                group_id: groupId,
+                payload: storedCommitPayload,
+                key_package_reference: null,
+                created_at: new Date('2026-08-01T00:00:00.000Z'),
+                expires_at: new Date('2026-10-30T00:00:00.000Z'),
+              },
+            ]);
+          }
           return result();
         }
         if (sql.includes('INSERT INTO mls_resource_rate_buckets')) {
@@ -511,24 +538,69 @@ describe('PostgreSQL enterprise core authority', () => {
           ]);
         }
         if (sql.includes('SELECT * FROM mls_conversations')) {
+          return conversationCreated
+            ? result([
+                {
+                  conversation_id: 'b'.repeat(64),
+                  participant_a_account_id: 'acc_alice',
+                  participant_b_account_id: 'acc_bob',
+                  group_id: groupId,
+                  current_epoch: 1,
+                  active_generation: 1,
+                  retention_floor_sequence: 0,
+                  created_at: new Date('2026-08-01T00:00:00.000Z'),
+                  updated_at: new Date('2026-08-01T00:00:00.000Z'),
+                },
+              ])
+            : result();
+        }
+        if (sql.includes('INSERT INTO mls_conversations')) {
+          conversationCreated = true;
+          return result();
+        }
+        if (sql.includes('SELECT * FROM mls_key_packages')) {
+          return result([
+            {
+              key_package_reference: keyPackageReference,
+              account_id: 'acc_bob',
+              device_id: 'bob-device',
+              ciphersuite: 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519',
+              key_package: Buffer.from('key-package').toString('base64'),
+              created_at: new Date('2026-08-01T00:00:00.000Z'),
+              claimed_at: new Date('2026-08-01T00:00:01.000Z'),
+              claimed_by_account_id: 'acc_alice',
+              claimed_by_device_id: 'alice-device',
+              welcome_event_id: reservedEventId,
+              expires_at: new Date('2099-08-02T00:00:00.000Z'),
+            },
+          ]);
+        }
+        if (sql.includes('UPDATE mls_key_packages')) {
+          reservedEventId = values[2] as string;
           return result();
         }
         if (sql.includes('INSERT INTO mls_transport_events')) {
+          const storedPayload = values[11] as string;
+          const eventType = values[8] as 'commit' | 'welcome';
+          if (eventType === 'commit') storedCommitPayload = storedPayload;
           return result([
             {
-              sequence: 1,
-              id: 'commit-1',
+              sequence: eventType === 'commit' ? 1 : 2,
+              id: values[0] as string,
               conversation_id: 'b'.repeat(64),
               session_generation: 1,
               sender_account_id: 'acc_alice',
               sender_device_id: 'alice-device',
-              recipient_account_id: null,
-              recipient_device_id: null,
-              event_type: 'commit',
+              recipient_account_id:
+                eventType === 'welcome' ? 'acc_bob' : null,
+              recipient_device_id:
+                eventType === 'welcome' ? 'bob-device' : null,
+              event_type: eventType,
               epoch: 1,
               group_id: groupId,
-              payload,
-              key_package_reference: null,
+              payload: storedPayload,
+              key_package_reference:
+                eventType === 'welcome' ? keyPackageReference : null,
               created_at: new Date('2026-08-01T00:00:00.000Z'),
               expires_at: new Date('2026-10-30T00:00:00.000Z'),
             },
@@ -556,26 +628,62 @@ describe('PostgreSQL enterprise core authority', () => {
         epoch: 1,
         groupId,
         payload,
+        recipientDeviceId: 'bob-device',
+        keyPackageReference,
       }),
     ).resolves.toMatchObject({
       eventId: 'commit-1',
       eventType: 'commit',
       epoch: 1,
       groupId,
-      payload,
       sessionGeneration: 1,
     });
+    const inserted = statements.find((statement) =>
+      statement.sql.includes('INSERT INTO mls_transport_events'),
+    );
+    const storedPayload = inserted?.values[11] as string;
+    expect(parseMlsMemberAddCommitEnvelope(storedPayload)).toEqual({
+      commit: payload,
+      recipientDeviceId: 'bob-device',
+      keyPackageReference,
+    });
+    await expect(
+      repository.appendMlsTransportEvent({
+        organizationId: 'org_default',
+        senderAccountId: 'acc_alice',
+        peerAccountId: 'acc_bob',
+        senderDeviceId: 'alice-device',
+        eventId: 'welcome-1',
+        eventType: 'welcome',
+        epoch: 1,
+        groupId,
+        payload: welcomePayload,
+        recipientDeviceId: 'bob-device',
+        keyPackageReference,
+      }),
+    ).resolves.toMatchObject({
+      eventId: 'welcome-1',
+      eventType: 'welcome',
+      payload: welcomePayload,
+      recipientDeviceId: 'bob-device',
+      keyPackageReference,
+    });
+    expect(reservedEventId).toBe('welcome-1');
     expect(
       statements.some((statement) =>
         statement.sql.includes('INSERT INTO mls_group_sessions'),
       ),
     ).toBe(true);
-    const inserted = statements.find((statement) =>
-      statement.sql.includes('INSERT INTO mls_transport_events'),
-    );
     expect(inserted?.values).toEqual(
-      expect.arrayContaining(['commit-1', 'acc_alice', groupId, payload]),
+      expect.arrayContaining(['commit-1', 'acc_alice', groupId, storedPayload]),
     );
+    expect(
+      statements.some(
+        (statement) =>
+          statement.sql.includes('UPDATE mls_key_packages') &&
+          statement.values.includes(keyPackageReference),
+      ),
+    ).toBe(true);
     expect(statements.map((statement) => statement.sql).join('\n')).not.toMatch(
       /plaintext|private_key/i,
     );

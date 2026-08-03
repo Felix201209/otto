@@ -682,6 +682,9 @@ fn handle_request(
             let sender_device_id = p["sender_device_id"]
                 .as_str()
                 .ok_or("Missing sender_device_id")?;
+            let expected_added_device_id = p["expected_added_device_id"].as_str();
+            let expected_added_key_package_reference =
+                p["expected_added_key_package_reference"].as_str();
             serde_json::to_value(mls_kernel.receive_transport_commit(
                 scope,
                 conversation,
@@ -691,6 +694,8 @@ fn handle_request(
                 expected_group_id,
                 expected_epoch,
                 sender_device_id,
+                expected_added_device_id,
+                expected_added_key_package_reference,
             )?)
             .map_err(|error| format!("MLS response serialization failed: {error}"))
         }

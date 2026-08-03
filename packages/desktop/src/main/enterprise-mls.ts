@@ -76,8 +76,47 @@ export interface EnterpriseMlsTransportEvent {
   groupId: string;
   payload: string;
   keyPackageReference: string | null;
+  memberAddDeviceId?: string | null;
+  memberAddKeyPackageReference?: string | null;
   createdAt: string;
   expiresAt: string;
+}
+
+const MLS_MEMBER_ADD_ENVELOPE_PREFIX = 'otto:mls:member-add:v1:';
+
+function parseMemberAddCommitEnvelope(payload: string): {
+  commit: string;
+  recipientDeviceId: string;
+  keyPackageReference: string;
+} | null {
+  const decoded = Buffer.from(payload, 'base64').toString('utf8');
+  if (!decoded.startsWith(MLS_MEMBER_ADD_ENVELOPE_PREFIX)) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(decoded.slice(MLS_MEMBER_ADD_ENVELOPE_PREFIX.length));
+  } catch {
+    throw new Error('enterprise MLS member-add Commit envelope is invalid');
+  }
+  const envelope = parsed as {
+    commit?: unknown;
+    recipientDeviceId?: unknown;
+    keyPackageReference?: unknown;
+  };
+  if (
+    typeof envelope.commit !== 'string' ||
+    !isMlsBase64(envelope.commit, 1024 * 1024) ||
+    typeof envelope.recipientDeviceId !== 'string' ||
+    !IDENTIFIER.test(envelope.recipientDeviceId) ||
+    typeof envelope.keyPackageReference !== 'string' ||
+    !isMlsReference(envelope.keyPackageReference)
+  ) {
+    throw new Error('enterprise MLS member-add Commit envelope is invalid');
+  }
+  return {
+    commit: envelope.commit,
+    recipientDeviceId: envelope.recipientDeviceId,
+    keyPackageReference: envelope.keyPackageReference,
+  };
 }
 
 export interface EnterpriseMlsTransportClient {
@@ -221,6 +260,8 @@ export interface EnterpriseMlsKernel {
     expectedGroupId: string,
     expectedEpoch: number,
     senderDeviceId: string,
+    expectedAddedDeviceId?: string | null,
+    expectedAddedKeyPackageReference?: string | null,
   ): Promise<MlsGroupState>;
   reset(): Promise<void>;
   close(): Promise<void>;
@@ -455,7 +496,20 @@ export function parseEnterpriseMlsTransportEvent(
   ) {
     throw new Error('enterprise MLS transport event binding is invalid');
   }
-  return { ...event } as EnterpriseMlsTransportEvent;
+  const memberAdd =
+    event.eventType === 'commit'
+      ? parseMemberAddCommitEnvelope(event.payload!)
+      : null;
+  return {
+    ...event,
+    payload: memberAdd?.commit ?? event.payload,
+    ...(memberAdd
+      ? {
+          memberAddDeviceId: memberAdd.recipientDeviceId,
+          memberAddKeyPackageReference: memberAdd.keyPackageReference,
+        }
+      : {}),
+  } as EnterpriseMlsTransportEvent;
 }
 
 export function parseEnterpriseMlsInboundConversationPeerPage(
@@ -796,6 +850,8 @@ export class EnterpriseMlsSessionManager {
     expectedGroupId: string,
     expectedEpoch: number,
     senderDeviceId: string,
+    expectedAddedDeviceId: string | null = null,
+    expectedAddedKeyPackageReference: string | null = null,
   ): Promise<MlsGroupState> {
     return this.withReadyKernel((active) =>
       active.kernel.receiveTransportCommit(
@@ -806,6 +862,8 @@ export class EnterpriseMlsSessionManager {
         expectedGroupId,
         expectedEpoch,
         senderDeviceId,
+        expectedAddedDeviceId,
+        expectedAddedKeyPackageReference,
       ),
     );
   }
@@ -973,6 +1031,8 @@ export interface EnterpriseMlsSessionOperations {
     expectedGroupId: string,
     expectedEpoch: number,
     senderDeviceId: string,
+    expectedAddedDeviceId?: string | null,
+    expectedAddedKeyPackageReference?: string | null,
   ): Promise<MlsGroupState>;
   receiveTransportApplication(
     peerAccountId: string,
@@ -1237,6 +1297,8 @@ export class EnterpriseMlsSessionCoordinator {
         epoch: targetEpoch,
         groupId: invitation.group_id,
         payload: invitation.commit,
+        recipientDeviceId: invitation.recipient_device_id,
+        keyPackageReference: invitation.key_package_reference,
       });
       const welcomeId = enterpriseMlsTransportEventId({
         conversationId,
@@ -1391,11 +1453,15 @@ export class EnterpriseMlsSessionCoordinator {
               event.groupId,
               event.epoch,
               event.senderDeviceId,
+              event.memberAddDeviceId ?? null,
+              event.memberAddKeyPackageReference ?? null,
             );
+            const expectedMemberCount =
+              group.member_count + (event.memberAddKeyPackageReference ? 1 : 0);
             if (
               updated.group_id !== event.groupId ||
               updated.epoch !== event.epoch ||
-              updated.member_count !== group.member_count
+              updated.member_count !== expectedMemberCount
             ) {
               throw new Error(
                 'remote MLS Commit result does not match transport bindings',

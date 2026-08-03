@@ -245,18 +245,25 @@ re-delivery. Inbox item and byte limits fail closed before decryption. A cursor
 never moves backwards. Events for another local device are skipped without
 attempting to consume that device's Welcome material.
 
-For an established direct session, a remote self-update Commit is parsed,
-authenticated, merged, and cursor-advanced by one native operation before the
-resulting encrypted snapshot is replaced. The Commit must bind the current
-group, exact next epoch, peer account and sender device, retain the exact member
-set, include an authenticated update path, and contain no queued proposals.
-Replay, epoch skips, tampering, Add/Remove, identity replacement, and other
-membership changes fail closed; authenticated-but-unsupported changes and
-OpenMLS panic paths quarantine the conversation until an explicit security
-reset. The native client persists that quarantined state even though the RPC
-returns an error, so restart cannot resurrect the rejected ratchet or its
-pending records. This is epoch update plumbing only and is not a claim of
-message-level forward secrecy, Double Ratchet, or post-compromise security.
+For an established direct session, a remote Commit is parsed, authenticated,
+merged, and cursor-advanced by one native operation before the resulting
+encrypted snapshot is replaced. A proposal-free self-update must bind the
+current group, exact next epoch, peer account and sender device, retain the
+exact member set, and include an authenticated update path. A membership
+Commit is accepted only when it contains exactly one Add proposal and the
+server-authenticated transport envelope binds that proposal to an approved,
+previously absent device of the local account and to the exact claimed
+KeyPackage reference. The resulting roster must be precisely the previous
+roster plus that device and remain within the 100-member limit. Replay, epoch
+skips, tampering, removal, duplicate devices, cross-account additions,
+identity replacement, mixed proposals, and unbound membership changes fail
+closed. Rejected authenticated changes and OpenMLS panic paths quarantine the
+conversation until an explicit security reset. The native client persists
+that quarantined state even though the RPC returns an error, so restart cannot
+resurrect the rejected ratchet or its pending records. This is guarded member
+addition and epoch-update plumbing only; it is not automatic multi-device
+orchestration and is not a claim of message-level forward secrecy, Double
+Ratchet, or post-compromise security.
 
 The server now exposes an inactive `e2ee_mls_transport_v1` foundation in both
 SQLite development mode and the PostgreSQL clustered authority. It publishes
@@ -353,18 +360,20 @@ sender, group, epoch and cursor bindings. It does not enumerate pending inbox
 records or return their plaintext to the JavaScript scheduler. Only an explicit
 future chat consumer may list those records; it must durably insert each
 returned message and then call the explicit inbox acknowledgement. Polling a
-later unsupported membership-changing remote Commit still fails closed and
-requires a security-state reset; proposal-free peer self-update Commits advance
-the epoch through the atomic native path described above. Device-scoped Welcome
-discovery does not implement invitation fanout or recovery for the user's
-other devices and does not activate the production MLS gate.
+server-bound, one-at-a-time local-device Add Commit uses the guarded native
+path described above; every other membership-changing Commit still fails
+closed and requires a security-state reset. Proposal-free peer self-update
+Commits advance the epoch through the same atomic path. Device-scoped Welcome
+discovery does not implement invitation fanout, automatic roster expansion, or
+recovery for the user's other devices and does not activate the production MLS
+gate.
 
 This is still not the active chat protocol. No production server advertises
 `e2ee_mls_v1`. If a server does advertise that capability, the desktop refuses
 to read or send through the legacy envelope instead of silently downgrading.
 The initial handshake, polling, durable inbox and outbox coordinator are not yet
-connected to the production chat composer or history writer. Processing later
-membership-changing Commits, wiring durable inbox delivery/acknowledgement into
+connected to the production chat composer or history writer. Automatic
+member-add orchestration, wiring durable inbox delivery/acknowledgement into
 chat, multi-device fan-out, user-visible safety-state reset, state recovery
 policy, multi-platform native packaging, and external review are still
 required. The release gate therefore keeps

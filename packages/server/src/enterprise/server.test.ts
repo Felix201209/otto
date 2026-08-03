@@ -2544,6 +2544,8 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
           eventType: 'commit',
           epoch: 1,
           payload: opaque('commit'),
+          recipientDeviceId: bobDevice.deviceId,
+          keyPackageReference: keyPackage.keyPackage.reference,
         })
       ).status,
     ).toBe(201);

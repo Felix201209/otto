@@ -9,7 +9,7 @@ use openmls::prelude::{
     tls_codec::{Deserialize, Serialize},
     BasicCredential, Ciphersuite, Credential, CredentialType, CredentialWithKey, GroupId,
     KeyPackage, KeyPackageIn, MlsGroup, MlsGroupCreateConfig, MlsGroupJoinConfig, MlsMessageBodyIn,
-    MlsMessageIn, ProcessedMessageContent, ProtocolVersion, StagedWelcome,
+    MlsMessageIn, ProcessedMessageContent, Proposal, ProtocolVersion, StagedWelcome,
 };
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
@@ -22,6 +22,7 @@ const PROTOCOL: &str = "mls10-openmls-0.8";
 const MAX_KEY_PACKAGE_BASE64: usize = 128 * 1024;
 const MAX_AVAILABLE_KEY_PACKAGES: usize = 100;
 const MAX_CONVERSATIONS: usize = 1_000;
+const MAX_DIRECT_SESSION_MEMBERS: usize = 100;
 const MAX_WELCOME_BASE64: usize = 2 * 1024 * 1024;
 const MAX_APPLICATION_BYTES: usize = 1024 * 1024;
 const MAX_CIPHERTEXT_BASE64: usize = 2 * 1024 * 1024;
@@ -1155,6 +1156,7 @@ impl MlsKernel {
         if group.pending_commit().is_some() {
             return Err("MLS member change is already pending".into());
         }
+        group.set_aad(conversation_aad(&conversation_id));
         let group_id = BASE64.encode(group.group_id().as_slice());
         let epoch = group.epoch().as_u64();
         let (commit, welcome, _) = group
@@ -1305,12 +1307,40 @@ impl MlsKernel {
         raw_expected_group_id: &str,
         expected_epoch: u64,
         raw_sender_device_id: &str,
+        raw_expected_added_device_id: Option<&str>,
+        raw_expected_added_key_package_reference: Option<&str>,
     ) -> Result<ExportedGroupState, String> {
         let scope = validate_scope(raw_scope)?;
         let conversation_id = validate_conversation_id(raw_conversation_id)?;
         let peer_account_id = validate_account_id(raw_peer_account_id)?;
         let expected_group_id = decode_base64("MLS group id", raw_expected_group_id, 128)?;
         let sender_device_id = validate_device_id(raw_sender_device_id)?;
+        let expected_addition = match (
+            raw_expected_added_device_id,
+            raw_expected_added_key_package_reference,
+        ) {
+            (None, None) => None,
+            (Some(device_id), Some(reference)) => {
+                let device_id = validate_device_id(device_id)?;
+                if !is_sha256(reference) {
+                    return Err("MLS Commit KeyPackage reference is invalid".into());
+                }
+                let local_account_id = scope
+                    .split('/')
+                    .nth(2)
+                    .ok_or_else(|| "MLS local account identity is missing".to_string())?;
+                let trust_prefix = scope
+                    .rsplit_once('/')
+                    .map(|(prefix, _)| prefix)
+                    .ok_or_else(|| "MLS device scope is invalid".to_string())?;
+                Some((
+                    format!("{trust_prefix}/{device_id}"),
+                    local_account_id.to_string(),
+                    reference.to_string(),
+                ))
+            }
+            _ => return Err("MLS Commit member addition binding is incomplete".into()),
+        };
         let serialized = decode_base64("MLS Commit", encoded_commit, MAX_WELCOME_BASE64)?;
         self.require_identity(&scope)?;
         if scope.split('/').nth(2) == Some(peer_account_id.as_str()) {
@@ -1394,14 +1424,56 @@ impl MlsKernel {
                 ProcessedMessageContent::StagedCommitMessage(staged) => staged,
                 _ => return Err("MLS message is not a Commit".into()),
             };
-            if staged.epoch().as_u64() != expected_epoch
-                || staged.self_removed()
-                || staged.queued_proposals().next().is_some()
-            {
+            if staged.epoch().as_u64() != expected_epoch || staged.self_removed() {
                 return Err(
                     "MLS direct-session Commit contains an unsupported membership or proposal change"
                         .into(),
                 );
+            }
+            let mut added_member_scopes = HashSet::new();
+            for queued in staged.queued_proposals() {
+                let Proposal::Add(add) = queued.proposal() else {
+                    return Err(
+                        "MLS direct-session Commit contains an unsupported membership or proposal change"
+                            .into(),
+                    );
+                };
+                let Some((expected_scope, expected_account_id, expected_reference)) =
+                    expected_addition.as_ref()
+                else {
+                    return Err("MLS Commit member addition lacks a server-verified binding".into());
+                };
+                if !added_member_scopes.is_empty() {
+                    return Err("MLS Commit may add only one device at a time".into());
+                }
+                let key_package = add.key_package();
+                let member_scope =
+                    validate_member_credential(key_package.leaf_node().credential(), &scope)?;
+                let member_account_id = member_scope
+                    .split('/')
+                    .nth(2)
+                    .ok_or_else(|| "MLS member account identity is missing".to_string())?;
+                let reference = hex::encode(
+                    key_package
+                        .hash_ref(self.provider.crypto())
+                        .map_err(|error| format!("MLS key package reference failed: {error}"))?
+                        .as_slice(),
+                );
+                if &member_scope != expected_scope
+                    || member_account_id != expected_account_id
+                    || &reference != expected_reference
+                    || current_member_scopes.contains(&member_scope)
+                {
+                    return Err("MLS Commit member addition binding is invalid".into());
+                }
+                added_member_scopes.insert(member_scope);
+            }
+            if expected_addition.is_some() != !added_member_scopes.is_empty() {
+                return Err("MLS Commit member addition binding is invalid".into());
+            }
+            if current_member_scopes.len() + added_member_scopes.len() > MAX_DIRECT_SESSION_MEMBERS
+            {
+                return Err("MLS direct-session member limit reached".into());
             }
             let update_scope = staged
                 .update_path_leaf_node()
@@ -1410,10 +1482,10 @@ impl MlsKernel {
             if update_scope != sender_scope {
                 return Err("MLS Commit update identity is invalid".into());
             }
-            Ok(staged)
+            Ok((staged, added_member_scopes))
         })();
 
-        let staged = match authenticated_commit {
+        let (staged, added_member_scopes) = match authenticated_commit {
             Ok(staged) => staged,
             Err(error) => {
                 self.quarantine_conversation(&conversation_id);
@@ -1430,7 +1502,9 @@ impl MlsKernel {
                 .merge_staged_commit(&self.provider, *staged)
                 .map_err(|error| format!("MLS Commit merge failed: {error}"))?;
             let updated_member_scopes = group_member_scopes(group, &scope)?;
-            if updated_member_scopes != current_member_scopes
+            let mut expected_member_scopes = current_member_scopes.clone();
+            expected_member_scopes.extend(added_member_scopes);
+            if updated_member_scopes != expected_member_scopes
                 || group.group_id().as_slice() != expected_group_id.as_slice()
                 || group.epoch().as_u64() != expected_epoch
             {
@@ -2512,6 +2586,8 @@ mod tests {
                 &group_id,
                 2,
                 "alice-device",
+                None,
+                None,
             )
             .unwrap();
         assert_eq!(updated.epoch, 2);
@@ -2527,6 +2603,8 @@ mod tests {
                 &group_id,
                 2,
                 "alice-device",
+                None,
+                None,
             )
             .unwrap_err()
             .contains("already processed"));
@@ -2589,6 +2667,8 @@ mod tests {
                 &group_id,
                 2,
                 "alice-device",
+                None,
+                None,
             )
             .unwrap_err();
         assert!(error.contains("quarantined"));
@@ -2614,6 +2694,8 @@ mod tests {
                 &group_id,
                 2,
                 "substituted-device",
+                None,
+                None,
             )
             .unwrap_err();
         assert!(error.contains("sender binding is invalid"));
@@ -2626,7 +2708,42 @@ mod tests {
     }
 
     #[test]
-    fn remote_commit_quarantines_direct_session_membership_changes() {
+    fn remote_commit_accepts_a_server_bound_second_local_device() {
+        let (mut alice, mut bob, alice_scope, bob_scope, conversation, group_id) =
+            established_direct_group();
+        let bob_second_scope = "server-a/org-a/bob/bob-device-2";
+        let mut bob_second = MlsKernel::default();
+        bob_second.initialize(bob_second_scope).unwrap();
+        let bob_second_key_package = bob_second.create_key_package(bob_second_scope).unwrap();
+        let invitation = alice
+            .add_member(
+                alice_scope,
+                conversation,
+                &bob_second_key_package.key_package,
+            )
+            .unwrap();
+
+        let updated = bob
+            .receive_transport_commit(
+                bob_scope,
+                conversation,
+                "alice",
+                &invitation.commit,
+                1,
+                &group_id,
+                2,
+                "alice-device",
+                Some("bob-device-2"),
+                Some(&bob_second_key_package.reference),
+            )
+            .unwrap();
+        assert_eq!(updated.member_count, 3);
+        assert_eq!(updated.epoch, 2);
+        assert_eq!(bob.transport_cursor(bob_scope, conversation).unwrap(), 1);
+    }
+
+    #[test]
+    fn remote_commit_quarantines_an_unexpected_account_addition() {
         let (mut alice, mut bob, alice_scope, bob_scope, conversation, group_id) =
             established_direct_group();
         let bob_state_key = BASE64.encode([13u8; 32]);
@@ -2643,11 +2760,6 @@ mod tests {
         let mut charlie = MlsKernel::default();
         charlie.initialize(charlie_scope).unwrap();
         let charlie_key_package = charlie.create_key_package(charlie_scope).unwrap();
-        alice
-            .groups
-            .get_mut(conversation)
-            .unwrap()
-            .set_aad(conversation_aad(conversation));
         let invitation = alice
             .add_member(alice_scope, conversation, &charlie_key_package.key_package)
             .unwrap();
@@ -2662,9 +2774,11 @@ mod tests {
                 &group_id,
                 2,
                 "alice-device",
+                Some("charlie-device"),
+                Some(&charlie_key_package.reference),
             )
             .unwrap_err();
-        assert!(error.contains("unsupported membership or proposal change"));
+        assert!(error.contains("member addition binding is invalid"));
         assert!(error.contains("quarantined"));
         assert!(bob
             .inspect_group(bob_scope, conversation)
@@ -2691,6 +2805,82 @@ mod tests {
             .list_pending_application_peers(bob_scope)
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn remote_commit_quarantines_a_duplicate_device_credential() {
+        let (mut alice, mut bob, alice_scope, bob_scope, conversation, group_id) =
+            established_direct_group();
+        let mut duplicate_bob = MlsKernel::default();
+        duplicate_bob.initialize(bob_scope).unwrap();
+        let duplicate_key_package = duplicate_bob.create_key_package(bob_scope).unwrap();
+        let invitation = alice
+            .add_member(
+                alice_scope,
+                conversation,
+                &duplicate_key_package.key_package,
+            )
+            .unwrap();
+
+        let error = bob
+            .receive_transport_commit(
+                bob_scope,
+                conversation,
+                "alice",
+                &invitation.commit,
+                1,
+                &group_id,
+                2,
+                "alice-device",
+                Some("bob-device"),
+                Some(&duplicate_key_package.reference),
+            )
+            .unwrap_err();
+        assert!(error.contains("member addition binding is invalid"));
+        assert!(error.contains("quarantined"));
+        assert!(bob
+            .inspect_group(bob_scope, conversation)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn remote_commit_quarantines_a_member_removal_even_with_no_add_binding() {
+        let (mut alice, mut bob, _alice_scope, bob_scope, conversation, group_id) =
+            established_direct_group();
+        let identity = alice.identity.as_ref().unwrap();
+        let group = alice.groups.get_mut(conversation).unwrap();
+        group.set_aad(conversation_aad(conversation));
+        let bob_index = group
+            .members()
+            .find(|member| member.credential.serialized_content() == bob_scope.as_bytes())
+            .unwrap()
+            .index;
+        let (commit, _, _) = group
+            .remove_members(&alice.provider, &identity.signer, &[bob_index])
+            .unwrap();
+        let encoded_commit = BASE64.encode(commit.to_bytes().unwrap());
+
+        let error = bob
+            .receive_transport_commit(
+                bob_scope,
+                conversation,
+                "alice",
+                &encoded_commit,
+                1,
+                &group_id,
+                2,
+                "alice-device",
+                None,
+                None,
+            )
+            .unwrap_err();
+        assert!(error.contains("unsupported membership or proposal change"));
+        assert!(error.contains("quarantined"));
+        assert!(bob
+            .inspect_group(bob_scope, conversation)
+            .unwrap()
+            .is_none());
     }
 
     #[test]

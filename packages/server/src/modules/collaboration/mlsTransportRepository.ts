@@ -186,6 +186,58 @@ interface EventRow {
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
+const MLS_MEMBER_ADD_ENVELOPE_PREFIX = 'otto:mls:member-add:v1:';
+
+export interface MlsMemberAddCommitEnvelope {
+  commit: string;
+  recipientDeviceId: string;
+  keyPackageReference: string;
+}
+
+export function encodeMlsMemberAddCommitEnvelope(
+  input: MlsMemberAddCommitEnvelope,
+): string {
+  return Buffer.from(
+    MLS_MEMBER_ADD_ENVELOPE_PREFIX +
+      JSON.stringify({
+        commit: input.commit,
+        recipientDeviceId: input.recipientDeviceId,
+        keyPackageReference: input.keyPackageReference,
+      }),
+    'utf8',
+  ).toString('base64');
+}
+
+export function parseMlsMemberAddCommitEnvelope(
+  payload: string,
+): MlsMemberAddCommitEnvelope | null {
+  const decoded = Buffer.from(payload, 'base64').toString('utf8');
+  if (!decoded.startsWith(MLS_MEMBER_ADD_ENVELOPE_PREFIX)) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(decoded.slice(MLS_MEMBER_ADD_ENVELOPE_PREFIX.length));
+  } catch {
+    throw new Error('MLS member-add Commit envelope is invalid');
+  }
+  const envelope = parsed as Partial<MlsMemberAddCommitEnvelope>;
+  if (
+    !envelope ||
+    typeof envelope.commit !== 'string' ||
+    !IDENTIFIER.test(envelope.recipientDeviceId ?? '') ||
+    !SHA256.test(envelope.keyPackageReference ?? '')
+  ) {
+    throw new Error('MLS member-add Commit envelope is invalid');
+  }
+  return {
+    commit: requireMlsBase64(
+      envelope.commit,
+      'MLS member-add Commit',
+      MLS_TRANSPORT_PAYLOAD_MAX_BYTES,
+    ),
+    recipientDeviceId: envelope.recipientDeviceId!,
+    keyPackageReference: envelope.keyPackageReference!,
+  };
+}
 
 function positivePolicyInteger(value: number, label: string): number {
   if (!Number.isSafeInteger(value) || value <= 0) {
@@ -860,28 +912,45 @@ export function appendMlsTransportEventInRepository(
   }
   const epoch = requireMlsEpoch(raw.epoch);
   const groupId = requireMlsBase64(raw.groupId, 'MLS group id', 255);
-  const payload = requireMlsBase64(
+  const rawPayload = requireMlsBase64(
     raw.payload,
     'MLS transport payload',
     MLS_TRANSPORT_PAYLOAD_MAX_BYTES,
   );
-  const recipientDeviceId =
-    raw.eventType === 'welcome'
-      ? requireMlsIdentifier(raw.recipientDeviceId ?? '', 'recipient device id')
-      : null;
+  const hasSuppliedKeyPackageTarget =
+    raw.recipientDeviceId != null || raw.keyPackageReference != null;
+  if (
+    (raw.recipientDeviceId == null) !== (raw.keyPackageReference == null) ||
+    (raw.eventType === 'welcome' && !hasSuppliedKeyPackageTarget) ||
+    (raw.eventType === 'application' && hasSuppliedKeyPackageTarget)
+  ) {
+    throw new Error('MLS KeyPackage target binding is invalid');
+  }
+  const targetDeviceId = hasSuppliedKeyPackageTarget
+    ? requireMlsIdentifier(raw.recipientDeviceId ?? '', 'recipient device id')
+    : null;
+  const targetKeyPackageReference = hasSuppliedKeyPackageTarget
+    ? requireMlsKeyPackageReference(raw.keyPackageReference ?? '')
+    : null;
+  const isMemberAddCommit =
+    raw.eventType === 'commit' && hasSuppliedKeyPackageTarget;
+  const payload = isMemberAddCommit
+    ? requireMlsBase64(
+        encodeMlsMemberAddCommitEnvelope({
+          commit: rawPayload,
+          recipientDeviceId: targetDeviceId!,
+          keyPackageReference: targetKeyPackageReference!,
+        }),
+        'MLS member-add Commit envelope',
+        MLS_TRANSPORT_PAYLOAD_MAX_BYTES,
+      )
+    : rawPayload;
+  const recipientDeviceId = raw.eventType === 'welcome' ? targetDeviceId : null;
   const keyPackageReference =
-    raw.eventType === 'welcome'
-      ? requireMlsKeyPackageReference(raw.keyPackageReference ?? '')
-      : null;
+    raw.eventType === 'welcome' ? targetKeyPackageReference : null;
   const resetFromGroupId = raw.resetFromGroupId
     ? requireMlsBase64(raw.resetFromGroupId, 'MLS reset source group id', 255)
     : null;
-  if (
-    raw.eventType !== 'welcome' &&
-    (raw.recipientDeviceId || raw.keyPackageReference)
-  ) {
-    throw new Error('only MLS Welcome may target a KeyPackage device');
-  }
   if (
     resetFromGroupId &&
     (raw.eventType !== 'commit' || epoch !== 1 || resetFromGroupId === groupId)
@@ -930,7 +999,9 @@ export function appendMlsTransportEventInRepository(
         throw new Error('MLS event idempotency conflict');
       }
       if (existing.expires_at <= now) {
-        throw new Error('MLS event cursor expired; secure session reset required');
+        throw new Error(
+          'MLS event cursor expired; secure session reset required',
+        );
       }
       return eventView(existing);
     }
@@ -997,11 +1068,7 @@ export function appendMlsTransportEventInRepository(
     } else {
       sessionGeneration = Number(conversation.active_generation);
       if (conversation.group_id !== groupId) {
-        if (
-          raw.eventType !== 'commit' ||
-          epoch !== 1 ||
-          !resetFromGroupId
-        ) {
+        if (raw.eventType !== 'commit' || epoch !== 1 || !resetFromGroupId) {
           throw new Error(
             'a new MLS group requires an explicit MLS session reset',
           );
@@ -1026,12 +1093,7 @@ export function appendMlsTransportEventInRepository(
              WHERE organization_id = ? AND conversation_id = ?
                AND generation = ? AND status = 'active'`,
           )
-          .run(
-            now,
-            organizationId,
-            direct.conversationId,
-            sessionGeneration,
-          );
+          .run(now, organizationId, direct.conversationId, sessionGeneration);
         if (retired.changes !== 1) {
           throw new Error('MLS active group session state is inconsistent');
         }
@@ -1104,32 +1166,67 @@ export function appendMlsTransportEventInRepository(
       }
     }
 
-    if (raw.eventType === 'welcome') {
+    if (isMemberAddCommit || raw.eventType === 'welcome') {
       requireActiveApprovedDevice(
         database,
         organizationId,
         peerAccountId,
-        recipientDeviceId!,
+        targetDeviceId!,
       );
       const claimed = database
         .prepare(
           `SELECT * FROM mls_key_packages
            WHERE organization_id = ? AND key_package_reference = ?`,
         )
-        .get(organizationId, keyPackageReference!) as KeyPackageRow | undefined;
+        .get(organizationId, targetKeyPackageReference!) as
+        KeyPackageRow | undefined;
       if (
         !claimed ||
         claimed.account_id !== peerAccountId ||
-        claimed.device_id !== recipientDeviceId ||
+        claimed.device_id !== targetDeviceId ||
         claimed.claimed_by_account_id !== senderAccountId ||
         claimed.claimed_by_device_id !== senderDeviceId ||
         !claimed.claimed_at ||
-        claimed.welcome_event_id ||
+        (isMemberAddCommit
+          ? claimed.welcome_event_id !== null
+          : claimed.welcome_event_id === null) ||
         claimed.expires_at <= now
       ) {
         throw new Error(
-          'MLS Welcome does not match an unused KeyPackage claim for this device',
+          'MLS event does not match the verified KeyPackage claim for this device',
         );
+      }
+      if (raw.eventType === 'welcome') {
+        const membershipCommit = database
+          .prepare(
+            `SELECT * FROM mls_transport_events
+             WHERE organization_id = ? AND id = ?
+               AND conversation_id = ? AND session_generation = ?
+               AND sender_account_id = ? AND sender_device_id = ?
+               AND event_type = 'commit' AND epoch = ? AND group_id = ?`,
+          )
+          .get(
+            organizationId,
+            claimed.welcome_event_id,
+            direct.conversationId,
+            sessionGeneration,
+            senderAccountId,
+            senderDeviceId,
+            epoch,
+            groupId,
+          ) as EventRow | undefined;
+        const envelope = membershipCommit
+          ? parseMlsMemberAddCommitEnvelope(membershipCommit.payload)
+          : null;
+        if (
+          !envelope ||
+          envelope.recipientDeviceId !== targetDeviceId ||
+          envelope.keyPackageReference !== targetKeyPackageReference
+        ) {
+          throw new Error(
+            'MLS Welcome is missing its verified membership Commit',
+          );
+        }
       }
     }
 
@@ -1159,13 +1256,13 @@ export function appendMlsTransportEventInRepository(
         keyPackageReference,
         isoTime(nowMs + policy.transportEventTtlMs),
       );
-    if (raw.eventType === 'welcome') {
+    if (isMemberAddCommit || raw.eventType === 'welcome') {
       database
         .prepare(
           `UPDATE mls_key_packages SET welcome_event_id = ?
            WHERE organization_id = ? AND key_package_reference = ?`,
         )
-        .run(eventId, organizationId, keyPackageReference);
+        .run(eventId, organizationId, targetKeyPackageReference);
     }
     return eventView(
       database
