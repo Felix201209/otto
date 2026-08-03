@@ -29,6 +29,7 @@ import {
 } from './deploymentRepository.js';
 import {
   flushBillingUsageQueue as flushBillingUsageQueueInRepository,
+  getBillingExecutionReceiptKey as getBillingExecutionReceiptKeyFromRepository,
   queueBillingUsage as queueBillingUsageInRepository,
 } from './billingUsageRepository.js';
 import {
@@ -163,6 +164,8 @@ export function createCommercialControlComposition(
     flushBillingUsageQueue: (
       fetchImpl?: Parameters<typeof flushBillingUsageQueueInRepository>[1],
     ) => flushBillingUsageQueueInRepository(billingUsageStore, fetchImpl),
+    getBillingExecutionReceiptKey: () =>
+      getBillingExecutionReceiptKeyFromRepository(billingUsageStore),
     authorizeBillingOperation: (
       input: Parameters<typeof authorizeBillingOperationInRepository>[1],
       fetchImpl?: typeof fetch,

@@ -2181,12 +2181,10 @@ export class FeishuGateway {
           return { code: 0 };
         }
 
-        // 标记为正在处理（内存级并发拦截）+ 受理即落盘（at-most-once 的核心）。
-        // 关键顺序：在调用 onMessage 之前就把 id 持久化，这样即便处理途中进程被
-        // self_update / 重启 / 崩溃带走，飞书之后重推也会被识别丢弃，不会重跑。
+        // 标记为正在处理（内存级并发拦截）。processed 必须等上层把消息写入
+        // durable inbox 后才能落盘；否则进程在“已去重、未执行”窗口崩溃时会永久丢消息。
         if (feishuMsg.messageId && feishuMsg.messageId.startsWith('om_')) {
           this.inFlightMessages.add(feishuMsg.messageId);
-          this.recordProcessedMessage(feishuMsg.messageId);
         }
 
         this.recentContents.set(contentKey, now);
@@ -2209,7 +2207,9 @@ export class FeishuGateway {
             const consumed = textChoiceCb(feishuMsg);
             if (consumed) {
               // 该消息已被文本选择器消费，不触发 onMessage。
-              // 去重已在受理时落盘（见上方 recordProcessedMessage），此处无需再记。
+              if (feishuMsg.messageId?.startsWith('om_')) {
+                this.recordProcessedMessage(feishuMsg.messageId);
+              }
               return { code: 0 };
             }
           }
@@ -2222,13 +2222,19 @@ export class FeishuGateway {
               if (reply) {
                 await this.sendMessage(feishuMsg.chatId, reply, feishuMsg.messageId);
               }
-              // 去重已在受理时（调用 onMessage 之前）落盘，处理成功无需再记。
+              // onMessage 只有在消息已经持久写入 adapter inbox 后才返回。
+              if (feishuMsg.messageId?.startsWith('om_')) {
+                this.recordProcessedMessage(feishuMsg.messageId);
+              }
             } catch (err) {
               derror('feishu onMessage handler error:', err);
+              throw err;
             } finally {
               // 处理完成，移除"思考中"表情
               await this.removeReaction(feishuMsg.messageId, reactionId);
             }
+          } else if (feishuMsg.messageId?.startsWith('om_')) {
+            this.recordProcessedMessage(feishuMsg.messageId);
           }
         } finally {
           // 无论成功还是失败，只要该消息处理流程结束，就从 in-flight 集合中移除
@@ -2240,7 +2246,7 @@ export class FeishuGateway {
         return { code: 0 };
       } catch (err) {
         derror('feishu event handler error:', err);
-        return { code: 0 };
+        return { code: 1 };
       }
       }
     });

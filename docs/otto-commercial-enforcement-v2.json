@@ -1,0 +1,54 @@
+{
+  "version": 2,
+  "name": "execution_receipt_v2",
+  "algorithm": "Ed25519",
+  "canonicalization": "recursive object-key sort followed by UTF-8 JSON",
+  "requestEndpoint": "/v1/billing/execution-receipts",
+  "producer": {
+    "privateKeyStorage": "AES-256-GCM encrypted on the customer server",
+    "durableOutbox": "billing_usage_outbox",
+    "strictHeadOfLineDelivery": true,
+    "legacyPendingUsageMigration": true
+  },
+  "keyAdministration": {
+    "publicKeySource": "/enterprise/deployment/status",
+    "controlList": "/v1/admin/deployments/{deploymentId}/execution-receipt-keys",
+    "controlRegister": "/v1/admin/deployments/{deploymentId}/execution-receipt-keys",
+    "controlRevoke": "/v1/admin/deployments/{deploymentId}/execution-receipt-keys/{keyId}/revoke",
+    "dualApproval": true
+  },
+  "receiptFields": [
+    "version",
+    "receiptId",
+    "deploymentId",
+    "organizationId",
+    "taskId",
+    "moduleId",
+    "units",
+    "model",
+    "issuedAtMs",
+    "expiresAtMs",
+    "sequence",
+    "policyVersion"
+  ],
+  "privacyBoundary": {
+    "unknownFieldsRejected": true,
+    "prohibited": [
+      "prompt",
+      "response",
+      "chat",
+      "file",
+      "filename",
+      "meetingContent",
+      "personalIdentifier"
+    ]
+  },
+  "antiReplay": {
+    "receiptIdUnique": true,
+    "sameTaskChargedOnce": true,
+    "strictContiguousSequencePerDeployment": true,
+    "maximumValidityMs": 604800000,
+    "maximumFutureSkewMs": 300000
+  },
+  "legacyUsageReportsAllowedInProductionByDefault": false
+}

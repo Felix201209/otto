@@ -852,7 +852,7 @@ describe('CoreSessionRuntime · AskUserQuestion 交互闸门', () => {
 });
 
 describe('CoreSessionRuntime · 工具状态收口', () => {
-  it('飞书适配器发起的普通工具无需桌面确认即可执行', async () => {
+  it('飞书适配器发起的高风险工具必须由原请求确认后执行', async () => {
     let markProgress!: () => void;
     const progress = new Promise<void>((resolve) => {
       markProgress = resolve;
@@ -912,8 +912,11 @@ describe('CoreSessionRuntime · 工具状态收口', () => {
     }
     await running;
 
-    expect(requested).toBe(false);
-    expect(onConfirm).toHaveBeenCalledWith(ToolConfirmationOutcome.ProceedOnce);
+    expect(requested).toBe(true);
+    expect(onConfirm).toHaveBeenCalledWith(
+      ToolConfirmationOutcome.ProceedOnce,
+      undefined,
+    );
     expect(execute).toHaveBeenCalledTimes(1);
   });
 

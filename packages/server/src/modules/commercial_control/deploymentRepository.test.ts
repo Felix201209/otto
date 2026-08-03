@@ -9,7 +9,12 @@ import { createAuditLogSchemaContributor } from './auditLogSchema.js';
 import { createCommercialControlComposition } from './commercialControlComposition.js';
 import { signTelemetryRequest } from './deploymentRepository.js';
 import { PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR } from './privateDeploymentSchema.js';
-import { canonicalJson, publicKeyId, signEd25519Envelope } from './signedEnvelope.js';
+import {
+  canonicalJson,
+  publicKeyId,
+  signEd25519Envelope,
+  verifyEd25519Envelope,
+} from './signedEnvelope.js';
 
 function setup() {
   const pair = generateKeyPairSync('ed25519');
@@ -103,6 +108,7 @@ describe('private deployment license repository', () => {
         offline: false,
         leaseEndpoint: 'https://control.otto.example/v1/licenses/lic-billing/lease',
         billingEndpoint: 'https://control.otto.example/v1/billing/usage/consume',
+        billingEnforcement: 'enforce',
         leaseToken: 'test-license-lease-token-at-least-32-characters',
         telemetryAllowed: false,
         issuedAtMs: now,
@@ -142,7 +148,9 @@ describe('private deployment license repository', () => {
       let uploaded: Record<string, unknown> = {};
       let attempt = 0;
       const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-        expect(String(url)).toBe(licensePayload.billingEndpoint);
+        expect(String(url)).toBe(
+          'https://control.otto.example/v1/billing/execution-receipts',
+        );
         expect((init?.headers as Record<string, string>).authorization)
           .toBe(`Bearer ${licensePayload.leaseToken}`);
         uploaded = JSON.parse(String(init?.body));
@@ -168,14 +176,39 @@ describe('private deployment license repository', () => {
       });
       expect(uploaded).toMatchObject({
         licenseId: 'lic-billing',
-        deploymentId: licensePayload.deploymentId,
-        organizationId: 'org-licensed',
-        module: 'model_gateway',
-        units: 1_250,
-        referenceId: 'usage_abcdef',
-        idempotencyKey: 'usage:abcdef',
+        machineFingerprint: licensePayload.machineFingerprint,
+        envelope: {
+          receipt: {
+            version: 2,
+            deploymentId: licensePayload.deploymentId,
+            organizationId: 'org-licensed',
+            taskId: 'usage_abcdef',
+            moduleId: 'model_gateway',
+            units: 1_250,
+            sequence: 1,
+            policyVersion: 'commercial-v2',
+          },
+        },
       });
+      const envelope = uploaded.envelope as {
+        receipt: Record<string, unknown>;
+        signingKeyId: string;
+        signature: string;
+      };
+      const receiptKey = control.getBillingExecutionReceiptKey();
+      expect(receiptKey.keyId).toBe(envelope.signingKeyId);
+      expect(verifyEd25519Envelope(
+        envelope.receipt,
+        envelope.signature,
+        [receiptKey.publicKeyPem],
+        envelope.signingKeyId,
+      )).toEqual({ valid: true, keyId: receiptKey.keyId });
       expect(JSON.stringify(uploaded)).not.toContain('prompt');
+      const storedKey = database.prepare(
+        `SELECT private_key_ciphertext, private_key_iv, private_key_auth_tag
+         FROM billing_execution_receipt_keys`,
+      ).get();
+      expect(JSON.stringify(storedKey)).not.toContain('BEGIN PRIVATE KEY');
       expect(database.prepare(
         'SELECT status FROM billing_usage_outbox WHERE idempotency_key = ?',
       ).get('usage:abcdef')).toEqual({ status: 'sent' });

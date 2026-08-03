@@ -414,6 +414,34 @@ describe('FeishuAdapter 双向链路', () => {
     expect(events).toEqual(['start1:第一条', 'end1', 'start2:第二条', 'end2']);
   });
 
+  it('同一飞书 event 重推只落库并执行一次', async () => {
+    const { adapter, fake } = newAdapter({ fire: () => makeFakeGateway(log) });
+    await adapter.start();
+    const pre = store.getOrCreateFeishuSession('oc_chat_dedup');
+    let calls = 0;
+    store.attachRuntime(pre.sessionId, {
+      async run() { calls += 1; },
+      cancel() {},
+      setModel() {},
+      getConfig() { return undefined; },
+      async dispose() {},
+    } as SessionRuntime);
+    const message = makeMsg({
+      chatId: 'oc_chat_dedup',
+      messageId: 'om_same_event',
+      text: '只执行一次',
+    });
+
+    await fake.fireMessage(message);
+    await flush();
+    await fake.fireMessage(message);
+    await flush();
+
+    expect(calls).toBe(1);
+    expect(store.getHistory(pre.sessionId).filter((item) => item.role === 'user'))
+      .toHaveLength(1);
+  });
+
   it('同一飞书会话的每轮回复引用各自触发消息，而不是永远引用第一条', async () => {
     const { adapter, fake } = newAdapter({ fire: () => makeFakeGateway(log) });
     await adapter.start();

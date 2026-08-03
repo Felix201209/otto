@@ -488,6 +488,7 @@ export const {
   flushTelemetryQueue,
   queueBillingUsage,
   flushBillingUsageQueue,
+  getBillingExecutionReceiptKey,
   authorizeBillingOperation,
   finalizeBillingOperation,
   flushBillingAdmissionQueue,
@@ -1100,6 +1101,7 @@ const modelGateway = createModelGatewayComposition({
       organizationId: input.organizationId,
       module: 'model_gateway',
       units: input.totalTokens,
+      model: input.model,
       referenceId: `usage_${digest.slice(0, 32)}`,
       idempotencyKey: `usage:${digest}`,
     });

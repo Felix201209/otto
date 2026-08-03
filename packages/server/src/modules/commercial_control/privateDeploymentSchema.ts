@@ -99,8 +99,18 @@ export const PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor =
         organization_id TEXT NOT NULL,
         module TEXT NOT NULL,
         units INTEGER NOT NULL CHECK(units > 0),
+        model TEXT,
         reference_id TEXT NOT NULL,
         idempotency_key TEXT NOT NULL UNIQUE,
+        receipt_version INTEGER,
+        receipt_id TEXT,
+        task_id TEXT,
+        issued_at_ms INTEGER,
+        expires_at_ms INTEGER,
+        sequence INTEGER,
+        policy_version TEXT,
+        signing_key_id TEXT,
+        receipt_signature TEXT,
         status TEXT NOT NULL DEFAULT 'queued'
           CHECK(status IN ('queued', 'sent', 'failed', 'discarded')),
         attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
@@ -108,6 +118,27 @@ export const PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor =
         sent_at_ms INTEGER,
         next_attempt_at_ms INTEGER,
         last_error TEXT,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS billing_execution_receipt_keys (
+        deployment_id TEXT NOT NULL,
+        key_id TEXT NOT NULL,
+        public_key_pem TEXT NOT NULL,
+        private_key_ciphertext TEXT NOT NULL,
+        private_key_iv TEXT NOT NULL,
+        private_key_auth_tag TEXT NOT NULL,
+        private_key_version INTEGER NOT NULL DEFAULT 1,
+        status TEXT NOT NULL DEFAULT 'active'
+          CHECK(status IN ('active', 'retired')),
+        created_at_ms INTEGER NOT NULL,
+        retired_at_ms INTEGER,
+        PRIMARY KEY (deployment_id, key_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS billing_execution_receipt_sequences (
+        deployment_id TEXT PRIMARY KEY,
+        last_sequence INTEGER NOT NULL DEFAULT 0 CHECK(last_sequence >= 0),
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
 
@@ -190,5 +221,39 @@ export const PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor =
           'ALTER TABLE telemetry_events ADD COLUMN last_error TEXT',
         );
       }
+
+      const billingColumns = new Set(
+        (
+          database.prepare('PRAGMA table_info(billing_usage_outbox)').all() as Array<{
+            name: string;
+          }>
+        ).map((column) => column.name),
+      );
+      const addBillingColumn = (name: string, definition: string) => {
+        if (!billingColumns.has(name)) {
+          database.exec(
+            `ALTER TABLE billing_usage_outbox ADD COLUMN ${name} ${definition}`,
+          );
+        }
+      };
+      addBillingColumn('model', 'TEXT');
+      addBillingColumn('receipt_version', 'INTEGER');
+      addBillingColumn('receipt_id', 'TEXT');
+      addBillingColumn('task_id', 'TEXT');
+      addBillingColumn('issued_at_ms', 'INTEGER');
+      addBillingColumn('expires_at_ms', 'INTEGER');
+      addBillingColumn('sequence', 'INTEGER');
+      addBillingColumn('policy_version', 'TEXT');
+      addBillingColumn('signing_key_id', 'TEXT');
+      addBillingColumn('receipt_signature', 'TEXT');
+
+      database.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_usage_receipt_id
+          ON billing_usage_outbox(receipt_id) WHERE receipt_id IS NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_usage_deployment_sequence
+          ON billing_usage_outbox(deployment_id, sequence) WHERE sequence IS NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_usage_deployment_task
+          ON billing_usage_outbox(deployment_id, task_id) WHERE task_id IS NOT NULL;
+      `);
     },
   };

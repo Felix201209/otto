@@ -30,6 +30,7 @@ import type {
 } from './deploymentTypes.js';
 import { canonicalJson, verifyEd25519Envelope } from './signedEnvelope.js';
 import {
+  getBillingExecutionReceiptKey,
   getBillingUsageQueueSummary,
   type BillingUsageRepositoryStore,
   type DeploymentBillingCredentials,
@@ -970,6 +971,7 @@ export function getDeploymentBillingCredentials(
   if (
     license.id === 'unlicensed' || license.offline ||
     !license.lease.endpoint || !license.organizationId ||
+    license.lease.status !== 'active' ||
     ['missing', 'invalid', 'revoked', 'expired'].includes(license.status)
   ) return null;
   const payload = latestLicensePayload(store);
@@ -978,16 +980,20 @@ export function getDeploymentBillingCredentials(
   let endpoint: URL;
   let holdEndpoint: URL;
   try {
-    endpoint = typeof payload.billingEndpoint === 'string'
-      ? new URL(payload.billingEndpoint)
-      : new URL('/v1/billing/usage/consume', license.lease.endpoint);
+    endpoint = typeof payload.executionReceiptEndpoint === 'string'
+      ? new URL(payload.executionReceiptEndpoint)
+      : new URL('/v1/billing/execution-receipts', license.lease.endpoint);
     holdEndpoint = typeof payload.billingHoldEndpoint === 'string'
       ? new URL(payload.billingHoldEndpoint)
       : new URL('/v1/billing/holds', license.lease.endpoint);
   } catch {
     return null;
   }
-  if (endpoint.protocol !== 'https:' || holdEndpoint.protocol !== 'https:') return null;
+  if (
+    endpoint.protocol !== 'https:' || holdEndpoint.protocol !== 'https:' ||
+    endpoint.username || endpoint.password || holdEndpoint.username ||
+    holdEndpoint.password
+  ) return null;
   return {
     licenseId: license.id,
     deploymentId: license.deploymentId,
@@ -1005,7 +1011,9 @@ export function createDeploymentBillingUsageStore(
 ): BillingUsageRepositoryStore {
   return {
     db: store.db,
+    deploymentId: () => getDeploymentId(store),
     credentials: () => getDeploymentBillingCredentials(store),
+    fieldCipher: store.fieldCipher,
   };
 }
 
@@ -1401,17 +1409,32 @@ export function getPrivateDeploymentStatus(
   store: DeploymentRepositoryStore,
 ): PrivateDeploymentStatus {
   const telemetry = getTelemetrySettings(store);
+  const billingStore = createDeploymentBillingUsageStore(store);
+  const billingSummary = getBillingUsageQueueSummary(billingStore);
+  let receiptKey: PrivateDeploymentStatus['billing']['executionReceipt']['key'] = null;
+  let receiptKeyError: string | null = null;
+  try {
+    receiptKey = getBillingExecutionReceiptKey(billingStore);
+  } catch (error) {
+    receiptKeyError = safeErrorMessage(error);
+  }
   return {
     deploymentId: getDeploymentId(store),
     machineFingerprint: getMachineFingerprint(),
     license: getDeploymentLicense(store),
     telemetry: { ...telemetry, ...getTelemetryQueueSummary(store) },
     billing: {
-      ...getBillingUsageQueueSummary(createDeploymentBillingUsageStore(store)),
+      ...billingSummary,
       admission: getBillingAdmissionQueueSummary(
-        createDeploymentBillingUsageStore(store),
+        billingStore,
       ),
-      evidenceTrust: 'customer_server_reported',
+      executionReceipt: {
+        protocol: 'execution_receipt_v2',
+        key: receiptKey,
+        registrationRequired: billingSummary.sent === 0,
+        error: receiptKeyError,
+      },
+      evidenceTrust: 'signed_execution_receipt_v2',
     },
     dataBoundary: {
       uploadsContentByDefault: false,

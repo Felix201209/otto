@@ -29,6 +29,7 @@ function setup(enforcement: 'disabled' | 'enforce' = 'enforce') {
   } as const;
   const store: BillingUsageRepositoryStore = {
     db: () => database,
+    deploymentId: () => credentials.deploymentId,
     credentials: () => credentials,
   };
   return { database, store };

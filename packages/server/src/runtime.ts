@@ -495,7 +495,7 @@ export class CoreSessionRuntime implements SessionRuntime {
    * 跑一整轮对话（可能多回合工具往返）。
    * 期间所有流式/工具事件经 store.publish 广播；不写 stdout。
    */
-  async run(input: MessageContent, source: MessageSource): Promise<void> {
+  async run(input: MessageContent, _source: MessageSource): Promise<void> {
     if (this.running) {
       // 同一会话已有一轮在跑：拒绝并行（保护 core chat 历史一致性）。
       this.store.publish(this.sessionId, {
@@ -804,7 +804,6 @@ export class CoreSessionRuntime implements SessionRuntime {
           caps.maxConcurrentTools,
           signal,
           toolMessageId,
-          source,
         );
 
         if (signal.aborted) {
@@ -864,7 +863,6 @@ export class CoreSessionRuntime implements SessionRuntime {
     maxConcurrent: number,
     signal: AbortSignal,
     messageId: string,
-    source: MessageSource,
   ): Promise<Part[]> {
     const responseParts: Part[] = [];
 
@@ -953,7 +951,6 @@ export class CoreSessionRuntime implements SessionRuntime {
                   callId,
                   signal,
                   messageId,
-                  source,
                 );
               }
 
@@ -1062,24 +1059,16 @@ export class CoreSessionRuntime implements SessionRuntime {
     callId: string,
     signal: AbortSignal,
     messageId: string,
-    source: MessageSource,
   ): Promise<boolean> {
     const tool = toolRegistry.getTool(requestInfo.name);
     if (!tool) return false;
     const details = await tool.shouldConfirmExecute(requestInfo.args, signal);
     if (!details) return false;
 
-    // 飞书没有桌面确认入口：授权用户从 FeishuAdapter 发起的普通操作直接按
-    // ProceedOnce 执行，否则会永远挂在只有 Otto 桌面能看到的确认卡上。
-    // ask_user_question 走独立闸门，不会落到这里；客户端 WS 又禁止伪造
-    // source=feishu，因此桌面里的本地操作仍保持原确认边界。
-    if (source === 'feishu') {
-      await details.onConfirm(ToolConfirmationOutcome.ProceedOnce);
-      return true;
-    }
-
     if (!shouldRequestConfirmation(this.authorizationMode, details))
       return false;
+
+    const confirmation = this.waitForConfirmation(callId, signal);
 
     const base = cards.get(callId);
     if (base) {
@@ -1102,7 +1091,7 @@ export class CoreSessionRuntime implements SessionRuntime {
       });
     }
 
-    const result = await this.waitForConfirmation(callId, signal);
+    const result = await confirmation;
     if (result.outcome === 'rejected') throw new Error('用户已取消此操作');
     await details.onConfirm(
       result.outcome === 'always_approve'
@@ -1182,6 +1171,9 @@ export class CoreSessionRuntime implements SessionRuntime {
     };
     const questions = args.questions ?? [];
 
+    // 先登记 resolver 再广播，避免飞书卡片或测试适配器极快应答时丢失确认。
+    const confirmation = this.waitForConfirmation(callId, signal);
+
     // 工具卡 → 待确认态，挂上问题清单；广播 tool_calls_update + 单独发 confirmation_request。
     const base = cards.get(callId);
     if (base) {
@@ -1209,7 +1201,7 @@ export class CoreSessionRuntime implements SessionRuntime {
     }
 
     // 挂起等待用户作答（或会话取消）。
-    const result = await this.waitForConfirmation(callId, signal);
+    const result = await confirmation;
 
     // 把答案交给工具 onConfirm 写进 pendingAnswers；rejected/取消 → Cancel（execute 回落 declined）。
     const outcome =

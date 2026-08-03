@@ -141,4 +141,54 @@ describe('private deployment schema contributor', () => {
       database.close();
     }
   });
+
+  it('upgrades the legacy unsigned billing outbox without dropping rows', () => {
+    const database = new Database(':memory:');
+    try {
+      database.exec(`
+        CREATE TABLE billing_usage_outbox (
+          id TEXT PRIMARY KEY,
+          deployment_id TEXT NOT NULL,
+          organization_id TEXT NOT NULL,
+          module TEXT NOT NULL,
+          units INTEGER NOT NULL,
+          reference_id TEXT NOT NULL,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          status TEXT NOT NULL DEFAULT 'queued',
+          attempts INTEGER NOT NULL DEFAULT 0,
+          created_at_ms INTEGER NOT NULL,
+          sent_at_ms INTEGER,
+          next_attempt_at_ms INTEGER,
+          last_error TEXT,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO billing_usage_outbox
+          (id, deployment_id, organization_id, module, units, reference_id,
+           idempotency_key, created_at_ms)
+        VALUES
+          ('bil-old', 'dep-old', 'org-old', 'model_gateway', 20,
+           'task_old', 'usage:old', 1000);
+      `);
+
+      applySchema(database);
+
+      expect(database.prepare(
+        `SELECT id, receipt_id, sequence, receipt_signature
+         FROM billing_usage_outbox WHERE id = 'bil-old'`,
+      ).get()).toEqual({
+        id: 'bil-old',
+        receipt_id: null,
+        sequence: null,
+        receipt_signature: null,
+      });
+      expect(database.prepare(
+        `SELECT COUNT(*) AS count FROM sqlite_master
+         WHERE type = 'table'
+           AND name IN ('billing_execution_receipt_keys',
+                        'billing_execution_receipt_sequences')`,
+      ).get()).toEqual({ count: 2 });
+    } finally {
+      database.close();
+    }
+  });
 });
