@@ -117,6 +117,12 @@ describe('desktop packaging contract', () => {
       await readFile(path.join(packageRoot, 'package.json'), 'utf8'),
     );
     expect(packageJson.build).not.toHaveProperty('includeSubNodeModules');
+    expect(packageJson.build.publish).toEqual([
+      {
+        provider: 'generic',
+        url: 'https://59.110.154.44:7777/downloads',
+      },
+    ]);
     expect(packageJson.scripts['dist:win']).toContain(
       'node scripts/verify-packaged-runtime.mjs release/win-unpacked/resources/app.asar --platform win32',
     );
