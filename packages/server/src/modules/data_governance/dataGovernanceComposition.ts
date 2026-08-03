@@ -17,6 +17,7 @@ import {
   type DataGovernanceAccount,
 } from './dataGovernanceRepository.js';
 import { createPrivacyDeletionLedger } from './privacyDeletionLedger.js';
+import { buildRedactedDiagnosticPackage } from './diagnosticPackage.js';
 
 export function createDataGovernanceComposition(input: {
   db(): Database;
@@ -46,5 +47,6 @@ export function createDataGovernanceComposition(input: {
     exportAccountData: (account: DataGovernanceAccount) => exportAccountDataFromRepository(store, account),
     deleteOwnAccountData: (account: DataGovernanceAccount) => deleteOwnAccountDataInRepository(store, account),
     reapplyPrivacyDeletionTombstones: () => reapplyPrivacyDeletionTombstones(store, ledger.list()),
+    buildDiagnosticPackage: () => buildRedactedDiagnosticPackage(store),
   };
 }
