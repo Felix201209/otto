@@ -1,3 +1,4 @@
+
 /**
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  *
@@ -40,6 +41,7 @@ export type ClusteredEnterpriseEnvironment = EnterpriseServiceEnvironment &
     OTTO_ATTACHMENT_TENANT_QUOTA_BYTES?: string;
     OTTO_ATTACHMENT_LEGACY_READ_DIR?: string;
     OTTO_ATTACHMENT_LEGACY_READ_KEY_FILE?: string;
+    OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE?: string;
   };
 
 function positiveIntegerSetting(input: {
@@ -112,6 +114,20 @@ export async function createClusteredEnterpriseInfrastructure(input: {
       'legacy local attachment dual-read is restricted to one migration-window replica',
     );
   }
+  const accountSyncKeyFile =
+    environment.OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE?.trim();
+  if (!accountSyncKeyFile) {
+    throw new Error(
+      'clustered account sync requires OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE from a shared secret provider',
+    );
+  }
+  const accountSyncKeyProvider = createFileEncryptionKeyProvider({
+    keyPath: path.resolve(accountSyncKeyFile),
+    keyBytes: 32,
+    invalidKeyMessage: 'account sync encryption key is invalid',
+    createIfMissing: false,
+    managePermissions: false,
+  });
   let legacyKeyProvider: ReturnType<
     typeof createFileEncryptionKeyProvider
   > | null = null;
@@ -156,6 +172,7 @@ export async function createClusteredEnterpriseInfrastructure(input: {
     typeof createClusteredEnterpriseInfrastructureRuntime
   > | null = null;
   try {
+    accountSyncKeyProvider.getKey();
     legacyKeyProvider?.getKey();
     cache = await createNodeRedisEnterpriseSharedCache({
       connectionString: topology.cache.connectionString,
@@ -168,7 +185,10 @@ export async function createClusteredEnterpriseInfrastructure(input: {
       closeAttachments: attachmentRuntime.close,
     });
     const initialReadiness = await infrastructure.initialize();
-    const repository = createPostgresEnterpriseCoreRepository({ pool });
+    const repository = createPostgresEnterpriseCoreRepository({
+      pool,
+      accountSyncKeyProvider,
+    });
     const attachmentStorage = createAttachmentStorageService({
       metadata: createPostgresAttachmentMetadataRepository({
         pool,
@@ -200,6 +220,7 @@ export async function createClusteredEnterpriseInfrastructure(input: {
           await infrastructure!.close();
         } finally {
           legacyKeyProvider?.clear();
+          accountSyncKeyProvider.clear();
         }
       },
     };
@@ -214,6 +235,7 @@ export async function createClusteredEnterpriseInfrastructure(input: {
       ]);
     }
     legacyKeyProvider?.clear();
+    accountSyncKeyProvider.clear();
     throw error;
   }
 }

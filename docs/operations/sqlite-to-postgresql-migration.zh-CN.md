@@ -26,6 +26,9 @@ SQLite/SQLCipher，不参与企业集群切换。
 2. Redis/兼容缓存和私有 S3/MinIO 已配置；集群预检全部通过。
 3. 已创建并验证 SQLite/SQLCipher 快照，快照与密钥恢复材料分开保管。
 4. 已冻结企业变更窗口，并确认所有 Otto Server/旧企业服务端进程停止。
+5. 所有无状态实例挂载同一个外部下发的 32 字节账号同步密钥文件，并设置
+   `OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE`。缺少或无法读取时集群服务拒绝启动，
+   不会生成每实例密钥或回落明文。
 
 先构建并准备 PostgreSQL 控制面：
 
@@ -102,8 +105,10 @@ npm run enterprise:postgres:promote --workspace=packages/server -- --run <run-id
 ```
 
 正式提升使用 advisory lock，在单个事务内写入组织、账号、会话、组织架构、
-功能开关、审计、E2EE 设备、密钥透明日志、消息密文、MLS KeyPackage、MLS
-会话 epoch 和 MLS 传输密文事件，并记录幂等 promotion receipt。MLS 事件会
+功能开关、审计、短信注册、企业邀请、E2EE 设备、密钥透明日志、消息密文、
+MLS KeyPackage、MLS 会话 epoch、MLS 传输密文事件、账号同步密文、知识、
+Skills、园区、工单、商业控制和数据治理记录，并记录幂等 promotion receipt。
+MLS 事件会
 保留 SQLite 中的原始 `sequence`，随后校准 PostgreSQL identity，避免切换后
 已有设备的同步游标跳过或重复事件；KeyPackage/事件到期时间和会话 retention
 floor 也会原样迁移。仍在窗口内的分钟级速率桶同步转换为 PostgreSQL 时间戳，
@@ -116,6 +121,12 @@ MLS 提升还会按 `mls_conversations`、`mls_group_sessions`、
 同时保留 `active_generation` 与每条事件的 `session_generation`。来自旧版本且
 尚无 group 代次表的导入会安全合成为第一代会话；已有多代历史的数据不得降级为
 单个 `group_id`。
+
+账号同步快照沿用经过校验的 AES-256-GCM 密文字段，切换前后必须使用同一份
+外部密钥。若旧库含有加密的 Skill 正文，提升命令还必须设置
+`OTTO_ENTERPRISE_FIELD_KEY_FILE` 指向旧企业字段密钥；工具只在内存中解密并
+转换已验证记录，不在输出、审计或 PostgreSQL 中写入密钥材料。缺少该密钥时
+包含此类记录的提升会失败关闭。
 
 ## 停机切换
 
@@ -132,10 +143,15 @@ MLS 提升还会按 `mls_conversations`、`mls_group_sessions`、
    多设备增量同步游标、附件、审计、备份和恢复，再逐步增加无状态实例。
 8. 在回滚宽限期内保留只读 SQLite 快照及密钥，禁止删除或覆盖。
 
-当前只有账号、组织、审计和 E2EE 核心路由完成异步 PostgreSQL Repository。
-SMS 注册、邀请、知识库、园区、工单、商业控制、数据治理、附件 S3 路由及
-Redis 会话/限流仍需迁移；这些路由会显式返回 503。因此只能对核心范围做
-金丝雀验证，不能宣称完整企业生产切换完成。
+账号、组织、审计、短信注册、企业邀请、账号同步、知识、Skills、园区、工单、
+商业控制、数据治理、E2EE/MLS 密文和附件 S3 路由均使用异步 PostgreSQL
+Repository；这些领域不再回落 SQLite。未知或尚未实现的企业路由仍显式返回
+`POSTGRES_ROUTE_NOT_MIGRATED`，避免静默分裂权威源。
+
+代码层面的全业务权威迁移完成不等于生产切换验收完成。正式开放流量前仍须对
+生产规模快照执行全表提升、附件复制校验、双读宽限和回滚演练，并完成多实例、
+PostgreSQL 自动故障转移、Redis 故障转移、PITR 恢复、对象生命周期及容量边界
+签字确认。
 
 ## 回滚
 

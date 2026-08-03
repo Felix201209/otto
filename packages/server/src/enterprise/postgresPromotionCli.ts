@@ -11,6 +11,10 @@ import {
   resolveEnterpriseDatabaseTopology,
   type EnterpriseDatabaseTopologyEnvironment,
 } from '../modules/data_platform/enterpriseDatabaseTopology.js';
+import {
+  createEncryptedFieldCipher,
+  createFileEncryptionKeyProvider,
+} from '../modules/data_platform/index.js';
 import { ENTERPRISE_POSTGRES_MIGRATIONS } from './postgresMigrations.js';
 import {
   buildNodePostgresPoolConfig,
@@ -30,6 +34,7 @@ type PromotionEnvironment = NodeJS.ProcessEnv &
     OTTO_SQLITE_IMPORT_MAINTENANCE_CONFIRMED?: string;
     OTTO_ATTACHMENT_TENANT_QUOTA_BYTES?: string;
     OTTO_ATTACHMENT_MIGRATION_GRACE_DAYS?: string;
+    OTTO_ENTERPRISE_FIELD_KEY_FILE?: string;
   };
 
 export interface PostgresEnterprisePromotionArguments {
@@ -114,7 +119,18 @@ export async function promoteEnterprisePostgres(input: {
     pool,
     migrations: ENTERPRISE_POSTGRES_MIGRATIONS,
   });
+  const fieldKeyFile = input.environment.OTTO_ENTERPRISE_FIELD_KEY_FILE?.trim();
+  const fieldKeyProvider = fieldKeyFile
+    ? createFileEncryptionKeyProvider({
+        keyPath: path.resolve(fieldKeyFile),
+        keyBytes: 32,
+        invalidKeyMessage: 'enterprise field encryption key is invalid',
+        createIfMissing: false,
+        managePermissions: false,
+      })
+    : null;
   try {
+    fieldKeyProvider?.getKey();
     await lifecycle.initialize();
     const result = await promoteVerifiedSqliteImport({
       pool,
@@ -135,6 +151,9 @@ export async function promoteEnterprisePostgres(input: {
         60 *
         60 *
         1_000,
+      fieldCipher: fieldKeyProvider
+        ? createEncryptedFieldCipher({ keyProvider: fieldKeyProvider })
+        : undefined,
     });
     input.log?.(
       JSON.stringify({
@@ -145,7 +164,11 @@ export async function promoteEnterprisePostgres(input: {
     );
     return result;
   } finally {
-    await lifecycle.close();
+    try {
+      await lifecycle.close();
+    } finally {
+      fieldKeyProvider?.clear();
+    }
   }
 }
 

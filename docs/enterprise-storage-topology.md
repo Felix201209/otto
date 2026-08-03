@@ -44,6 +44,7 @@ $env:OTTO_ATTACHMENT_TENANT_QUOTA_BYTES = '107374182400'
 $env:OTTO_ATTACHMENT_MIGRATION_GRACE_DAYS = '30'
 $env:OTTO_ENTERPRISE_CACHE_BACKEND = 'redis'
 $env:OTTO_REDIS_URL = 'rediss://default:<password>@redis.internal:6379/0'
+$env:OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE = 'D:\otto-secrets\account-sync.key'
 ```
 
 Plaintext Redis is rejected unless
@@ -103,25 +104,38 @@ downgrades to SQLite, process memory, or local attachment storage.
 The PostgreSQL lifecycle, migration control plane, resumable verified SQLite
 staging importer, S3 attachment adapter, Redis shared-cache/lease adapter,
 combined topology validation and production infrastructure preflight are
-implemented. PostgreSQL schema v6 now owns organizations, accounts, password
+implemented. PostgreSQL schema v13 now owns organizations, accounts, password
 sessions, organization structure and feature flags, audit events, E2EE device
 trust/transparency state, encrypted direct messages, attachment ACLs and
-message-to-object references. The enterprise
+message-to-object references. It also owns registration challenges,
+organization invitations, encrypted account-sync snapshots, knowledge, Skills,
+park services, tickets, commercial-control state and data-governance records.
+Tenant identity is a first-class key in every shared business record and event.
+The enterprise
 launcher selects an isolated asynchronous PostgreSQL server before importing
 the legacy SQLite module, so clustered mode cannot create a hidden `data.db`.
 
 The clustered server currently mounts health, password login/logout/session,
-account administration, organization view/structure/features, audit, E2EE
-device approval/revocation/transparency, E2EE ciphertext message routes, S3
-inline/multipart upload, resume, completion and authorized download routes.
+SMS registration, organization invitations and joining, account administration,
+organization view/structure/features, audit, encrypted account sync, knowledge,
+Skills, park services, tickets, commercial control, privacy export/deletion,
+E2EE device approval/revocation/transparency, E2EE ciphertext message routes,
+and S3 inline/multipart upload, resume, completion and authorized download
+routes.
 The production composition refuses to start unless PostgreSQL, Redis and the
 private S3 bucket all pass readiness. Session entries and active login blocks
 are mirrored into Redis with hashed keys; PostgreSQL remains authoritative.
 Attachment expiry, orphan and legacy-copy cleanup runs under a Redis lease so
 only one replica performs destructive maintenance at a time.
-Every route outside that migrated core returns
+An unimplemented enterprise route still returns
 `POSTGRES_ROUTE_NOT_MIGRATED` with HTTP 503 instead of reading or writing
-SQLite.
+SQLite, but none of the business domains listed above use that fallback.
+
+Account-sync content remains AES-256-GCM ciphertext in PostgreSQL. Every
+replica must mount the same externally provisioned 32-byte key at
+`OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE`; startup is fail-closed if the file is
+missing or invalid. The key is not generated independently by a replica and is
+not stored in PostgreSQL, configuration output or logs.
 
 After a verified staging import, prepare every legacy E2EE attachment in S3.
 The first command only validates the plan. The execute command requires stopped
@@ -153,9 +167,14 @@ npm run enterprise:postgres:promote --workspace=packages/server -- --run <run-id
 
 Promotion acquires a PostgreSQL advisory lock, refuses a non-empty authority,
 validates every source table again, rejects unencrypted legacy messages, and
-commits messages, S3 metadata, participant ACLs, quotas, attachment references,
-and an idempotent promotion receipt in one transaction. It refuses cutover if
-even one staged attachment lacks an exact verified S3 preparation.
+commits core identity, registration/invitation, E2EE/MLS, account-sync,
+knowledge, Skills, park, ticketing, commercial-control, privacy-governance,
+S3 metadata, participant ACL, quota and attachment-reference rows plus an
+idempotent promotion receipt in one transaction. It refuses cutover if even one
+staged attachment lacks an exact verified S3 preparation. If the snapshot has
+legacy encrypted Skill content, promotion additionally requires
+`OTTO_ENTERPRISE_FIELD_KEY_FILE`; the key is used only to transform verified
+legacy rows and is never emitted.
 
 For a controlled single-replica migration window, optional
 `OTTO_ATTACHMENT_LEGACY_READ_DIR` and
@@ -171,17 +190,17 @@ legacy inline protocol. Object keys are not exposed as standalone API fields;
 they may appear only inside an opaque, short-lived presigned URL. E2EE file keys
 are never sent to Otto Server or the object store.
 
-The remaining cutover work is:
+The remaining cutover work is operational qualification rather than route
+migration:
 
-1. port SMS registration, organization invites, account sync, knowledge,
-   skills, park, ticketing, commercial-control and data-governance repositories;
-2. execute and sign off a real attachment preparation, cutover, dual-read
-   grace and rollback rehearsal against the production-sized snapshot;
-3. promote the remaining verified staging
-   tables to their PostgreSQL domain schemas;
-4. qualify multiple replicas, backup/PITR, Redis failover, object lifecycle
-   rules and PostgreSQL automatic failover.
+1. execute and sign off a real attachment preparation, full-domain cutover,
+   dual-read grace and rollback rehearsal against a production-sized snapshot;
+2. qualify multiple replicas, backup/PITR restore, Redis failover, object
+   lifecycle rules and PostgreSQL automatic failover under the documented load;
+3. retain versioned reconciliation evidence for every promoted table and the
+   final maintenance-window receipt.
 
-The PostgreSQL core is a real write-serving authority, but until those stages
-are complete the full Otto Enterprise product must not be described as a
-production-ready clustered backend.
+The PostgreSQL business authority is write-serving and no longer splits the
+listed domains with SQLite. It must still not be described as production-ready
+until the deployment-specific HA, capacity and recovery qualification is signed
+off.

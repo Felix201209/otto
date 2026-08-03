@@ -111,6 +111,31 @@ describe('PostgreSQL enterprise core authority', () => {
     expect(migration!.sql).not.toContain('code TEXT NOT NULL');
   });
 
+  it('installs tenant-bound PostgreSQL authority for the remaining business domains', () => {
+    const migration = ENTERPRISE_POSTGRES_MIGRATIONS.find(
+      (candidate) => candidate.version === 13,
+    );
+    expect(migration).toMatchObject({
+      version: 13,
+      name: 'enterprise-business-authority',
+    });
+    for (const table of [
+      'account_sync_snapshots',
+      'enterprise_business_records',
+      'enterprise_business_events',
+    ]) {
+      expect(migration!.sql).toContain(`CREATE TABLE ${table}`);
+    }
+    expect(migration!.sql).toContain(
+      'FOREIGN KEY (account_id, organization_id)',
+    );
+    expect(migration!.sql).toContain(
+      'FOREIGN KEY (owner_account_id, organization_id)',
+    );
+    expect(migration!.sql).toContain('payload_ciphertext TEXT NOT NULL');
+    expect(migration!.sql).not.toContain('payload_plaintext');
+  });
+
   it('requires an exact policy hash before PostgreSQL reports current consent', async () => {
     const references = currentLegalDocumentReferences();
     const pool: PostgresPoolLike = {

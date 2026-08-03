@@ -43,6 +43,7 @@ import {
   type PostgresDatabaseReadiness,
 } from '../modules/data_platform/index.js';
 import { createClusteredAttachmentMaintenance } from './clusteredAttachmentMaintenance.js';
+import { handleClusteredBusinessRoute } from './clusteredBusinessRoutes.js';
 import { createClusteredMlsMaintenance } from './clusteredMlsMaintenance.js';
 import {
   createClusteredEnterpriseInfrastructure,
@@ -417,6 +418,7 @@ export function createClusteredEnterpriseServer(
             'personal_enterprise_upgrade',
             'multi_organization',
             'organization_structure_v1',
+            'organization_feature_switches_v1',
             'direct_messages',
             'unread_message_notifications_v1',
             'e2ee_private_messages_v1',
@@ -429,6 +431,15 @@ export function createClusteredEnterpriseServer(
             'organization_invites_v1',
             'data_governance_v1',
             'legal_documents_v1',
+            'account_data_sync_v1',
+            'enterprise_knowledge_v1',
+            'enterprise_skill_market_v1',
+            'enterprise_park_services_v1',
+            'enterprise_ticketing_v1',
+            'commercial_control_v1',
+            'modular_update_push_v1',
+            'signed_update_policy_v1',
+            'privacy_export_delete_v1',
             ...(options.attachmentStorage
               ? [
                   'direct_message_attachments_v1',
@@ -928,6 +939,53 @@ export function createClusteredEnterpriseServer(
       );
       if (!member) return;
 
+      if (path === '/enterprise/privacy/export' && method === 'GET') {
+        sendJson(res, 200, await repository.exportAccountData(member));
+        return;
+      }
+
+      if (path === '/enterprise/privacy/account' && method === 'DELETE') {
+        const body = await readJsonBody(req);
+        const password = typeof body.password === 'string' ? body.password : '';
+        if (
+          body.confirmation !== '注销我的 Otto 账号' ||
+          !password
+        ) {
+          sendJson(res, 400, {
+            error: 'password and exact account deletion confirmation are required',
+          });
+          return;
+        }
+        const verified = await repository.authenticateAccount(
+          member.username,
+          password,
+        );
+        if (!verified || verified.id !== member.id) {
+          sendJson(res, 403, { error: 'account password is invalid' });
+          return;
+        }
+        const receipt = await repository.deleteOwnAccountData(member);
+        await options.sharedState?.revokeSession(bearerToken(req));
+        sendJson(res, 200, receipt);
+        return;
+      }
+
+      if (
+        await handleClusteredBusinessRoute({
+          path,
+          method,
+          url,
+          req,
+          res,
+          member,
+          repository,
+          readBody: readJsonBody,
+          sendJson,
+        })
+      ) {
+        return;
+      }
+
       if (
         options.attachmentStorage &&
         path === '/enterprise/attachments/inline' &&
@@ -1144,7 +1202,10 @@ export function createClusteredEnterpriseServer(
         return;
       }
 
-      if (path === '/enterprise/organization/features' && method === 'PUT') {
+      if (
+        path === '/enterprise/organization/features' &&
+        (method === 'PUT' || method === 'PATCH')
+      ) {
         if (!member.isAdmin) {
           sendJson(res, 403, { error: 'administrator permission required' });
           return;
@@ -1155,6 +1216,8 @@ export function createClusteredEnterpriseServer(
           'direct_messages',
           'atoa',
           'park_services',
+          'knowledge',
+          'skill_market',
         ] as const;
         const patch: Partial<Record<(typeof featureNames)[number], boolean>> = {};
         for (const feature of featureNames) {

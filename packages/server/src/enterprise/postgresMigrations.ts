@@ -787,6 +787,87 @@ CREATE INDEX mls_key_packages_device_inventory
   WHERE claimed_at IS NULL;
 `,
   },
+  {
+    version: 13,
+    name: 'enterprise-business-authority',
+    sql: `
+ALTER TABLE organization_features
+  ADD COLUMN knowledge BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN skill_market BOOLEAN NOT NULL DEFAULT TRUE;
+
+CREATE TABLE account_sync_snapshots (
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  account_id TEXT NOT NULL,
+  scope TEXT NOT NULL CHECK (scope IN ('personal_memory', 'worklog', 'auto_skills')),
+  version INTEGER NOT NULL CHECK (version > 0),
+  payload_ciphertext TEXT NOT NULL,
+  payload_iv TEXT NOT NULL,
+  payload_auth_tag TEXT NOT NULL,
+  payload_hash TEXT NOT NULL CHECK (length(payload_hash) = 64),
+  device_id TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (organization_id, account_id, scope),
+  UNIQUE (account_id, scope),
+  FOREIGN KEY (account_id, organization_id)
+    REFERENCES accounts(id, organization_id) ON DELETE CASCADE
+);
+
+CREATE TABLE enterprise_business_records (
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  domain TEXT NOT NULL CHECK (domain IN (
+    'knowledge', 'skills', 'park', 'ticketing', 'commercial_control', 'data_governance'
+  )),
+  resource_type TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  owner_account_id TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (organization_id, domain, resource_type, resource_id),
+  FOREIGN KEY (owner_account_id, organization_id)
+    REFERENCES accounts(id, organization_id)
+    ON DELETE SET NULL (owner_account_id)
+);
+
+CREATE INDEX enterprise_business_records_listing
+  ON enterprise_business_records (
+    organization_id, domain, resource_type, status, updated_at DESC, resource_id
+  );
+CREATE INDEX enterprise_business_records_owner
+  ON enterprise_business_records (
+    organization_id, owner_account_id, domain, resource_type, updated_at DESC
+  ) WHERE owner_account_id IS NOT NULL;
+
+CREATE TABLE enterprise_business_events (
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  domain TEXT NOT NULL CHECK (domain IN (
+    'knowledge', 'skills', 'park', 'ticketing', 'commercial_control', 'data_governance'
+  )),
+  event_id TEXT NOT NULL,
+  resource_type TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  actor_account_id TEXT,
+  event_type TEXT NOT NULL,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (organization_id, domain, event_id),
+  FOREIGN KEY (actor_account_id, organization_id)
+    REFERENCES accounts(id, organization_id)
+    ON DELETE SET NULL (actor_account_id),
+  FOREIGN KEY (organization_id, domain, resource_type, resource_id)
+    REFERENCES enterprise_business_records(
+      organization_id, domain, resource_type, resource_id
+    ) ON DELETE CASCADE
+);
+
+CREATE INDEX enterprise_business_events_resource
+  ON enterprise_business_events (
+    organization_id, domain, resource_type, resource_id, created_at, event_id
+  );
+`,
+  },
 ];
 
 export const ENTERPRISE_POSTGRES_SCHEMA_VERSION =

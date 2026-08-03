@@ -70,6 +70,8 @@ import type {
   PostgresClientLike,
   PostgresPoolLike,
 } from '../modules/data_platform/postgresDatabaseLifecycle.js';
+import type { AccountSyncEncryptionKeyProvider } from '../modules/personal_intelligence/index.js';
+import { createPostgresEnterpriseBusinessRepository } from './postgresBusinessRepository.js';
 import { createPostgresRegistrationRepository } from './postgresRegistrationRepository.js';
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
@@ -95,6 +97,8 @@ export interface PostgresEnterpriseFeatures {
   direct_messages: boolean;
   atoa: boolean;
   park_services: boolean;
+  knowledge: boolean;
+  skill_market: boolean;
 }
 
 export interface PostgresEnterpriseAccountView {
@@ -791,6 +795,7 @@ export function createPostgresEnterpriseCoreRepository(input: {
   sessionTtlMs?: number;
   now?: () => number;
   mlsResourcePolicy?: Partial<MlsResourceGovernancePolicy>;
+  accountSyncKeyProvider?: AccountSyncEncryptionKeyProvider;
 }) {
   const defaultOrganizationId = input.defaultOrganizationId?.trim() || 'org_default';
   const sessionTtlMs = input.sessionTtlMs ?? SESSION_TTL_MS;
@@ -1194,7 +1199,8 @@ export function createPostgresEnterpriseCoreRepository(input: {
     const result = await input.pool.query<
       PostgresEnterpriseFeatures & Record<string, unknown>
     >(
-      `SELECT enterprise_tree, direct_messages, atoa, park_services
+      `SELECT enterprise_tree, direct_messages, atoa, park_services,
+              knowledge, skill_market
        FROM organization_features WHERE organization_id = $1`,
       [organizationId],
     );
@@ -1212,7 +1218,8 @@ export function createPostgresEnterpriseCoreRepository(input: {
     await input.pool.query(
       `UPDATE organization_features SET
          enterprise_tree = $2, direct_messages = $3, atoa = $4,
-         park_services = $5, updated_at = CURRENT_TIMESTAMP
+         park_services = $5, knowledge = $6, skill_market = $7,
+         updated_at = CURRENT_TIMESTAMP
        WHERE organization_id = $1`,
       [
         organizationId,
@@ -1220,6 +1227,8 @@ export function createPostgresEnterpriseCoreRepository(input: {
         next.direct_messages,
         next.atoa,
         next.park_services,
+        next.knowledge,
+        next.skill_market,
       ],
     );
     await logAudit('organization_features_updated', organizationId, null, { features: next });
@@ -3443,6 +3452,223 @@ export function createPostgresEnterpriseCoreRepository(input: {
     });
   }
 
+  async function exportAccountData(
+    account: PostgresEnterpriseAccountView,
+  ): Promise<Record<string, unknown>> {
+    const [consents, devices, messages, syncSnapshots, businessRecords] =
+      await Promise.all([
+        input.pool.query(
+          `SELECT document_id, document_version, policy_hash, source, accepted_at
+           FROM legal_consents
+           WHERE account_id = $1 AND organization_id = $2
+           ORDER BY accepted_at, document_id`,
+          [account.id, account.organizationId],
+        ),
+        input.pool.query(
+          `SELECT device_id, device_name, key_fingerprint, approval_state,
+                  approved_at, created_at, last_seen_at, revoked_at
+           FROM e2ee_devices
+           WHERE account_id = $1 AND organization_id = $2
+           ORDER BY created_at, device_id`,
+          [account.id, account.organizationId],
+        ),
+        input.pool.query(
+          `SELECT id, sender_account_id, recipient_account_id, content_type,
+                  e2ee_protocol_version, e2ee_sender_device_id,
+                  e2ee_ciphertext, e2ee_nonce, e2ee_signature, e2ee_envelopes,
+                  in_reply_to_message_id, created_at, read_at
+           FROM direct_messages
+           WHERE organization_id = $2
+             AND (sender_account_id = $1 OR recipient_account_id = $1)
+           ORDER BY created_at, id`,
+          [account.id, account.organizationId],
+        ),
+        business.listAccountSyncSnapshots({
+          accountId: account.id,
+          organizationId: account.organizationId,
+        }),
+        input.pool.query(
+          `SELECT domain, resource_type, resource_id, status, version, payload,
+                  created_at, updated_at
+           FROM enterprise_business_records
+           WHERE organization_id = $2
+             AND (owner_account_id = $1 OR payload->'participantAccountIds' ? $1
+                  OR payload->'recipientAccountIds' ? $1
+                  OR payload->'assigneeAccountIds' ? $1)
+           ORDER BY domain, resource_type, created_at, resource_id`,
+          [account.id, account.organizationId],
+        ),
+      ]);
+    const exportedAt = new Date().toISOString();
+    const exported = {
+      format: 'otto-account-export-v1',
+      exportedAt,
+      account,
+      legalConsents: consents.rows,
+      e2eeDevices: devices.rows,
+      e2eeCiphertextMessages: messages.rows,
+      accountSyncSnapshots: syncSnapshots,
+      businessRecords: businessRecords.rows,
+      securityNotice:
+        'E2EE message bodies remain ciphertext; client private keys are not held by Otto Server.',
+    };
+    await business.createBusinessRecord({
+      organizationId: account.organizationId,
+      domain: 'data_governance',
+      resourceType: 'privacy_request',
+      ownerAccountId: account.id,
+      status: 'completed',
+      payload: {
+        requestType: 'export',
+        requestedAt: exportedAt,
+        completedAt: exportedAt,
+        receipt: {
+          format: exported.format,
+          legalConsentCount: consents.rows.length,
+          e2eeDeviceCount: devices.rows.length,
+          e2eeCiphertextMessageCount: messages.rows.length,
+          accountSyncSnapshotCount: syncSnapshots.length,
+          businessRecordCount: businessRecords.rows.length,
+        },
+      },
+    });
+    return exported;
+  }
+
+  async function deleteOwnAccountData(
+    account: PostgresEnterpriseAccountView,
+  ): Promise<{
+    accountId: string;
+    deletedAt: string;
+    mode: 'cryptographic_and_soft_delete';
+  }> {
+    const deletedAt = new Date().toISOString();
+    await transaction(input.pool, async (client) => {
+      const locked = await client.query<
+        { is_admin: boolean; status: string } & Record<string, unknown>
+      >(
+        `SELECT is_admin, status FROM accounts
+         WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
+         FOR UPDATE`,
+        [account.id, account.organizationId],
+      );
+      if (!locked.rows[0]) throw new Error('account not found');
+      if (locked.rows[0].is_admin && locked.rows[0].status === 'active') {
+        const administrators = await client.query<
+          { count: number | string } & Record<string, unknown>
+        >(
+          `SELECT count(*)::integer AS count FROM accounts
+           WHERE organization_id = $1 AND is_admin = TRUE AND status = 'active'
+             AND deleted_at IS NULL`,
+          [account.organizationId],
+        );
+        if (Number(administrators.rows[0]?.count ?? 0) <= 1) {
+          throw new Error('organization must retain one active administrator');
+        }
+      }
+
+      await client.query(
+        `UPDATE direct_messages SET in_reply_to_message_id = NULL
+         WHERE organization_id = $2 AND in_reply_to_message_id IN (
+           SELECT id FROM direct_messages
+           WHERE organization_id = $2
+             AND (sender_account_id = $1 OR recipient_account_id = $1)
+         )`,
+        [account.id, account.organizationId],
+      );
+      await client.query(
+        `DELETE FROM direct_messages
+         WHERE organization_id = $2
+           AND (sender_account_id = $1 OR recipient_account_id = $1)`,
+        [account.id, account.organizationId],
+      );
+      await client.query(
+        `DELETE FROM mls_conversations
+         WHERE organization_id = $2
+           AND (participant_a_account_id = $1 OR participant_b_account_id = $1)`,
+        [account.id, account.organizationId],
+      );
+      await client.query(
+        `DELETE FROM mls_key_packages
+         WHERE organization_id = $2
+           AND (account_id = $1 OR claimed_by_account_id = $1)`,
+        [account.id, account.organizationId],
+      );
+      await client.query(
+        `DELETE FROM account_sync_snapshots
+         WHERE organization_id = $2 AND account_id = $1`,
+        [account.id, account.organizationId],
+      );
+      await client.query(
+        `DELETE FROM enterprise_business_records
+         WHERE organization_id = $2 AND owner_account_id = $1`,
+        [account.id, account.organizationId],
+      );
+      await client.query(
+        `UPDATE enterprise_business_events SET actor_account_id = NULL
+         WHERE organization_id = $2 AND actor_account_id = $1`,
+        [account.id, account.organizationId],
+      );
+      await client.query(
+        `DELETE FROM legal_consents
+         WHERE organization_id = $2 AND account_id = $1`,
+        [account.id, account.organizationId],
+      );
+      await client.query(
+        `DELETE FROM e2ee_devices
+         WHERE organization_id = $2 AND account_id = $1`,
+        [account.id, account.organizationId],
+      );
+      await client.query('DELETE FROM auth_sessions WHERE account_id = $1', [account.id]);
+      await client.query(
+        `UPDATE accounts SET
+           username = concat('deleted-', id), phone = NULL, feishu_open_id = NULL,
+           password_hash = $3, name = 'Deleted account', role = NULL,
+           department = NULL, department_id = NULL, position_id = NULL,
+           position_title = NULL, avatar_url = NULL, is_admin = FALSE,
+           status = 'disabled', deleted_at = $4, updated_at = $4
+         WHERE id = $1 AND organization_id = $2`,
+        [
+          account.id,
+          account.organizationId,
+          hashIdentitySecret(randomBytes(32).toString('base64url')),
+          deletedAt,
+        ],
+      );
+      await client.query(
+        `INSERT INTO enterprise_business_records
+           (organization_id, domain, resource_type, resource_id,
+            owner_account_id, status, payload, created_at, updated_at)
+         VALUES ($1, 'data_governance', 'privacy_request', $2,
+                 $3, 'completed', $4::jsonb, $5, $5)`,
+        [
+          account.organizationId,
+          randomUUID(),
+          account.id,
+          JSON.stringify({
+            requestType: 'delete',
+            requestedAt: deletedAt,
+            completedAt: deletedAt,
+            mode: 'cryptographic_and_soft_delete',
+          }),
+          deletedAt,
+        ],
+      );
+      await logAudit(
+        'privacy_account_deleted',
+        account.organizationId,
+        null,
+        { accountId: account.id, deletedAt },
+        client,
+      );
+    });
+    return {
+      accountId: account.id,
+      deletedAt,
+      mode: 'cryptographic_and_soft_delete',
+    };
+  }
+
   const registration = createPostgresRegistrationRepository({
     pool: input.pool,
     defaultOrganizationId,
@@ -3450,12 +3676,18 @@ export function createPostgresEnterpriseCoreRepository(input: {
     getAccount,
     logAudit,
   });
+  const business = createPostgresEnterpriseBusinessRepository({
+    pool: input.pool,
+    accountSyncKeyProvider: input.accountSyncKeyProvider,
+  });
 
   return {
     defaultOrganizationId,
     readiness,
     getDataGovernanceProfile,
     recordCurrentLegalConsent,
+    exportAccountData,
+    deleteOwnAccountData,
     getOrganization,
     getOrganizationFeatures,
     updateOrganizationFeatures,
@@ -3499,6 +3731,7 @@ export function createPostgresEnterpriseCoreRepository(input: {
     claimExpiredUnboundAttachments,
     completeExpiredUnboundAttachment,
     listUnreadE2eeNotifications,
+    ...business,
     ...registration,
   };
 }

@@ -83,13 +83,99 @@ function repository(): PostgresEnterpriseCoreRepository {
       expiresAt: '2026-09-01T00:00:00.000Z',
     })),
     getAccountBySession: vi.fn(async (token: string) =>
-      token === 'clustered-session-token' ? account : null,
+      token === 'clustered-session-token'
+        ? account
+        : token === 'peer-session-token'
+          ? peerAccount
+          : null,
     ),
     revokeAuthSession: vi.fn(async () => true),
+    getOrganizationFeatures: vi.fn(async () => ({
+      enterprise_tree: true,
+      direct_messages: true,
+      atoa: true,
+      park_services: true,
+      knowledge: true,
+      skill_market: true,
+    })),
+    updateOrganizationFeatures: vi.fn(async (_organizationId, patch) => ({
+      enterprise_tree: true,
+      direct_messages: true,
+      atoa: true,
+      park_services: true,
+      knowledge: patch.knowledge ?? true,
+      skill_market: patch.skill_market ?? true,
+    })),
+    listAccountSyncSnapshots: vi.fn(async () => []),
+    putAccountSyncSnapshot: vi.fn(async (input) => ({
+      scope: input.scope,
+      version: input.expectedVersion + 1,
+      payload: input.payload,
+      payloadHash: 'a'.repeat(64),
+      deviceId: input.deviceId ?? null,
+      updatedAtMs: Date.parse('2026-08-01T00:00:00.000Z'),
+    })),
+    listBusinessRecords: vi.fn(async () => []),
+    getBusinessRecord: vi.fn(async () => null),
+    createBusinessRecord: vi.fn(async (input) => ({
+      organizationId: input.organizationId,
+      domain: input.domain,
+      resourceType: input.resourceType,
+      resourceId: input.resourceId ?? 'resource-1',
+      ownerAccountId: input.ownerAccountId ?? null,
+      status: input.status ?? 'active',
+      version: 1,
+      payload: input.payload,
+      createdAt: '2026-08-01T00:00:00.000Z',
+      updatedAt: '2026-08-01T00:00:00.000Z',
+    })),
+    updateBusinessRecord: vi.fn(async () => null),
+    appendBusinessEvent: vi.fn(async (input) => ({
+      organizationId: input.organizationId,
+      domain: input.domain,
+      eventId: input.eventId ?? 'event-1',
+      resourceType: input.resourceType,
+      resourceId: input.resourceId,
+      actorAccountId: input.actorAccountId ?? null,
+      eventType: input.eventType,
+      payload: input.payload,
+      createdAt: '2026-08-01T00:00:00.000Z',
+      inserted: true,
+    })),
+    listBusinessEvents: vi.fn(async () => []),
+    findActiveParkInvite: vi.fn(async () => null),
+    listParkTenantMemberships: vi.fn(async () => []),
+    listTicketRecordsForAccount: vi.fn(async () => []),
+    listAddressedBusinessRecords: vi.fn(async () => []),
+    exportAccountData: vi.fn(async (target) => ({
+      format: 'otto-account-export-v1',
+      account: target,
+    })),
+    deleteOwnAccountData: vi.fn(async (target) => ({
+      accountId: target.id,
+      deletedAt: '2026-08-01T00:00:00.000Z',
+      mode: 'cryptographic_and_soft_delete' as const,
+    })),
     getDataGovernanceProfile,
     recordCurrentLegalConsent: vi.fn(async () => undefined),
     getAccount: vi.fn(async (id: string) =>
       id === peerAccount.id ? peerAccount : id === account.id ? account : null,
+    ),
+    getOrganization: vi.fn(async (id: string) =>
+      id === account.organizationId
+        ? {
+            id,
+            name: account.organizationName,
+            slug: 'otto',
+            parkId: null,
+            status: 'active' as const,
+            createdAt: account.createdAt,
+            updatedAt: account.updatedAt,
+          }
+        : null,
+    ),
+    listAccounts: vi.fn(async (organizationId: string) =>
+      organizationId === account.organizationId ? [account, peerAccount] : [],
     ),
   } as unknown as PostgresEnterpriseCoreRepository;
 }
@@ -223,7 +309,10 @@ describe('clustered PostgreSQL enterprise server', () => {
       body: JSON.stringify({ accepted: true, documents: references }),
     });
     expect(accepted.status).toBe(200);
-    expect(repo.recordCurrentLegalConsent).toHaveBeenCalledWith(account, references);
+    expect(repo.recordCurrentLegalConsent).toHaveBeenCalledWith(
+      account,
+      references,
+    );
   });
 
   it('relays MLS KeyPackages and opaque events through the PostgreSQL authority', async () => {
@@ -390,9 +479,7 @@ describe('clustered PostgreSQL enterprise server', () => {
       await fetch(`${baseUrl}/enterprise/health`)
     ).json()) as { capabilities: string[] };
     expect(health.capabilities).toContain('e2ee_mls_transport_v1');
-    expect(health.capabilities).toContain(
-      'e2ee_mls_resource_governance_v1',
-    );
+    expect(health.capabilities).toContain('e2ee_mls_resource_governance_v1');
     expect(health.capabilities).toContain(
       'e2ee_mls_transport_session_reset_v1',
     );
@@ -419,16 +506,216 @@ describe('clustered PostgreSQL enterprise server', () => {
     expect(repo.authenticateAccount).not.toHaveBeenCalled();
   });
 
-  it('fails closed for routes that have not moved to PostgreSQL', async () => {
-    const { baseUrl } = await listen();
-    const response = await fetch(`${baseUrl}/enterprise/knowledge`, {
+  it('serves account sync from the PostgreSQL tenant authority', async () => {
+    const repo = repository();
+    const { baseUrl } = await listen(repo);
+    const response = await fetch(`${baseUrl}/enterprise/account-sync`, {
+      method: 'PUT',
       headers: { authorization: 'Bearer clustered-session-token' },
+      body: JSON.stringify({
+        scope: 'worklog',
+        expectedVersion: 0,
+        deviceId: 'desktop-1',
+        payload: {
+          schemaVersion: 1,
+          generatedAt: '2026-08-01T00:00:00.000Z',
+          files: [],
+        },
+      }),
     });
-    expect(response.status).toBe(503);
+    expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
-      code: 'POSTGRES_ROUTE_NOT_MIGRATED',
-      path: '/enterprise/knowledge',
+      snapshot: { scope: 'worklog', version: 1, deviceId: 'desktop-1' },
     });
+    expect(repo.putAccountSyncSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organizationId: 'org_default',
+        accountId: 'acc_admin',
+        expectedVersion: 0,
+      }),
+    );
+  });
+
+  it('stores knowledge and skills under the authenticated PostgreSQL tenant', async () => {
+    const repo = repository();
+    const { baseUrl } = await listen(repo);
+    const headers = {
+      authorization: 'Bearer clustered-session-token',
+      'content-type': 'application/json',
+    };
+    const knowledge = await fetch(`${baseUrl}/enterprise/knowledge`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        category: 'runbook',
+        content: 'Restore from PITR.',
+      }),
+    });
+    expect(knowledge.status).toBe(200);
+    await expect(knowledge.json()).resolves.toMatchObject({
+      added: true,
+      reviewStatus: 'active',
+    });
+
+    const skill = await fetch(`${baseUrl}/enterprise/skills`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        name: 'Incident triage',
+        description: 'Classifies and routes incidents.',
+        content: '# Incident triage\n\nFollow the verified runbook.',
+        visibility: 'company',
+      }),
+    });
+    expect(skill.status).toBe(201);
+    await expect(skill.json()).resolves.toMatchObject({
+      outcome: 'submitted',
+      skill: { name: 'Incident triage', status: 'active' },
+    });
+    expect(repo.createBusinessRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organizationId: 'org_default',
+        domain: 'skills',
+        ownerAccountId: 'acc_admin',
+      }),
+    );
+  });
+
+  it('accepts the desktop feature PATCH contract for migrated domains', async () => {
+    const repo = repository();
+    const { baseUrl } = await listen(repo);
+    const response = await fetch(
+      `${baseUrl}/enterprise/organization/features`,
+      {
+        method: 'PATCH',
+        headers: {
+          authorization: 'Bearer clustered-session-token',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ knowledge: false, skill_market: false }),
+      },
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      features: { knowledge: false, skill_market: false },
+    });
+    expect(repo.updateOrganizationFeatures).toHaveBeenCalledWith(
+      'org_default',
+      { knowledge: false, skill_market: false },
+    );
+  });
+
+  it('mounts park, ticketing and commercial control on PostgreSQL authority', async () => {
+    const repo = repository();
+    const { baseUrl } = await listen(repo);
+    const headers = {
+      authorization: 'Bearer clustered-session-token',
+      'content-type': 'application/json',
+    };
+
+    const park = await fetch(`${baseUrl}/enterprise/park`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ name: 'Otto Campus' }),
+    });
+    expect(park.status).toBe(200);
+    await expect(park.json()).resolves.toMatchObject({
+      park: { name: 'Otto Campus' },
+    });
+
+    const ticket = await fetch(`${baseUrl}/enterprise/tickets`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        serviceId: 'it',
+        title: 'PostgreSQL cutover check',
+        description: 'Verify the authoritative route.',
+      }),
+    });
+    expect(ticket.status).toBe(201);
+    await expect(ticket.json()).resolves.toMatchObject({
+      ticket: { title: 'PostgreSQL cutover check', status: 'open' },
+    });
+
+    const deployment = await fetch(`${baseUrl}/enterprise/deployment/status`, {
+      headers,
+    });
+    expect(deployment.status).toBe(200);
+    await expect(deployment.json()).resolves.toMatchObject({
+      authority: 'postgresql',
+      dataBoundary: {
+        messageContent: 'client_e2ee_ciphertext_only',
+        clientIdentityPrivateKeys: 'client_only',
+      },
+    });
+    expect(repo.createBusinessRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organizationId: 'org_default',
+        domain: 'ticketing',
+      }),
+    );
+  });
+
+  it('preserves member update-policy and module-manifest contracts', async () => {
+    const repo = repository();
+    const { baseUrl } = await listen(repo);
+    const authorization = 'Bearer peer-session-token';
+    const policy = await fetch(
+      `${baseUrl}/enterprise/deployment/update-policy`,
+      {
+        method: 'POST',
+        headers: { authorization, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          distributionId: 'desktop-win32-x64',
+          currentVersion: '1.10.0',
+        }),
+      },
+    );
+    expect(policy.status).toBe(200);
+    await expect(policy.json()).resolves.toEqual({
+      status: 'not_configured',
+      reason: 'online_license_required',
+    });
+
+    const manifest = await fetch(
+      `${baseUrl}/enterprise/modules/updates/client`,
+      { headers: { authorization } },
+    );
+    expect(manifest.status).toBe(200);
+    await expect(manifest.json()).resolves.toMatchObject({
+      format: 'otto-module-updates-v1',
+      deploymentId: 'clustered-enterprise',
+      modules: [],
+    });
+  });
+
+  it('exports and deletes account data through the PostgreSQL repository', async () => {
+    const repo = repository();
+    const { baseUrl } = await listen(repo);
+    const authorization = 'Bearer clustered-session-token';
+    const exported = await fetch(`${baseUrl}/enterprise/privacy/export`, {
+      headers: { authorization },
+    });
+    expect(exported.status).toBe(200);
+    await expect(exported.json()).resolves.toMatchObject({
+      format: 'otto-account-export-v1',
+      account: { id: 'acc_admin', organizationId: 'org_default' },
+    });
+
+    const deleted = await fetch(`${baseUrl}/enterprise/privacy/account`, {
+      method: 'DELETE',
+      headers: { authorization, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        password: 'correct-password',
+        confirmation: '注销我的 Otto 账号',
+      }),
+    });
+    expect(deleted.status).toBe(200);
+    await expect(deleted.json()).resolves.toMatchObject({
+      accountId: 'acc_admin',
+      mode: 'cryptographic_and_soft_delete',
+    });
+    expect(repo.deleteOwnAccountData).toHaveBeenCalledWith(account);
   });
 
   it('issues organization invites through PostgreSQL without exposing a stored code', async () => {

@@ -51,6 +51,8 @@ function dryRunPool(
             mls_conversations: 0,
             mls_group_sessions: 0,
             mls_transport_events: input.targetMlsEvents ?? 0,
+            account_sync_snapshots: 0,
+            business_records: 0,
             non_default_organizations: 0,
           },
         ]);
