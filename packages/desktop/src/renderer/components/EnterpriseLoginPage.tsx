@@ -85,14 +85,6 @@ export function isRegistrationReady(input: {
     && input.legalDocuments.length === 2;
 }
 
-function enterpriseServerHost(serverUrl: string): string {
-  try {
-    return new URL(serverUrl).host || serverUrl.trim();
-  } catch {
-    return serverUrl.trim();
-  }
-}
-
 function enterpriseLegalUrl(serverUrl: string): string | null {
   try {
     const url = new URL(serverUrl.trim());
@@ -200,7 +192,7 @@ export function EnterpriseLoginPage({
   const [loginNotice, setLoginNotice] = useState('');
   const [loginCountdown, setLoginCountdown] = useState(0);
   const [loginRequesting, setLoginRequesting] = useState(false);
-  const [serverUrl, setServerUrl] = useState(initialServerUrl);
+  const serverUrl = initialServerUrl;
   const [name, setName] = useState('');
   const [registrationPassword, setRegistrationPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -220,7 +212,6 @@ export function EnterpriseLoginPage({
   const requestEpochRef = useRef(0);
   const submitLockedRef = useRef(false);
   const formPending = busy || submitting;
-  const serverHost = enterpriseServerHost(serverUrl);
   const legalUrl = enterpriseLegalUrl(serverUrl);
 
   useEffect(() => {
@@ -322,7 +313,6 @@ export function EnterpriseLoginPage({
   };
 
   useEffect(() => {
-    setServerUrl(initialServerUrl);
     requestEpochRef.current += 1;
     setLoginChallengeId('');
     setLoginCode('');
@@ -336,13 +326,6 @@ export function EnterpriseLoginPage({
     setOrganizationName('');
     setCountdown(0);
   }, [initialServerUrl]);
-
-  const updateServerUrl = (value: string): void => {
-    setServerUrl(value);
-    invalidateLoginChallenge();
-    invalidateRegistrationChallenge();
-    onClearError();
-  };
 
   const submitAuth = async (): Promise<void> => {
     if (formPending || requesting || loginRequesting || submitLockedRef.current) return;
@@ -441,25 +424,6 @@ export function EnterpriseLoginPage({
             <span><strong>OTTO SECURE ACCESS</strong><small>企业身份门禁</small></span>
             <b>{mode === 'login' ? 'AUTHORIZED' : mode === 'join' ? 'JOIN COMPANY' : 'NEW ACCOUNT'}</b>
           </header>
-          <label
-            className="otto-auth-server"
-          >
-            <span>企业服务器地址</span>
-            <input
-              aria-label="企业服务器地址"
-              type="url"
-              inputMode="url"
-              autoCapitalize="none"
-              autoComplete="url"
-              spellCheck={false}
-              value={serverUrl}
-              disabled={formPending}
-              onChange={(event) => updateServerUrl(event.target.value)}
-              placeholder="https://enterprise.example.com"
-              required
-            />
-            <strong>{serverHost || '请输入管理员提供的 HTTPS 地址'}</strong>
-          </label>
           <div className="otto-auth-card__topline">
             <span className="otto-auth-status-dot" />
             {mode === 'login'

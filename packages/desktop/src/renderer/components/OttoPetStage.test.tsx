@@ -7,6 +7,7 @@ import { act, cleanup, render, screen } from '@testing-library/react';
 import { OttoPetStage, PET_ANIMATIONS } from './OttoPetStage.js';
 
 vi.mock('../assets/otto-pet-atlas.png', () => ({ default: 'otto-pet-atlas.png' }));
+vi.mock('../assets/otto-login-mascot-hd.png', () => ({ default: 'otto-login-mascot-hd.png' }));
 
 const matchMedia = (matches: boolean): typeof window.matchMedia =>
   vi.fn().mockReturnValue({
@@ -75,15 +76,15 @@ describe('OttoPetStage', () => {
     ).toBeTruthy();
   });
 
-  it('登录页模式放大官方图集，并移除右栏标题和地面装饰', () => {
+  it('登录页使用独立高清吉祥物，并移除低分辨率图集和地面装饰', () => {
     const { container } = render(<OttoPetStage running={false} variant="login" />);
     const stage = container.querySelector<HTMLElement>('[data-testid="otto-pet-stage"]');
-    const sprite = container.querySelector<HTMLElement>('.otto-pet-stage__sprite');
+    const mascot = container.querySelector<HTMLImageElement>('.otto-pet-stage__login-mascot');
 
     expect(stage?.classList.contains('otto-pet-stage--login')).toBe(true);
     expect(container.querySelector('.otto-pet-stage__head')).toBeNull();
     expect(container.querySelector('.otto-pet-stage__floor')).toBeNull();
-    expect(sprite?.style.width).toBe('316.8px');
-    expect(sprite?.style.height).toBe('343.2px');
+    expect(container.querySelector('.otto-pet-stage__sprite')).toBeNull();
+    expect(mascot?.src).toContain('otto-login-mascot-hd.png');
   });
 });

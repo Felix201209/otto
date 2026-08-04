@@ -5,6 +5,7 @@
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
+import ottoLoginMascotUrl from '../assets/otto-login-mascot-hd.png';
 import ottoPetAtlasUrl from '../assets/otto-pet-atlas.png';
 
 const CELL_WIDTH = 192;
@@ -209,9 +210,6 @@ export function OttoPetStage({
     '--otto-pet-state-duration': `${totalStateDuration}ms`,
   } as React.CSSProperties;
 
-  const travelling =
-    animation.id === 'running-right' || animation.id === 'running-left';
-
   if (variant === 'widget') {
     return (
       <aside
@@ -252,24 +250,17 @@ export function OttoPetStage({
   return (
     <section
       className="otto-pet-stage otto-pet-stage--login"
-      aria-label="Otto 像素吉祥物动画"
+      aria-label="Otto 高清吉祥物"
       data-testid="otto-pet-stage"
-      data-current-state={animation.id}
       data-running={running ? 'true' : 'false'}
     >
       <div className="otto-pet-stage__scene">
-        <div
-          key={`${animation.id}-${stepIndex}`}
-          className={`otto-pet-stage__motion${
-            travelling ? ` is-${animation.id}` : ''
-          }`}
-          style={motionStyle}
-          data-state={animation.id}
-          data-frame={frameIndex}
-          data-reduced-motion={reducedMotion ? 'true' : 'false'}
-        >
-          <div className="otto-pet-stage__sprite" style={spriteStyle} aria-hidden="true" />
-        </div>
+        <img
+          className="otto-pet-stage__login-mascot"
+          src={ottoLoginMascotUrl}
+          alt=""
+          aria-hidden="true"
+        />
       </div>
     </section>
   );
