@@ -1,0 +1,44 @@
+{
+  "format": 1,
+  "protocol": {
+    "id": "mls10-openmls-0.8-candidate",
+    "implementation": "openmls-0.8.1",
+    "candidateOnly": true,
+    "productionCapabilityAdvertised": false,
+    "serverCiphertextTransport": true,
+    "desktopCiphertextTransportClient": true,
+    "desktopTransportSessionOrchestration": true,
+    "desktopInitialSessionOrchestration": true,
+    "crashSafeInitialHandshakeRecovery": true,
+    "crashSafeRemoteCommitProcessing": true,
+    "durableTransportCursor": true,
+    "durableApplicationOutbox": true,
+    "backgroundOutboxRetry": true,
+    "transportSessionHistory": true,
+    "transportSessionReset": true,
+    "externalAuditCompleted": false,
+    "prekeyHandshake": true,
+    "doubleRatchet": false,
+    "mls10SessionProtocol": true,
+    "multiDeviceSessions": true,
+    "safetyStateReset": true,
+    "forwardSecrecy": true,
+    "postCompromiseSecurity": true
+  },
+  "deviceTrust": {
+    "safetyNumbers": true,
+    "qrVerification": true,
+    "outOfBandDeviceApproval": true,
+    "keyTransparency": true,
+    "keyTransparencyMode": "client-pinned-server-hash-chain-not-externally-witnessed",
+    "localCheckpointPinning": true,
+    "externalWitness": false
+  },
+  "auditReports": [],
+  "releaseApproved": false,
+  "prohibitedClaims": [
+    "Signal-grade security",
+    "externally audited production E2EE",
+    "protection from a malicious device-directory server"
+  ]
+}

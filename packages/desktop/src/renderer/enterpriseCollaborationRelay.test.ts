@@ -60,7 +60,6 @@ const organization = {
 
 const dependencies = () => ({
   getOrganizationView: vi.fn(async () => organization),
-  listMessages: vi.fn(async () => []),
   sendMessage: vi.fn(async (_peer: string, content: string) => ({
     id: 'sent-1',
     senderAccountId: 'me',
@@ -97,6 +96,13 @@ const dependencies = () => ({
 });
 
 describe('enterprise_collaboration renderer 真实中继', () => {
+  it('does not expose decrypted private-chat history to Otto tools', async () => {
+    await expect(executeEnterpriseCollaborationRelay(
+      { action: 'list_messages', recipientAccountId: 'peer-1' },
+      account,
+      dependencies(),
+    )).rejects.toThrow('action');
+  });
   it('list_members 返回真实 active 企业树成员和可用于后续动作的账号 ID', async () => {
     const deps = dependencies();
     const result = await executeEnterpriseCollaborationRelay(

@@ -1,8 +1,9 @@
 /**
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  *
- * Enterprise SQLite database - all data stored on admin/owner device.
- * Zero cloud dependency. All data is local.
+ * Legacy synchronous enterprise repositories. Local/offline mode uses
+ * SQLite/SQLCipher; clustered PostgreSQL mode is rejected here until each
+ * route repository has moved to its asynchronous contract.
  * 存储层通过 data_platform 使用 Node 内置 node:sqlite，无原生依赖。
  */
 
@@ -13,6 +14,11 @@ import {
   createEncryptedObjectStore,
   createDataPlatformComposition,
   createFileEncryptionKeyProvider,
+  createSqlCipherFileRuntime,
+  describeEnterpriseServiceTopology,
+  parseSqlCipherRuntimeMode,
+  requireLocalSqliteTopology,
+  resolveEnterpriseServiceTopology,
   Database,
 } from '../modules/data_platform/index.js';
 import { createAuthorizationComposition } from '../modules/authorization/index.js';
@@ -142,6 +148,8 @@ export type {
   DirectMessageAttachmentInput,
   DirectMessageAttachmentView,
   DirectMessageView,
+  E2eeAttachmentCiphertextInput,
+  E2eeMessageEnvelope,
   UnreadDirectMessageNotification,
 } from '../modules/collaboration/index.js';
 export type {
@@ -200,6 +208,16 @@ const DATA_DIR =
   process.env.OTTO_ENTERPRISE_DIR ||
   path.join(os.homedir(), '.otto-enterprise');
 const DB_PATH = path.join(DATA_DIR, 'data.db');
+const ENTERPRISE_SERVICE_TOPOLOGY = resolveEnterpriseServiceTopology({
+  environment: process.env,
+  sqliteDatabasePath: DB_PATH,
+});
+requireLocalSqliteTopology(ENTERPRISE_SERVICE_TOPOLOGY.database);
+const DATABASE_ENCRYPTION_MODE = parseSqlCipherRuntimeMode();
+const SQLCIPHER_RUNTIME =
+  DATABASE_ENCRYPTION_MODE === 'required'
+    ? createSqlCipherFileRuntime({ dataDirectory: DATA_DIR })
+    : null;
 const ACCOUNT_SYNC_EXTERNAL_KEY_PATH =
   process.env.OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE?.trim() || null;
 const ACCOUNT_SYNC_KEY_PATH =
@@ -226,7 +244,7 @@ const PRIVACY_DELETION_LEDGER_KEY_PATH = path.join(
 );
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
-export const ENTERPRISE_SCHEMA_VERSION = 19;
+export const ENTERPRISE_SCHEMA_VERSION = 22;
 export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
@@ -307,6 +325,14 @@ const dataPlatform = createDataPlatformComposition({
     },
     initializeSchema: initSchema,
   },
+  ...(SQLCIPHER_RUNTIME
+    ? {
+        databaseEncryption: {
+          keyProvider: SQLCIPHER_RUNTIME.keyProvider,
+          driver: SQLCIPHER_RUNTIME.driver,
+        },
+      }
+    : {}),
 });
 const accountSyncKeyProvider = dataPlatform.encryptionKeyProvider;
 const attachmentStorageKeyProvider = createFileEncryptionKeyProvider({
@@ -337,6 +363,13 @@ const dataProtection = createDataProtectionService({
   accountSyncKeyPath: ACCOUNT_SYNC_KEY_PATH,
   attachmentKeyPath: ATTACHMENT_STORAGE_KEY_PATH,
   fieldEncryptionKeyPath: FIELD_ENCRYPTION_KEY_PATH,
+  ...(SQLCIPHER_RUNTIME
+    ? {
+        databaseKeyRecoveryPath: SQLCIPHER_RUNTIME.keyPath,
+        createDatabaseSnapshot: dataPlatform.createDatabaseSnapshot,
+        openDatabaseSnapshot: dataPlatform.openDatabaseSnapshot,
+      }
+    : {}),
   attachmentDirectory: ATTACHMENT_STORAGE_DIR,
   privacyDeletionLedgerPath: PRIVACY_DELETION_LEDGER_PATH,
   privacyDeletionLedgerKeyPath: PRIVACY_DELETION_LEDGER_KEY_PATH,
@@ -367,8 +400,60 @@ export function closeEnterpriseDatabase(): void {
 
 export const getDB = dataPlatform.getDatabase;
 
+/** Credential-free storage topology for diagnostics and readiness output. */
+export function getEnterpriseServiceTopology() {
+  return describeEnterpriseServiceTopology(ENTERPRISE_SERVICE_TOPOLOGY);
+}
+
+/**
+ * Credential-free operations posture for the enterprise admin page. Planning
+ * targets are reported as not connected until a real runtime adapter exists.
+ */
+export function getOperationsSecurityStatus() {
+  let sqlCipher:
+    | {
+        state: 'active';
+        keyVersion: number;
+        migratedFromPlaintext: boolean;
+      }
+    | { state: 'disabled' | 'error' };
+  if (!SQLCIPHER_RUNTIME) {
+    sqlCipher = { state: 'disabled' };
+  } else {
+    try {
+      const status = dataPlatform.getDatabaseEncryptionStatus();
+      sqlCipher = {
+        state: 'active',
+        keyVersion: status.keyVersion,
+        migratedFromPlaintext: status.migratedFromPlaintext,
+      };
+    } catch {
+      sqlCipher = { state: 'error' };
+    }
+  }
+  return {
+    topology: getEnterpriseServiceTopology(),
+    sqlCipher,
+    keyManagement: {
+      databaseKeyProvider: SQLCIPHER_RUNTIME
+        ? ('offline-file' as const)
+        : ('not-configured' as const),
+      remoteProvider: 'not-connected' as const,
+      automaticRotation: 'not-configured' as const,
+      sseKms:
+        ENTERPRISE_SERVICE_TOPOLOGY.attachments.backend === 's3' &&
+        Boolean(ENTERPRISE_SERVICE_TOPOLOGY.attachments.kmsKeyId)
+          ? ('configured' as const)
+          : ('not-configured' as const),
+    },
+  };
+}
+
 /** 执行真实读查询，供 HTTP readiness 判断数据库与 schema 是否可用。 */
 export const getDatabaseReadiness = dataPlatform.getReadiness;
+export const getDatabaseEncryptionStatus =
+  dataPlatform.getDatabaseEncryptionStatus;
+export const rotateDatabaseEncryptionKey = dataPlatform.rotateDatabaseKey;
 
 export const getDataProtectionStatus = dataProtection.getStatus;
 export const runDataProtectionBackup = dataProtection.runBackup;
@@ -432,8 +517,7 @@ export const {
       process.env.OTTO_LICENSE_REVOKED_KEY_IDS,
     ),
   telemetryEndpoint: () => process.env.OTTO_TELEMETRY_ENDPOINT || null,
-  telemetryIngestSecret: () =>
-    process.env.OTTO_TELEMETRY_INGEST_SECRET || '',
+  telemetryIngestSecret: () => process.env.OTTO_TELEMETRY_INGEST_SECRET || '',
   telemetryRetentionDays: () =>
     Number(process.env.OTTO_TELEMETRY_RETENTION_DAYS || 90),
   fieldCipher,
@@ -543,7 +627,8 @@ export const {
   db: getDB,
   fieldCipher,
   createId: randomUUID,
-  organizationExists: (organizationId) => Boolean(getOrganization(organizationId)),
+  organizationExists: (organizationId) =>
+    Boolean(getOrganization(organizationId)),
 });
 
 function normalizeOptionalText(
@@ -675,8 +760,7 @@ export const normalizeTags = normalizeAccountTags;
 const passwordHash = hashIdentitySecret;
 const passwordMatches = identitySecretMatches;
 const assertAccountPassword = assertIdentityAccountPassword;
-export const isAcceptableAccountPassword =
-  isAcceptableIdentityAccountPassword;
+export const isAcceptableAccountPassword = isAcceptableIdentityAccountPassword;
 
 const accountTagStore = { db: getDB };
 
@@ -796,8 +880,7 @@ export const {
   normalizeOptionalAvatarUrl,
   assertPassword: assertAccountPassword,
   hashPassword: passwordHash,
-  createAccountEntityId: (prefix: 'acc' | 'emp') =>
-    `${prefix}_${randomUUID()}`,
+  createAccountEntityId: (prefix: 'acc' | 'emp') => `${prefix}_${randomUUID()}`,
   createDeletionPasswordHash: () =>
     passwordHash(randomBytes(32).toString('base64url')),
   createOrganizationId: () => `org_${randomUUID()}`,
@@ -835,10 +918,28 @@ export const {
   ensureDirectMessageContentEncrypted,
   getDirectMessageAttachment,
   listDirectMessages,
+  getE2eeAttachment,
+  approveE2eeDevice,
+  listE2eeDevices,
+  listE2eeKeyTransparency,
+  publishMlsKeyPackage,
+  listMlsKeyPackageInventory,
+  retireMlsKeyPackage,
+  claimMlsKeyPackage,
+  appendMlsTransportEvent,
+  listMlsTransportEvents,
+  listMlsInboundConversationPeers,
+  cleanupExpiredMlsResources,
+  listE2eeDirectMessages,
+  listPendingE2eeAtoaRequests,
+  listUnreadE2eeNotifications,
   listPendingAtoaRequests,
   listUnreadDirectMessageNotifications,
   markAtoaRequestReadFromResponse,
   sendDirectMessage,
+  registerE2eeDevice,
+  revokeE2eeDevice,
+  sendE2eeDirectMessage,
   touchAccountPresence,
   listAccountPresence,
 } = createCollaborationComposition<AccountView>({
@@ -1057,10 +1158,8 @@ const enterpriseBackup = dataPlatform.createBackup({
   defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
   listEmployees: (organizationId) =>
     listEmployeesForBackup(backupDatabaseStore, organizationId),
-  listTaskLogs: (organizationId) =>
-    listWorklogsForBackup(organizationId),
-  listKnowledge: (organizationId) =>
-    getKnowledgeForBackup(organizationId),
+  listTaskLogs: (organizationId) => listWorklogsForBackup(organizationId),
+  listKnowledge: (organizationId) => getKnowledgeForBackup(organizationId),
   listInviteCodes: (organizationId) =>
     listDepartmentInvitesForBackup(backupDatabaseStore, organizationId),
   listAuditLogs: (organizationId) => getAuditLogs(200, organizationId),

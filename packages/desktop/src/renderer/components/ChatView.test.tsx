@@ -63,6 +63,7 @@ function renderChat(onRegenerate = vi.fn()) {
       models={MODELS}
       currentModel="m1"
       userInitial="F"
+      identityLabel="北辰科技 · 产品部 · 产品经理 · 企业成员"
       busy={false}
       onSend={vi.fn()}
       onCancel={vi.fn()}
@@ -72,12 +73,24 @@ function renderChat(onRegenerate = vi.fn()) {
       onToggleAgents={vi.fn()}
       onNewChat={vi.fn()}
       onClearContext={vi.fn()}
+      onExport={vi.fn()}
     />,
   );
   return { onRegenerate };
 }
 
 describe('ChatView 重新生成携带消息 id', () => {
+  it('在聊天顶栏显示服务端权威身份并使用一致的中文操作文案', () => {
+    renderChat();
+
+    expect(
+      screen.getByText('北辰科技 · 产品部 · 产品经理 · 企业成员'),
+    ).toBeTruthy();
+    expect(screen.getByRole('button', { name: '导出会话为 Markdown' }).textContent).toBe('导出');
+    expect(screen.getByRole('button', { name: '模型与个人 API 设置' }).textContent).toBe('设置');
+    expect(screen.getByRole('button', { name: '智能体面板' }).textContent).toBe('工作台');
+  });
+
   it('空会话与未选择会话时恢复 v1.6 的 Otto 形象', () => {
     const props = {
       models: MODELS,

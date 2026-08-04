@@ -473,6 +473,35 @@ describe('附件预览卡片', () => {
     expect(screen.queryByText(displayName)).toBeNull();
   });
 
+  it('原生选择的目录以目录卡片展示并作为 folder_reference 附件发送', async () => {
+    const onSend = vi.fn();
+    const folderPath = 'C:\\Users\\tester\\Documents\\客户资料';
+    const selectFolders = vi.fn(async () => [folderPath]);
+    Object.assign(window.otto, { selectFolders });
+    render(
+      <Composer
+        models={[]}
+        currentModel={null}
+        sessionId="s1"
+        onSend={onSend}
+        onSetModel={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    const folderName = await screen.findByText('客户资料');
+    const card = folderName.closest('.otto-attachment');
+    expect(selectFolders).toHaveBeenCalledTimes(1);
+    expect(card?.classList.contains('otto-attachment--folder')).toBe(true);
+    expect(card?.querySelector('.otto-attachment__type-icon')?.textContent).toBe('DIR');
+    expect(await screen.findByTitle(folderPath)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect(onSend).toHaveBeenCalledWith('', [
+      { folderName: '客户资料', folderPath },
+    ]);
+  });
+
   it('拖入外部卷文件时通过 webUtils 保留真实路径并随消息发送', async () => {
     const onSend = vi.fn();
     const externalPath = '/Volumes/Portable/客户资料/园区方案.pdf';

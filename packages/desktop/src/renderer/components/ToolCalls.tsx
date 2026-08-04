@@ -15,7 +15,6 @@
  */
 
 import React, { useState } from 'react';
-import * as qrcodeTerminal from 'qrcode-terminal';
 import type {
   ToolCallStatus,
   ToolCall,
@@ -23,6 +22,7 @@ import type {
   ToolConfirmationResponsePayload,
 } from 'otto-server';
 import { parseDiff, type DiffLine } from './diff.js';
+import { createQrMatrix } from '../lib/qrMatrix.js';
 import {
   IconFile,
   IconTerminal,
@@ -120,12 +120,7 @@ const AUDIO_TOOLS = new Set([
   'whisper',
   'meeting_transcribe',
 ]);
-const AGENT_TOOLS = new Set([
-  'task',
-  'subagent',
-  'multi_agent',
-  'workflow',
-]);
+const AGENT_TOOLS = new Set(['task', 'subagent', 'multi_agent', 'workflow']);
 
 const DOCUMENT_TOOL_PATTERNS = [
   'doc',
@@ -149,10 +144,7 @@ const FEISHU_ACCOUNTS_HOSTS = new Set([
   'accounts.feishu.cn',
   'accounts.larksuite.com',
 ]);
-const FEISHU_OPEN_HOSTS = new Set([
-  'open.feishu.cn',
-  'open.larksuite.com',
-]);
+const FEISHU_OPEN_HOSTS = new Set(['open.feishu.cn', 'open.larksuite.com']);
 const USER_CODE_RE = /^[a-z0-9][a-z0-9_-]{3,63}$/i;
 const APP_ID_RE = /^[a-z0-9_-]{3,128}$/i;
 const ANSI_ESCAPE = String.fromCharCode(27);
@@ -176,8 +168,7 @@ function isAllowedFeishuAuthorizationUrl(url: URL): boolean {
   const userCode = url.searchParams.get('user_code') ?? '';
   if (FEISHU_ACCOUNTS_HOSTS.has(url.hostname)) {
     return (
-      url.pathname === '/oauth/v1/device/verify' &&
-      USER_CODE_RE.test(userCode)
+      url.pathname === '/oauth/v1/device/verify' && USER_CODE_RE.test(userCode)
     );
   }
 
@@ -224,46 +215,6 @@ function extractFeishuAuthorization(
 }
 
 /** 使用项目已有的本地 QR 编码器生成矩阵，不把授权 URL 发给第三方服务。 */
-function createQrMatrix(value: string): boolean[][] | null {
-  try {
-    let ansi: string | undefined;
-    qrcodeTerminal.generate(value, { small: false }, (result) => {
-      ansi = result;
-    });
-    if (!ansi) return null;
-
-    const blackCell = `${ANSI_ESCAPE}[40m  ${ANSI_ESCAPE}[0m`;
-    const whiteCell = `${ANSI_ESCAPE}[47m  ${ANSI_ESCAPE}[0m`;
-    const rows = ansi
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => {
-        const cells: boolean[] = [];
-        let offset = 0;
-        while (offset < line.length) {
-          if (line.startsWith(blackCell, offset)) {
-            cells.push(true);
-            offset += blackCell.length;
-          } else if (line.startsWith(whiteCell, offset)) {
-            cells.push(false);
-            offset += whiteCell.length;
-          } else {
-            offset += 1;
-          }
-        }
-        return cells;
-      })
-      .filter((row) => row.length > 0);
-    const width = rows[0]?.length ?? 0;
-    if (width < 21 || rows.length !== width || rows.some((row) => row.length !== width)) {
-      return null;
-    }
-    return rows;
-  } catch {
-    return null;
-  }
-}
-
 function str(v: unknown): string | undefined {
   return typeof v === 'string' ? v : undefined;
 }
@@ -341,7 +292,8 @@ function resolveTool(tc: ToolCall): ResolvedTool {
   }
 
   // —— 终端运行 —— //
-  const isExec = d.type === 'exec' || EXEC_TOOLS.has(name) || Boolean(d.command);
+  const isExec =
+    d.type === 'exec' || EXEC_TOOLS.has(name) || Boolean(d.command);
   if (isExec) {
     const command =
       d.command ??
@@ -369,9 +321,10 @@ function resolveTool(tc: ToolCall): ResolvedTool {
       '';
     return {
       kind: 'read',
-      label: name === 'list_directory' || name === 'list_dir' || name === 'ls'
-        ? '查看目录'
-        : '查看文件',
+      label:
+        name === 'list_directory' || name === 'list_dir' || name === 'ls'
+          ? '查看目录'
+          : '查看文件',
       action: '查看相关资料',
       target,
       output: tc.liveOutput ?? str(tc.result?.data),
@@ -396,7 +349,8 @@ function resolveTool(tc: ToolCall): ResolvedTool {
   }
 
   if (WEB_TOOLS.has(name)) {
-    const target = str(p.url) ?? str(p.query) ?? str(p.prompt) ?? tc.description ?? '';
+    const target =
+      str(p.url) ?? str(p.query) ?? str(p.prompt) ?? tc.description ?? '';
     return {
       kind: 'web',
       label: name.includes('search') ? '查找资料' : '读取网页',
@@ -421,7 +375,12 @@ function resolveTool(tc: ToolCall): ResolvedTool {
       kind: 'audio',
       label: '处理音频',
       action: '转写音频内容',
-      target: str(p.path) ?? str(p.file_path) ?? str(p.fileName) ?? tc.description ?? '',
+      target:
+        str(p.path) ??
+        str(p.file_path) ??
+        str(p.fileName) ??
+        tc.description ??
+        '',
       output: tc.liveOutput ?? str(tc.result?.data),
     };
   }
@@ -490,12 +449,21 @@ function describeFileTarget(value: string): string {
   const name = basename(value);
   const lower = name.toLowerCase();
   if (lower.endsWith('.pdf')) return `PDF：${name}`;
-  if (lower.endsWith('.docx') || lower.endsWith('.doc')) return `Word 文档：${name}`;
+  if (lower.endsWith('.docx') || lower.endsWith('.doc'))
+    return `Word 文档：${name}`;
   if (lower.endsWith('.pptx') || lower.endsWith('.ppt')) return `PPT：${name}`;
-  if (lower.endsWith('.xlsx') || lower.endsWith('.xls') || lower.endsWith('.csv')) {
+  if (
+    lower.endsWith('.xlsx') ||
+    lower.endsWith('.xls') ||
+    lower.endsWith('.csv')
+  ) {
     return `表格：${name}`;
   }
-  if (/\.(ts|tsx|js|jsx|py|go|rs|java|cs|cpp|c|h|css|scss|html|json|md)$/iu.test(lower)) {
+  if (
+    /\.(ts|tsx|js|jsx|py|go|rs|java|cs|cpp|c|h|css|scss|html|json|md)$/iu.test(
+      lower,
+    )
+  ) {
     return `代码文件：${name}`;
   }
   return name || value;
@@ -510,27 +478,42 @@ function describeCommand(command: string): { action: string; target: string } {
   if (/\b(vitest|jest|pytest|cargo test|go test)\b/u.test(lower)) {
     return { action: '运行测试', target: compact };
   }
-  if (/\b(npm|pnpm|yarn|bun)\s+(run\s+)?(typecheck|tsc|lint|check)\b/u.test(lower)) {
+  if (
+    /\b(npm|pnpm|yarn|bun)\s+(run\s+)?(typecheck|tsc|lint|check)\b/u.test(lower)
+  ) {
     return { action: '检查代码质量', target: compact };
   }
   if (/\b(npm|pnpm|yarn|bun)\s+(run\s+)?(build|package|dist)\b/u.test(lower)) {
     return { action: '构建项目', target: compact };
   }
-  if (/^git\s+status\b/u.test(lower)) return { action: '检查提交状态', target: compact };
-  if (/^git\s+(diff|show|log)\b/u.test(lower)) return { action: '查看代码变更', target: compact };
-  if (/^git\s+(push|pull|fetch)\b/u.test(lower)) return { action: '同步代码仓库', target: compact };
-  if (/^git\s+(commit|add)\b/u.test(lower)) return { action: '整理提交内容', target: compact };
+  if (/^git\s+status\b/u.test(lower))
+    return { action: '检查提交状态', target: compact };
+  if (/^git\s+(diff|show|log)\b/u.test(lower))
+    return { action: '查看代码变更', target: compact };
+  if (/^git\s+(push|pull|fetch)\b/u.test(lower))
+    return { action: '同步代码仓库', target: compact };
+  if (/^git\s+(commit|add)\b/u.test(lower))
+    return { action: '整理提交内容', target: compact };
   return { action: '执行本地命令', target: compact };
 }
 
 function refineResolvedTool(tool: ResolvedTool): ResolvedTool {
   if (!tool.target) return tool;
-  if (tool.kind === 'read' || tool.kind === 'edit' || tool.kind === 'document') {
+  if (
+    tool.kind === 'read' ||
+    tool.kind === 'edit' ||
+    tool.kind === 'document'
+  ) {
     return { ...tool, target: describeFileTarget(tool.target) };
   }
   if (tool.kind === 'exec') {
     const command = describeCommand(tool.target);
-    return { ...tool, label: command.action, action: command.action, target: command.target };
+    return {
+      ...tool,
+      label: command.action,
+      action: command.action,
+      target: command.target,
+    };
   }
   return tool;
 }
@@ -557,7 +540,8 @@ function summarizeCompletedWork(toolCalls: readonly ToolCall[]): string {
     .slice(0, 3);
   if (meaningful.length === 0) return '相关处理已完成。';
   if (meaningful.length === 1) return `${meaningful[0]}已完成。`;
-  const suffix = toolCalls.length > meaningful.length ? '等处理已完成。' : '已完成。';
+  const suffix =
+    toolCalls.length > meaningful.length ? '等处理已完成。' : '已完成。';
   return `${meaningful.join('、')}${suffix}`;
 }
 
@@ -567,9 +551,7 @@ function summarizeFailedWork(failedTools: readonly ToolCall[]): string {
   const action = summarizeToolAction(first);
   const reason = toolErrorText(first);
   if (failedTools.length === 1) {
-    return reason
-      ? `${action}没有完成：${reason}。`
-      : `${action}没有完成。`;
+    return reason ? `${action}没有完成：${reason}。` : `${action}没有完成。`;
   }
   return reason
     ? `${failedTools.length} 个步骤没有完成，最先卡在 ${action}：${reason}。`
@@ -590,7 +572,10 @@ export function buildToolCompletionSummary(
     (tool) => tool.status === 'error' || tool.status === 'cancelled',
   );
   const pendingTools = toolCalls.filter(
-    (tool) => tool.status !== 'success' && tool.status !== 'error' && tool.status !== 'cancelled',
+    (tool) =>
+      tool.status !== 'success' &&
+      tool.status !== 'error' &&
+      tool.status !== 'cancelled',
   );
   const completed = completedTools.length;
   const pending = pendingTools.length;
@@ -600,8 +585,7 @@ export function buildToolCompletionSummary(
       completedTools.length > 0
         ? `已完成：${completedTools.slice(0, 2).map(summarizeToolAction).join('、')}。`
         : '';
-    const pendingText =
-      pending > 0 ? `还有 ${pending} 个步骤在等待处理。` : '';
+    const pendingText = pending > 0 ? `还有 ${pending} 个步骤在等待处理。` : '';
     return `${summarizeFailedWork(failedTools)}${completedText}${pendingText}`;
   }
 
@@ -612,12 +596,15 @@ export function buildToolCompletionSummary(
       .join('、')}。`;
   }
 
-  const steps = toolCalls.slice(0, 3).map((tool) => {
-    const resolved = refineResolvedTool(resolveTool(tool));
-    const label = compactSummaryText(resolved.action || resolved.label, 24);
-    const target = compactSummaryText(resolved.target);
-    return target && target !== label ? `${label}（${target}）` : label;
-  }).filter(Boolean);
+  const steps = toolCalls
+    .slice(0, 3)
+    .map((tool) => {
+      const resolved = refineResolvedTool(resolveTool(tool));
+      const label = compactSummaryText(resolved.action || resolved.label, 24);
+      const target = compactSummaryText(resolved.target);
+      return target && target !== label ? `${label}（${target}）` : label;
+    })
+    .filter(Boolean);
 
   if (completed === 0) return '';
   if (toolCalls.length <= 3) return summarizeCompletedWork(toolCalls);
@@ -625,14 +612,17 @@ export function buildToolCompletionSummary(
 }
 
 function buildToolGroupSummary(toolCalls: readonly ToolCall[]): string {
-  const running = toolCalls.filter((tool) =>
-    tool.status === 'executing' ||
-    tool.status === 'validating' ||
-    tool.status === 'scheduled'
+  const running = toolCalls.filter(
+    (tool) =>
+      tool.status === 'executing' ||
+      tool.status === 'validating' ||
+      tool.status === 'scheduled',
   );
-  const awaiting = toolCalls.filter((tool) => tool.status === 'awaiting_approval');
-  const failed = toolCalls.filter((tool) =>
-    tool.status === 'error' || tool.status === 'cancelled'
+  const awaiting = toolCalls.filter(
+    (tool) => tool.status === 'awaiting_approval',
+  );
+  const failed = toolCalls.filter(
+    (tool) => tool.status === 'error' || tool.status === 'cancelled',
   );
 
   if (awaiting.length > 0) return '需要你确认下一步';
@@ -673,23 +663,65 @@ function statusInfo(status: ToolCallStatus): {
   // 避免在渲染层 import 枚举「值」而把 otto-server 运行时拖进 bundle。
   switch (status as string) {
     case 'success':
-      return { cls: 'otto-tool__status--done', text: '已完成', running: false, error: false, kind: 'done' };
+      return {
+        cls: 'otto-tool__status--done',
+        text: '已完成',
+        running: false,
+        error: false,
+        kind: 'done',
+      };
     case 'error':
-      return { cls: 'otto-tool__status--error', text: '失败', running: false, error: true, kind: 'error' };
+      return {
+        cls: 'otto-tool__status--error',
+        text: '失败',
+        running: false,
+        error: true,
+        kind: 'error',
+      };
     case 'cancelled':
-      return { cls: 'otto-tool__status--error', text: '已取消', running: false, error: true, kind: 'error' };
+      return {
+        cls: 'otto-tool__status--error',
+        text: '已取消',
+        running: false,
+        error: true,
+        kind: 'error',
+      };
     case 'awaiting_approval':
       // 待确认：不转圈也不渲染成功勾，用中性暂停语义（琥珀点）。
-      return { cls: 'otto-tool__status--pending', text: '待确认', running: false, error: false, kind: 'pending' };
+      return {
+        cls: 'otto-tool__status--pending',
+        text: '待确认',
+        running: false,
+        error: false,
+        kind: 'pending',
+      };
     case 'scheduled':
       // 排队中：尚未开始，用静态点而非转圈，区别于真正在跑。
-      return { cls: 'otto-tool__status--running', text: '排队中', running: false, error: false, kind: 'queued' };
+      return {
+        cls: 'otto-tool__status--running',
+        text: '排队中',
+        running: false,
+        error: false,
+        kind: 'queued',
+      };
     case 'validating':
       // 校验中：已在动，保留转圈。
-      return { cls: 'otto-tool__status--running', text: '校验中', running: true, error: false, kind: 'running' };
+      return {
+        cls: 'otto-tool__status--running',
+        text: '校验中',
+        running: true,
+        error: false,
+        kind: 'running',
+      };
     default:
       // executing 及其它未列举态：执行中转圈。
-      return { cls: 'otto-tool__status--running', text: '运行中', running: true, error: false, kind: 'running' };
+      return {
+        cls: 'otto-tool__status--running',
+        text: '运行中',
+        running: true,
+        error: false,
+        kind: 'running',
+      };
   }
 }
 
@@ -758,7 +790,11 @@ export function ToolCallsCard({
                   onRespond={onRespondQuestion}
                 />
               ) : isPendingConfirmation(tc) ? (
-                <ConfirmationCard key={tc.id} tool={tc} onRespond={onRespondQuestion} />
+                <ConfirmationCard
+                  key={tc.id}
+                  tool={tc}
+                  onRespond={onRespondQuestion}
+                />
               ) : (
                 <ToolItem key={tc.id} tool={tc} />
               ),
@@ -771,7 +807,10 @@ export function ToolCallsCard({
 }
 
 function isPendingConfirmation(tc: ToolCall): boolean {
-  return tc.status === 'awaiting_approval' && tc.confirmationDetails?.type !== 'question';
+  return (
+    tc.status === 'awaiting_approval' &&
+    tc.confirmationDetails?.type !== 'question'
+  );
 }
 
 function ConfirmationCard({
@@ -783,8 +822,13 @@ function ConfirmationCard({
 }): React.JSX.Element {
   const [sent, setSent] = useState(false);
   const details = tool.confirmationDetails ?? {};
-  const target = details.command ?? details.filePath ?? details.fileName ??
-    str(tool.parameters.command) ?? str(tool.parameters.path) ?? tool.toolName;
+  const target =
+    details.command ??
+    details.filePath ??
+    details.fileName ??
+    str(tool.parameters.command) ??
+    str(tool.parameters.path) ??
+    tool.toolName;
   const highRisk = details.riskLevel === 'high' || details.type === 'delete';
   const respond = (outcome: 'approved' | 'rejected'): void => {
     if (!onRespond || sent) return;
@@ -794,15 +838,31 @@ function ConfirmationCard({
   return (
     <div className="otto-tool otto-ask otto-confirm">
       <div className="otto-ask__head">
-        <span className={`otto-ask__badge${highRisk ? ' otto-confirm__badge--danger' : ''}`}>
+        <span
+          className={`otto-ask__badge${highRisk ? ' otto-confirm__badge--danger' : ''}`}
+        >
           {highRisk ? '高风险操作' : '需要你确认'}
         </span>
-        <span className="otto-ask__title">{details.title ?? '允许 Otto 执行此操作？'}</span>
+        <span className="otto-ask__title">
+          {details.title ?? '允许 Otto 执行此操作？'}
+        </span>
       </div>
       <div className="otto-confirm__target">{target}</div>
       <div className="otto-ask__actions">
-        <button type="button" className="otto-ask__skip" disabled={sent || !onRespond} onClick={() => respond('rejected')}>拒绝</button>
-        <button type="button" className="otto-ask__submit" disabled={sent || !onRespond} onClick={() => respond('approved')}>
+        <button
+          type="button"
+          className="otto-ask__skip"
+          disabled={sent || !onRespond}
+          onClick={() => respond('rejected')}
+        >
+          拒绝
+        </button>
+        <button
+          type="button"
+          className="otto-ask__submit"
+          disabled={sent || !onRespond}
+          onClick={() => respond('approved')}
+        >
           {sent ? '已提交' : '允许执行'}
         </button>
       </div>
@@ -852,7 +912,9 @@ function ToolItem({ tool }: { tool: ToolCall }): React.JSX.Element {
   // 编辑文件卡默认展开看 diff（spec 截图）；exec/generic 运行中默认展开露实时输出，
   // 否则默认折叠。
   const [open, setOpen] = useState(resolved.kind === 'edit' || st.running);
-  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>(
+    'idle',
+  );
 
   const Icon = resolved.kind === 'exec' ? IconTerminal : IconFile;
   const hasBody =
@@ -903,7 +965,9 @@ function ToolItem({ tool }: { tool: ToolCall }): React.JSX.Element {
         </button>
       ) : (
         // 无可展开内容：不挂点击/展开语义，避免假可点性（cursor/hover 归 CSS 的 --static）。
-        <div className="otto-tool__head otto-tool__head--static">{headInner}</div>
+        <div className="otto-tool__head otto-tool__head--static">
+          {headInner}
+        </div>
       )}
 
       {/* grid 折叠动画包裹 body（diff / 终端输出） */}
@@ -924,10 +988,15 @@ function ToolItem({ tool }: { tool: ToolCall }): React.JSX.Element {
                     onClick={async () => {
                       const copied = await copyToolOutput(resolved.output!);
                       setCopyState(copied ? 'copied' : 'failed');
-                      if (copied) window.setTimeout(() => setCopyState('idle'), 1600);
+                      if (copied)
+                        window.setTimeout(() => setCopyState('idle'), 1600);
                     }}
                   >
-                    {copyState === 'copied' ? '已复制' : copyState === 'failed' ? '复制失败' : '复制结果'}
+                    {copyState === 'copied'
+                      ? '已复制'
+                      : copyState === 'failed'
+                        ? '复制失败'
+                        : '复制结果'}
                   </button>
                 </div>
                 <pre className="otto-tool__output">{resolved.output}</pre>
@@ -977,7 +1046,9 @@ function FeishuAuthorizationCard({
           type="button"
           className="otto-feishu-auth__open"
           onClick={() => {
-            void window.otto.openExternal(authorization.url).catch(() => undefined);
+            void window.otto
+              .openExternal(authorization.url)
+              .catch(() => undefined);
           }}
         >
           在浏览器中打开授权页面
@@ -1047,7 +1118,8 @@ function QuestionCard({
   }
 
   const allAnswered =
-    questions.length > 0 && questions.every((q) => answerFor(q.question) !== null);
+    questions.length > 0 &&
+    questions.every((q) => answerFor(q.question) !== null);
 
   function submit(): void {
     if (!onRespond || sent || !allAnswered) return;
@@ -1173,7 +1245,7 @@ function DiffView({
   const { lines, stats } = parseDiff(diff);
   return (
     <div className="otto-diff">
-      {(stats.added > 0 || stats.removed > 0 || path) ? (
+      {stats.added > 0 || stats.removed > 0 || path ? (
         <div className="otto-diff__stat">
           {path ? (
             <span className="otto-diff__stat-path" title={path}>
@@ -1210,10 +1282,10 @@ function DiffRow({ line }: { line: DiffLine }): React.JSX.Element {
   const sign = line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' ';
   const gutter =
     line.type === 'add'
-      ? line.newLine ?? ''
+      ? (line.newLine ?? '')
       : line.type === 'del'
-        ? line.oldLine ?? ''
-        : line.newLine ?? '';
+        ? (line.oldLine ?? '')
+        : (line.newLine ?? '');
   return (
     <div className={`otto-diff__row otto-diff__row--${line.type}`}>
       <span className="otto-diff__gutter">{gutter}</span>

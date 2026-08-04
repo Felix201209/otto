@@ -23,6 +23,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -30,16 +32,23 @@ concurrency:
 
 env:
   NODE_VERSION: '22.23.1'
+  ELECTRON_VERSION: '43.1.0'
+  SQLCIPHER_SOURCE_REVISION: e2a6040f2ae5cfff2b3e08eb3320007d93cdf3fc
   RELEASES_REPO: Felix201209/otto-releases
   UPDATE_MIRROR_ASSET_BASE_URL: 'https://59.110.154.44:7777/downloads'
   UPDATE_MIRROR_MANIFEST_URL: 'https://59.110.154.44:7777/otto-releases/latest.json'
   UPDATE_MIRROR_ROOT: '/opt/otto-website'
 
 jobs:
+  sqlcipher-native:
+    name: Build verified SQLCipher native matrix
+    uses: ./.github/workflows/sqlcipher-native.yml
+
   build:
     name: Check, Build, Draft Release
     runs-on: macos-latest
     timeout-minutes: 90
+    needs: sqlcipher-native
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -49,6 +58,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Enforce audited E2EE production readiness
+        run: node scripts/verify-e2ee-release-readiness.mjs
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -66,6 +78,29 @@ jobs:
         env:
           PYTHON: python3.11
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download verified SQLCipher native matrix
+        uses: actions/download-artifact@v7
+        with:
+          name: sqlcipher-native-matrix
+          path: native/sqlcipher
+
+      - name: Verify SQLCipher native matrix before packaging
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node scripts/verify-sqlcipher-native-assets.mjs \
+            --expected-build-commit "$GITHUB_SHA" \
+            --expected-source-revision "$SQLCIPHER_SOURCE_REVISION" \
+            --expected-runtime-version "$ELECTRON_VERSION" \
+            --require-matrix-manifest
+          while IFS= read -r -d '' binding; do
+            gh attestation verify "$binding" --repo "$GITHUB_REPOSITORY"
+          done < <(find native/sqlcipher -type f -name better_sqlite3.node -print0)
+          gh attestation verify native/sqlcipher/matrix-manifest.json \
+            --repo "$GITHUB_REPOSITORY"
 
       - name: Resolve release version
         id: version
@@ -110,6 +145,30 @@ jobs:
           set -euo pipefail
           test -n "$LICENSE_PUBLIC_KEYS"
 
+      - name: Require desktop signing and notarization custody
+        shell: bash
+        env:
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ENTERPRISE_SIGNING_PRIVATE_KEY: ${{ secrets.OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY }}
+          ENTERPRISE_SIGNING_PUBLIC_KEY: ${{ secrets.OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$MAC_CSC_LINK"
+          test -n "$MAC_CSC_KEY_PASSWORD"
+          test -n "$WIN_CSC_LINK"
+          test -n "$WIN_CSC_KEY_PASSWORD"
+          test -n "$APPLE_ID"
+          test -n "$APPLE_APP_SPECIFIC_PASSWORD"
+          test -n "$APPLE_TEAM_ID"
+          test -n "$ENTERPRISE_SIGNING_PRIVATE_KEY"
+          test -n "$ENTERPRISE_SIGNING_PUBLIC_KEY"
+
       - name: Repository anomaly checks
         run: |
           npm run doctor
@@ -147,25 +206,51 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OTTO_RELEASES_REPO: ${{ env.RELEASES_REPO }}
           OTTO_UPDATE_ASSET_BASE_URL: ${{ env.UPDATE_MIRROR_ASSET_BASE_URL }}
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Verify signed macOS disk images
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          for dmg in \
+            "packages/desktop/release/Otto-${VERSION}-arm64.dmg" \
+            "packages/desktop/release/Otto-${VERSION}-x64.dmg"; do
+            codesign --verify --verbose=2 "$dmg"
+            spctl --assess --type open --context context:primary-signature \
+              --verbose=4 "$dmg"
+          done
 
       - name: Build enterprise server package
         run: npm run bundle:enterprise
         env:
-          OTTO_ALLOW_UNSIGNED_ENTERPRISE_PACKAGE: '1'
           OTTO_LICENSE_PUBLIC_KEYS: ${{ secrets.OTTO_LICENSE_PUBLIC_KEYS }}
+          OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY: ${{ secrets.OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY }}
 
       - name: Verify release artifacts
         id: artifacts
         shell: bash
+        env:
+          OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY: ${{ secrets.OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
           DESKTOP_RELEASE="packages/desktop/release"
           ENTERPRISE_ARCHIVE="$(ls deliverables/otto-enterprise-oneclick-v${VERSION}-*.tar.gz | head -n 1)"
           ENTERPRISE_SHA="${ENTERPRISE_ARCHIVE}.sha256"
+          ENTERPRISE_SIGNATURE="${ENTERPRISE_ARCHIVE}.sig"
           test -f "$ENTERPRISE_ARCHIVE"
           test -f "$ENTERPRISE_SHA"
+          test -f "$ENTERPRISE_SIGNATURE"
           sha256sum -c "$ENTERPRISE_SHA"
+          node scripts/verify-enterprise-package-signature.mjs \
+            "$ENTERPRISE_ARCHIVE" "$ENTERPRISE_SIGNATURE"
           test -f "$DESKTOP_RELEASE/Otto-${VERSION}-arm64.dmg"
           test -f "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg"
           test -f "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe"
@@ -182,7 +267,8 @@ jobs:
               "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe.blockmap" \
               "$DESKTOP_RELEASE/latest.json" \
               "$ENTERPRISE_ARCHIVE" \
-              "$ENTERPRISE_SHA"
+              "$ENTERPRISE_SHA" \
+              "$ENTERPRISE_SIGNATURE"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -206,8 +292,8 @@ jobs:
             echo
             echo "SHA256: \`${INSTALLER_SHA}\`"
             echo
-            echo "This release is unsigned: Windows Authenticode, macOS Developer ID/notarization, and enterprise detached signatures are not included."
-            echo "The release workflow verifies SHA-256 checksums, the signed desktop update manifest, and the enterprise License public-key trust anchor."
+            echo "Windows Authenticode and macOS Developer ID/notarization are mandatory release gates."
+            echo "The release workflow also verifies SHA-256 checksums, SQLCipher provenance and SBOMs, the desktop update manifest, the enterprise Ed25519 package signature, and the License public-key trust anchor."
             echo
             echo "Desktop installers, update manifest, and enterprise one-click package are attached to this release."
           } > "$NOTES_FILE"
@@ -221,6 +307,7 @@ jobs:
             packages/desktop/release/*
             deliverables/otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz
             deliverables/otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz.sha256
+            deliverables/otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz.sig
           retention-days: 30
 
       - name: Create draft GitHub release
@@ -235,6 +322,66 @@ jobs:
           prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease }}
           files: ${{ steps.artifacts.outputs.files }}
           body_path: ${{ steps.release_notes.outputs.path }}
+
+  verify-windows-signature:
+    name: Verify Windows Authenticode and packaged runtime
+    needs: build
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install locked JavaScript runtime
+        run: npm ci --ignore-scripts
+
+      - name: Download release workflow artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: otto-release-v${{ needs.build.outputs.version }}
+          path: release-download
+
+      - name: Require a valid Authenticode chain
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path release-download -Recurse `
+            -Filter 'Otto-Setup-${{ needs.build.outputs.version }}-win-x64.exe' |
+            Select-Object -First 1
+          if (-not $installer) { throw 'Windows installer is missing' }
+          $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
+          if ($signature.Status -ne 'Valid' -or -not $signature.SignerCertificate) {
+            throw "Windows Authenticode verification failed: $($signature.Status) $($signature.StatusMessage)"
+          }
+          Write-Host "Authenticode signer: $($signature.SignerCertificate.Subject)"
+
+      - name: Install and load the packaged SQLCipher binding
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path release-download -Recurse `
+            -Filter 'Otto-Setup-${{ needs.build.outputs.version }}-win-x64.exe' |
+            Select-Object -First 1
+          if (-not $installer) { throw 'Windows installer is missing' }
+          $installRoot = Join-Path $env:RUNNER_TEMP 'otto-packaged-runtime'
+          $process = Start-Process -FilePath $installer.FullName -Wait -PassThru `
+            -ArgumentList @('/S', "/D=$installRoot")
+          if ($process.ExitCode -ne 0) {
+            throw "Silent installer failed: $($process.ExitCode)"
+          }
+          $electron = Join-Path $installRoot 'Otto.exe'
+          $binding = Join-Path $installRoot 'resources\sqlcipher\better_sqlite3.node'
+          if (-not (Test-Path -LiteralPath $electron)) { throw 'Installed Otto.exe is missing' }
+          if (-not (Test-Path -LiteralPath $binding)) { throw 'Installed SQLCipher binding is missing' }
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          & $electron packages/desktop/scripts/probe-packaged-sqlcipher.mjs `
+            --binding $binding
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged SQLCipher runtime probe failed: $LASTEXITCODE"
+          }
 
   deploy-enterprise:
     name: Deploy Enterprise Server
@@ -275,16 +422,22 @@ jobs:
 
       - name: Verify enterprise package
         shell: bash
+        env:
+          OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY: ${{ secrets.OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           mkdir -p enterprise-upload
           ARCHIVE="$(find release-download -type f -name 'otto-enterprise-oneclick-v${{ needs.build.outputs.version }}-*.tar.gz' -print -quit)"
           CHECKSUM="$(find release-download -type f -name 'otto-enterprise-oneclick-v${{ needs.build.outputs.version }}-*.tar.gz.sha256' -print -quit)"
+          SIGNATURE="$(find release-download -type f -name 'otto-enterprise-oneclick-v${{ needs.build.outputs.version }}-*.tar.gz.sig' -print -quit)"
           test -n "$ARCHIVE"
           test -n "$CHECKSUM"
-          cp "$ARCHIVE" "$CHECKSUM" enterprise-upload/
+          test -n "$SIGNATURE"
+          cp "$ARCHIVE" "$CHECKSUM" "$SIGNATURE" enterprise-upload/
           cd enterprise-upload
           sha256sum -c ./*.sha256
+          node ../scripts/verify-enterprise-package-signature.mjs \
+            "$(basename "$ARCHIVE")" "$(basename "$SIGNATURE")"
           ls -lh ./*
 
       - name: Configure SSH
@@ -332,7 +485,9 @@ jobs:
 
   deploy-update-mirror:
     name: Deploy Desktop Update Mirror
-    needs: build
+    needs:
+      - build
+      - verify-windows-signature
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: >-
@@ -440,6 +595,7 @@ jobs:
     name: Publish Verified Release
     needs:
       - build
+      - verify-windows-signature
       - deploy-enterprise
       - deploy-update-mirror
     runs-on: ubuntu-latest
@@ -447,6 +603,7 @@ jobs:
       ${{
         always()
         && needs.build.result == 'success'
+        && needs.verify-windows-signature.result == 'success'
         && needs.deploy-enterprise.result == 'success'
         && needs.deploy-update-mirror.result == 'success'
         && (

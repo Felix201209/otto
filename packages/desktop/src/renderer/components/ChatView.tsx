@@ -85,6 +85,8 @@ interface ChatViewProps {
   models: ModelInfo[];
   currentModel: string | null;
   userInitial: string;
+  /** 服务端权威企业、账号与角色身份，不从本地昵称推断。 */
+  identityLabel?: string;
   busy: boolean;
   modelManagementLabel?: string;
   onSend: (
@@ -139,6 +141,7 @@ export function ChatView({
   messages,
   models,
   currentModel,
+  identityLabel,
   busy,
   modelManagementLabel = '模型与个人 API 设置',
   onSend,
@@ -273,6 +276,10 @@ export function ChatView({
           {session?.title ?? 'Otto'}
         </span>
 
+        {identityLabel ? (
+          <span className="otto-main__identity">{identityLabel}</span>
+        ) : null}
+
         {session?.source === 'feishu' ? (
           <span className="otto-main__sync">飞书 · 实时同步</span>
         ) : null}
@@ -286,7 +293,7 @@ export function ChatView({
               title="导出会话为 Markdown"
               aria-label="导出会话为 Markdown"
             >
-              Export
+              导出
             </button>
           ) : null}
           <button

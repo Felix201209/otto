@@ -9,9 +9,26 @@
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 
 export interface Stmt {
-  run(...args: unknown[]): { changes: number | bigint; lastInsertRowid: number | bigint };
+  run(...args: unknown[]): {
+    changes: number | bigint;
+    lastInsertRowid: number | bigint;
+  };
   get(...args: unknown[]): unknown;
   all(...args: unknown[]): unknown[];
+}
+
+/**
+ * Synchronous database surface consumed by the enterprise repositories.
+ *
+ * Keeping this as a structural contract lets the production SQLCipher binding
+ * replace `node:sqlite` without leaking a native-driver type into domain code.
+ */
+export interface DatabaseHandle {
+  readonly inTransaction: boolean;
+  pragma(directive: string): void;
+  exec(sql: string): void;
+  prepare(sql: string): Stmt;
+  close(): void;
 }
 
 // node:sqlite 与 better-sqlite3 一样拒绝 undefined 绑定值；把 undefined 归一为 null。
@@ -35,11 +52,11 @@ function normalize(args: unknown[]): unknown[] {
   return args.map(coerce);
 }
 
-export class Database {
+export class NodeSqliteDatabase implements DatabaseHandle {
   private readonly db: DatabaseSync;
 
-  constructor(filename: string) {
-    this.db = new DatabaseSync(filename);
+  constructor(filename: string, options?: { readOnly?: boolean }) {
+    this.db = new DatabaseSync(filename, options ?? {});
   }
 
   get inTransaction(): boolean {
@@ -57,12 +74,17 @@ export class Database {
   prepare(sql: string): Stmt {
     const st: StatementSync = this.db.prepare(sql);
     // 允许 { name } 这种不带 @/$/: 前缀的具名参数（对齐 better-sqlite3 语义）。
-    (st as unknown as { setAllowBareNamedParameters?: (v: boolean) => void })
-      .setAllowBareNamedParameters?.(true);
+    (
+      st as unknown as { setAllowBareNamedParameters?: (v: boolean) => void }
+    ).setAllowBareNamedParameters?.(true);
     const call = (fn: 'run' | 'get' | 'all', args: unknown[]): unknown =>
       (st[fn] as (...a: unknown[]) => unknown)(...normalize(args));
     return {
-      run: (...a) => call('run', a) as { changes: number | bigint; lastInsertRowid: number | bigint },
+      run: (...a) =>
+        call('run', a) as {
+          changes: number | bigint;
+          lastInsertRowid: number | bigint;
+        },
       get: (...a) => call('get', a),
       all: (...a) => call('all', a) as unknown[],
     };
@@ -73,4 +95,10 @@ export class Database {
   }
 }
 
-export type DatabaseHandle = Database;
+/**
+ * Backwards-compatible constructor plus a driver-neutral type. Existing tests
+ * can keep using `new Database(...)`, while repository contracts no longer
+ * require the private internals of the node:sqlite implementation.
+ */
+export const Database = NodeSqliteDatabase;
+export type Database = DatabaseHandle;

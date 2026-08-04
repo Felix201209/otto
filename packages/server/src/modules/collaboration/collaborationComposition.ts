@@ -8,6 +8,9 @@ import type {
   EncryptedObjectStore,
 } from '../data_platform/index.js';
 import { createDirectMessageFacade } from './directMessageFacade.js';
+import { createE2eeFacade } from './e2eeRepository.js';
+import { createMlsTransportFacade } from './mlsTransportRepository.js';
+import type { MlsResourceGovernancePolicy } from './mlsTransportRepository.js';
 import { createAccountPresenceFacade } from './presenceFacade.js';
 
 export interface CollaborationCompositionAccount {
@@ -24,6 +27,7 @@ export interface CollaborationCompositionOptions<
   createId(): string;
   fieldCipher?: EncryptedFieldCipher;
   attachmentObjectStore?: EncryptedObjectStore;
+  mlsResourcePolicy?: Partial<MlsResourceGovernancePolicy>;
   getAccount(accountId: string, organizationId: string): TAccount | null;
 }
 
@@ -40,15 +44,16 @@ export function createCollaborationComposition<
     createId: options.createId,
     fieldCipher: options.fieldCipher,
     attachmentObjectStore: options.attachmentObjectStore,
-    getActiveAccountInOrganization(
-      accountId: string,
-      organizationId: string,
-    ) {
+    now: options.now,
+    mlsResourcePolicy: options.mlsResourcePolicy,
+    getActiveAccountInOrganization(accountId: string, organizationId: string) {
       const account = getActiveAccount(accountId, organizationId);
       return account ? { id: account.id, name: account.name } : null;
     },
   };
   const directMessages = createDirectMessageFacade(directMessageStore);
+  const e2ee = createE2eeFacade(directMessageStore);
+  const mlsTransport = createMlsTransportFacade(directMessageStore);
   const presence = createAccountPresenceFacade({
     db: options.db,
     now: options.now,
@@ -58,6 +63,8 @@ export function createCollaborationComposition<
 
   return {
     ...directMessages,
+    ...e2ee,
+    ...mlsTransport,
     ...presence,
   };
 }

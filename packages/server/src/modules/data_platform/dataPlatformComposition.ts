@@ -11,6 +11,11 @@ import {
   type EnterpriseDatabaseLifecycleOptions,
 } from './enterpriseDatabaseLifecycle.js';
 import { createFileEncryptionKeyProvider } from './fileEncryptionKeyProvider.js';
+import {
+  createSqlCipherDatabaseLifecycle,
+  type SqlCipherDriver,
+  type SqlCipherKeyProvider,
+} from './sqlCipherDatabaseLifecycle.js';
 
 export interface DataPlatformEncryptionKeyOptions {
   keyPath: string;
@@ -23,6 +28,10 @@ export interface DataPlatformEncryptionKeyOptions {
 export interface DataPlatformCompositionOptions {
   encryptionKey: DataPlatformEncryptionKeyOptions;
   database: EnterpriseDatabaseLifecycleOptions;
+  databaseEncryption?: {
+    keyProvider: SqlCipherKeyProvider;
+    driver: SqlCipherDriver;
+  };
 }
 
 /** Owns database resources, encryption-key lifetime and deferred backups. */
@@ -32,13 +41,34 @@ export function createDataPlatformComposition(
   const encryptionKeyProvider = createFileEncryptionKeyProvider(
     options.encryptionKey,
   );
-  const databaseLifecycle = createEnterpriseDatabaseLifecycle(options.database);
+  if (options.databaseEncryption && options.database.openDatabase) {
+    throw new Error(
+      'database encryption cannot be combined with a custom openDatabase callback',
+    );
+  }
+  const databaseEncryption = options.databaseEncryption
+    ? createSqlCipherDatabaseLifecycle({
+        dataDirectory: options.database.dataDirectory,
+        databasePath: options.database.databasePath,
+        ...options.databaseEncryption,
+      })
+    : null;
+  const databaseLifecycle = createEnterpriseDatabaseLifecycle({
+    ...options.database,
+    ...(databaseEncryption
+      ? { openDatabase: databaseEncryption.openDatabase }
+      : {}),
+  });
 
   function closeDatabase(): void {
     try {
       databaseLifecycle.close();
     } finally {
-      encryptionKeyProvider.clear();
+      try {
+        encryptionKeyProvider.clear();
+      } finally {
+        databaseEncryption?.clearKeys();
+      }
     }
   }
 
@@ -47,6 +77,27 @@ export function createDataPlatformComposition(
     closeDatabase,
     getDatabase: databaseLifecycle.getDatabase,
     getReadiness: databaseLifecycle.getReadiness,
+    getDatabaseEncryptionStatus() {
+      if (!databaseEncryption)
+        throw new Error('SQLCipher database encryption is disabled');
+      return databaseEncryption.getStatus();
+    },
+    createDatabaseSnapshot(destinationPath: string) {
+      if (!databaseEncryption)
+        throw new Error('SQLCipher database encryption is disabled');
+      databaseEncryption.createSnapshot(destinationPath);
+    },
+    openDatabaseSnapshot(databasePath: string) {
+      if (!databaseEncryption)
+        throw new Error('SQLCipher database encryption is disabled');
+      return databaseEncryption.openSnapshot(databasePath);
+    },
+    rotateDatabaseKey() {
+      if (!databaseEncryption)
+        throw new Error('SQLCipher database encryption is disabled');
+      databaseLifecycle.close();
+      return databaseEncryption.rotateKey();
+    },
     createBackup(store: EnterpriseBackupFacadeStore) {
       return createEnterpriseBackupFacade(store);
     },

@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   EnterpriseAccount,
+  EnterpriseLegalDocumentReference,
   EnterpriseRegistrationIntent,
   EnterpriseSmsChallenge,
   EnterpriseSmsLoginChallenge,
@@ -49,7 +50,14 @@ export function useEnterpriseAuth(): {
       phone: string;
       inviteCode?: string;
     }): Promise<EnterpriseSmsChallenge>;
-    register(input: { challengeId: string; code: string; name: string; password: string; legalConsent: true }): Promise<void>;
+    register(input: {
+      challengeId: string;
+      code: string;
+      name: string;
+      password: string;
+      legalConsent: true;
+      legalDocuments: EnterpriseLegalDocumentReference[];
+    }): Promise<void>;
     joinEnterprise(input: { inviteCode: string }): Promise<void>;
     logout(): Promise<void>;
     clearError(): void;
@@ -166,7 +174,6 @@ export function useEnterpriseAuth(): {
     serverUrl: string;
     identifier: string;
     password: string;
-    legalConsent: true;
   }): Promise<void> => {
     const epoch = authEpochRef.current + 1;
     authEpochRef.current = epoch;
@@ -259,6 +266,7 @@ export function useEnterpriseAuth(): {
     name: string;
     password: string;
     legalConsent: true;
+    legalDocuments: EnterpriseLegalDocumentReference[];
   }): Promise<void> => {
     const epoch = authEpochRef.current + 1;
     authEpochRef.current = epoch;

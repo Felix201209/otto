@@ -9,15 +9,130 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import { request as httpRequest, type Server } from 'node:http';
-import { createHash, generateKeyPairSync, sign } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { canonicalJson } from '../modules/commercial_control/signedEnvelope.js';
+import { currentLegalDocumentReferences } from '../modules/data_governance/index.js';
 import {
-  buildAtoaRequest,
-  buildAtoaResponse,
-} from '../../../core/src/a2a/atoaProtocol.js';
+  e2eeDeviceApprovalSignaturePayload,
+  e2eeMessageSignaturePayload,
+  type E2eeAttachmentCiphertextInput,
+  type E2eeContentType,
+  type E2eeMessageEnvelope,
+  type SendE2eeDirectMessageInput,
+} from '../modules/collaboration/e2eeRepository.js';
+
+interface RouteE2eeDevice {
+  accountId: string;
+  deviceId: string;
+  signingPrivateKey: ReturnType<typeof generateKeyPairSync>['privateKey'];
+  signingPublicKey: string;
+  exchangePublicKey: string;
+  keyFingerprint: string;
+  approvalState: 'pending' | 'approved';
+}
+
+function routePublicKey(
+  key: ReturnType<typeof generateKeyPairSync>['publicKey'],
+): string {
+  return key.export({ type: 'spki', format: 'pem' }).toString();
+}
+
+async function registerRouteE2eeDevice(input: {
+  base: string;
+  token: string;
+  accountId: string;
+  deviceId?: string;
+}): Promise<RouteE2eeDevice> {
+  const signing = generateKeyPairSync('ed25519');
+  const exchange = generateKeyPairSync('x25519');
+  const device: RouteE2eeDevice = {
+    accountId: input.accountId,
+    deviceId: input.deviceId ?? `device-${randomUUID()}`,
+    signingPrivateKey: signing.privateKey,
+    signingPublicKey: routePublicKey(signing.publicKey),
+    exchangePublicKey: routePublicKey(exchange.publicKey),
+    keyFingerprint: '',
+    approvalState: 'pending',
+  };
+  const response = await fetch(`${input.base}/enterprise/e2ee/devices`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${input.token}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      deviceId: device.deviceId,
+      deviceName: 'route test device',
+      identitySigningPublicKey: device.signingPublicKey,
+      deviceExchangePublicKey: device.exchangePublicKey,
+    }),
+  });
+  expect(response.status).toBe(200);
+  const registered = (await response.json()) as {
+    device: { keyFingerprint: string; approvalState: 'pending' | 'approved' };
+  };
+  return { ...device, ...registered.device };
+}
+
+function routeE2eePayload(input: {
+  organizationId: string;
+  senderAccountId: string;
+  recipientAccountId: string;
+  senderDevice: RouteE2eeDevice;
+  devices: RouteE2eeDevice[];
+  messageId?: string;
+  contentType?: E2eeContentType;
+  inReplyToMessageId?: string | null;
+  attachments?: E2eeAttachmentCiphertextInput[];
+}): Omit<
+  SendE2eeDirectMessageInput,
+  'organizationId' | 'senderAccountId' | 'recipientAccountId'
+> {
+  const ephemeral = routePublicKey(generateKeyPairSync('x25519').publicKey);
+  const envelopes: E2eeMessageEnvelope[] = input.devices.map(
+    (device, index) => ({
+      accountId: device.accountId,
+      deviceId: device.deviceId,
+      ephemeralPublicKey: ephemeral,
+      wrappedKey: Buffer.alloc(48, index + 1).toString('base64'),
+      nonce: Buffer.alloc(12, index + 1).toString('base64'),
+    }),
+  );
+  const unsigned: Omit<SendE2eeDirectMessageInput, 'signature'> = {
+    organizationId: input.organizationId,
+    senderAccountId: input.senderAccountId,
+    recipientAccountId: input.recipientAccountId,
+    messageId: input.messageId ?? randomUUID(),
+    senderDeviceId: input.senderDevice.deviceId,
+    protocolVersion: 1,
+    contentType: input.contentType ?? 'message',
+    inReplyToMessageId: input.inReplyToMessageId ?? null,
+    ciphertext: Buffer.from(
+      'opaque route ciphertext plus authentication tag',
+    ).toString('base64'),
+    nonce: Buffer.alloc(12, 7).toString('base64'),
+    envelopes,
+    attachments: input.attachments ?? [],
+  };
+  const complete: SendE2eeDirectMessageInput = {
+    ...unsigned,
+    signature: sign(
+      null,
+      e2eeMessageSignaturePayload(unsigned),
+      input.senderDevice.signingPrivateKey,
+    ).toString('base64'),
+  };
+  const {
+    organizationId: _organizationId,
+    senderAccountId: _senderAccountId,
+    recipientAccountId: _recipientAccountId,
+    ...payload
+  } = complete;
+  return payload;
+}
 
 type ServerModule = typeof import('./server.js');
 type DatabaseModule = typeof import('./db.js');
@@ -49,6 +164,7 @@ const ENV_KEYS = [
   'OTTO_TELEMETRY_ENDPOINT',
   'OTTO_DATA_CONTROLLER_NAME',
   'OTTO_PRIVACY_CONTACT',
+  'OTTO_LEGAL_DOCUMENTS_APPROVED',
   'OTTO_DATA_REGION',
   'OTTO_DATA_RESIDENCY',
   'OTTO_CROSS_BORDER_DATA_ENABLED',
@@ -57,10 +173,12 @@ const ENV_KEYS = [
 
 const ADMIN_TOKEN = 'test-admin-token-abc123';
 const LICENSE_KEY_PAIR = generateKeyPairSync('ed25519');
-const LICENSE_PUBLIC_KEY = LICENSE_KEY_PAIR.publicKey.export({
-  format: 'pem',
-  type: 'spki',
-}).toString();
+const LICENSE_PUBLIC_KEY = LICENSE_KEY_PAIR.publicKey
+  .export({
+    format: 'pem',
+    type: 'spki',
+  })
+  .toString();
 
 function signLicensePayload(payload: Record<string, unknown>): string {
   return `ed25519:${sign(
@@ -73,7 +191,9 @@ function signLicensePayload(payload: Record<string, unknown>): string {
 /** 起一个隔离的企业服务端（临时端口），返回 baseUrl + 关闭句柄。 */
 async function startIsolated(
   adminToken?: string,
-  smsSender?: { sendVerificationCode(phone: string, code: string): Promise<boolean> } | null,
+  smsSender?: {
+    sendVerificationCode(phone: string, code: string): Promise<boolean>;
+  } | null,
   serverOptions: Record<string, unknown> = {},
 ): Promise<{ base: string; server: Server }> {
   process.env.OTTO_ENTERPRISE_DIR = tmpDir;
@@ -124,9 +244,13 @@ describe('数据治理自助闭环', { timeout: 30_000 }, () => {
     });
     expect(publicLegal.status).toBe(200);
     expect(publicLegal.headers.get('content-type')).toContain('text/html');
-    expect(await publicLegal.text()).toContain('Otto 用户协议与隐私规则');
+    const legalHtml = await publicLegal.text();
+    expect(legalHtml).toContain('Otto 用户协议与隐私规则');
+    expect(legalHtml).toContain('正文 SHA-256');
 
-    const profile = await fetch(`${base}/enterprise/privacy`, { headers: auth });
+    const profile = await fetch(`${base}/enterprise/privacy`, {
+      headers: auth,
+    });
     expect(profile.status).toBe(200);
     await expect(profile.json()).resolves.toMatchObject({
       controller: { configured: true },
@@ -137,12 +261,19 @@ describe('数据治理自助闭环', { timeout: 30_000 }, () => {
     const accept = await fetch(`${base}/enterprise/privacy/accept`, {
       method: 'POST',
       headers: { ...auth, 'content-type': 'application/json' },
-      body: JSON.stringify({ accepted: true }),
+      body: JSON.stringify({
+        accepted: true,
+        documents: currentLegalDocumentReferences(),
+      }),
     });
     expect(accept.status).toBe(200);
-    await expect(accept.json()).resolves.toMatchObject({ currentConsentComplete: true });
+    await expect(accept.json()).resolves.toMatchObject({
+      currentConsentComplete: true,
+    });
 
-    const exported = await fetch(`${base}/enterprise/privacy/export`, { headers: auth });
+    const exported = await fetch(`${base}/enterprise/privacy/export`, {
+      headers: auth,
+    });
     expect(exported.status).toBe(200);
     await expect(exported.json()).resolves.toMatchObject({
       account: { id: account.id, phone: '+8613800138001' },
@@ -157,14 +288,18 @@ describe('数据治理自助闭环', { timeout: 30_000 }, () => {
       }),
     });
     expect(deleted.status).toBe(200);
-    await expect(deleted.json()).resolves.toMatchObject({ accountId: account.id });
+    await expect(deleted.json()).resolves.toMatchObject({
+      accountId: account.id,
+    });
     expect(database.getAccountBySession(token)).toBeNull();
   });
 });
 
 afterEach(async () => {
   await Promise.all(
-    servers.map((s) => new Promise<void>((resolve) => s.close(() => resolve()))),
+    servers.map(
+      (s) => new Promise<void>((resolve) => s.close(() => resolve())),
+    ),
   );
   for (const closeDatabase of closeDatabases.reverse()) closeDatabase();
   for (const k of ENV_KEYS) {
@@ -187,16 +322,22 @@ describe('本地 Agent 配对路由默认关闭', { timeout: 30_000 }, () => {
     const requests: Array<[string, RequestInit | undefined]> = [
       ['/enterprise/sdk/otto-discovery.js', undefined],
       ['/enterprise/local-agent', undefined],
-      ['/enterprise/local-agent/pair', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ instanceId: 'test-instance' }),
-      }],
-      ['/enterprise/local-agent/pair/verify', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ token: 'ABCDEF' }),
-      }],
+      [
+        '/enterprise/local-agent/pair',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ instanceId: 'test-instance' }),
+        },
+      ],
+      [
+        '/enterprise/local-agent/pair/verify',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ token: 'ABCDEF' }),
+        },
+      ],
     ];
 
     for (const [route, init] of requests) {
@@ -224,7 +365,7 @@ describe('本地 Agent 配对路由默认关闭', { timeout: 30_000 }, () => {
       body: JSON.stringify({ instanceId: 'test-instance' }),
     });
     expect(pair.status).toBe(200);
-    const pairBody = await pair.json() as {
+    const pairBody = (await pair.json()) as {
       data: { token: string };
     };
 
@@ -249,7 +390,9 @@ describe('本地 Agent 配对路由默认关闭', { timeout: 30_000 }, () => {
 describe('管理端鉴权：受保护路由需正确 token', { timeout: 15_000 }, () => {
   it('带错 token 访问 /enterprise/report → 401', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
-    const res = await fetch(`${base}/enterprise/report?token=wrong-token-xxxxxxxxxxx`);
+    const res = await fetch(
+      `${base}/enterprise/report?token=wrong-token-xxxxxxxxxxx`,
+    );
     expect(res.status).toBe(401);
     const body = await res.json();
     expect(body.error).toMatch(/unauthorized/i);
@@ -309,7 +452,9 @@ describe('管理端鉴权：受保护路由需正确 token', { timeout: 15_000 }
     let responseBody = '';
     let headersSent = false;
     const response = {
-      get headersSent() { return headersSent; },
+      get headersSent() {
+        return headersSent;
+      },
       setHeader() {},
       writeHead(status: number) {
         statusCode = status;
@@ -326,20 +471,27 @@ describe('管理端鉴权：受保护路由需正确 token', { timeout: 15_000 }
     };
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
-      await expect(listener({
-        url: '/enterprise/report',
-        method: 'GET',
-        headers: {
-          host: '127.0.0.1',
-          authorization: 'Bearer invalid-account-session',
-        },
-      }, response)).resolves.toBeUndefined();
+      await expect(
+        listener(
+          {
+            url: '/enterprise/report',
+            method: 'GET',
+            headers: {
+              host: '127.0.0.1',
+              authorization: 'Bearer invalid-account-session',
+            },
+          },
+          response,
+        ),
+      ).resolves.toBeUndefined();
     } finally {
       errorSpy.mockRestore();
     }
 
     expect(statusCode).toBe(500);
-    expect(JSON.parse(responseBody)).toEqual({ error: '企业服务暂时不可用，请稍后重试' });
+    expect(JSON.parse(responseBody)).toEqual({
+      error: '企业服务暂时不可用，请稍后重试',
+    });
     expect(responseBody).not.toMatch(/database|sqlite|closed/i);
   });
 });
@@ -424,7 +576,10 @@ describe('正式公网启动的部署身份安全门', () => {
     delete process.env.OTTO_BUILD_COMMIT;
     vi.resetModules();
     const localModule: ServerModule = await import('./server.js');
-    const local = localModule.startEnterpriseServer({ host: '127.0.0.1', port: 0 });
+    const local = localModule.startEnterpriseServer({
+      host: '127.0.0.1',
+      port: 0,
+    });
     servers.push(local);
     await new Promise<void>((resolve) => local.once('listening', resolve));
     expect((local.address() as AddressInfo).port).toBeGreaterThan(0);
@@ -470,30 +625,33 @@ describe('正式公网启动的部署身份安全门', () => {
 describe('可信反向代理客户端地址解析', () => {
   it('trustedProxyHops=0 或直连来源不可信时忽略 X-Forwarded-For', async () => {
     const mod: ServerModule = await import('./server.js');
-    expect(mod.resolveEnterpriseClientAddress(
-      '203.0.113.10',
-      '198.51.100.23',
-      { trustedProxyHops: 0 },
-    )).toBe('203.0.113.10');
-    expect(mod.resolveEnterpriseClientAddress(
-      '203.0.113.10',
-      '198.51.100.23',
-      { trustedProxyHops: 1, trustedProxyAddresses: ['10.0.0.5'] },
-    )).toBe('203.0.113.10');
+    expect(
+      mod.resolveEnterpriseClientAddress('203.0.113.10', '198.51.100.23', {
+        trustedProxyHops: 0,
+      }),
+    ).toBe('203.0.113.10');
+    expect(
+      mod.resolveEnterpriseClientAddress('203.0.113.10', '198.51.100.23', {
+        trustedProxyHops: 1,
+        trustedProxyAddresses: ['10.0.0.5'],
+      }),
+    ).toBe('203.0.113.10');
   });
 
   it('仅对 loopback 或明确可信直连代理按 trustedProxyHops 取 XFF 客户端', async () => {
     const mod: ServerModule = await import('./server.js');
-    expect(mod.resolveEnterpriseClientAddress(
-      '::1',
-      '198.51.100.23',
-      { trustedProxyHops: 1 },
-    )).toBe('198.51.100.23');
-    expect(mod.resolveEnterpriseClientAddress(
-      '10.0.0.5',
-      '198.51.100.23, 10.0.0.4',
-      { trustedProxyHops: 2, trustedProxyAddresses: ['10.0.0.5'] },
-    )).toBe('198.51.100.23');
+    expect(
+      mod.resolveEnterpriseClientAddress('::1', '198.51.100.23', {
+        trustedProxyHops: 1,
+      }),
+    ).toBe('198.51.100.23');
+    expect(
+      mod.resolveEnterpriseClientAddress(
+        '10.0.0.5',
+        '198.51.100.23, 10.0.0.4',
+        { trustedProxyHops: 2, trustedProxyAddresses: ['10.0.0.5'] },
+      ),
+    ).toBe('198.51.100.23');
   });
 
   it('XFF 格式非法、重复 header 或链长不足时 fail closed 回落直连地址', async () => {
@@ -503,11 +661,11 @@ describe('可信反向代理客户端地址解析', () => {
       ['198.51.100.23', '198.51.100.24'],
       '198.51.100.23',
     ]) {
-      expect(mod.resolveEnterpriseClientAddress(
-        '127.0.0.1',
-        forwarded,
-        { trustedProxyHops: forwarded === '198.51.100.23' ? 2 : 1 },
-      )).toBe('127.0.0.1');
+      expect(
+        mod.resolveEnterpriseClientAddress('127.0.0.1', forwarded, {
+          trustedProxyHops: forwarded === '198.51.100.23' ? 2 : 1,
+        }),
+      ).toBe('127.0.0.1');
     }
   });
 });
@@ -596,14 +754,22 @@ describe('受保护 vs 公开路由边界', () => {
       license: { status: 'missing', enforce: true },
     });
 
-    const publicPark = await fetch(`${base}/enterprise/park/services?parkId=park_missing`);
+    const publicPark = await fetch(
+      `${base}/enterprise/park/services?parkId=park_missing`,
+    );
     expect(publicPark.status).toBe(402);
 
-    const status = await fetch(`${base}/enterprise/deployment/status`, { headers });
+    const status = await fetch(`${base}/enterprise/deployment/status`, {
+      headers,
+    });
     expect(status.status).toBe(200);
     await expect(status.json()).resolves.toMatchObject({
       license: { status: 'missing', enforce: true },
-      dataBoundary: { includesUserMessages: false, includesFiles: false, includesMeetingAudio: false },
+      dataBoundary: {
+        includesUserMessages: false,
+        includesFiles: false,
+        includesMeetingAudio: false,
+      },
       dataProtection: { enabled: true, retentionDays: 30, minimumRetained: 3 },
     });
 
@@ -615,7 +781,7 @@ describe('受保护 vs 公开路由边界', () => {
     await expect(backup.json()).resolves.toMatchObject({
       lastError: null,
       backupCount: 1,
-      latestSchemaVersion: 19,
+      latestSchemaVersion: 22,
     });
 
     const telemetry = await fetch(`${base}/enterprise/deployment/telemetry`, {
@@ -624,9 +790,14 @@ describe('受保护 vs 公开路由边界', () => {
       body: JSON.stringify({ enabled: false }),
     });
     expect(telemetry.status).toBe(200);
-    await expect(telemetry.json()).resolves.toMatchObject({ telemetry: { enabled: false } });
+    await expect(telemetry.json()).resolves.toMatchObject({
+      telemetry: { enabled: false },
+    });
 
-    const diagnostics = await fetch(`${base}/enterprise/deployment/diagnostics`, { headers });
+    const diagnostics = await fetch(
+      `${base}/enterprise/deployment/diagnostics`,
+      { headers },
+    );
     expect(diagnostics.status).toBe(200);
     await expect(diagnostics.json()).resolves.toMatchObject({
       redactedSamplesIncluded: false,
@@ -640,7 +811,9 @@ describe('受保护 vs 公开路由边界', () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
     const headers = { 'x-otto-admin-token': ADMIN_TOKEN };
 
-    const status = await fetch(`${base}/enterprise/deployment/status`, { headers });
+    const status = await fetch(`${base}/enterprise/deployment/status`, {
+      headers,
+    });
     const deployment = await status.json();
     const payload = {
       id: 'lic_test_enterprise',
@@ -661,7 +834,10 @@ describe('受保护 vs 公开路由边界', () => {
     const imported = await fetch(`${base}/enterprise/deployment/license`, {
       method: 'POST',
       headers: { ...headers, 'content-type': 'application/json' },
-      body: JSON.stringify({ license: payload, signature: signLicensePayload(payload) }),
+      body: JSON.stringify({
+        license: payload,
+        signature: signLicensePayload(payload),
+      }),
     });
     expect(imported.status).toBe(200);
     await expect(imported.json()).resolves.toMatchObject({
@@ -676,7 +852,10 @@ describe('受保护 vs 公开路由边界', () => {
     expect(report.status).toBe(200);
 
     const db = await import('./db.js');
-    const org = db.createOrganization({ name: 'Licensed Tenant', slug: 'licensed-tenant' });
+    const org = db.createOrganization({
+      name: 'Licensed Tenant',
+      slug: 'licensed-tenant',
+    });
     expect(db.getOrganizationFeatures(org.id)).toMatchObject({
       enterprise_tree: true,
       direct_messages: true,
@@ -876,7 +1055,10 @@ describe('受保护 vs 公开路由边界', () => {
 
   it('admin publishes modular updates without exposing deployment details in public health', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
-    const headers = { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' };
+    const headers = {
+      'x-otto-admin-token': ADMIN_TOKEN,
+      'content-type': 'application/json',
+    };
 
     const denied = await fetch(`${base}/enterprise/modules/updates`, {
       method: 'PATCH',
@@ -908,7 +1090,10 @@ describe('受保护 vs 公开路由边界', () => {
       manifest: {
         format: 'otto-module-updates-v1',
         modules: [
-          expect.objectContaining({ module: 'park_service', version: '1.9.5-park.1' }),
+          expect.objectContaining({
+            module: 'park_service',
+            version: '1.9.5-park.1',
+          }),
         ],
       },
     });
@@ -918,13 +1103,17 @@ describe('受保护 vs 公开路由边界', () => {
     });
     expect(manifest.status).toBe(200);
     await expect(manifest.json()).resolves.toMatchObject({
-      modules: [expect.objectContaining({ module: 'park_service', rollout: 'stable' })],
+      modules: [
+        expect.objectContaining({ module: 'park_service', rollout: 'stable' }),
+      ],
       catalog: expect.arrayContaining([
         expect.objectContaining({ module: 'park_service' }),
       ]),
     });
 
-    const anonymousClientManifest = await fetch(`${base}/enterprise/modules/updates/client`);
+    const anonymousClientManifest = await fetch(
+      `${base}/enterprise/modules/updates/client`,
+    );
     expect(anonymousClientManifest.status).toBe(401);
 
     const database = await import('./db.js');
@@ -934,12 +1123,17 @@ describe('受保护 vs 公开路由边界', () => {
       name: 'Module Reader',
     });
     const session = database.createAuthSession(member.id);
-    const clientManifest = await fetch(`${base}/enterprise/modules/updates/client`, {
-      headers: { authorization: `Bearer ${session.token}` },
-    });
+    const clientManifest = await fetch(
+      `${base}/enterprise/modules/updates/client`,
+      {
+        headers: { authorization: `Bearer ${session.token}` },
+      },
+    );
     expect(clientManifest.status).toBe(200);
     await expect(clientManifest.json()).resolves.toMatchObject({
-      modules: [expect.objectContaining({ module: 'park_service', rollout: 'stable' })],
+      modules: [
+        expect.objectContaining({ module: 'park_service', rollout: 'stable' }),
+      ],
     });
 
     const health = await fetch(`${base}/enterprise/health`);
@@ -966,16 +1160,19 @@ describe('受保护 vs 公开路由边界', () => {
     });
     const firstToken = database.createAuthSession(first.id).token;
     const secondToken = database.createAuthSession(second.id).token;
-    const memoryContent = '- Restore this personal memory' + String.fromCharCode(10);
+    const memoryContent =
+      '- Restore this personal memory' + String.fromCharCode(10);
     const payload = {
       schemaVersion: 1,
       generatedAt: '2026-07-26T10:30:00.000Z',
-      files: [{
-        path: 'memory/global.md',
-        content: memoryContent,
-        modifiedAtMs: Date.parse('2026-07-26T10:30:00.000Z'),
-        sha256: createHash('sha256').update(memoryContent).digest('hex'),
-      }],
+      files: [
+        {
+          path: 'memory/global.md',
+          content: memoryContent,
+          modifiedAtMs: Date.parse('2026-07-26T10:30:00.000Z'),
+          sha256: createHash('sha256').update(memoryContent).digest('hex'),
+        },
+      ],
     };
     const saved = await fetch(base + '/enterprise/account-sync', {
       method: 'PUT',
@@ -1007,7 +1204,13 @@ describe('受保护 vs 公开路由边界', () => {
     expect(restored.status).toBe(200);
     expect(restored.headers.get('cache-control')).toBe('no-store');
     await expect(restored.json()).resolves.toMatchObject({
-      snapshots: [expect.objectContaining({ scope: 'personal_memory', version: 1, payload })],
+      snapshots: [
+        expect.objectContaining({
+          scope: 'personal_memory',
+          version: 1,
+          payload,
+        }),
+      ],
     });
     const isolated = await fetch(base + '/enterprise/account-sync', {
       headers: { authorization: 'Bearer ' + secondToken },
@@ -1050,13 +1253,20 @@ describe('受保护 vs 公开路由边界', () => {
     const login = await fetch(`${base}/enterprise/auth/admin/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ identifier: 'local-admin', password: 'local-admin-password' }),
+      body: JSON.stringify({
+        identifier: 'local-admin',
+        password: 'local-admin-password',
+      }),
     });
     expect(login.status).toBe(200);
     const token = (await login.json()).token;
-    expect((await fetch(`${base}/enterprise/report`, {
-      headers: { authorization: `Bearer ${token}` },
-    })).status).toBe(200);
+    expect(
+      (
+        await fetch(`${base}/enterprise/report`, {
+          headers: { authorization: `Bearer ${token}` },
+        })
+      ).status,
+    ).toBe(200);
   });
 
   it('本机模式拒绝第三方网页跨域改写企业邀请码，并只向已登录管理员保留同源能力', async () => {
@@ -1080,16 +1290,22 @@ describe('受保护 vs 公开路由边界', () => {
     const port = new URL(base).port;
     const rebindingStatus = await new Promise<number>((resolve, reject) => {
       const target = new URL(`${base}/enterprise/organization/invite`);
-      const request = httpRequest({
-        hostname: target.hostname,
-        port: target.port,
-        path: target.pathname,
-        method: 'POST',
-        headers: { host: `evil.example:${port}`, origin: `http://evil.example:${port}` },
-      }, (response) => {
-        response.resume();
-        response.on('end', () => resolve(response.statusCode ?? 0));
-      });
+      const request = httpRequest(
+        {
+          hostname: target.hostname,
+          port: target.port,
+          path: target.pathname,
+          method: 'POST',
+          headers: {
+            host: `evil.example:${port}`,
+            origin: `http://evil.example:${port}`,
+          },
+        },
+        (response) => {
+          response.resume();
+          response.on('end', () => resolve(response.statusCode ?? 0));
+        },
+      );
       request.on('error', reject);
       request.end();
     });
@@ -1099,7 +1315,10 @@ describe('受保护 vs 公开路由边界', () => {
     const login = await fetch(`${base}/enterprise/auth/admin/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ identifier: 'local-admin', password: 'local-admin-password' }),
+      body: JSON.stringify({
+        identifier: 'local-admin',
+        password: 'local-admin-password',
+      }),
     });
     const token = (await login.json()).token;
     const sameOrigin = await fetch(`${base}/enterprise/organization/invite`, {
@@ -1162,7 +1381,10 @@ describe('园区资源后台与用户端资源接口', () => {
       name: '资源入驻企业管理员',
       isAdmin: true,
     });
-    const invite = database.issueParkInvite({ parkId: park.id, actorAccountId: parkAdmin.id });
+    const invite = database.issueParkInvite({
+      parkId: park.id,
+      actorAccountId: parkAdmin.id,
+    });
     database.joinOrganizationToPark({
       organizationId: tenantOrganization.id,
       actorAccountId: tenantAdmin.id,
@@ -1211,13 +1433,21 @@ describe('园区资源后台与用户端资源接口', () => {
         equipment: ['投屏', '视频会议'],
       },
     });
-    const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
-    const daySlots = database.listParkMeetingSlots(
-      park.adminOrganizationId, tomorrow, tomorrow,
-    ).filter((slot) => slot.roomId === createdBody.meetingRoom.id);
+    const tomorrow = new Date(Date.now() + 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    const daySlots = database
+      .listParkMeetingSlots(park.adminOrganizationId, tomorrow, tomorrow)
+      .filter((slot) => slot.roomId === createdBody.meetingRoom.id);
     expect(daySlots).toHaveLength(28);
-    expect(daySlots[0]).toMatchObject({ slotKey: '09:00', status: 'available' });
-    expect(daySlots.at(-1)).toMatchObject({ slotKey: '22:30', status: 'available' });
+    expect(daySlots[0]).toMatchObject({
+      slotKey: '09:00',
+      status: 'available',
+    });
+    expect(daySlots.at(-1)).toMatchObject({
+      slotKey: '22:30',
+      status: 'available',
+    });
 
     const member = database.createAccount({
       organizationId: tenantOrganization.id,
@@ -1242,7 +1472,10 @@ describe('园区资源后台与用户端资源接口', () => {
   it('普通企业管理员不能越权修改产业园资源', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
     const database = await import('./db.js');
-    const organization = database.createOrganization({ name: '普通企业', slug: 'ordinary-resource-org' });
+    const organization = database.createOrganization({
+      name: '普通企业',
+      slug: 'ordinary-resource-org',
+    });
     const admin = database.createAccount({
       organizationId: organization.id,
       username: 'ordinary.resource.admin',
@@ -1253,11 +1486,16 @@ describe('园区资源后台与用户端资源接口', () => {
     const session = database.createAuthSession(admin.id);
     const response = await fetch(`${base}/enterprise/park-settings`, {
       method: 'PUT',
-      headers: { authorization: `Bearer ${session.token}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${session.token}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({ parkingTotal: 999 }),
     });
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: '当前企业不是产业园管理方' });
+    await expect(response.json()).resolves.toEqual({
+      error: '当前企业不是产业园管理方',
+    });
   });
 });
 
@@ -1275,7 +1513,9 @@ describe('公网企业引入链接与公开落地页', () => {
 
     expect(response.status).toBe(201);
     const { invite } = await response.json();
-    expect(invite.link).toBe(`https://join.otto.example/enterprise/join/${invite.code}`);
+    expect(invite.link).toBe(
+      `https://join.otto.example/enterprise/join/${invite.code}`,
+    );
     expect(invite.link).not.toContain('evil.example');
   });
 
@@ -1291,22 +1531,33 @@ describe('公网企业引入链接与公开落地页', () => {
       smsSender: null,
     });
 
-    expect(created.publicBaseUrl).toBe('https://from-option.otto.example/company');
+    expect(created.publicBaseUrl).toBe(
+      'https://from-option.otto.example/company',
+    );
   });
 
   it('有效链接返回干净落地页、App 唤起按钮、邀请码与严格安全头，不泄露企业名称', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
     const db = await import('./db.js');
     const secretName = '机密企业 <script>alert(1)</script>';
-    const organization = db.createOrganization({ name: secretName, slug: 'private-company' });
+    const organization = db.createOrganization({
+      name: secretName,
+      slug: 'private-company',
+    });
     const invite = db.issueOrganizationInvite(organization.id);
 
     const response = await fetch(`${base}/enterprise/join/${invite.code}`);
     expect(response.status).toBe(200);
-    expect(response.headers.get('content-type')).toMatch(/^text\/html; charset=utf-8$/i);
+    expect(response.headers.get('content-type')).toMatch(
+      /^text\/html; charset=utf-8$/i,
+    );
     expect(response.headers.get('cache-control')).toBe('no-store');
-    expect(response.headers.get('content-security-policy')).toContain("default-src 'none'");
-    expect(response.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
+    expect(response.headers.get('content-security-policy')).toContain(
+      "default-src 'none'",
+    );
+    expect(response.headers.get('content-security-policy')).toContain(
+      "frame-ancestors 'none'",
+    );
     expect(response.headers.get('referrer-policy')).toBe('no-referrer');
     expect(response.headers.get('x-content-type-options')).toBe('nosniff');
     expect(response.headers.get('x-frame-options')).toBe('DENY');
@@ -1335,21 +1586,32 @@ describe('公网企业引入链接与公开落地页', () => {
   it('过期与换新后撤销的链接均返回 410，不再提供 App 唤起入口', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
     const db = await import('./db.js');
-    const organization = db.createOrganization({ name: '时效测试企业', slug: 'expiry-test' });
+    const organization = db.createOrganization({
+      name: '时效测试企业',
+      slug: 'expiry-test',
+    });
 
     const expired = db.issueOrganizationInvite(
       organization.id,
       Date.now() - db.ORGANIZATION_INVITE_VALIDITY_MS - 1_000,
     );
-    const expiredResponse = await fetch(`${base}/enterprise/join/${expired.code}`);
+    const expiredResponse = await fetch(
+      `${base}/enterprise/join/${expired.code}`,
+    );
     expect(expiredResponse.status).toBe(410);
-    expect(await expiredResponse.text()).not.toContain('otto://enterprise/join');
+    expect(await expiredResponse.text()).not.toContain(
+      'otto://enterprise/join',
+    );
 
     const revoked = db.issueOrganizationInvite(organization.id);
     db.issueOrganizationInvite(organization.id);
-    const revokedResponse = await fetch(`${base}/enterprise/join/${revoked.code}`);
+    const revokedResponse = await fetch(
+      `${base}/enterprise/join/${revoked.code}`,
+    );
     expect(revokedResponse.status).toBe(410);
-    expect(await revokedResponse.text()).not.toContain('otto://enterprise/join');
+    expect(await revokedResponse.text()).not.toContain(
+      'otto://enterprise/join',
+    );
   });
 });
 
@@ -1370,7 +1632,9 @@ describe('report/dashboard 路由基本可达', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toMatch(/text\/html/);
     expect(res.headers.get('cache-control')).toBe('no-store');
-    expect(res.headers.get('content-security-policy')).toContain("default-src 'self'");
+    expect(res.headers.get('content-security-policy')).toContain(
+      "default-src 'self'",
+    );
 
     const html = await res.text();
     expect(html).toContain('管理员登录');
@@ -1399,7 +1663,7 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('精确有效 7 天');
     expect(html).toContain('/enterprise/organization/invite');
     expect(html).toContain('currentInvite.link');
-    expect(html).not.toContain("server:location.origin");
+    expect(html).not.toContain('server:location.origin');
     expect(html).toContain('复制企业引入链接');
     expect(html).toContain('复制邀请码');
     expect(html).toContain('/enterprise/usage/summary?period=30');
@@ -1407,8 +1671,12 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('inviteModal');
     expect(html).toContain('生成新的岗位邀请码？');
     expect(html).toContain('id="organizationTitle" tabindex="-1"');
-    expect(html).toContain('id="resultCount" class="result-count" role="status"');
-    expect(html).toContain('id="drawerWrap" class="drawer-backdrop hidden" role="dialog"');
+    expect(html).toContain(
+      'id="resultCount" class="result-count" role="status"',
+    );
+    expect(html).toContain(
+      'id="drawerWrap" class="drawer-backdrop hidden" role="dialog"',
+    );
     expect(html).toContain('aria-describedby="passwordHint"');
     expect(html).toContain('<th scope="col">账号</th>');
     expect(html).toContain('<span class="sr-only">操作</span>');
@@ -1421,8 +1689,10 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('id="deleteAccount"');
     expect(html).toContain('id="editPositionTitle"');
     expect(html).toContain('id="editAvatarUrl"');
-    expect(html).toContain("account.positionTitle||account.role");
-    expect(html).toContain("positionTitle:$('editPositionTitle').value.trim()||null");
+    expect(html).toContain('account.positionTitle||account.role');
+    expect(html).toContain(
+      "positionTitle:$('editPositionTitle').value.trim()||null",
+    );
     expect(html).toContain("avatarUrl:$('editAvatarUrl').value.trim()||null");
     expect(html).toContain("method:'DELETE'");
     expect(html).toContain('删除账号');
@@ -1443,7 +1713,9 @@ describe('report/dashboard 路由基本可达', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toMatch(/text\/html/);
     expect(res.headers.get('cache-control')).toBe('no-store');
-    expect(res.headers.get('content-security-policy')).toContain("default-src 'self'");
+    expect(res.headers.get('content-security-policy')).toContain(
+      "default-src 'self'",
+    );
     expect(res.headers.get('x-frame-options')).toBe('DENY');
 
     const html = await res.text();
@@ -1472,14 +1744,14 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('id="platformParkEditForm"');
     expect(html).toContain('id="platformParkEditName"');
     expect(html).toContain('id="platformParkEditBrandName"');
-    expect(html).toContain("summary.replaceChildren()");
+    expect(html).toContain('summary.replaceChildren()');
     expect(html).not.toContain("$('platformParkSummary').innerHTML");
     expect(html).toContain("method:'PATCH'");
     expect(html).toContain('id="platformParkJoinForm"');
     expect(html).toContain('/park/join');
-    expect(html).toContain("body:JSON.stringify(body)");
+    expect(html).toContain('body:JSON.stringify(body)');
     expect(html).toContain("value=invite&&invite.defaultDepartment||''");
-    expect(html).toContain("account.positionTitle||account.role");
+    expect(html).toContain('account.positionTitle||account.role');
     expect(html).not.toContain("body:'{}'");
     expect(html).toContain('/enterprise/platform/organizations/');
     expect(html).toContain('platformRequestEpoch');
@@ -1497,7 +1769,9 @@ describe('report/dashboard 路由基本可达', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toMatch(/text\/html/);
     expect(res.headers.get('cache-control')).toBe('no-store');
-    expect(res.headers.get('content-security-policy')).toContain("default-src 'self'");
+    expect(res.headers.get('content-security-policy')).toContain(
+      "default-src 'self'",
+    );
     expect(res.headers.get('referrer-policy')).toBe('no-referrer');
     expect(res.headers.get('x-frame-options')).toBe('DENY');
 
@@ -1526,7 +1800,9 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('statusText.textContent=String(code.status');
     expect(html).toContain('redeemer.textContent=');
     expect(html).toContain('accountCell.textContent=String(row.accountName');
-    expect(html).toContain('descriptionCell.textContent=String(row.description');
+    expect(html).toContain(
+      'descriptionCell.textContent=String(row.description',
+    );
     expect(html).toContain('encodeURIComponent(id)');
     expect(html).not.toMatch(/\+code\.(?:code|status|redeemedBy|id)\+/);
     expect(html).not.toMatch(/\+row\.(?:accountName|description|type)\+/);
@@ -1538,18 +1814,22 @@ describe('report/dashboard 路由基本可达', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toMatch(/text\/html/);
     expect(res.headers.get('cache-control')).toBe('no-store');
-    expect(res.headers.get('content-security-policy')).toContain("default-src 'self'");
+    expect(res.headers.get('content-security-policy')).toContain(
+      "default-src 'self'",
+    );
     expect(res.headers.get('referrer-policy')).toBe('no-referrer');
     expect(res.headers.get('x-frame-options')).toBe('DENY');
     const html = await res.text();
     expect(html).toContain('Otto Enterprise');
     expect(html).toContain('估算');
-    expect(html).toContain("sessionStorage.getItem(KEY)");
+    expect(html).toContain('sessionStorage.getItem(KEY)');
     expect(html).toContain('id="dashboardToken"');
     expect(html).toContain("authorization:'Bearer '+TOKEN");
     expect(html).not.toContain(ADMIN_TOKEN);
 
-    const queryToken = await fetch(`${base}/enterprise/dashboard?token=${ADMIN_TOKEN}`);
+    const queryToken = await fetch(
+      `${base}/enterprise/dashboard?token=${ADMIN_TOKEN}`,
+    );
     expect(queryToken.status).toBe(400);
     expect(queryToken.headers.get('cache-control')).toBe('no-store');
   });
@@ -1560,26 +1840,51 @@ describe('report/dashboard 路由基本可达', () => {
     // 造一个 seed 员工 + 通过 HTTP /task 上报（其中一条显式 cost_cny:0）。
     db.createEmployee({ id: 'e1', name: '张三', department: 'legal' });
     db.createAccount({
-      employeeId: 'e1', username: 'reporter', password: 'reporter-password', name: '张三',
+      employeeId: 'e1',
+      username: 'reporter',
+      password: 'reporter-password',
+      name: '张三',
     });
     const login = await fetch(`${base}/enterprise/auth/login`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ identifier: 'reporter', password: 'reporter-password' }),
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        identifier: 'reporter',
+        password: 'reporter-password',
+      }),
     });
     const sessionToken = (await login.json()).token;
     await fetch(`${base}/enterprise/task`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${sessionToken}` },
-      body: JSON.stringify({ employee_id: 'e1', task_type: 't1', duration_min: 60, cost_cny: 0 }),
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${sessionToken}`,
+      },
+      body: JSON.stringify({
+        employee_id: 'e1',
+        task_type: 't1',
+        duration_min: 60,
+        cost_cny: 0,
+      }),
     });
     await fetch(`${base}/enterprise/task`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${sessionToken}` },
-      body: JSON.stringify({ employee_id: 'e1', task_type: 't2', duration_min: 60, cost_cny: 0.03 }),
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${sessionToken}`,
+      },
+      body: JSON.stringify({
+        employee_id: 'e1',
+        task_type: 't2',
+        duration_min: 60,
+        cost_cny: 0.03,
+      }),
     });
-    const r = await (await fetch(`${base}/enterprise/report`, {
-      headers: { 'x-otto-admin-token': ADMIN_TOKEN },
-    })).json();
+    const r = await (
+      await fetch(`${base}/enterprise/report`, {
+        headers: { 'x-otto-admin-token': ADMIN_TOKEN },
+      })
+    ).json();
     expect(r.totalTasks).toBe(2);
     // 关键：绝不再出现天文数字，封顶 ≤ 50。
     expect(r.laborPerTokenCNY).toBeLessThanOrEqual(50);
@@ -1643,14 +1948,20 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       headers: { authorization: `Bearer ${loginBody.token}` },
     });
     expect(logout.status).toBe(200);
-    expect((await fetch(`${base}/enterprise/auth/me`, {
-      headers: { authorization: `Bearer ${loginBody.token}` },
-    })).status).toBe(401);
+    expect(
+      (
+        await fetch(`${base}/enterprise/auth/me`, {
+          headers: { authorization: `Bearer ${loginBody.token}` },
+        })
+      ).status,
+    ).toBe(401);
   });
 
   it('账号不存在和密码错误都返回同一 401，不泄露预设账号清单', async () => {
     const { base } = await seedAccount(ADMIN_TOKEN, {
-      username: 'staff01', password: 'staff-password', name: '普通员工',
+      username: 'staff01',
+      password: 'staff-password',
+      name: '普通员工',
     });
     for (const body of [
       { username: 'staff01', password: 'wrong-password' },
@@ -1683,14 +1994,12 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       phone: '13800138000',
     });
 
-    const login = (identifier: string, password: string) => fetch(
-      `${base}/enterprise/auth/login`,
-      {
+    const login = (identifier: string, password: string) =>
+      fetch(`${base}/enterprise/auth/login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ identifier, password }),
-      },
-    );
+      });
 
     const missing = await login('missing-user', 'wrong-password');
     const wrongPassword = await login('limited-user', 'wrong-password');
@@ -1732,14 +2041,12 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       password: 'decay-password',
       name: '衰减用户',
     });
-    const login = (identifier: string, password: string) => fetch(
-      `${base}/enterprise/auth/login`,
-      {
+    const login = (identifier: string, password: string) =>
+      fetch(`${base}/enterprise/auth/login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ identifier, password }),
-      },
-    );
+      });
 
     expect((await login('decay-user', 'wrong-password')).status).toBe(401);
     expect((await login('decay-user', 'wrong-password')).status).toBe(401);
@@ -1766,14 +2073,18 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         trustedProxyHops: 1,
       },
     });
-    const login = (forwardedFor: string) => fetch(`${base}/enterprise/auth/login`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-forwarded-for': forwardedFor,
-      },
-      body: JSON.stringify({ identifier: 'known-admin', password: 'wrong-password' }),
-    });
+    const login = (forwardedFor: string) =>
+      fetch(`${base}/enterprise/auth/login`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-forwarded-for': forwardedFor,
+        },
+        body: JSON.stringify({
+          identifier: 'known-admin',
+          password: 'wrong-password',
+        }),
+      });
 
     expect((await login('203.0.113.10')).status).toBe(401);
     expect((await login('198.51.100.20')).status).toBe(401);
@@ -1794,17 +2105,15 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         trustedProxyHops: 1,
       },
     });
-    const login = (identifier: string, forwardedFor: string) => fetch(
-      `${base}/enterprise/auth/login`,
-      {
+    const login = (identifier: string, forwardedFor: string) =>
+      fetch(`${base}/enterprise/auth/login`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
           'x-forwarded-for': forwardedFor,
         },
         body: JSON.stringify({ identifier, password: 'wrong-password' }),
-      },
-    );
+      });
 
     expect((await login('user-a', '203.0.113.50')).status).toBe(401);
     expect((await login('user-b', '203.0.113.50')).status).toBe(401);
@@ -1817,34 +2126,63 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
     const db = await import('./db.js');
     db.createAccount({
-      username: 'staff01', password: 'staff-password', name: '普通成员',
+      username: 'staff01',
+      password: 'staff-password',
+      name: '普通成员',
     });
     db.createAccount({
-      username: 'admin01', password: 'admin-password', name: '管理员',
-      phone: '13800138000', isAdmin: true,
+      username: 'admin01',
+      password: 'admin-password',
+      name: '管理员',
+      phone: '13800138000',
+      isAdmin: true,
     });
 
-    const sessionsBefore = (db.getDB().prepare('SELECT COUNT(*) AS count FROM auth_sessions').get() as { count: number }).count;
+    const sessionsBefore = (
+      db
+        .getDB()
+        .prepare('SELECT COUNT(*) AS count FROM auth_sessions')
+        .get() as { count: number }
+    ).count;
     const staffLogin = await fetch(`${base}/enterprise/auth/admin/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ identifier: 'staff01', password: 'staff-password' }),
+      body: JSON.stringify({
+        identifier: 'staff01',
+        password: 'staff-password',
+      }),
     });
     expect(staffLogin.status).toBe(403);
     expect(await staffLogin.json()).toEqual({ error: '该账号没有管理员权限' });
-    const sessionsAfterStaff = (db.getDB().prepare('SELECT COUNT(*) AS count FROM auth_sessions').get() as { count: number }).count;
+    const sessionsAfterStaff = (
+      db
+        .getDB()
+        .prepare('SELECT COUNT(*) AS count FROM auth_sessions')
+        .get() as { count: number }
+    ).count;
     expect(sessionsAfterStaff).toBe(sessionsBefore);
 
     const adminLogin = await fetch(`${base}/enterprise/auth/admin/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ identifier: '13800138000', password: 'admin-password' }),
+      body: JSON.stringify({
+        identifier: '13800138000',
+        password: 'admin-password',
+      }),
     });
     expect(adminLogin.status).toBe(200);
     const adminBody = await adminLogin.json();
-    expect(adminBody.account).toMatchObject({ username: 'admin01', isAdmin: true });
+    expect(adminBody.account).toMatchObject({
+      username: 'admin01',
+      isAdmin: true,
+    });
     expect(adminBody.token).toEqual(expect.any(String));
-    const sessionsAfterAdmin = (db.getDB().prepare('SELECT COUNT(*) AS count FROM auth_sessions').get() as { count: number }).count;
+    const sessionsAfterAdmin = (
+      db
+        .getDB()
+        .prepare('SELECT COUNT(*) AS count FROM auth_sessions')
+        .get() as { count: number }
+    ).count;
     expect(sessionsAfterAdmin).toBe(sessionsBefore + 1);
   });
 
@@ -1880,20 +2218,26 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       note: '请今天下班前补充现场照片',
     });
 
-    const unauthenticated = await fetch(`${base}/enterprise/park-services/push`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: pushBody,
-    });
+    const unauthenticated = await fetch(
+      `${base}/enterprise/park-services/push`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: pushBody,
+      },
+    );
     expect(unauthenticated.status).toBe(401);
 
     const adminLogin = await fetch(`${base}/enterprise/auth/admin/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ identifier: 'park-admin', password: 'admin-password' }),
+      body: JSON.stringify({
+        identifier: 'park-admin',
+        password: 'admin-password',
+      }),
     });
     expect(adminLogin.status).toBe(200);
-    const adminSession = await adminLogin.json() as { token: string };
+    const adminSession = (await adminLogin.json()) as { token: string };
 
     const pushed = await fetch(`${base}/enterprise/park-services/push`, {
       method: 'POST',
@@ -1916,24 +2260,390 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     const memberLogin = await fetch(`${base}/enterprise/auth/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ identifier: 'park-member', password: 'member-password' }),
+      body: JSON.stringify({
+        identifier: 'park-member',
+        password: 'member-password',
+      }),
     });
     expect(memberLogin.status).toBe(200);
-    const memberSession = await memberLogin.json() as { token: string };
-    const conversation = await fetch(`${base}/enterprise/messages/${admin.id}`, {
-      headers: { authorization: `Bearer ${memberSession.token}` },
-    });
+    const memberSession = (await memberLogin.json()) as { token: string };
+    const conversation = await fetch(
+      `${base}/enterprise/messages/${admin.id}`,
+      {
+        headers: { authorization: `Bearer ${memberSession.token}` },
+      },
+    );
     expect(conversation.status).toBe(200);
-    await expect(conversation.json()).resolves.toMatchObject({
-      messages: [
-        expect.objectContaining({
-          senderAccountId: admin.id,
-          recipientAccountId: member.id,
-          content: expect.stringContaining('请今天下班前补充现场照片'),
+    // 园区系统通知不是成员私聊，不能伪装成客户端 E2EE 消息进入私聊历史。
+    await expect(conversation.json()).resolves.toEqual({ messages: [] });
+  }, 20_000);
+
+  it('E2EE 设备登记与撤销只作用于当前账号，并写入安全审计', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const db = await import('./db.js');
+    const alice = db.createAccount({
+      username: 'e2ee-device-alice',
+      password: 'alice-password',
+      name: 'Alice',
+    });
+    const login = await fetch(`${base}/enterprise/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        identifier: 'e2ee-device-alice',
+        password: 'alice-password',
+      }),
+    });
+    expect(login.status).toBe(200);
+    const token = ((await login.json()) as { token: string }).token;
+    const device = await registerRouteE2eeDevice({
+      base,
+      token,
+      accountId: alice.id,
+    });
+
+    const revoked = await fetch(
+      `${base}/enterprise/e2ee/devices/${encodeURIComponent(device.deviceId)}`,
+      { method: 'DELETE', headers: { authorization: `Bearer ${token}` } },
+    );
+    expect(revoked.status).toBe(200);
+    await expect(revoked.json()).resolves.toEqual({ revoked: true });
+    expect(db.getAuditLogs(20, alice.organizationId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ event: 'e2ee_device_registered' }),
+        expect.objectContaining({ event: 'e2ee_device_revoked' }),
+      ]),
+    );
+  });
+
+  it('requires a signed approval for a second E2EE device and exposes its transparency chain', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const db = await import('./db.js');
+    const alice = db.createAccount({
+      username: 'e2ee-approval-alice',
+      password: 'alice-password',
+      name: 'Alice',
+    });
+    const login = await fetch(`${base}/enterprise/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        identifier: 'e2ee-approval-alice',
+        password: 'alice-password',
+      }),
+    });
+    const token = ((await login.json()) as { token: string }).token;
+    const first = await registerRouteE2eeDevice({
+      base,
+      token,
+      accountId: alice.id,
+      deviceId: 'alice-approved-device',
+    });
+    const second = await registerRouteE2eeDevice({
+      base,
+      token,
+      accountId: alice.id,
+      deviceId: 'alice-pending-device',
+    });
+    expect(first.approvalState).toBe('approved');
+    expect(second.approvalState).toBe('pending');
+
+    const approval = {
+      organizationId: alice.organizationId,
+      accountId: alice.id,
+      approverDeviceId: first.deviceId,
+      targetDeviceId: second.deviceId,
+      targetKeyFingerprint: second.keyFingerprint,
+    };
+    const approved = await fetch(
+      `${base}/enterprise/e2ee/devices/${second.deviceId}/approve`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          ...approval,
+          signature: sign(
+            null,
+            e2eeDeviceApprovalSignaturePayload(approval),
+            first.signingPrivateKey,
+          ).toString('base64'),
         }),
+      },
+    );
+    expect(approved.status).toBe(200);
+    await expect(approved.json()).resolves.toMatchObject({
+      device: {
+        deviceId: second.deviceId,
+        approvalState: 'approved',
+        approvedByDeviceId: first.deviceId,
+      },
+    });
+
+    const transparency = await fetch(
+      `${base}/enterprise/e2ee/key-transparency?accountId=${encodeURIComponent(alice.id)}`,
+      { headers: { authorization: `Bearer ${token}` } },
+    );
+    expect(transparency.status).toBe(200);
+    await expect(transparency.json()).resolves.toMatchObject({
+      transparency: {
+        headSequence: 3,
+        entries: [
+          { event: 'bootstrap_approved' },
+          { event: 'registered_pending' },
+          { event: 'approved' },
+        ],
+      },
+    });
+    expect(db.getAuditLogs(20, alice.organizationId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ event: 'e2ee_device_approved' }),
+      ]),
+    );
+  });
+
+  it('relays one-time MLS KeyPackages and opaque epoch-bound events without activating MLS chat', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const db = await import('./db.js');
+    const alice = db.createAccount({
+      username: 'mls-route-alice',
+      password: 'alice-password',
+      name: 'Alice',
+    });
+    const bob = db.createAccount({
+      username: 'mls-route-bob',
+      password: 'bob-password',
+      name: 'Bob',
+    });
+    const login = async (identifier: string, password: string) => {
+      const response = await fetch(`${base}/enterprise/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ identifier, password }),
+      });
+      expect(response.status).toBe(200);
+      return ((await response.json()) as { token: string }).token;
+    };
+    const aliceToken = await login('mls-route-alice', 'alice-password');
+    const bobToken = await login('mls-route-bob', 'bob-password');
+    const aliceDevice = await registerRouteE2eeDevice({
+      base,
+      token: aliceToken,
+      accountId: alice.id,
+      deviceId: 'alice-mls-device',
+    });
+    const bobDevice = await registerRouteE2eeDevice({
+      base,
+      token: bobToken,
+      accountId: bob.id,
+      deviceId: 'bob-mls-device',
+    });
+    const opaque = (value: string) =>
+      Buffer.from(value.repeat(24), 'utf8').toString('base64');
+    const headers = (token: string) => ({
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    });
+
+    const published = await fetch(`${base}/enterprise/e2ee/mls/key-packages`, {
+      method: 'POST',
+      headers: headers(bobToken),
+      body: JSON.stringify({
+        deviceId: bobDevice.deviceId,
+        ciphersuite: 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519',
+        keyPackageReference: 'd'.repeat(64),
+        keyPackage: opaque('key-package'),
+      }),
+    });
+    expect(published.status).toBe(201);
+    const keyPackage = (await published.json()) as {
+      keyPackage: { reference: string };
+    };
+    expect(keyPackage.keyPackage.reference).toBe('d'.repeat(64));
+    const inventoryBeforeClaim = await fetch(
+      `${base}/enterprise/e2ee/mls/key-packages/inventory?deviceId=${encodeURIComponent(bobDevice.deviceId)}`,
+      { headers: { authorization: `Bearer ${bobToken}` } },
+    );
+    expect(inventoryBeforeClaim.status).toBe(200);
+    expect(inventoryBeforeClaim.headers.get('cache-control')).toBe('no-store');
+    await expect(inventoryBeforeClaim.json()).resolves.toMatchObject({
+      deviceId: bobDevice.deviceId,
+      keyPackages: [{ reference: keyPackage.keyPackage.reference }],
+    });
+    const retiredAbsent = await fetch(
+      `${base}/enterprise/e2ee/mls/key-packages/${'e'.repeat(64)}?deviceId=${encodeURIComponent(bobDevice.deviceId)}`,
+      {
+        method: 'DELETE',
+        headers: { authorization: `Bearer ${bobToken}` },
+      },
+    );
+    expect(retiredAbsent.status).toBe(200);
+    await expect(retiredAbsent.json()).resolves.toEqual({
+      deviceId: bobDevice.deviceId,
+      reference: 'e'.repeat(64),
+      retired: true,
+    });
+    const claimed = await fetch(
+      `${base}/enterprise/e2ee/mls/key-packages/claim`,
+      {
+        method: 'POST',
+        headers: headers(aliceToken),
+        body: JSON.stringify({
+          requesterDeviceId: aliceDevice.deviceId,
+          recipientAccountId: bob.id,
+        }),
+      },
+    );
+    expect(claimed.status).toBe(200);
+    await expect(claimed.json()).resolves.toMatchObject({
+      keyPackage: { reference: keyPackage.keyPackage.reference },
+    });
+    const inventoryAfterClaim = await fetch(
+      `${base}/enterprise/e2ee/mls/key-packages/inventory?deviceId=${encodeURIComponent(bobDevice.deviceId)}`,
+      { headers: { authorization: `Bearer ${bobToken}` } },
+    );
+    await expect(inventoryAfterClaim.json()).resolves.toEqual({
+      deviceId: bobDevice.deviceId,
+      keyPackages: [],
+    });
+    const claimedAgain = await fetch(
+      `${base}/enterprise/e2ee/mls/key-packages/claim`,
+      {
+        method: 'POST',
+        headers: headers(aliceToken),
+        body: JSON.stringify({
+          requesterDeviceId: aliceDevice.deviceId,
+          recipientAccountId: bob.id,
+        }),
+      },
+    );
+    expect(claimedAgain.status).toBe(200);
+    await expect(claimedAgain.json()).resolves.toMatchObject({
+      keyPackage: { reference: keyPackage.keyPackage.reference },
+    });
+
+    const eventsUrl = `${base}/enterprise/e2ee/mls/conversations/${encodeURIComponent(bob.id)}/events`;
+    const groupId = opaque('group');
+    const append = (body: Record<string, unknown>) =>
+      fetch(eventsUrl, {
+        method: 'POST',
+        headers: headers(aliceToken),
+        body: JSON.stringify({
+          senderDeviceId: aliceDevice.deviceId,
+          groupId,
+          ...body,
+        }),
+      });
+    expect(
+      (
+        await append({
+          eventId: 'commit-1',
+          eventType: 'commit',
+          epoch: 1,
+          payload: opaque('commit'),
+          recipientDeviceId: bobDevice.deviceId,
+          keyPackageReference: keyPackage.keyPackage.reference,
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await append({
+          eventId: 'welcome-1',
+          eventType: 'welcome',
+          epoch: 1,
+          recipientDeviceId: bobDevice.deviceId,
+          keyPackageReference: keyPackage.keyPackage.reference,
+          payload: opaque('welcome'),
+        })
+      ).status,
+    ).toBe(201);
+    const inboundBeforeReset = await fetch(
+      `${base}/enterprise/e2ee/mls/inbound-conversations?deviceId=${encodeURIComponent(bobDevice.deviceId)}&limit=100`,
+      { headers: { authorization: `Bearer ${bobToken}` } },
+    );
+    expect(inboundBeforeReset.status).toBe(200);
+    expect(inboundBeforeReset.headers.get('cache-control')).toBe('no-store');
+    await expect(inboundBeforeReset.json()).resolves.toEqual({
+      peerAccountIds: [alice.id],
+    });
+    expect(
+      (
+        await append({
+          eventId: 'application-1',
+          eventType: 'application',
+          epoch: 1,
+          payload: opaque('application'),
+        })
+      ).status,
+    ).toBe(201);
+    const nextGroupId = opaque('next');
+    expect(
+      (
+        await append({
+          eventId: 'implicit-reset-1',
+          eventType: 'commit',
+          epoch: 1,
+          groupId: nextGroupId,
+          payload: opaque('implicit-reset'),
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await append({
+          eventId: 'reset-commit-1',
+          eventType: 'commit',
+          epoch: 1,
+          groupId: nextGroupId,
+          resetFromGroupId: groupId,
+          payload: opaque('reset-commit'),
+        })
+      ).status,
+    ).toBe(201);
+
+    const inboundAfterReset = await fetch(
+      `${base}/enterprise/e2ee/mls/inbound-conversations?deviceId=${encodeURIComponent(bobDevice.deviceId)}&limit=100`,
+      { headers: { authorization: `Bearer ${bobToken}` } },
+    );
+    expect(inboundAfterReset.status).toBe(200);
+    await expect(inboundAfterReset.json()).resolves.toEqual({
+      peerAccountIds: [],
+    });
+
+    const events = await fetch(
+      `${base}/enterprise/e2ee/mls/conversations/${encodeURIComponent(alice.id)}/events`,
+      { headers: { authorization: `Bearer ${bobToken}` } },
+    );
+    expect(events.status).toBe(200);
+    await expect(events.json()).resolves.toMatchObject({
+      events: [
+        { eventId: 'commit-1', eventType: 'commit', epoch: 1 },
+        { eventId: 'welcome-1', eventType: 'welcome', epoch: 1 },
+        { eventId: 'application-1', eventType: 'application', epoch: 1 },
+        {
+          eventId: 'reset-commit-1',
+          eventType: 'commit',
+          epoch: 1,
+          sessionGeneration: 2,
+        },
       ],
     });
-  }, 20_000);
+
+    const health = (await (
+      await fetch(`${base}/enterprise/health`)
+    ).json()) as { capabilities: string[] };
+    expect(health.capabilities).toContain('e2ee_mls_transport_v1');
+    expect(health.capabilities).toContain(
+      'e2ee_mls_resource_governance_v1',
+    );
+    expect(health.capabilities).toContain(
+      'e2ee_mls_transport_session_reset_v1',
+    );
+    expect(health.capabilities).not.toContain('e2ee_mls_v1');
+  }, 60_000);
 
   it('企业私聊可发送并鉴权下载 Word、PDF 或图片附件', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
@@ -1953,7 +2663,10 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       password: 'charlie-password',
       name: 'Charlie',
     });
-    const login = async (identifier: string, password: string): Promise<string> => {
+    const login = async (
+      identifier: string,
+      password: string,
+    ): Promise<string> => {
       const response = await fetch(base + '/enterprise/auth/login', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -1966,6 +2679,21 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     const bobToken = await login('file-route-bob', 'bob-password');
     const charlieToken = await login('file-route-charlie', 'charlie-password');
     const file = Buffer.from('%PDF-1.7\nAttachment route test');
+    const aliceDevice = await registerRouteE2eeDevice({
+      base,
+      token: aliceToken,
+      accountId: alice.id,
+    });
+    const bobDevice = await registerRouteE2eeDevice({
+      base,
+      token: bobToken,
+      accountId: bob.id,
+    });
+    const attachmentId = `attachment-${randomUUID()}`;
+    const encryptedAttachment = Buffer.concat([
+      file,
+      Buffer.alloc(16, 9),
+    ]).toString('base64');
 
     const sent = await fetch(base + '/enterprise/messages/' + bob.id, {
       method: 'POST',
@@ -1973,29 +2701,41 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         authorization: 'Bearer ' + aliceToken,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({
-        content: '',
-        attachments: [{
-          fileName: '项目方案.pdf',
-          mimeType: 'application/pdf',
-          size: file.length,
-          data: file.toString('base64'),
-        }],
-      }),
+      body: JSON.stringify(
+        routeE2eePayload({
+          organizationId: alice.organizationId,
+          senderAccountId: alice.id,
+          recipientAccountId: bob.id,
+          senderDevice: aliceDevice,
+          devices: [aliceDevice, bobDevice],
+          attachments: [
+            {
+              id: attachmentId,
+              ciphertext: encryptedAttachment,
+              nonce: Buffer.alloc(12, 8).toString('base64'),
+            },
+          ],
+        }),
+      ),
     });
     expect(sent.status).toBe(201);
-    const sentBody = await sent.json() as {
-      message: { content: string; attachments: Array<{ id: string; fileName: string; size: number }> };
+    const sentBody = (await sent.json()) as {
+      message: {
+        ciphertext: string;
+        attachments: Array<{ id: string; ciphertextSize: number }>;
+      };
     };
-    expect(sentBody.message.content).toContain('项目方案.pdf');
+    expect(JSON.stringify(sentBody)).not.toContain('项目方案.pdf');
     expect(sentBody.message.attachments).toEqual([
-      expect.objectContaining({ fileName: '项目方案.pdf', size: file.length }),
+      expect.objectContaining({ id: attachmentId }),
     ]);
-    const attachmentId = sentBody.message.attachments[0]!.id;
 
-    const conversation = await fetch(base + '/enterprise/messages/' + alice.id, {
-      headers: { authorization: 'Bearer ' + bobToken },
-    });
+    const conversation = await fetch(
+      base + '/enterprise/messages/' + alice.id,
+      {
+        headers: { authorization: 'Bearer ' + bobToken },
+      },
+    );
     expect(conversation.status).toBe(200);
     await expect(conversation.json()).resolves.toMatchObject({
       messages: [
@@ -2005,17 +2745,21 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       ],
     });
 
-    const attachmentUrl = base + '/enterprise/message-attachments/'
-      + encodeURIComponent(attachmentId);
+    const attachmentUrl =
+      base +
+      '/enterprise/message-attachments/' +
+      encodeURIComponent(attachmentId);
     const downloaded = await fetch(attachmentUrl, {
       headers: { authorization: 'Bearer ' + bobToken },
     });
     expect(downloaded.status).toBe(200);
     await expect(downloaded.json()).resolves.toMatchObject({
       attachment: {
-        id: attachmentId,
-        fileName: '项目方案.pdf',
-        data: file.toString('base64'),
+        message: { id: expect.any(String) },
+        attachment: {
+          id: attachmentId,
+          ciphertext: encryptedAttachment,
+        },
       },
     });
 
@@ -2038,7 +2782,10 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       password: 'bob-password',
       name: 'Bob',
     });
-    const login = async (identifier: string, password: string): Promise<string> => {
+    const login = async (
+      identifier: string,
+      password: string,
+    ): Promise<string> => {
       const response = await fetch(`${base}/enterprise/auth/login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -2049,6 +2796,24 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     };
     const aliceToken = await login('atoa-route-alice', 'alice-password');
     const bobToken = await login('atoa-route-bob', 'bob-password');
+    const aliceDevice = await registerRouteE2eeDevice({
+      base,
+      token: aliceToken,
+      accountId: alice.id,
+    });
+    const bobDevice = await registerRouteE2eeDevice({
+      base,
+      token: bobToken,
+      accountId: bob.id,
+    });
+    const requestPayload = routeE2eePayload({
+      organizationId: alice.organizationId,
+      senderAccountId: alice.id,
+      recipientAccountId: bob.id,
+      senderDevice: aliceDevice,
+      devices: [aliceDevice, bobDevice],
+      contentType: 'atoa_request',
+    });
 
     const sent = await fetch(`${base}/enterprise/messages/${bob.id}`, {
       method: 'POST',
@@ -2056,9 +2821,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         authorization: `Bearer ${aliceToken}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({
-        content: buildAtoaRequest('今天方便评审吗？', { id: 'route-1' }),
-      }),
+      body: JSON.stringify(requestPayload),
     });
     expect(sent.status).toBe(201);
     const requestMessage = (await sent.json()) as { message: { id: string } };
@@ -2099,18 +2862,25 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         authorization: `Bearer ${bobToken}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({
-        content: buildAtoaResponse({
-          requestId: requestMessage.message.id,
-          question: '今天方便评审吗？',
-          answer: '可以，15:00 开始。',
+      body: JSON.stringify(
+        routeE2eePayload({
+          organizationId: bob.organizationId,
+          senderAccountId: bob.id,
+          recipientAccountId: alice.id,
+          senderDevice: bobDevice,
+          devices: [aliceDevice, bobDevice],
+          contentType: 'atoa_response',
+          inReplyToMessageId: requestMessage.message.id,
         }),
-      }),
+      ),
     });
     expect(replied.status).toBe(201);
-    expect(db.getDB().prepare(
-      'SELECT read_at FROM direct_messages WHERE id = ?',
-    ).get(requestMessage.message.id)).toEqual({ read_at: expect.any(String) });
+    expect(
+      db
+        .getDB()
+        .prepare('SELECT read_at FROM direct_messages WHERE id = ?')
+        .get(requestMessage.message.id),
+    ).toEqual({ read_at: expect.any(String) });
 
     const afterReply = await fetch(`${base}/enterprise/atoa/inbox`, {
       headers: { authorization: `Bearer ${bobToken}` },
@@ -2122,30 +2892,54 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
   it('企业邀请注册保存姓名和密码，之后支持手机号加密码或验证码登录', async () => {
     const sent: Array<{ phone: string; code: string }> = [];
     const sender = {
-      async sendVerificationCode(phone: string, code: string): Promise<boolean> {
+      async sendVerificationCode(
+        phone: string,
+        code: string,
+      ): Promise<boolean> {
         sent.push({ phone, code });
         return true;
       },
     };
     const { base } = await startIsolated(ADMIN_TOKEN, sender);
     const db = await import('./db.js');
-    const defaultInvite = db.issueOrganizationInvite(db.DEFAULT_ORGANIZATION_ID).code;
+    const defaultInvite = db.issueOrganizationInvite(
+      db.DEFAULT_ORGANIZATION_ID,
+    ).code;
     db.createAccount({
-      username: 'sms01', password: 'sms-password-1', name: '短信用户', phone: '13800138000',
+      username: 'sms01',
+      password: 'sms-password-1',
+      name: '短信用户',
+      phone: '13800138000',
     });
 
-    const existing = await fetch(`${base}/enterprise/auth/register/sms/request`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ phone: '138 0013 8000', inviteCode: defaultInvite }),
-    });
+    const existing = await fetch(
+      `${base}/enterprise/auth/register/sms/request`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          phone: '138 0013 8000',
+          inviteCode: defaultInvite,
+        }),
+      },
+    );
     expect(existing.status).toBe(409);
-    expect(await existing.json()).toEqual({ error: '该手机号已注册，请直接登录' });
+    expect(await existing.json()).toEqual({
+      error: '该手机号已注册，请直接登录',
+    });
     expect(sent).toHaveLength(0);
 
-    const request = await fetch(`${base}/enterprise/auth/register/sms/request`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ phone: '13700137000', inviteCode: defaultInvite }),
-    });
+    const request = await fetch(
+      `${base}/enterprise/auth/register/sms/request`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          phone: '13700137000',
+          inviteCode: defaultInvite,
+        }),
+      },
+    );
     expect(request.status).toBe(200);
     const registrationChallenge = await request.json();
     expect(registrationChallenge).toMatchObject({
@@ -2156,36 +2950,52 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]?.phone).toBe('13700137000');
 
-    const incomplete = await fetch(`${base}/enterprise/auth/register/sms/verify`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ challengeId: registrationChallenge.challengeId, code: sent[0]?.code }),
-    });
+    const incomplete = await fetch(
+      `${base}/enterprise/auth/register/sms/verify`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          challengeId: registrationChallenge.challengeId,
+          code: sent[0]?.code,
+        }),
+      },
+    );
     expect(incomplete.status).toBe(400);
 
-    const withoutConsent = await fetch(`${base}/enterprise/auth/register/sms/verify`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        challengeId: registrationChallenge.challengeId,
-        code: sent[0]?.code,
-        name: '王小明',
-        password: 'registered-password-1',
-      }),
-    });
+    const withoutConsent = await fetch(
+      `${base}/enterprise/auth/register/sms/verify`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          challengeId: registrationChallenge.challengeId,
+          code: sent[0]?.code,
+          name: '王小明',
+          password: 'registered-password-1',
+        }),
+      },
+    );
     expect(withoutConsent.status).toBe(400);
     await expect(withoutConsent.json()).resolves.toEqual({
       error: '请先阅读并同意用户协议和隐私规则',
     });
 
-    const register = await fetch(`${base}/enterprise/auth/register/sms/verify`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        challengeId: registrationChallenge.challengeId,
-        code: sent[0]?.code,
-        name: '王小明',
-        password: 'registered-password-1',
-        legalConsent: true,
-      }),
-    });
+    const register = await fetch(
+      `${base}/enterprise/auth/register/sms/verify`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          challengeId: registrationChallenge.challengeId,
+          code: sent[0]?.code,
+          name: '王小明',
+          password: 'registered-password-1',
+          legalConsent: true,
+          legalDocuments: currentLegalDocumentReferences(),
+        }),
+      },
+    );
     expect(register.status).toBe(200);
     const registered = await register.json();
     expect(registered.account).toMatchObject({
@@ -2209,9 +3019,12 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       organizationId: db.DEFAULT_ORGANIZATION_ID,
     });
 
-    const organizationView = await fetch(`${base}/enterprise/organization/view`, {
-      headers: { authorization: `Bearer ${registered.token}` },
-    });
+    const organizationView = await fetch(
+      `${base}/enterprise/organization/view`,
+      {
+        headers: { authorization: `Bearer ${registered.token}` },
+      },
+    );
     expect(organizationView.status).toBe(200);
     expect(await organizationView.json()).toMatchObject({
       organization: { id: db.DEFAULT_ORGANIZATION_ID, name: '默认企业' },
@@ -2225,11 +3038,14 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       ]),
     });
 
-    const anonymousHeartbeat = await fetch(`${base}/enterprise/presence/heartbeat`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ clientId: 'spoof' }),
-    });
+    const anonymousHeartbeat = await fetch(
+      `${base}/enterprise/presence/heartbeat`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ clientId: 'spoof' }),
+      },
+    );
     expect(anonymousHeartbeat.status).toBe(401);
 
     const heartbeat = await fetch(`${base}/enterprise/presence/heartbeat`, {
@@ -2242,9 +3058,12 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     });
     expect(heartbeat.status).toBe(200);
 
-    const onlineOrganizationView = await fetch(`${base}/enterprise/organization/view`, {
-      headers: { authorization: `Bearer ${registered.token}` },
-    });
+    const onlineOrganizationView = await fetch(
+      `${base}/enterprise/organization/view`,
+      {
+        headers: { authorization: `Bearer ${registered.token}` },
+      },
+    );
     expect(onlineOrganizationView.status).toBe(200);
     expect(await onlineOrganizationView.json()).toMatchObject({
       members: expect.arrayContaining([
@@ -2262,8 +3081,12 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     expect(adminDenied.status).toBe(403);
 
     const login = await fetch(`${base}/enterprise/auth/login`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ identifier: '137 0013 7000', password: 'registered-password-1' }),
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        identifier: '137 0013 7000',
+        password: 'registered-password-1',
+      }),
     });
     expect(login.status).toBe(200);
     const loggedIn = await login.json();
@@ -2271,7 +3094,8 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     expect(loggedIn.token).toEqual(expect.any(String));
 
     const smsLoginRequest = await fetch(`${base}/enterprise/auth/sms/request`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ phone: '13700137000' }),
     });
     expect(smsLoginRequest.status).toBe(200);
@@ -2280,7 +3104,8 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     expect(sent).toHaveLength(2);
 
     const smsLoginVerify = await fetch(`${base}/enterprise/auth/sms/verify`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         challengeId: smsLoginChallenge.challengeId,
         code: sent[1]?.code,
@@ -2296,18 +3121,24 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
   it('普通注册无需企业邀请码，并给每个账号创建互相隔离的个人空间', async () => {
     const sent: Array<{ phone: string; code: string }> = [];
     const { base } = await startIsolated(ADMIN_TOKEN, {
-      async sendVerificationCode(phone: string, code: string): Promise<boolean> {
+      async sendVerificationCode(
+        phone: string,
+        code: string,
+      ): Promise<boolean> {
         sent.push({ phone, code });
         return true;
       },
     });
 
     const registerPersonal = async (phone: string, name: string) => {
-      const request = await fetch(`${base}/enterprise/auth/register/sms/request`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ phone }),
-      });
+      const request = await fetch(
+        `${base}/enterprise/auth/register/sms/request`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ phone }),
+        },
+      );
       expect(request.status).toBe(200);
       const challenge = await request.json();
       expect(challenge).toMatchObject({
@@ -2316,17 +3147,21 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         organization: null,
       });
       const sentCode = sent.at(-1)?.code;
-      const verify = await fetch(`${base}/enterprise/auth/register/sms/verify`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          challengeId: challenge.challengeId,
-          code: sentCode,
-          name,
-          password: 'personal-password-1',
-          legalConsent: true,
-        }),
-      });
+      const verify = await fetch(
+        `${base}/enterprise/auth/register/sms/verify`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            challengeId: challenge.challengeId,
+            code: sentCode,
+            name,
+            password: 'personal-password-1',
+            legalConsent: true,
+            legalDocuments: currentLegalDocumentReferences(),
+          }),
+        },
+      );
       expect(verify.status).toBe(200);
       return verify.json();
     };
@@ -2338,39 +3173,55 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       organizationName: '个人一号的个人空间',
     });
     expect(second.account.accountType).toBe('personal');
-    expect(first.account.organizationId).not.toBe(second.account.organizationId);
+    expect(first.account.organizationId).not.toBe(
+      second.account.organizationId,
+    );
   });
 
   it('短信服务未配置时注册入口返回 503', async () => {
     const { base } = await seedAccount(ADMIN_TOKEN, {
-      username: 'sms02', password: 'sms-password-2', name: '短信用户二',
+      username: 'sms02',
+      password: 'sms-password-2',
+      name: '短信用户二',
     });
-    const unavailable = await fetch(`${base}/enterprise/auth/register/sms/request`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ phone: '13900139000' }),
-    });
+    const unavailable = await fetch(
+      `${base}/enterprise/auth/register/sms/request`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ phone: '13900139000' }),
+      },
+    );
     expect(unavailable.status).toBe(503);
-    expect(await unavailable.json()).toEqual({ error: '短信注册暂不可用，请稍后重试' });
+    expect(await unavailable.json()).toEqual({
+      error: '短信注册暂不可用，请稍后重试',
+    });
   });
 
   it('注册短信发送失败会释放挑战，用户可立刻重试而不会被冷却时间误伤', async () => {
     let succeeds = false;
     const sender = {
-      async sendVerificationCode(): Promise<boolean> { return succeeds; },
+      async sendVerificationCode(): Promise<boolean> {
+        return succeeds;
+      },
     };
     const { base } = await startIsolated(ADMIN_TOKEN, sender);
     const db = await import('./db.js');
-    const defaultInvite = db.issueOrganizationInvite(db.DEFAULT_ORGANIZATION_ID).code;
+    const defaultInvite = db.issueOrganizationInvite(
+      db.DEFAULT_ORGANIZATION_ID,
+    ).code;
 
     const first = await fetch(`${base}/enterprise/auth/register/sms/request`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ phone: '13600136000', inviteCode: defaultInvite }),
     });
     expect(first.status).toBe(502);
 
     succeeds = true;
     const second = await fetch(`${base}/enterprise/auth/register/sms/request`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ phone: '13600136000', inviteCode: defaultInvite }),
     });
     expect(second.status).toBe(200);
@@ -2379,31 +3230,50 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
 
   it('管理员会话可查看、新增、修改全部账号；普通账号不可访问', async () => {
     const { base } = await seedAccount(ADMIN_TOKEN, {
-      username: 'admin', password: 'admin-password', name: '管理员', isAdmin: true,
+      username: 'admin',
+      password: 'admin-password',
+      name: '管理员',
+      isAdmin: true,
     });
     const db = await import('./db.js');
-    db.createAccount({ username: 'staff', password: 'staff-password', name: '员工' });
+    db.createAccount({
+      username: 'staff',
+      password: 'staff-password',
+      name: '员工',
+    });
 
     async function login(username: string, password: string): Promise<string> {
       const res = await fetch(`${base}/enterprise/auth/login`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username, password }),
       });
       return (await res.json()).token;
     }
     const adminSession = await login('admin', 'admin-password');
     const staffSession = await login('staff', 'staff-password');
-    expect((await fetch(`${base}/enterprise/accounts`, {
-      headers: { authorization: `Bearer ${staffSession}` },
-    })).status).toBe(403);
+    expect(
+      (
+        await fetch(`${base}/enterprise/accounts`, {
+          headers: { authorization: `Bearer ${staffSession}` },
+        })
+      ).status,
+    ).toBe(403);
 
     const created = await fetch(`${base}/enterprise/accounts`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${adminSession}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${adminSession}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({
-        username: 'it01', password: 'it-password-1', name: 'IT 一号',
-        role: '普通成员', department: 'IT',
-        positionId: 'position_desktop_support', positionTitle: '桌面支持',
+        username: 'it01',
+        password: 'it-password-1',
+        name: 'IT 一号',
+        role: '普通成员',
+        department: 'IT',
+        positionId: 'position_desktop_support',
+        positionTitle: '桌面支持',
         avatarUrl: 'https://cdn.example.com/avatar/it01.png',
         tags: ['IT', '报修'],
       }),
@@ -2421,17 +3291,23 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       avatarUrl: 'https://cdn.example.com/avatar/it01.png',
     });
 
-    const updated = await fetch(`${base}/enterprise/accounts/${createdBody.account.id}`, {
-      method: 'PATCH',
-      headers: { authorization: `Bearer ${adminSession}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        name: 'IT 值班',
-        positionId: 'position_on_call',
-        positionTitle: '值班工程师',
-        avatarUrl: 'data:image/png;base64,AA==',
-        tags: ['IT', '报修', '夜班'],
-      }),
-    });
+    const updated = await fetch(
+      `${base}/enterprise/accounts/${createdBody.account.id}`,
+      {
+        method: 'PATCH',
+        headers: {
+          authorization: `Bearer ${adminSession}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: 'IT 值班',
+          positionId: 'position_on_call',
+          positionTitle: '值班工程师',
+          avatarUrl: 'data:image/png;base64,AA==',
+          tags: ['IT', '报修', '夜班'],
+        }),
+      },
+    );
     expect(updated.status).toBe(200);
     const updatedAccount = (await updated.json()).account;
     expect(updatedAccount.tags).toEqual(['IT', '夜班', '报修']);
@@ -2472,37 +3348,60 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         password: 'delete-admin-password',
       }),
     });
-    const adminSession = (await loginResponse.json()) as { token: string; account: { id: string } };
+    const adminSession = (await loginResponse.json()) as {
+      token: string;
+      account: { id: string };
+    };
 
     const deleted = await fetch(`${base}/enterprise/accounts/${staff.id}`, {
       method: 'DELETE',
       headers: { authorization: `Bearer ${adminSession.token}` },
     });
     expect(deleted.status).toBe(200);
-    await expect(deleted.json()).resolves.toEqual({ deleted: true, id: staff.id });
+    await expect(deleted.json()).resolves.toEqual({
+      deleted: true,
+      id: staff.id,
+    });
 
     const list = await fetch(`${base}/enterprise/accounts`, {
       headers: { authorization: `Bearer ${adminSession.token}` },
     });
-    expect(((await list.json()) as { accounts: Array<{ id: string }> }).accounts)
-      .not.toContainEqual(expect.objectContaining({ id: staff.id }));
-    expect(db.listEmployees().map((employee) => employee.id)).not.toContain('delete-employee');
-    expect(db.getEmployee('delete-employee')).toMatchObject({ status: 'offboarded' });
-    expect((await fetch(`${base}/enterprise/auth/me`, {
-      headers: { authorization: `Bearer ${staffSession.token}` },
-    })).status).toBe(401);
-
-    const selfDelete = await fetch(`${base}/enterprise/accounts/${adminSession.account.id}`, {
-      method: 'DELETE',
-      headers: { authorization: `Bearer ${adminSession.token}` },
+    expect(
+      ((await list.json()) as { accounts: Array<{ id: string }> }).accounts,
+    ).not.toContainEqual(expect.objectContaining({ id: staff.id }));
+    expect(db.listEmployees().map((employee) => employee.id)).not.toContain(
+      'delete-employee',
+    );
+    expect(db.getEmployee('delete-employee')).toMatchObject({
+      status: 'offboarded',
     });
+    expect(
+      (
+        await fetch(`${base}/enterprise/auth/me`, {
+          headers: { authorization: `Bearer ${staffSession.token}` },
+        })
+      ).status,
+    ).toBe(401);
+
+    const selfDelete = await fetch(
+      `${base}/enterprise/accounts/${adminSession.account.id}`,
+      {
+        method: 'DELETE',
+        headers: { authorization: `Bearer ${adminSession.token}` },
+      },
+    );
     expect(selfDelete.status).toBe(409);
-    await expect(selfDelete.json()).resolves.toEqual({ error: '不能删除当前登录账号' });
+    await expect(selfDelete.json()).resolves.toEqual({
+      error: '不能删除当前登录账号',
+    });
   });
 
   it('新增账号支持 disabled，并明确拒绝非法 status 而不是静默创建 active 账号', async () => {
     const { base } = await seedAccount(ADMIN_TOKEN, {
-      username: 'admin', password: 'admin-password', name: '管理员', isAdmin: true,
+      username: 'admin',
+      password: 'admin-password',
+      name: '管理员',
+      isAdmin: true,
     });
     const db = await import('./db.js');
     const login = await fetch(`${base}/enterprise/auth/admin/login`, {
@@ -2511,7 +3410,10 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       body: JSON.stringify({ identifier: 'admin', password: 'admin-password' }),
     });
     const token = (await login.json()).token;
-    const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+    const headers = {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    };
 
     const disabled = await fetch(`${base}/enterprise/accounts`, {
       method: 'POST',
@@ -2528,11 +3430,18 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       username: 'disabled-user',
       status: 'disabled',
     });
-    expect((await fetch(`${base}/enterprise/auth/login`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ identifier: 'disabled-user', password: 'disabled-password' }),
-    })).status).toBe(401);
+    expect(
+      (
+        await fetch(`${base}/enterprise/auth/login`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            identifier: 'disabled-user',
+            password: 'disabled-password',
+          }),
+        })
+      ).status,
+    ).toBe(401);
 
     const invalid = await fetch(`${base}/enterprise/accounts`, {
       method: 'POST',
@@ -2545,39 +3454,63 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       }),
     });
     expect(invalid.status).toBe(400);
-    expect(await invalid.json()).toEqual({ error: '账号状态必须是 active 或 disabled' });
-    expect(db.listAccounts().some((account) => account.username === 'invalid-status-user')).toBe(false);
+    expect(await invalid.json()).toEqual({
+      error: '账号状态必须是 active 或 disabled',
+    });
+    expect(
+      db
+        .listAccounts()
+        .some((account) => account.username === 'invalid-status-user'),
+    ).toBe(false);
   });
 
   it('新增或编辑账号时重复绑定手机号 → 409，不把数据约束错误暴露成 500', async () => {
     const { base } = await seedAccount(ADMIN_TOKEN, {
-      username: 'admin', password: 'admin-password', name: '管理员', isAdmin: true,
+      username: 'admin',
+      password: 'admin-password',
+      name: '管理员',
+      isAdmin: true,
     });
     const db = await import('./db.js');
     const first = db.createAccount({
-      username: 'first', password: 'first-password', name: '一号', phone: '13800138000',
+      username: 'first',
+      password: 'first-password',
+      name: '一号',
+      phone: '13800138000',
     });
     const second = db.createAccount({
-      username: 'second', password: 'second-password', name: '二号', phone: '13900139000',
+      username: 'second',
+      password: 'second-password',
+      name: '二号',
+      phone: '13900139000',
     });
     const login = await fetch(`${base}/enterprise/auth/login`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'admin', password: 'admin-password' }),
     });
     const token = (await login.json()).token;
-    const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+    const headers = {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    };
 
     const create = await fetch(`${base}/enterprise/accounts`, {
-      method: 'POST', headers,
+      method: 'POST',
+      headers,
       body: JSON.stringify({
-        username: 'third', password: 'third-password', name: '三号', phone: '13800138000',
+        username: 'third',
+        password: 'third-password',
+        name: '三号',
+        phone: '13800138000',
       }),
     });
     expect(create.status).toBe(409);
     expect(await create.json()).toEqual({ error: '手机号已绑定其他账号' });
 
     const update = await fetch(`${base}/enterprise/accounts/${second.id}`, {
-      method: 'PATCH', headers,
+      method: 'PATCH',
+      headers,
       body: JSON.stringify({ phone: '+86 138 0013 8000' }),
     });
     expect(update.status).toBe(409);
@@ -2588,40 +3521,69 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
 
   it('账号管理拒绝非法手机号和少于 8 位的新密码，不把输入错误暴露成 500', async () => {
     const { base } = await seedAccount(ADMIN_TOKEN, {
-      username: 'admin', password: 'admin-password', name: '管理员', isAdmin: true,
+      username: 'admin',
+      password: 'admin-password',
+      name: '管理员',
+      isAdmin: true,
     });
     const db = await import('./db.js');
     const staff = db.createAccount({
-      username: 'staff', password: 'staff-password', name: '员工', phone: '13800138000',
+      username: 'staff',
+      password: 'staff-password',
+      name: '员工',
+      phone: '13800138000',
     });
     const login = await fetch(`${base}/enterprise/auth/admin/login`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ identifier: 'admin', password: 'admin-password' }),
     });
     const token = (await login.json()).token;
-    const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+    const headers = {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    };
 
-    const invalidPhone = await fetch(`${base}/enterprise/accounts/${staff.id}`, {
-      method: 'PATCH', headers, body: JSON.stringify({ phone: 'abc' }),
-    });
+    const invalidPhone = await fetch(
+      `${base}/enterprise/accounts/${staff.id}`,
+      {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ phone: 'abc' }),
+      },
+    );
     expect(invalidPhone.status).toBe(400);
     expect(await invalidPhone.json()).toEqual({ error: '手机号格式不正确' });
 
-    const shortPassword = await fetch(`${base}/enterprise/accounts/${staff.id}`, {
-      method: 'PATCH', headers, body: JSON.stringify({ password: 'x' }),
-    });
+    const shortPassword = await fetch(
+      `${base}/enterprise/accounts/${staff.id}`,
+      {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ password: 'x' }),
+      },
+    );
     expect(shortPassword.status).toBe(400);
-    expect(await shortPassword.json()).toEqual({ error: '登录密码至少需要 8 位' });
-
-    const unsafeAvatar = await fetch(`${base}/enterprise/accounts/${staff.id}`, {
-      method: 'PATCH', headers, body: JSON.stringify({ avatarUrl: 'javascript:alert(1)' }),
+    expect(await shortPassword.json()).toEqual({
+      error: '登录密码至少需要 8 位',
     });
+
+    const unsafeAvatar = await fetch(
+      `${base}/enterprise/accounts/${staff.id}`,
+      {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ avatarUrl: 'javascript:alert(1)' }),
+      },
+    );
     expect(unsafeAvatar.status).toBe(400);
     expect(await unsafeAvatar.json()).toEqual({
       error: '头像仅支持 HTTPS 或 PNG、JPEG、WebP、GIF 格式的 data:image',
     });
     const svgAvatar = await fetch(`${base}/enterprise/accounts/${staff.id}`, {
-      method: 'PATCH', headers, body: JSON.stringify({
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({
         avatarUrl: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=',
       }),
     });
@@ -2629,7 +3591,8 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
 
     expect(db.getAccount(staff.id)?.phone).toBe('+8613800138000');
     const oldPassword = await fetch(`${base}/enterprise/auth/login`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ identifier: 'staff', password: 'staff-password' }),
     });
     expect(oldPassword.status).toBe(200);
@@ -2637,15 +3600,26 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
 
   it('企业必须保留一名可登录管理员，并在密码、状态或权限变化后永久撤销旧会话', async () => {
     const { base } = await seedAccount(ADMIN_TOKEN, {
-      username: 'primary', password: 'primary-password', name: '主管理员', isAdmin: true,
+      username: 'primary',
+      password: 'primary-password',
+      name: '主管理员',
+      isAdmin: true,
     });
     const db = await import('./db.js');
 
-    async function login(identifier: string, password: string, admin = false): Promise<string> {
-      const response = await fetch(`${base}/enterprise/auth/${admin ? 'admin/' : ''}login`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ identifier, password }),
-      });
+    async function login(
+      identifier: string,
+      password: string,
+      admin = false,
+    ): Promise<string> {
+      const response = await fetch(
+        `${base}/enterprise/auth/${admin ? 'admin/' : ''}login`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ identifier, password }),
+        },
+      );
       expect(response.status).toBe(200);
       return (await response.json()).token;
     }
@@ -2658,74 +3632,143 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     };
 
     for (const patch of [{ isAdmin: false }, { status: 'disabled' }]) {
-      const response = await fetch(`${base}/enterprise/accounts/${primary.id}`, {
-        method: 'PATCH', headers: primaryHeaders, body: JSON.stringify(patch),
-      });
+      const response = await fetch(
+        `${base}/enterprise/accounts/${primary.id}`,
+        {
+          method: 'PATCH',
+          headers: primaryHeaders,
+          body: JSON.stringify(patch),
+        },
+      );
       expect(response.status).toBe(409);
-      expect(await response.json()).toEqual({ error: '企业至少需要保留一名可登录管理员' });
+      expect(await response.json()).toEqual({
+        error: '企业至少需要保留一名可登录管理员',
+      });
     }
-    expect(db.getAccount(primary.id)).toMatchObject({ isAdmin: true, status: 'active' });
+    expect(db.getAccount(primary.id)).toMatchObject({
+      isAdmin: true,
+      status: 'active',
+    });
 
     const backup = db.createAccount({
-      username: 'backup', password: 'backup-password', name: '备用管理员', isAdmin: true,
+      username: 'backup',
+      password: 'backup-password',
+      name: '备用管理员',
+      isAdmin: true,
     });
     const backupToken = await login('backup', 'backup-password', true);
     const staff = db.createAccount({
-      username: 'staff', password: 'staff-password', name: '普通员工',
+      username: 'staff',
+      password: 'staff-password',
+      name: '普通员工',
     });
     const staffToken = await login('staff', 'staff-password');
 
-    const changedPassword = await fetch(`${base}/enterprise/accounts/${staff.id}`, {
-      method: 'PATCH', headers: primaryHeaders, body: JSON.stringify({ password: 'new-staff-password' }),
-    });
+    const changedPassword = await fetch(
+      `${base}/enterprise/accounts/${staff.id}`,
+      {
+        method: 'PATCH',
+        headers: primaryHeaders,
+        body: JSON.stringify({ password: 'new-staff-password' }),
+      },
+    );
     expect(changedPassword.status).toBe(200);
-    expect((await fetch(`${base}/enterprise/auth/me`, {
-      headers: { authorization: `Bearer ${staffToken}` },
-    })).status).toBe(401);
-    expect((await fetch(`${base}/enterprise/auth/login`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ identifier: 'staff', password: 'staff-password' }),
-    })).status).toBe(401);
-    expect((await fetch(`${base}/enterprise/auth/login`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ identifier: 'staff', password: 'new-staff-password' }),
-    })).status).toBe(200);
+    expect(
+      (
+        await fetch(`${base}/enterprise/auth/me`, {
+          headers: { authorization: `Bearer ${staffToken}` },
+        })
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await fetch(`${base}/enterprise/auth/login`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            identifier: 'staff',
+            password: 'staff-password',
+          }),
+        })
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await fetch(`${base}/enterprise/auth/login`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            identifier: 'staff',
+            password: 'new-staff-password',
+          }),
+        })
+      ).status,
+    ).toBe(200);
 
     const disabled = await fetch(`${base}/enterprise/accounts/${primary.id}`, {
-      method: 'PATCH', headers: { authorization: `Bearer ${backupToken}`, 'content-type': 'application/json' },
+      method: 'PATCH',
+      headers: {
+        authorization: `Bearer ${backupToken}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({ status: 'disabled' }),
     });
     expect(disabled.status).toBe(200);
-    expect((await fetch(`${base}/enterprise/auth/me`, {
-      headers: { authorization: `Bearer ${primaryToken}` },
-    })).status).toBe(401);
+    expect(
+      (
+        await fetch(`${base}/enterprise/auth/me`, {
+          headers: { authorization: `Bearer ${primaryToken}` },
+        })
+      ).status,
+    ).toBe(401);
 
     const reenabled = await fetch(`${base}/enterprise/accounts/${primary.id}`, {
-      method: 'PATCH', headers: { authorization: `Bearer ${backupToken}`, 'content-type': 'application/json' },
+      method: 'PATCH',
+      headers: {
+        authorization: `Bearer ${backupToken}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({ status: 'active' }),
     });
     expect(reenabled.status).toBe(200);
-    expect((await fetch(`${base}/enterprise/auth/me`, {
-      headers: { authorization: `Bearer ${primaryToken}` },
-    })).status).toBe(401);
-    expect(db.getAccount(backup.id)).toMatchObject({ isAdmin: true, status: 'active' });
+    expect(
+      (
+        await fetch(`${base}/enterprise/auth/me`, {
+          headers: { authorization: `Bearer ${primaryToken}` },
+        })
+      ).status,
+    ).toBe(401);
+    expect(db.getAccount(backup.id)).toMatchObject({
+      isAdmin: true,
+      status: 'active',
+    });
   });
 
   it('提交 IT 报修后，只有对应标签账号能在收件箱真实收到工单', async () => {
     const { base } = await seedAccount(ADMIN_TOKEN, {
-      username: 'staff', password: 'staff-password', name: '员工', tags: ['普通员工'],
+      username: 'staff',
+      password: 'staff-password',
+      name: '员工',
+      tags: ['普通员工'],
     });
     const db = await import('./db.js');
     db.createAccount({
-      username: 'it01', password: 'it-password-1', name: 'IT 一号', tags: ['IT', '报修'],
+      username: 'it01',
+      password: 'it-password-1',
+      name: 'IT 一号',
+      tags: ['IT', '报修'],
     });
     db.createAccount({
-      username: 'it02', password: 'it-password-2', name: 'IT 二号', tags: ['IT'],
+      username: 'it02',
+      password: 'it-password-2',
+      name: 'IT 二号',
+      tags: ['IT'],
     });
 
     async function login(username: string, password: string): Promise<string> {
       const res = await fetch(`${base}/enterprise/auth/login`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username, password }),
       });
       return (await res.json()).token;
@@ -2736,8 +3779,14 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
 
     const submitted = await fetch(`${base}/enterprise/tickets`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${staffToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ title: '电脑无法联网', description: 'Wi-Fi 一直掉线' }),
+      headers: {
+        authorization: `Bearer ${staffToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: '电脑无法联网',
+        description: 'Wi-Fi 一直掉线',
+      }),
     });
     expect(submitted.status).toBe(201);
     expect((await submitted.json()).ticket.recipientCount).toBe(1);
@@ -2761,22 +3810,36 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     });
     const db = await import('./db.js');
     const reporter = db.createAccount({
-      username: 'repair.reporter', password: 'reporter-password', name: '报修员工',
-      phone: '13800138000', feishuOpenId: 'ou_reporter', tags: ['普通成员'],
+      username: 'repair.reporter',
+      password: 'reporter-password',
+      name: '报修员工',
+      phone: '13800138000',
+      feishuOpenId: 'ou_reporter',
+      tags: ['普通成员'],
     });
     const worker = db.createAccount({
-      username: 'repair.worker', password: 'worker-password', name: '维修张工',
-      phone: '13900139000', feishuOpenId: 'ou_worker',
+      username: 'repair.worker',
+      password: 'worker-password',
+      name: '维修张工',
+      phone: '13900139000',
+      feishuOpenId: 'ou_worker',
       tags: ['维修工作人员', 'IT', '报修'],
     });
     db.createAccount({
-      username: 'repair.engineer', password: 'engineer-password', name: '工程李工',
+      username: 'repair.engineer',
+      password: 'engineer-password',
+      name: '工程李工',
       department: '工程部',
-      phone: '13600136000', feishuOpenId: 'ou_engineer',
+      phone: '13600136000',
+      feishuOpenId: 'ou_engineer',
     });
-    const login = async (identifier: string, password: string): Promise<string> => {
+    const login = async (
+      identifier: string,
+      password: string,
+    ): Promise<string> => {
       const response = await fetch(`${base}/enterprise/auth/login`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ identifier, password }),
       });
       return (await response.json()).token;
@@ -2785,14 +3848,26 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     const workerToken = await login('repair.worker', 'worker-password');
     const blockedBeforeJoining = await fetch(`${base}/enterprise/tickets`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${reporterToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ serviceId: 'repair', title: '未入园报修', description: '不应落成本企业工单' }),
+      headers: {
+        authorization: `Bearer ${reporterToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        serviceId: 'repair',
+        title: '未入园报修',
+        description: '不应落成本企业工单',
+      }),
     });
     expect(blockedBeforeJoining.status).toBe(403);
-    expect(await blockedBeforeJoining.json()).toEqual({ error: '企业尚未加入产业园' });
+    expect(await blockedBeforeJoining.json()).toEqual({
+      error: '企业尚未加入产业园',
+    });
 
     const parkAdmin = db.createAccount({
-      username: 'repair.park.admin', password: 'park-admin-password', name: '园区管理员', isAdmin: true,
+      username: 'repair.park.admin',
+      password: 'park-admin-password',
+      name: '园区管理员',
+      isAdmin: true,
     });
     const park = db.createPark({
       adminOrganizationId: parkAdmin.organizationId,
@@ -2805,14 +3880,24 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       serviceId: 'repair',
       accountId: worker.id,
     });
-    expect(db.getParkForOrganization(reporter.organizationId)?.id).toBe(park.id);
+    expect(db.getParkForOrganization(reporter.organizationId)?.id).toBe(
+      park.id,
+    );
     const submitted = await fetch(`${base}/enterprise/tickets`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${reporterToken}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${reporterToken}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({
-        title: '某某会议室 · 水电报修', description: '灯坏了',
-        targetTags: ['维修工作人员'], category: '水电', location: '某某会议室',
-        urgency: '普通', contact: '报修员工', contactPhone: '13800138000',
+        title: '某某会议室 · 水电报修',
+        description: '灯坏了',
+        targetTags: ['维修工作人员'],
+        category: '水电',
+        location: '某某会议室',
+        urgency: '普通',
+        contact: '报修员工',
+        contactPhone: '13800138000',
       }),
     });
     expect(submitted.status).toBe(201);
@@ -2823,34 +3908,55 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       location: '某某会议室',
       applicationNumber: expect.stringMatching(/^\d{11}$/),
     });
-    expect(smsSend).toHaveBeenCalledWith('+8613900139000', expect.stringContaining('新报修'), expect.stringContaining('灯坏了'));
-    expect(feishuSend).toHaveBeenCalledWith('ou_worker', expect.stringContaining('新报修'), expect.stringContaining('灯坏了'));
+    expect(smsSend).toHaveBeenCalledWith(
+      '+8613900139000',
+      expect.stringContaining('新报修'),
+      expect.stringContaining('灯坏了'),
+    );
+    expect(feishuSend).toHaveBeenCalledWith(
+      'ou_worker',
+      expect.stringContaining('新报修'),
+      expect.stringContaining('灯坏了'),
+    );
 
     const read = await fetch(`${base}/enterprise/tickets/${ticket.id}/read`, {
-      method: 'POST', headers: { authorization: `Bearer ${workerToken}` },
+      method: 'POST',
+      headers: { authorization: `Bearer ${workerToken}` },
     });
     expect((await read.json()).ticket.readAt).toBeTruthy();
-    const accepted = await fetch(`${base}/enterprise/tickets/${ticket.id}/action`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${workerToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'accept' }),
-    });
+    const accepted = await fetch(
+      `${base}/enterprise/tickets/${ticket.id}/action`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${workerToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ action: 'accept' }),
+      },
+    );
     const acceptedTicket = (await accepted.json()).ticket;
     expect(acceptedTicket.status).toBe('维修中');
-    expect(acceptedTicket.history.map((entry: { action: string }) => entry.action)).toEqual([
-      'created', 'accept',
-    ]);
+    expect(
+      acceptedTicket.history.map((entry: { action: string }) => entry.action),
+    ).toEqual(['created', 'accept']);
     smsSend.mockRejectedValueOnce(new Error('sms provider unavailable'));
-    const replied = await fetch(`${base}/enterprise/tickets/${ticket.id}/action`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${workerToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        action: 'respond_and_transfer',
-        responseType: '客服已受理',
-        responseText: '已核对故障信息，现转交工程部处理。',
-        transferNote: '请工程部检查墙面开关并填写完成说明。',
-      }),
-    });
+    const replied = await fetch(
+      `${base}/enterprise/tickets/${ticket.id}/action`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${workerToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'respond_and_transfer',
+          responseType: '客服已受理',
+          responseText: '已核对故障信息，现转交工程部处理。',
+          transferNote: '请工程部检查墙面开关并填写完成说明。',
+        }),
+      },
+    );
     expect(replied.status).toBe(200);
     const repliedTicket = (await replied.json()).ticket;
     expect(repliedTicket).toMatchObject({
@@ -2873,10 +3979,13 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       }),
     ]);
     expect(
-      db.getDB().prepare(
-        `SELECT status FROM ticket_notifications
+      db
+        .getDB()
+        .prepare(
+          `SELECT status FROM ticket_notifications
          WHERE ticket_id = ? AND channel = 'sms' AND event = 'ticket_respond'`,
-      ).get(ticket.id),
+        )
+        .get(ticket.id),
     ).toEqual({ status: 'failed' });
     expect(smsSend).toHaveBeenCalledWith(
       '+8613800138000',
@@ -2908,7 +4017,10 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       repairFeishuSender: { channel: 'feishu', send: feishuSend },
     });
     const db = await import('./db.js');
-    const parkOrganization = db.createOrganization({ name: '园区运营企业', slug: 'receipt-park' });
+    const parkOrganization = db.createOrganization({
+      name: '园区运营企业',
+      slug: 'receipt-park',
+    });
     const parkAdmin = db.createAccount({
       organizationId: parkOrganization.id,
       username: 'receipt.park.admin',
@@ -2935,7 +4047,10 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       phone: '13600136000',
       feishuOpenId: 'ou_receipt_engineer',
     });
-    const tenantOrganization = db.createOrganization({ name: '园区入驻企业', slug: 'receipt-tenant' });
+    const tenantOrganization = db.createOrganization({
+      name: '园区入驻企业',
+      slug: 'receipt-tenant',
+    });
     const tenantAdmin = db.createAccount({
       organizationId: tenantOrganization.id,
       username: 'receipt.tenant.admin',
@@ -2961,7 +4076,10 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       actorAccountId: parkAdmin.id,
       name: '回执测试园区',
     });
-    const invite = db.issueParkInvite({ parkId: park.id, actorAccountId: parkAdmin.id });
+    const invite = db.issueParkInvite({
+      parkId: park.id,
+      actorAccountId: parkAdmin.id,
+    });
     db.joinOrganizationToPark({
       organizationId: tenantOrganization.id,
       actorAccountId: tenantAdmin.id,
@@ -2982,12 +4100,21 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
 
     const submitted = await fetch(`${base}/enterprise/tickets`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${reporterToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ serviceId: 'repair', title: '空调故障', description: '空调无法启动' }),
+      headers: {
+        authorization: `Bearer ${reporterToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        serviceId: 'repair',
+        title: '空调故障',
+        description: '空调无法启动',
+      }),
     });
     expect(submitted.status).toBe(201);
     const specialistTicket = (await submitted.json()).ticket;
-    expect(specialistTicket.recipients).toEqual([{ id: specialist.id, name: '园区维修专员' }]);
+    expect(specialistTicket.recipients).toEqual([
+      { id: specialist.id, name: '园区维修专员' },
+    ]);
     smsSend.mockClear();
     feishuSend.mockClear();
 
@@ -3002,11 +4129,17 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     ];
     let completedTicket: { history: Array<{ action: string }> } | null = null;
     for (const action of specialistActions) {
-      const response = await fetch(`${base}/enterprise/tickets/${specialistTicket.id}/action`, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${specialistToken}`, 'content-type': 'application/json' },
-        body: JSON.stringify(action),
-      });
+      const response = await fetch(
+        `${base}/enterprise/tickets/${specialistTicket.id}/action`,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${specialistToken}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify(action),
+        },
+      );
       expect(response.status).toBe(200);
       completedTicket = (await response.json()).ticket;
     }
@@ -3040,15 +4173,23 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     expect(completedByEngineer.status).toBe(200);
     completedTicket = (await completedByEngineer.json()).ticket;
     expect(completedTicket?.history.map((entry) => entry.action)).toEqual([
-      'created', 'accept', 'respond', 'transfer', 'complete',
+      'created',
+      'accept',
+      'respond',
+      'transfer',
+      'complete',
     ]);
     expect(smsSend).toHaveBeenCalledTimes(5);
     expect(feishuSend).toHaveBeenCalledTimes(5);
     expect(smsSend).toHaveBeenCalledWith(
-      '+8613800138000', expect.any(String), expect.any(String),
+      '+8613800138000',
+      expect.any(String),
+      expect.any(String),
     );
     expect(feishuSend).toHaveBeenCalledWith(
-      'ou_receipt_reporter', expect.any(String), expect.any(String),
+      'ou_receipt_reporter',
+      expect.any(String),
+      expect.any(String),
     );
     expect(completedTicket).toMatchObject({
       status: '已完成',
@@ -3064,7 +4205,10 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
 
     const transferredSubmitted = await fetch(`${base}/enterprise/tickets`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${reporterToken}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${reporterToken}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({
         serviceId: 'repair',
         title: '物业报修 · 灯具维修',
@@ -3082,20 +4226,29 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     });
     expect(transferredSubmitted.status).toBe(201);
     const transferredTicket = (await transferredSubmitted.json()).ticket;
-    const transfer = await fetch(`${base}/enterprise/tickets/${transferredTicket.id}/action`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${specialistToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        action: 'respond_and_transfer',
-        responseType: '客服已受理',
-        responseText: '已核对灯具报修信息，现转交工程部。',
-        transferNote: '请工程部上门检查灯具并反馈结果',
-      }),
-    });
+    const transfer = await fetch(
+      `${base}/enterprise/tickets/${transferredTicket.id}/action`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${specialistToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'respond_and_transfer',
+          responseType: '客服已受理',
+          responseText: '已核对灯具报修信息，现转交工程部。',
+          transferNote: '请工程部上门检查灯具并反馈结果',
+        }),
+      },
+    );
     const transferPayload = await transfer.json();
     expect(transfer.status, JSON.stringify(transferPayload)).toBe(200);
     const oldAssigneeView = transferPayload.ticket;
-    expect(oldAssigneeView).toMatchObject({ status: '已转交', deliveryStatus: 'transferred' });
+    expect(oldAssigneeView).toMatchObject({
+      status: '已转交',
+      deliveryStatus: 'transferred',
+    });
     expect(oldAssigneeView.history.slice(-2)).toEqual([
       expect.objectContaining({
         action: 'respond',
@@ -3109,10 +4262,14 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       }),
     ]);
     expect(smsSend).toHaveBeenCalledWith(
-      '+8613600136000', expect.stringContaining('转交任务'), expect.stringContaining('请工程部上门检查灯具'),
+      '+8613600136000',
+      expect.stringContaining('转交任务'),
+      expect.stringContaining('请工程部上门检查灯具'),
     );
     expect(feishuSend).toHaveBeenCalledWith(
-      'ou_receipt_engineer', expect.stringContaining('转交任务'), expect.stringContaining('请工程部上门检查灯具'),
+      'ou_receipt_engineer',
+      expect.stringContaining('转交任务'),
+      expect.stringContaining('请工程部上门检查灯具'),
     );
     const engineerInbox = await fetch(`${base}/enterprise/tickets/inbox`, {
       headers: { authorization: `Bearer ${engineerToken}` },
@@ -3120,38 +4277,59 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     const engineerTicket = (await engineerInbox.json()).tickets.find(
       (item: { id: string }) => item.id === transferredTicket.id,
     );
-    expect(engineerTicket).toMatchObject({ status: '已转交', deliveryStatus: 'delivered', isRecipient: true });
+    expect(engineerTicket).toMatchObject({
+      status: '已转交',
+      deliveryStatus: 'delivered',
+      isRecipient: true,
+    });
     smsSend.mockClear();
     feishuSend.mockClear();
-    const completeTransfer = await fetch(`${base}/enterprise/tickets/${transferredTicket.id}/action`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${engineerToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        action: 'complete',
-        responseType: '已完成工作',
-        responseText: '已更换灯具并完成通电测试',
-      }),
-    });
+    const completeTransfer = await fetch(
+      `${base}/enterprise/tickets/${transferredTicket.id}/action`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${engineerToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'complete',
+          responseType: '已完成工作',
+          responseText: '已更换灯具并完成通电测试',
+        }),
+      },
+    );
     expect(completeTransfer.status).toBe(200);
     const completedTransfer = (await completeTransfer.json()).ticket;
     expect(completedTransfer).toMatchObject({
-      status: '已完成', responseType: '已完成工作', responseText: '已更换灯具并完成通电测试',
+      status: '已完成',
+      responseType: '已完成工作',
+      responseText: '已更换灯具并完成通电测试',
     });
-    expect(completedTransfer.history.slice(-3).map((entry: { action: string }) => entry.action)).toEqual([
-      'respond', 'transfer', 'complete',
-    ]);
+    expect(
+      completedTransfer.history
+        .slice(-3)
+        .map((entry: { action: string }) => entry.action),
+    ).toEqual(['respond', 'transfer', 'complete']);
     expect(smsSend).toHaveBeenCalledTimes(2);
     expect(feishuSend).toHaveBeenCalledTimes(2);
     expect(smsSend).toHaveBeenCalledWith(
-      '+8613800138000', expect.stringContaining('工作已完成'), expect.stringContaining('当前状态：已完成'),
+      '+8613800138000',
+      expect.stringContaining('工作已完成'),
+      expect.stringContaining('当前状态：已完成'),
     );
     expect(smsSend).toHaveBeenCalledWith(
-      '+8613700137000', expect.stringContaining('工作已完成'), expect.stringContaining('当前状态：已完成'),
+      '+8613700137000',
+      expect.stringContaining('工作已完成'),
+      expect.stringContaining('当前状态：已完成'),
     );
 
     const fallbackSubmitted = await fetch(`${base}/enterprise/tickets`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${reporterToken}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${reporterToken}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({
         serviceId: 'renovation',
         title: '装修管理申请',
@@ -3162,34 +4340,53 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
           contact: reporter.name,
           phone: '13800138000',
           area: 'A 座 1203 室',
-          startDate: new Date(Date.now() + 86_400_000).toISOString().slice(0, 10),
+          startDate: new Date(Date.now() + 86_400_000)
+            .toISOString()
+            .slice(0, 10),
         },
       }),
     });
     expect(fallbackSubmitted.status).toBe(201);
     const fallbackTicket = (await fallbackSubmitted.json()).ticket;
-    expect(fallbackTicket.recipients).toEqual([{ id: parkAdmin.id, name: '园区管理员' }]);
+    expect(fallbackTicket.recipients).toEqual([
+      { id: parkAdmin.id, name: '园区管理员' },
+    ]);
     smsSend.mockClear();
     feishuSend.mockClear();
-    const fallbackAccepted = await fetch(`${base}/enterprise/tickets/${fallbackTicket.id}/action`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${parkAdminToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'accept' }),
-    });
+    const fallbackAccepted = await fetch(
+      `${base}/enterprise/tickets/${fallbackTicket.id}/action`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${parkAdminToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ action: 'accept' }),
+      },
+    );
     expect(fallbackAccepted.status).toBe(200);
     expect(smsSend).toHaveBeenCalledWith(
-      '+8613800138000', expect.stringContaining('已受理'), expect.any(String),
+      '+8613800138000',
+      expect.stringContaining('已受理'),
+      expect.any(String),
     );
     expect(feishuSend).toHaveBeenCalledWith(
-      'ou_receipt_reporter', expect.stringContaining('已受理'), expect.any(String),
+      'ou_receipt_reporter',
+      expect.stringContaining('已受理'),
+      expect.any(String),
     );
-    expect(db.getTicketCreatorForAccount(specialistTicket.id, unrelated.id)).toBeNull();
+    expect(
+      db.getTicketCreatorForAccount(specialistTicket.id, unrelated.id),
+    ).toBeNull();
   }, 30_000);
 
   it('关闭园区服务后精确阻断既有园区工单，企业内部 IT 工单仍可读写', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN, null);
     const db = await import('./db.js');
-    const parkOrganization = db.createOrganization({ name: '关闭测试园区方', slug: 'disabled-ticket-park' });
+    const parkOrganization = db.createOrganization({
+      name: '关闭测试园区方',
+      slug: 'disabled-ticket-park',
+    });
     const parkAdmin = db.createAccount({
       organizationId: parkOrganization.id,
       username: 'disabled.ticket.park.admin',
@@ -3197,7 +4394,10 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       name: '园区管理员',
       isAdmin: true,
     });
-    const tenantOrganization = db.createOrganization({ name: '关闭测试入驻方', slug: 'disabled-ticket-tenant' });
+    const tenantOrganization = db.createOrganization({
+      name: '关闭测试入驻方',
+      slug: 'disabled-ticket-tenant',
+    });
     const tenantAdmin = db.createAccount({
       organizationId: tenantOrganization.id,
       username: 'disabled.ticket.tenant.admin',
@@ -3223,7 +4423,10 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       actorAccountId: parkAdmin.id,
       name: '关闭测试园区',
     });
-    const invite = db.issueParkInvite({ parkId: park.id, actorAccountId: parkAdmin.id });
+    const invite = db.issueParkInvite({
+      parkId: park.id,
+      actorAccountId: parkAdmin.id,
+    });
     db.joinOrganizationToPark({
       organizationId: tenantOrganization.id,
       actorAccountId: tenantAdmin.id,
@@ -3254,7 +4457,9 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       description: '企业内部 IT 工单',
       targetTags: ['IT', '报修'],
     });
-    db.updateOrganizationFeatures(tenantOrganization.id, { park_service: false });
+    db.updateOrganizationFeatures(tenantOrganization.id, {
+      park_service: false,
+    });
     const reporterToken = db.createAuthSession(reporter.id).token;
     const parkAdminToken = db.createAuthSession(parkAdmin.id).token;
     const localItToken = db.createAuthSession(localIt.id).token;
@@ -3263,7 +4468,9 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       headers: { authorization: `Bearer ${reporterToken}` },
     });
     expect(list.status).toBe(200);
-    expect((await list.json()).tickets.map((ticket: { id: string }) => ticket.id)).toEqual([itTicket.id]);
+    expect(
+      (await list.json()).tickets.map((ticket: { id: string }) => ticket.id),
+    ).toEqual([itTicket.id]);
     const parkInbox = await fetch(`${base}/enterprise/tickets/inbox`, {
       headers: { authorization: `Bearer ${parkAdminToken}` },
     });
@@ -3271,54 +4478,98 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     expect((await parkInbox.json()).tickets).toEqual([]);
 
     for (const suffix of ['read', 'action']) {
-      const blocked = await fetch(`${base}/enterprise/tickets/${parkTicket.id}/${suffix}`, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${parkAdminToken}`, 'content-type': 'application/json' },
-        body: suffix === 'action' ? JSON.stringify({ action: 'accept' }) : undefined,
-      });
+      const blocked = await fetch(
+        `${base}/enterprise/tickets/${parkTicket.id}/${suffix}`,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${parkAdminToken}`,
+            'content-type': 'application/json',
+          },
+          body:
+            suffix === 'action'
+              ? JSON.stringify({ action: 'accept' })
+              : undefined,
+        },
+      );
       expect(blocked.status).toBe(403);
-      expect(await blocked.json()).toEqual({ error: '园区服务功能已由管理员关闭' });
+      expect(await blocked.json()).toEqual({
+        error: '园区服务功能已由管理员关闭',
+      });
     }
 
     const itInbox = await fetch(`${base}/enterprise/tickets/inbox`, {
       headers: { authorization: `Bearer ${localItToken}` },
     });
-    expect((await itInbox.json()).tickets.map((ticket: { id: string }) => ticket.id)).toEqual([itTicket.id]);
-    const itRead = await fetch(`${base}/enterprise/tickets/${itTicket.id}/read`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${localItToken}` },
-    });
+    expect(
+      (await itInbox.json()).tickets.map((ticket: { id: string }) => ticket.id),
+    ).toEqual([itTicket.id]);
+    const itRead = await fetch(
+      `${base}/enterprise/tickets/${itTicket.id}/read`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${localItToken}` },
+      },
+    );
     expect(itRead.status).toBe(200);
-    const itAccepted = await fetch(`${base}/enterprise/tickets/${itTicket.id}/action`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${localItToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'accept' }),
-    });
+    const itAccepted = await fetch(
+      `${base}/enterprise/tickets/${itTicket.id}/action`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${localItToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ action: 'accept' }),
+      },
+    );
     expect(itAccepted.status).toBe(200);
     expect((await itAccepted.json()).ticket.status).toBe('处理中');
 
-    db.updateOrganizationFeatures(tenantOrganization.id, { park_service: true });
+    db.updateOrganizationFeatures(tenantOrganization.id, {
+      park_service: true,
+    });
     db.updateOrganizationFeatures(parkOrganization.id, { park_service: false });
     const blockedNewTicket = await fetch(`${base}/enterprise/tickets`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${reporterToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ serviceId: 'repair', title: '管理方关闭后的新工单', description: '必须拒绝' }),
+      headers: {
+        authorization: `Bearer ${reporterToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        serviceId: 'repair',
+        title: '管理方关闭后的新工单',
+        description: '必须拒绝',
+      }),
     });
     expect(blockedNewTicket.status).toBe(403);
-    expect(await blockedNewTicket.json()).toEqual({ error: '园区服务功能已由管理员关闭' });
+    expect(await blockedNewTicket.json()).toEqual({
+      error: '园区服务功能已由管理员关闭',
+    });
     const managementInbox = await fetch(`${base}/enterprise/tickets/inbox`, {
       headers: { authorization: `Bearer ${parkAdminToken}` },
     });
     expect(managementInbox.status).toBe(200);
     expect((await managementInbox.json()).tickets).toEqual([]);
     for (const suffix of ['read', 'action']) {
-      const blocked = await fetch(`${base}/enterprise/tickets/${parkTicket.id}/${suffix}`, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${parkAdminToken}`, 'content-type': 'application/json' },
-        body: suffix === 'action' ? JSON.stringify({ action: 'accept' }) : undefined,
-      });
+      const blocked = await fetch(
+        `${base}/enterprise/tickets/${parkTicket.id}/${suffix}`,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${parkAdminToken}`,
+            'content-type': 'application/json',
+          },
+          body:
+            suffix === 'action'
+              ? JSON.stringify({ action: 'accept' })
+              : undefined,
+        },
+      );
       expect(blocked.status).toBe(403);
-      expect(await blocked.json()).toEqual({ error: '园区服务功能已由管理员关闭' });
+      expect(await blocked.json()).toEqual({
+        error: '园区服务功能已由管理员关闭',
+      });
     }
   }, 30_000);
 
@@ -3326,9 +4577,15 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     const { base } = await startIsolated(ADMIN_TOKEN, null);
     const db = await import('./db.js');
     const admin = db.createAccount({
-      username: 'park.http.admin', password: 'park-http-admin-password', name: '园区管理员', isAdmin: true,
+      username: 'park.http.admin',
+      password: 'park-http-admin-password',
+      name: '园区管理员',
+      isAdmin: true,
     });
-    const tenantOrganization = db.createOrganization({ name: 'HTTP 入驻企业', slug: 'park-http-tenant' });
+    const tenantOrganization = db.createOrganization({
+      name: 'HTTP 入驻企业',
+      slug: 'park-http-tenant',
+    });
     const tenantAdmin = db.createAccount({
       organizationId: tenantOrganization.id,
       username: 'park.http.tenant.admin',
@@ -3338,21 +4595,33 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     });
     db.createAccount({
       organizationId: tenantOrganization.id,
-      username: 'park.http.user', password: 'park-http-user-password', name: '实名员工',
-      phone: '13800138000', tags: ['普通成员'],
+      username: 'park.http.user',
+      password: 'park-http-user-password',
+      name: '实名员工',
+      phone: '13800138000',
+      tags: ['普通成员'],
     });
     const firstService = db.createAccount({
-      username: 'park.http.service1', password: 'park-http-service1-password', name: '客服一号', tags: ['客服人员'],
+      username: 'park.http.service1',
+      password: 'park-http-service1-password',
+      name: '客服一号',
+      tags: ['客服人员'],
     });
     const secondService = db.createAccount({
-      username: 'park.http.service2', password: 'park-http-service2-password', name: '客服二号', tags: ['客服人员'],
+      username: 'park.http.service2',
+      password: 'park-http-service2-password',
+      name: '客服二号',
+      tags: ['客服人员'],
     });
     const park = db.createPark({
       adminOrganizationId: admin.organizationId,
       actorAccountId: admin.id,
       name: 'HTTP 测试园区',
     });
-    const invite = db.issueParkInvite({ parkId: park.id, actorAccountId: admin.id });
+    const invite = db.issueParkInvite({
+      parkId: park.id,
+      actorAccountId: admin.id,
+    });
     db.joinOrganizationToPark({
       organizationId: tenantOrganization.id,
       actorAccountId: tenantAdmin.id,
@@ -3368,77 +4637,150 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         accountId: specialist.id,
       });
     }
-    const login = async (identifier: string, password: string): Promise<string> => {
+    const login = async (
+      identifier: string,
+      password: string,
+    ): Promise<string> => {
       const response = await fetch(`${base}/enterprise/auth/login`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ identifier, password }),
       });
       expect(response.status).toBe(200);
       return (await response.json()).token;
     };
-    const adminToken = await login('park.http.admin', 'park-http-admin-password');
+    const adminToken = await login(
+      'park.http.admin',
+      'park-http-admin-password',
+    );
     const userToken = await login('park.http.user', 'park-http-user-password');
-    const serviceToken = await login('park.http.service1', 'park-http-service1-password');
+    const serviceToken = await login(
+      'park.http.service1',
+      'park-http-service1-password',
+    );
 
     const published = await fetch(`${base}/enterprise/park-services/push`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ recipientAccountId: 'all', serviceId: 'announcement', note: '今天下午 14:00–16:00 停水' }),
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        recipientAccountId: 'all',
+        serviceId: 'announcement',
+        note: '今天下午 14:00–16:00 停水',
+      }),
     });
     expect(published.status).toBe(201);
     expect((await published.json()).recipientCount).toBe(2);
-    const publications = await fetch(`${base}/enterprise/park-services/publications`, {
-      headers: { authorization: `Bearer ${userToken}` },
-    });
+    const publications = await fetch(
+      `${base}/enterprise/park-services/publications`,
+      {
+        headers: { authorization: `Bearer ${userToken}` },
+      },
+    );
     expect((await publications.json()).publications).toEqual([
-      expect.objectContaining({ kind: 'announcement', body: '今天下午 14:00–16:00 停水' }),
+      expect.objectContaining({
+        kind: 'announcement',
+        body: '今天下午 14:00–16:00 停水',
+      }),
     ]);
-    const announcement = (await (await fetch(`${base}/enterprise/park-services/publications`, {
-      headers: { authorization: `Bearer ${userToken}` },
-    })).json()).publications[0];
-    expect((await fetch(`${base}/enterprise/park-services/publications/${announcement.id}/read`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${userToken}` },
-    })).status).toBe(200);
-    const announcementResults = await fetch(`${base}/enterprise/park-services/announcement-results`, {
-      headers: { authorization: `Bearer ${adminToken}` },
-    });
+    const announcement = (
+      await (
+        await fetch(`${base}/enterprise/park-services/publications`, {
+          headers: { authorization: `Bearer ${userToken}` },
+        })
+      ).json()
+    ).publications[0];
+    expect(
+      (
+        await fetch(
+          `${base}/enterprise/park-services/publications/${announcement.id}/read`,
+          {
+            method: 'POST',
+            headers: { authorization: `Bearer ${userToken}` },
+          },
+        )
+      ).status,
+    ).toBe(200);
+    const announcementResults = await fetch(
+      `${base}/enterprise/park-services/announcement-results`,
+      {
+        headers: { authorization: `Bearer ${adminToken}` },
+      },
+    );
     expect(announcementResults.status).toBe(200);
     await expect(announcementResults.json()).resolves.toMatchObject({
-      announcements: [expect.objectContaining({ recipientCount: 2, readCount: 1 })],
+      announcements: [
+        expect.objectContaining({ recipientCount: 2, readCount: 1 }),
+      ],
     });
 
-    const user = db.authenticateAccount('park.http.user', 'park-http-user-password')!;
-    const surveyResponse = await fetch(`${base}/enterprise/park-services/push`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ recipientAccountId: user.id, serviceId: 'satisfaction', note: '请评价本季度园区服务' }),
-    });
+    const user = db.authenticateAccount(
+      'park.http.user',
+      'park-http-user-password',
+    )!;
+    const surveyResponse = await fetch(
+      `${base}/enterprise/park-services/push`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${adminToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          recipientAccountId: user.id,
+          serviceId: 'satisfaction',
+          note: '请评价本季度园区服务',
+        }),
+      },
+    );
     const survey = (await surveyResponse.json()).publication;
-    const submitSurvey = () => fetch(`${base}/enterprise/park-services/publications/${survey.id}/submit`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${userToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ responseData: { score: '4', feedback: '希望加强巡检', submittedBy: '实名员工' } }),
-    });
+    const submitSurvey = () =>
+      fetch(
+        `${base}/enterprise/park-services/publications/${survey.id}/submit`,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${userToken}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            responseData: {
+              score: '4',
+              feedback: '希望加强巡检',
+              submittedBy: '实名员工',
+            },
+          }),
+        },
+      );
     expect((await submitSurvey()).status).toBe(200);
     expect((await submitSurvey()).status).toBe(400);
-    const surveyResultsResponse = await fetch(`${base}/enterprise/park-services/survey-results`, {
-      headers: { authorization: `Bearer ${adminToken}` },
-    });
+    const surveyResultsResponse = await fetch(
+      `${base}/enterprise/park-services/survey-results`,
+      {
+        headers: { authorization: `Bearer ${adminToken}` },
+      },
+    );
     expect(surveyResultsResponse.status).toBe(200);
     expect((await surveyResultsResponse.json()).surveys[0]).toMatchObject({
       recipientCount: 1,
       submittedCount: 1,
-      responses: [expect.objectContaining({
-        accountName: '实名员工',
-        responseData: expect.objectContaining({ submittedBy: '实名员工' }),
-      })],
+      responses: [
+        expect.objectContaining({
+          accountName: '实名员工',
+          responseData: expect.objectContaining({ submittedBy: '实名员工' }),
+        }),
+      ],
     });
 
-    const meetingDate = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
+    const meetingDate = new Date(Date.now() + 2 * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
     const meetingRoom = db.listParkMeetingRooms(park.adminOrganizationId)[0]!;
     const meetingRequestBody = {
-      serviceId: 'meeting-room', title: `会议室预约 · ${meetingDate}`,
+      serviceId: 'meeting-room',
+      title: `会议室预约 · ${meetingDate}`,
       description: '14:00 至 16:00，10 人',
       formData: {
         company: tenantOrganization.name,
@@ -3457,7 +4799,10 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       meetingRequestBody.formData;
     const missingMeetingContent = await fetch(`${base}/enterprise/tickets`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${userToken}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${userToken}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({
         ...meetingRequestBody,
         formData: missingMeetingContentForm,
@@ -3469,17 +4814,27 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     });
     const request = await fetch(`${base}/enterprise/tickets`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${userToken}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${userToken}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify(meetingRequestBody),
     });
     expect(request.status).toBe(201);
     const ticket = (await request.json()).ticket;
-    expect(ticket).toMatchObject({ serviceId: 'meeting-room', recipientCount: 2, status: '待接单' });
+    expect(ticket).toMatchObject({
+      serviceId: 'meeting-room',
+      recipientCount: 2,
+      status: '待接单',
+    });
     expect(ticket.recipients[0]).not.toHaveProperty('phone');
 
     const conflict = await fetch(`${base}/enterprise/tickets`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${userToken}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${userToken}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify(meetingRequestBody),
     });
     expect(conflict.status).toBe(409);
@@ -3500,7 +4855,10 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     });
     const closed = await fetch(`${base}/enterprise/tickets`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${userToken}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${userToken}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({
         ...meetingRequestBody,
         formData: {
@@ -3519,18 +4877,33 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       headers: { authorization: `Bearer ${serviceToken}` },
     });
     const staffTicket = (await staffTickets.json()).tickets[0];
-    expect(staffTicket).toMatchObject({ id: ticket.id, isRecipient: true, recipients: [], notifications: [] });
-    const accepted = await fetch(`${base}/enterprise/tickets/${ticket.id}/action`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${serviceToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'accept' }),
+    expect(staffTicket).toMatchObject({
+      id: ticket.id,
+      isRecipient: true,
+      recipients: [],
+      notifications: [],
     });
+    const accepted = await fetch(
+      `${base}/enterprise/tickets/${ticket.id}/action`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${serviceToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ action: 'accept' }),
+      },
+    );
     expect((await accepted.json()).ticket.status).toBe('处理中');
   }, 30_000);
 });
 
 describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
-  async function login(base: string, identifier: string, password: string): Promise<string> {
+  async function login(
+    base: string,
+    identifier: string,
+    password: string,
+  ): Promise<string> {
     const response = await fetch(`${base}/enterprise/auth/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -3554,8 +4927,16 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       password: 'credit-member-password',
       name: '积分成员',
     });
-    const adminToken = await login(base, admin.username, 'credit-admin-password');
-    const memberToken = await login(base, member.username, 'credit-member-password');
+    const adminToken = await login(
+      base,
+      admin.username,
+      'credit-admin-password',
+    );
+    const memberToken = await login(
+      base,
+      member.username,
+      'credit-member-password',
+    );
     const memberHeaders = {
       authorization: `Bearer ${memberToken}`,
       'content-type': 'application/json',
@@ -3565,18 +4946,23 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       'content-type': 'application/json',
     };
 
-    expect((await fetch(`${base}/enterprise/credits/balance`)).status).toBe(401);
+    expect((await fetch(`${base}/enterprise/credits/balance`)).status).toBe(
+      401,
+    );
     const memberBalance = await fetch(`${base}/enterprise/credits/balance`, {
       headers: memberHeaders,
     });
     expect(memberBalance.status).toBe(200);
     expect(await memberBalance.json()).toMatchObject({ balance: 0 });
 
-    const memberCreate = await fetch(`${base}/enterprise/credits/redeem-codes`, {
-      method: 'POST',
-      headers: memberHeaders,
-      body: JSON.stringify({ creditAmount: 100, count: 1 }),
-    });
+    const memberCreate = await fetch(
+      `${base}/enterprise/credits/redeem-codes`,
+      {
+        method: 'POST',
+        headers: memberHeaders,
+        body: JSON.stringify({ creditAmount: 100, count: 1 }),
+      },
+    );
     expect(memberCreate.status).toBe(403);
     const memberTopUp = await fetch(`${base}/enterprise/credits/topup`, {
       method: 'POST',
@@ -3593,9 +4979,12 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       headers: memberHeaders,
     });
     expect(memberCodes.status).toBe(403);
-    const memberTransactions = await fetch(`${base}/enterprise/credits/transactions`, {
-      headers: memberHeaders,
-    });
+    const memberTransactions = await fetch(
+      `${base}/enterprise/credits/transactions`,
+      {
+        headers: memberHeaders,
+      },
+    );
     expect(memberTransactions.status).toBe(403);
 
     const topUp = await fetch(`${base}/enterprise/credits/topup`, {
@@ -3623,10 +5012,13 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       { headers: adminHeaders },
     );
     expect(unlimitedTransactions.status).toBe(400);
-    const revoked = await fetch(`${base}/enterprise/credits/redeem-codes/${codeId}/revoke`, {
-      method: 'POST',
-      headers: adminHeaders,
-    });
+    const revoked = await fetch(
+      `${base}/enterprise/credits/redeem-codes/${codeId}/revoke`,
+      {
+        method: 'POST',
+        headers: adminHeaders,
+      },
+    );
     expect(revoked.status).toBe(200);
     expect(await revoked.json()).toEqual({ ok: true });
   });
@@ -3645,8 +5037,16 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       password: 'credit-failure-member-password',
       name: '积分故障成员',
     });
-    const adminToken = await login(base, admin.username, 'credit-failure-admin-password');
-    const memberToken = await login(base, member.username, 'credit-failure-member-password');
+    const adminToken = await login(
+      base,
+      admin.username,
+      'credit-failure-admin-password',
+    );
+    const memberToken = await login(
+      base,
+      member.username,
+      'credit-failure-member-password',
+    );
     const adminHeaders = {
       authorization: `Bearer ${adminToken}`,
       'content-type': 'application/json',
@@ -3655,11 +5055,14 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       authorization: `Bearer ${memberToken}`,
       'content-type': 'application/json',
     };
-    const invalidCount = await fetch(`${base}/enterprise/credits/redeem-codes`, {
-      method: 'POST',
-      headers: adminHeaders,
-      body: JSON.stringify({ creditAmount: 25, count: 101 }),
-    });
+    const invalidCount = await fetch(
+      `${base}/enterprise/credits/redeem-codes`,
+      {
+        method: 'POST',
+        headers: adminHeaders,
+        body: JSON.stringify({ creditAmount: 25, count: 101 }),
+      },
+    );
     expect(invalidCount.status).toBe(400);
     expect(await invalidCount.json()).toEqual({
       error: '兑换码生成数量必须是 1 到 100 的整数',
@@ -3713,7 +5116,9 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       for (const response of responses) {
         expect(response.status).toBe(500);
         const text = await response.text();
-        expect(JSON.parse(text)).toEqual({ error: '企业服务暂时不可用，请稍后重试' });
+        expect(JSON.parse(text)).toEqual({
+          error: '企业服务暂时不可用，请稍后重试',
+        });
         expect(text).not.toMatch(/sensitive|sqlite|trigger|database/i);
       }
     } finally {
@@ -3740,47 +5145,60 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       maxUses: 1,
     });
 
-    const invalid = await fetch(`${base}/enterprise/auth/register/sms/request`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ phone: '13800138000', inviteCode: 'AAAA-BBBB' }),
-    });
+    const invalid = await fetch(
+      `${base}/enterprise/auth/register/sms/request`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ phone: '13800138000', inviteCode: 'AAAA-BBBB' }),
+      },
+    );
     expect(invalid.status).toBe(403);
     expect(sent).toHaveLength(0);
 
-    const request = await fetch(`${base}/enterprise/auth/register/sms/request`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ phone: '13800138000', inviteCode: invite.code }),
-    });
+    const request = await fetch(
+      `${base}/enterprise/auth/register/sms/request`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ phone: '13800138000', inviteCode: invite.code }),
+      },
+    );
     expect(request.status).toBe(200);
     const challenge = await request.json();
-    expect(challenge.organization).toEqual({ id: alpha.id, name: 'Alpha 科技' });
-
-    const register = await fetch(`${base}/enterprise/auth/register/sms/verify`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        challengeId: challenge.challengeId,
-        code: sent[0]?.code,
-        name: 'Alpha 新员工',
-        password: 'alpha-member-password',
-        legalConsent: true,
-      }),
+    expect(challenge.organization).toEqual({
+      id: alpha.id,
+      name: 'Alpha 科技',
     });
+
+    const register = await fetch(
+      `${base}/enterprise/auth/register/sms/verify`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          challengeId: challenge.challengeId,
+          code: sent[0]?.code,
+          name: 'Alpha 新员工',
+          password: 'alpha-member-password',
+          legalConsent: true,
+          legalDocuments: currentLegalDocumentReferences(),
+        }),
+      },
+    );
     expect(register.status).toBe(200);
-    const registrationPayload = await register.json() as {
+    const registrationPayload = (await register.json()) as {
       token: string;
       account: {
-      id: string;
-      organizationId: string;
-      organizationName: string;
-      employeeId: string | null;
-      name: string;
-      department: string | null;
-      role: string | null;
-      positionId: string | null;
-      positionTitle: string | null;
+        id: string;
+        organizationId: string;
+        organizationName: string;
+        employeeId: string | null;
+        name: string;
+        department: string | null;
+        role: string | null;
+        positionId: string | null;
+        positionTitle: string | null;
       };
     };
     const registered = registrationPayload.account;
@@ -3789,15 +5207,17 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     expect(registered.positionId).toBe('pos_brand');
     expect(registered.positionTitle).toBe('品牌运营');
     expect(registered.employeeId).toEqual(expect.stringMatching(/^emp_/));
-    expect(db.listEmployees(undefined, alpha.id)).toContainEqual(expect.objectContaining({
-      id: registered.employeeId,
-      organization_id: alpha.id,
-      name: 'Alpha 新员工',
-      department: '研发部',
-      role: '成员',
-      position_id: 'pos_brand',
-      position_title: '品牌运营',
-    }));
+    expect(db.listEmployees(undefined, alpha.id)).toContainEqual(
+      expect.objectContaining({
+        id: registered.employeeId,
+        organization_id: alpha.id,
+        name: 'Alpha 新员工',
+        department: '研发部',
+        role: '成员',
+        position_id: 'pos_brand',
+        position_title: '品牌运营',
+      }),
+    );
     const alphaAdmin = db.createAccount({
       organizationId: alpha.id,
       username: 'alpha.invite.admin',
@@ -3805,12 +5225,16 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       name: 'Alpha 邀请管理员',
       isAdmin: true,
     });
-    const adminToken = await login(base, alphaAdmin.username, 'alpha-admin-password');
+    const adminToken = await login(
+      base,
+      alphaAdmin.username,
+      'alpha-admin-password',
+    );
     const accounts = await fetch(`${base}/enterprise/accounts`, {
       headers: { authorization: `Bearer ${adminToken}` },
     });
     expect(accounts.status).toBe(200);
-    const accountRows = await accounts.json() as {
+    const accountRows = (await accounts.json()) as {
       accounts: Array<{
         phone: string | null;
         department: string | null;
@@ -3819,54 +5243,74 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
         positionTitle: string | null;
       }>;
     };
-    expect(accountRows.accounts).toContainEqual(expect.objectContaining({
-      phone: '+8613800138000',
-      department: '研发部',
-      role: '成员',
-      positionId: 'pos_brand',
-      positionTitle: '品牌运营',
-    }));
+    expect(accountRows.accounts).toContainEqual(
+      expect.objectContaining({
+        phone: '+8613800138000',
+        department: '研发部',
+        role: '成员',
+        positionId: 'pos_brand',
+        positionTitle: '品牌运营',
+      }),
+    );
     const employees = await fetch(`${base}/enterprise/employees`, {
       headers: { authorization: `Bearer ${adminToken}` },
     });
     expect(employees.status).toBe(200);
     await expect(employees.json()).resolves.toEqual({
-      employees: expect.arrayContaining([expect.objectContaining({
-        id: registered.employeeId,
-        organization_id: alpha.id,
-        department: '研发部',
-        role: '成员',
-        position_id: 'pos_brand',
-        position_title: '品牌运营',
-      }), expect.objectContaining({
-        id: alphaAdmin.employeeId,
-        organization_id: alpha.id,
-        name: 'Alpha 邀请管理员',
-      })]),
+      employees: expect.arrayContaining([
+        expect.objectContaining({
+          id: registered.employeeId,
+          organization_id: alpha.id,
+          department: '研发部',
+          role: '成员',
+          position_id: 'pos_brand',
+          position_title: '品牌运营',
+        }),
+        expect.objectContaining({
+          id: alphaAdmin.employeeId,
+          organization_id: alpha.id,
+          name: 'Alpha 邀请管理员',
+        }),
+      ]),
     });
-    const memberOrganizationView = await fetch(`${base}/enterprise/organization/view`, {
-      headers: { authorization: `Bearer ${registrationPayload.token}` },
-    });
+    const memberOrganizationView = await fetch(
+      `${base}/enterprise/organization/view`,
+      {
+        headers: { authorization: `Bearer ${registrationPayload.token}` },
+      },
+    );
     expect(memberOrganizationView.status).toBe(200);
     await expect(memberOrganizationView.json()).resolves.toMatchObject({
       employeeCount: 2,
-      members: expect.arrayContaining([expect.objectContaining({
-        id: expect.any(String),
-        department: '研发部',
-        role: '成员',
-        positionId: 'pos_brand',
-        positionTitle: '品牌运营',
-      }), expect.objectContaining({
-        id: alphaAdmin.id,
-        name: 'Alpha 邀请管理员',
-        isAdmin: true,
-      })]),
+      members: expect.arrayContaining([
+        expect.objectContaining({
+          id: expect.any(String),
+          department: '研发部',
+          role: '成员',
+          positionId: 'pos_brand',
+          positionTitle: '品牌运营',
+        }),
+        expect.objectContaining({
+          id: alphaAdmin.id,
+          name: 'Alpha 邀请管理员',
+          isAdmin: true,
+        }),
+      ]),
     });
-    const reassigned = await fetch(`${base}/enterprise/accounts/${registered.id}`, {
-      method: 'PATCH',
-      headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ positionId: 'pos_growth', positionTitle: '增长运营' }),
-    });
+    const reassigned = await fetch(
+      `${base}/enterprise/accounts/${registered.id}`,
+      {
+        method: 'PATCH',
+        headers: {
+          authorization: `Bearer ${adminToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          positionId: 'pos_growth',
+          positionTitle: '增长运营',
+        }),
+      },
+    );
     expect(reassigned.status).toBe(200);
     await expect(reassigned.json()).resolves.toMatchObject({
       account: { positionId: 'pos_growth', positionTitle: '增长运营' },
@@ -3876,11 +5320,14 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       position_title: '增长运营',
     });
     expect(db.getOrganizationInvite(alpha.id)?.usedCount).toBe(1);
-    const exhausted = await fetch(`${base}/enterprise/auth/register/sms/request`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ phone: '13900139000', inviteCode: invite.code }),
-    });
+    const exhausted = await fetch(
+      `${base}/enterprise/auth/register/sms/request`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ phone: '13900139000', inviteCode: invite.code }),
+      },
+    );
     expect(exhausted.status).toBe(403);
     expect(registered).toMatchObject({
       organizationId: alpha.id,
@@ -3892,7 +5339,10 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
   it('已登录个人账号可原子消费企业邀请码并保留当前会话，重复和并发加入 fail closed', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN, null);
     const db = await import('./db.js');
-    const alpha = db.createOrganization({ name: 'Alpha 科技', slug: 'alpha-upgrade' });
+    const alpha = db.createOrganization({
+      name: 'Alpha 科技',
+      slug: 'alpha-upgrade',
+    });
     const invite = db.issueOrganizationInvite(alpha.id, Date.now(), null, {
       defaultDepartment: '产品部',
       departmentId: 'dept_product',
@@ -3907,7 +5357,11 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       password: 'personal-upgrade-password',
     });
     const oldPersonalOrganizationId = personal.organizationId;
-    db.updateAccount(personal.id, { tags: ['个人偏好'] }, oldPersonalOrganizationId);
+    db.updateAccount(
+      personal.id,
+      { tags: ['个人偏好'] },
+      oldPersonalOrganizationId,
+    );
     const session = db.createAuthSession(personal.id);
 
     const upgraded = await fetch(`${base}/enterprise/auth/join-organization`, {
@@ -3935,20 +5389,26 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     });
     expect(db.getOrganization(oldPersonalOrganizationId)).not.toBeNull();
     expect(db.getOrganizationInvite(alpha.id)?.usedCount).toBe(1);
-    expect(db.listEmployees(undefined, alpha.id)).toContainEqual(expect.objectContaining({
-      id: upgradedAccount.employeeId,
-      department_id: 'dept_product',
-      department: '产品部',
-      position_id: 'position_pm',
-      position_title: '产品经理',
-    }));
+    expect(db.listEmployees(undefined, alpha.id)).toContainEqual(
+      expect.objectContaining({
+        id: upgradedAccount.employeeId,
+        department_id: 'dept_product',
+        department: '产品部',
+        position_id: 'position_pm',
+        position_title: '产品经理',
+      }),
+    );
 
     const sameSession = await fetch(`${base}/enterprise/auth/me`, {
       headers: { authorization: `Bearer ${session.token}` },
     });
     expect(sameSession.status).toBe(200);
     await expect(sameSession.json()).resolves.toMatchObject({
-      account: { id: personal.id, organizationId: alpha.id, accountType: 'enterprise' },
+      account: {
+        id: personal.id,
+        organizationId: alpha.id,
+        accountType: 'enterprise',
+      },
     });
     const repeated = await fetch(`${base}/enterprise/auth/join-organization`, {
       method: 'POST',
@@ -3971,29 +5431,42 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     });
     const racers = [
       db.createPersonalRegisteredAccount({
-        phone: '13200132000', name: '并发用户一', password: 'race-user-password-1',
+        phone: '13200132000',
+        name: '并发用户一',
+        password: 'race-user-password-1',
       }),
       db.createPersonalRegisteredAccount({
-        phone: '13300133000', name: '并发用户二', password: 'race-user-password-2',
+        phone: '13300133000',
+        name: '并发用户二',
+        password: 'race-user-password-2',
       }),
     ];
-    const racerSessions = racers.map((account) => db.createAuthSession(account.id));
-    const raceResults = await Promise.all(racerSessions.map((item) => fetch(
-      `${base}/enterprise/auth/join-organization`,
-      {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${item.token}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({ inviteCode: raceInvite.code }),
-      },
-    )));
-    expect(raceResults.map((response) => response.status).sort()).toEqual([200, 403]);
+    const racerSessions = racers.map((account) =>
+      db.createAuthSession(account.id),
+    );
+    const raceResults = await Promise.all(
+      racerSessions.map((item) =>
+        fetch(`${base}/enterprise/auth/join-organization`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${item.token}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ inviteCode: raceInvite.code }),
+        }),
+      ),
+    );
+    expect(raceResults.map((response) => response.status).sort()).toEqual([
+      200, 403,
+    ]);
     expect(db.getOrganizationInvite(alpha.id)?.usedCount).toBe(1);
     const racedAccounts = racers.map((account) => db.getAccount(account.id)!);
-    expect(racedAccounts.filter((account) => account.accountType === 'enterprise')).toHaveLength(1);
-    expect(racedAccounts.filter((account) => account.accountType === 'personal')).toHaveLength(1);
+    expect(
+      racedAccounts.filter((account) => account.accountType === 'enterprise'),
+    ).toHaveLength(1);
+    expect(
+      racedAccounts.filter((account) => account.accountType === 'personal'),
+    ).toHaveLength(1);
   });
 
   it('企业管理员只能查看和修改本企业账号，并可在后台手动生成新的 7 天邀请码', async () => {
@@ -4003,23 +5476,45 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     const beta = db.createOrganization({ name: 'Beta 制造', slug: 'beta' });
     const alphaAdmin = db.createAccount({
       organizationId: alpha.id,
-      username: 'alpha.admin', password: 'alpha-admin-password', name: 'Alpha 管理员', isAdmin: true,
+      username: 'alpha.admin',
+      password: 'alpha-admin-password',
+      name: 'Alpha 管理员',
+      isAdmin: true,
     });
     const alphaStaff = db.createAccount({
       organizationId: alpha.id,
-      username: 'alpha.staff', password: 'alpha-staff-password', name: 'Alpha 员工',
+      username: 'alpha.staff',
+      password: 'alpha-staff-password',
+      name: 'Alpha 员工',
     });
     const betaAdmin = db.createAccount({
       organizationId: beta.id,
-      username: 'beta.admin', password: 'beta-admin-password', name: 'Beta 管理员', isAdmin: true,
+      username: 'beta.admin',
+      password: 'beta-admin-password',
+      name: 'Beta 管理员',
+      isAdmin: true,
     });
     const betaStaff = db.createAccount({
       organizationId: beta.id,
-      username: 'beta.staff', password: 'beta-staff-password', name: 'Beta 员工',
+      username: 'beta.staff',
+      password: 'beta-staff-password',
+      name: 'Beta 员工',
     });
-    const alphaToken = await login(base, alphaAdmin.username, 'alpha-admin-password');
-    const betaToken = await login(base, betaAdmin.username, 'beta-admin-password');
-    const alphaStaffToken = await login(base, alphaStaff.username, 'alpha-staff-password');
+    const alphaToken = await login(
+      base,
+      alphaAdmin.username,
+      'alpha-admin-password',
+    );
+    const betaToken = await login(
+      base,
+      betaAdmin.username,
+      'beta-admin-password',
+    );
+    const alphaStaffToken = await login(
+      base,
+      alphaStaff.username,
+      'alpha-staff-password',
+    );
 
     const alphaAccounts = await fetch(`${base}/enterprise/accounts`, {
       headers: { authorization: `Bearer ${alphaToken}` },
@@ -4033,16 +5528,24 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     const betaAccountRows = (await betaAccounts.json()) as {
       accounts: Array<{ id: string }>;
     };
-    expect(alphaAccountRows.accounts.map((account) => account.id).sort())
-      .toEqual([alphaAdmin.id, alphaStaff.id].sort());
-    expect(betaAccountRows.accounts.map((account) => account.id).sort())
-      .toEqual([betaAdmin.id, betaStaff.id].sort());
+    expect(
+      alphaAccountRows.accounts.map((account) => account.id).sort(),
+    ).toEqual([alphaAdmin.id, alphaStaff.id].sort());
+    expect(
+      betaAccountRows.accounts.map((account) => account.id).sort(),
+    ).toEqual([betaAdmin.id, betaStaff.id].sort());
 
-    const crossTenantPatch = await fetch(`${base}/enterprise/accounts/${betaStaff.id}`, {
-      method: 'PATCH',
-      headers: { authorization: `Bearer ${alphaToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ name: '不应成功' }),
-    });
+    const crossTenantPatch = await fetch(
+      `${base}/enterprise/accounts/${betaStaff.id}`,
+      {
+        method: 'PATCH',
+        headers: {
+          authorization: `Bearer ${alphaToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ name: '不应成功' }),
+      },
+    );
     expect(crossTenantPatch.status).toBe(404);
     expect(db.getAccount(betaStaff.id)?.name).toBe('Beta 员工');
 
@@ -4071,7 +5574,10 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
 
     const second = await fetch(`${base}/enterprise/organization/invite`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${alphaToken}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${alphaToken}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({
         defaultDepartment: '研发部',
         positionTitle: '品牌运营',
@@ -4110,50 +5616,95 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     const beta = db.createOrganization({ name: 'Beta 制造', slug: 'beta' });
     const alphaAdmin = db.createAccount({
       organizationId: alpha.id,
-      username: 'alpha.admin', password: 'alpha-admin-password', name: 'Alpha 管理员', isAdmin: true,
+      username: 'alpha.admin',
+      password: 'alpha-admin-password',
+      name: 'Alpha 管理员',
+      isAdmin: true,
     });
     const alphaStaff = db.createAccount({
       organizationId: alpha.id,
-      username: 'alpha.staff', password: 'alpha-staff-password', name: 'Alpha 员工',
+      username: 'alpha.staff',
+      password: 'alpha-staff-password',
+      name: 'Alpha 员工',
     });
     const betaStaff = db.createAccount({
       organizationId: beta.id,
-      username: 'beta.staff', password: 'beta-staff-password', name: 'Beta 员工',
+      username: 'beta.staff',
+      password: 'beta-staff-password',
+      name: 'Beta 员工',
     });
-    const adminToken = await login(base, alphaAdmin.username, 'alpha-admin-password');
-    const alphaToken = await login(base, alphaStaff.username, 'alpha-staff-password');
-    const betaToken = await login(base, betaStaff.username, 'beta-staff-password');
+    const adminToken = await login(
+      base,
+      alphaAdmin.username,
+      'alpha-admin-password',
+    );
+    const alphaToken = await login(
+      base,
+      alphaStaff.username,
+      'alpha-staff-password',
+    );
+    const betaToken = await login(
+      base,
+      betaStaff.username,
+      'beta-staff-password',
+    );
 
     const usage = {
-      sessionId: 'chat-alpha', messageId: 'message-alpha-1', model: 'gpt-5.5',
-      inputTokens: 120, outputTokens: 30, totalTokens: 150,
+      sessionId: 'chat-alpha',
+      messageId: 'message-alpha-1',
+      model: 'gpt-5.5',
+      inputTokens: 120,
+      outputTokens: 30,
+      totalTokens: 150,
     };
     const recorded = await fetch(`${base}/enterprise/usage`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${alphaToken}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${alphaToken}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify(usage),
     });
     expect(recorded.status).toBe(201);
-    expect(await recorded.json()).toEqual({ recorded: true, source: 'client_reported' });
+    expect(await recorded.json()).toEqual({
+      recorded: true,
+      source: 'client_reported',
+    });
     const duplicate = await fetch(`${base}/enterprise/usage`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${alphaToken}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${alphaToken}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify(usage),
     });
-    expect(await duplicate.json()).toEqual({ recorded: false, source: 'client_reported' });
+    expect(await duplicate.json()).toEqual({
+      recorded: false,
+      source: 'client_reported',
+    });
 
     await fetch(`${base}/enterprise/usage`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${betaToken}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${betaToken}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({
-        sessionId: 'chat-beta', messageId: 'message-beta-1', model: 'gpt-5.5',
-        inputTokens: 900, outputTokens: 100, totalTokens: 1_000,
+        sessionId: 'chat-beta',
+        messageId: 'message-beta-1',
+        model: 'gpt-5.5',
+        inputTokens: 900,
+        outputTokens: 100,
+        totalTokens: 1_000,
       }),
     });
 
-    const summaryResponse = await fetch(`${base}/enterprise/usage/summary?period=30`, {
-      headers: { authorization: `Bearer ${adminToken}` },
-    });
+    const summaryResponse = await fetch(
+      `${base}/enterprise/usage/summary?period=30`,
+      {
+        headers: { authorization: `Bearer ${adminToken}` },
+      },
+    );
     expect(summaryResponse.status).toBe(200);
     const summary = await summaryResponse.json();
     expect(summary).toMatchObject({
@@ -4167,11 +5718,17 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     const accountsResponse = await fetch(`${base}/enterprise/accounts`, {
       headers: { authorization: `Bearer ${adminToken}` },
     });
-    const accounts = ((await accountsResponse.json()) as {
-      accounts: Array<{ id: string; usage?: { totalTokens: number; requestCount: number } }>;
-    }).accounts;
-    expect(accounts.find((account) => account.id === alphaStaff.id)?.usage)
-      .toMatchObject({ totalTokens: 150, requestCount: 1 });
+    const accounts = (
+      (await accountsResponse.json()) as {
+        accounts: Array<{
+          id: string;
+          usage?: { totalTokens: number; requestCount: number };
+        }>;
+      }
+    ).accounts;
+    expect(
+      accounts.find((account) => account.id === alphaStaff.id)?.usage,
+    ).toMatchObject({ totalTokens: 150, requestCount: 1 });
   });
 
   it('成员任务与知识接口必须登录且不能用其他企业的员工 ID', async () => {
@@ -4179,28 +5736,59 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     const db = await import('./db.js');
     const alpha = db.createOrganization({ name: 'Alpha 科技', slug: 'alpha' });
     const beta = db.createOrganization({ name: 'Beta 制造', slug: 'beta' });
-    db.createEmployee({ id: 'alpha-worker', organizationId: alpha.id, name: 'Alpha 员工' });
-    db.createEmployee({ id: 'beta-worker', organizationId: beta.id, name: 'Beta 员工' });
+    db.createEmployee({
+      id: 'alpha-worker',
+      organizationId: alpha.id,
+      name: 'Alpha 员工',
+    });
+    db.createEmployee({
+      id: 'beta-worker',
+      organizationId: beta.id,
+      name: 'Beta 员工',
+    });
     const alphaAccount = db.createAccount({
       organizationId: alpha.id,
       employeeId: 'alpha-worker',
-      username: 'alpha.worker', password: 'alpha-worker-password', name: 'Alpha 员工',
+      username: 'alpha.worker',
+      password: 'alpha-worker-password',
+      name: 'Alpha 员工',
       department: '研发部',
     });
-    db.addKnowledge({ organizationId: alpha.id, category: 'alpha', content: 'Alpha 知识' });
-    db.addKnowledge({ organizationId: beta.id, category: 'beta', content: 'Beta 知识' });
-    const alphaToken = await login(base, alphaAccount.username, 'alpha-worker-password');
+    db.addKnowledge({
+      organizationId: alpha.id,
+      category: 'alpha',
+      content: 'Alpha 知识',
+    });
+    db.addKnowledge({
+      organizationId: beta.id,
+      category: 'beta',
+      content: 'Beta 知识',
+    });
+    const alphaToken = await login(
+      base,
+      alphaAccount.username,
+      'alpha-worker-password',
+    );
 
     const crossTenant = await fetch(`${base}/enterprise/task`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${alphaToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ employee_id: 'beta-worker', task_type: 'forbidden' }),
+      headers: {
+        authorization: `Bearer ${alphaToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        employee_id: 'beta-worker',
+        task_type: 'forbidden',
+      }),
     });
     expect(crossTenant.status).toBe(404);
 
     const invalidTask = await fetch(`${base}/enterprise/task`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${alphaToken}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${alphaToken}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({
         employee_id: 'alpha-worker',
         task_type: 'invalid-duration',
@@ -4215,8 +5803,14 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
 
     const ownTask = await fetch(`${base}/enterprise/task`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${alphaToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ employee_id: 'alpha-worker', task_type: 'allowed' }),
+      headers: {
+        authorization: `Bearer ${alphaToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        employee_id: 'alpha-worker',
+        task_type: 'allowed',
+      }),
     });
     expect(ownTask.status).toBe(200);
     expect(db.getReport(30, undefined, alpha.id).totalTasks).toBe(1);
@@ -4226,7 +5820,9 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       headers: { authorization: `Bearer ${alphaToken}` },
     });
     expect(JSON.stringify(await knowledge.json())).toContain('Alpha 知识');
-    expect(JSON.stringify(db.getKnowledge(undefined, undefined, alpha.id))).not.toContain('Beta 知识');
+    expect(
+      JSON.stringify(db.getKnowledge(undefined, undefined, alpha.id)),
+    ).not.toContain('Beta 知识');
 
     const autoKnowledgeBody = {
       sourceId: 'kb_auto_1',
@@ -4241,11 +5837,14 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     };
     const firstCapture = await fetch(`${base}/enterprise/knowledge`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${alphaToken}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${alphaToken}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify(autoKnowledgeBody),
     });
     expect(firstCapture.status).toBe(200);
-    const firstCapturePayload = await firstCapture.json() as {
+    const firstCapturePayload = (await firstCapture.json()) as {
       status: string;
       added: boolean;
       outcome: string;
@@ -4260,7 +5859,10 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
 
     const duplicateCapture = await fetch(`${base}/enterprise/knowledge`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${alphaToken}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${alphaToken}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify(autoKnowledgeBody),
     });
     expect(await duplicateCapture.json()).toMatchObject({
@@ -4270,15 +5872,15 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       retention: { promoted: false, evidenceCount: 1 },
     });
 
-    expect(JSON.stringify(db.getKnowledge('研发部', 'solution', alpha.id)))
-      .not.toContain(autoKnowledgeBody.content);
-    const incubating = db.getKnowledgeForAdministration(
-      '',
-      '研发部',
-      alpha.id,
-      'pending_review',
-    )
-      .filter((item: { content: string }) => item.content === autoKnowledgeBody.content);
+    expect(
+      JSON.stringify(db.getKnowledge('研发部', 'solution', alpha.id)),
+    ).not.toContain(autoKnowledgeBody.content);
+    const incubating = db
+      .getKnowledgeForAdministration('', '研发部', alpha.id, 'pending_review')
+      .filter(
+        (item: { content: string }) =>
+          item.content === autoKnowledgeBody.content,
+      );
     expect(incubating).toHaveLength(0);
 
     const highImpactBody = {
@@ -4292,11 +5894,16 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     };
     const highImpactCapture = await fetch(`${base}/enterprise/knowledge`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${alphaToken}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${alphaToken}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify(highImpactBody),
     });
     expect(highImpactCapture.status).toBe(200);
-    const highImpactPayload = await highImpactCapture.json() as { knowledgeId: number };
+    const highImpactPayload = (await highImpactCapture.json()) as {
+      knowledgeId: number;
+    };
     expect(highImpactPayload).toMatchObject({
       status: 'promoted',
       added: true,
@@ -4305,12 +5912,11 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       retention: { promoted: true, reason: 'high_impact_verified' },
     });
     expect(highImpactPayload.knowledgeId).toBeGreaterThan(0);
-    const captured = db.getKnowledgeForAdministration(
-      '',
-      '研发部',
-      alpha.id,
-      'pending_review',
-    ).filter((item: { content: string }) => item.content === highImpactBody.content);
+    const captured = db
+      .getKnowledgeForAdministration('', '研发部', alpha.id, 'pending_review')
+      .filter(
+        (item: { content: string }) => item.content === highImpactBody.content,
+      );
     expect(captured).toHaveLength(1);
     expect(captured[0]).toMatchObject({
       department: '研发部',
@@ -4318,9 +5924,12 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       confidence: 0.95,
     });
 
-    const ownReviewQueue = await fetch(`${base}/enterprise/knowledge?includeReview=true`, {
-      headers: { authorization: `Bearer ${alphaToken}` },
-    });
+    const ownReviewQueue = await fetch(
+      `${base}/enterprise/knowledge?includeReview=true`,
+      {
+        headers: { authorization: `Bearer ${alphaToken}` },
+      },
+    );
     const ownReviewPayload = JSON.stringify(await ownReviewQueue.json());
     expect(ownReviewPayload).toContain(highImpactBody.content);
     expect(ownReviewPayload).not.toContain(autoKnowledgeBody.content);
@@ -4329,7 +5938,10 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
   it('普通成员只能读取全局知识和本人部门知识，department query 不能跨部门越权', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN, null);
     const db = await import('./db.js');
-    const organization = db.createOrganization({ name: '知识边界企业', slug: 'knowledge-boundary' });
+    const organization = db.createOrganization({
+      name: '知识边界企业',
+      slug: 'knowledge-boundary',
+    });
     const legal = db.createAccount({
       organizationId: organization.id,
       username: 'knowledge.legal',
@@ -4362,8 +5974,16 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       category: 'sales',
       content: '销售部客户名单',
     });
-    const legalToken = await login(base, legal.username, 'knowledge-legal-password');
-    const adminToken = await login(base, admin.username, 'knowledge-admin-password');
+    const legalToken = await login(
+      base,
+      legal.username,
+      'knowledge-legal-password',
+    );
+    const adminToken = await login(
+      base,
+      admin.username,
+      'knowledge-admin-password',
+    );
 
     const memberList = await fetch(`${base}/enterprise/knowledge`, {
       headers: { authorization: `Bearer ${legalToken}` },
@@ -4379,7 +5999,9 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       { headers: { authorization: `Bearer ${legalToken}` } },
     );
     expect(crossDepartment.status).toBe(403);
-    expect(await crossDepartment.json()).toEqual({ error: '无权读取其他部门知识' });
+    expect(await crossDepartment.json()).toEqual({
+      error: '无权读取其他部门知识',
+    });
 
     const crossDepartmentSearch = await fetch(
       `${base}/enterprise/knowledge?q=${encodeURIComponent('客户')}&department=${encodeURIComponent('销售部')}`,
@@ -4398,7 +6020,10 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
 
     const pendingCapture = await fetch(`${base}/enterprise/knowledge`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${legalToken}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${legalToken}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({
         sourceId: 'legal-checklist-1',
         title: '合同复核清单',
@@ -4407,7 +6032,7 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
         sourceType: 'work_result',
       }),
     });
-    const pendingPayload = await pendingCapture.json() as {
+    const pendingPayload = (await pendingCapture.json()) as {
       knowledgeId: number;
       reviewStatus: string;
     };
@@ -4417,7 +6042,10 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       `${base}/enterprise/knowledge/${pendingPayload.knowledgeId}/review`,
       {
         method: 'POST',
-        headers: { authorization: `Bearer ${legalToken}`, 'content-type': 'application/json' },
+        headers: {
+          authorization: `Bearer ${legalToken}`,
+          'content-type': 'application/json',
+        },
         body: JSON.stringify({ action: 'approve' }),
       },
     );
@@ -4427,7 +6055,10 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       `${base}/enterprise/knowledge/${pendingPayload.knowledgeId}/review`,
       {
         method: 'POST',
-        headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
+        headers: {
+          authorization: `Bearer ${adminToken}`,
+          'content-type': 'application/json',
+        },
         body: JSON.stringify({ action: 'approve', note: '已核验' }),
       },
     );
@@ -4440,7 +6071,10 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       `${base}/enterprise/knowledge/${pendingPayload.knowledgeId}`,
       {
         method: 'PATCH',
-        headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
+        headers: {
+          authorization: `Bearer ${adminToken}`,
+          'content-type': 'application/json',
+        },
         body: JSON.stringify({
           title: '合同复核清单',
           category: 'legal',
@@ -4450,7 +6084,9 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       },
     );
     expect(revision.status).toBe(200);
-    await expect(revision.json()).resolves.toMatchObject({ knowledge: { version: 3 } });
+    await expect(revision.json()).resolves.toMatchObject({
+      knowledge: { version: 3 },
+    });
 
     const history = await fetch(
       `${base}/enterprise/knowledge/${pendingPayload.knowledgeId}/revisions`,
@@ -4468,14 +6104,18 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       `${base}/enterprise/knowledge?q=${encodeURIComponent('合同复核')}`,
       { headers: { authorization: `Bearer ${legalToken}` } },
     );
-    expect(JSON.stringify(await memberAfterReview.json()))
-      .toContain('签署前必须核对主体、金额、违约责任和授权文件。');
+    expect(JSON.stringify(await memberAfterReview.json())).toContain(
+      '签署前必须核对主体、金额、违约责任和授权文件。',
+    );
   }, 30_000);
 
   it('关闭企业知识功能后禁止知识读写，入职与召回也不泄露知识但保留任务历史', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN, null);
     const db = await import('./db.js');
-    const organization = db.createOrganization({ name: '知识关闭企业', slug: 'knowledge-disabled' });
+    const organization = db.createOrganization({
+      name: '知识关闭企业',
+      slug: 'knowledge-disabled',
+    });
     const member = db.createAccount({
       organizationId: organization.id,
       username: 'knowledge.disabled.member',
@@ -4499,14 +6139,22 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     const token = db.createAuthSession(member.id).token;
     const headers = { authorization: `Bearer ${token}` };
 
-    const featureSnapshot = await fetch(`${base}/enterprise/organization/features`, { headers });
+    const featureSnapshot = await fetch(
+      `${base}/enterprise/organization/features`,
+      { headers },
+    );
     expect(featureSnapshot.status).toBe(200);
-    await expect(featureSnapshot.json()).resolves.toMatchObject({ features: { knowledge: false } });
-    const memberPatch = await fetch(`${base}/enterprise/organization/features`, {
-      method: 'PATCH',
-      headers: { ...headers, 'content-type': 'application/json' },
-      body: JSON.stringify({ knowledge: true }),
+    await expect(featureSnapshot.json()).resolves.toMatchObject({
+      features: { knowledge: false },
     });
+    const memberPatch = await fetch(
+      `${base}/enterprise/organization/features`,
+      {
+        method: 'PATCH',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify({ knowledge: true }),
+      },
+    );
     expect(memberPatch.status).toBe(403);
     expect(db.getOrganizationFeatures(organization.id).knowledge).toBe(false);
 
@@ -4523,8 +6171,11 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       body: JSON.stringify({ content: '不应写入的新知识' }),
     });
     expect(add.status).toBe(403);
-    expect(db.getKnowledge(undefined, undefined, organization.id).map((item) => item.content))
-      .toEqual(['关闭后不得泄露的知识']);
+    expect(
+      db
+        .getKnowledge(undefined, undefined, organization.id)
+        .map((item) => item.content),
+    ).toEqual(['关闭后不得泄露的知识']);
 
     const onboard = await fetch(`${base}/enterprise/onboard`, {
       method: 'POST',
@@ -4557,7 +6208,10 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
   it('A2A 选择企业知识作为上下文时，接收方仍只能取得全局和本人部门知识', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN, null);
     const db = await import('./db.js');
-    const organization = db.createOrganization({ name: 'A2A 知识企业', slug: 'atoa-knowledge' });
+    const organization = db.createOrganization({
+      name: 'A2A 知识企业',
+      slug: 'atoa-knowledge',
+    });
     const sales = db.createAccount({
       organizationId: organization.id,
       username: 'atoa.sales',
@@ -4591,6 +6245,16 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     });
     const salesToken = await login(base, sales.username, 'atoa-sales-password');
     const legalToken = await login(base, legal.username, 'atoa-legal-password');
+    const salesDevice = await registerRouteE2eeDevice({
+      base,
+      token: salesToken,
+      accountId: sales.id,
+    });
+    const legalDevice = await registerRouteE2eeDevice({
+      base,
+      token: legalToken,
+      accountId: legal.id,
+    });
 
     const sent = await fetch(`${base}/enterprise/messages/${legal.id}`, {
       method: 'POST',
@@ -4598,16 +6262,25 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
         authorization: `Bearer ${salesToken}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({
-        content: 'OTTO_ATOA_REQUEST {"v":1,"id":"knowledge-scope","question":"审查方案","requestedSources":["enterprise_knowledge"]}',
-      }),
+      body: JSON.stringify(
+        routeE2eePayload({
+          organizationId: organization.id,
+          senderAccountId: sales.id,
+          recipientAccountId: legal.id,
+          senderDevice: salesDevice,
+          devices: [salesDevice, legalDevice],
+          contentType: 'atoa_request',
+        }),
+      ),
     });
     expect(sent.status).toBe(201);
     const inbox = await fetch(`${base}/enterprise/atoa/inbox`, {
       headers: { authorization: `Bearer ${legalToken}` },
     });
     expect(inbox.status).toBe(200);
-    expect(JSON.stringify(await inbox.json())).toContain('enterprise_knowledge');
+    const inboxPayload = JSON.stringify(await inbox.json());
+    expect(inboxPayload).not.toContain('审查方案');
+    expect(inboxPayload).not.toContain('enterprise_knowledge');
 
     // A2A context collector 使用的就是当前账号会话下的 knowledge GET。
     const contextKnowledge = await fetch(`${base}/enterprise/knowledge`, {
@@ -4624,7 +6297,10 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     const { base } = await startIsolated(ADMIN_TOKEN, null);
     const provision = await fetch(`${base}/enterprise/organizations`, {
       method: 'POST',
-      headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+      headers: {
+        'x-otto-admin-token': ADMIN_TOKEN,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({
         name: 'Gamma 商贸',
         slug: 'gamma',
@@ -4639,13 +6315,20 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     const created = await provision.json();
     expect(created).toMatchObject({
       organization: { name: 'Gamma 商贸', slug: 'gamma' },
-      admin: { organizationId: expect.any(String), username: 'gamma.owner', isAdmin: true },
+      admin: {
+        organizationId: expect.any(String),
+        username: 'gamma.owner',
+        isAdmin: true,
+      },
       invite: { status: 'active', validHours: 168 },
     });
 
     const secondProvision = await fetch(`${base}/enterprise/organizations`, {
       method: 'POST',
-      headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+      headers: {
+        'x-otto-admin-token': ADMIN_TOKEN,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({
         name: 'Delta 物流',
         slug: 'delta',
@@ -4661,16 +6344,21 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       headers: { 'x-otto-admin-token': ADMIN_TOKEN },
     });
     expect(organizations.status).toBe(200);
-    expect(((await organizations.json()) as {
-      organizations: Array<{ slug: string }>;
-    }).organizations.map((organization) => organization.slug)).toEqual(
-      expect.arrayContaining(['gamma', 'delta']),
-    );
+    expect(
+      (
+        (await organizations.json()) as {
+          organizations: Array<{ slug: string }>;
+        }
+      ).organizations.map((organization) => organization.slug),
+    ).toEqual(expect.arrayContaining(['gamma', 'delta']));
 
     const ownerToken = await login(base, 'gamma.owner', 'gamma-owner-password');
     const denied = await fetch(`${base}/enterprise/organizations`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${ownerToken}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${ownerToken}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({ name: '越权企业', slug: 'forbidden' }),
     });
     expect(denied.status).toBe(403);
@@ -4679,8 +6367,14 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
   it('平台工作台按所选企业隔离面板数据，并从企业清单排除个人空间', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN, null);
     const db = await import('./db.js');
-    const alpha = db.createOrganization({ name: 'Alpha 科技', slug: 'alpha-panel' });
-    const beta = db.createOrganization({ name: 'Beta 物流', slug: 'beta-panel' });
+    const alpha = db.createOrganization({
+      name: 'Alpha 科技',
+      slug: 'alpha-panel',
+    });
+    const beta = db.createOrganization({
+      name: 'Beta 物流',
+      slug: 'beta-panel',
+    });
     const alphaAdmin = db.createAccount({
       organizationId: alpha.id,
       username: 'alpha.panel.owner',
@@ -4720,9 +6414,9 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     expect(listed.organizations.map((organization) => organization.id)).toEqual(
       expect.arrayContaining([alpha.id, beta.id]),
     );
-    expect(listed.organizations.map((organization) => organization.id)).not.toContain(
-      personal.organizationId,
-    );
+    expect(
+      listed.organizations.map((organization) => organization.id),
+    ).not.toContain(personal.organizationId);
 
     const overview = await fetch(
       `${base}/enterprise/platform/organizations/${encodeURIComponent(beta.id)}/overview`,
@@ -4734,20 +6428,30 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       accounts: Array<{ id: string; organizationId: string; name: string }>;
       usage: { organizationId: string };
     };
-    expect(panel.organization).toMatchObject({ id: beta.id, name: 'Beta 物流' });
+    expect(panel.organization).toMatchObject({
+      id: beta.id,
+      name: 'Beta 物流',
+    });
     expect(panel.usage.organizationId).toBe(beta.id);
     expect(panel.accounts.map((account) => account.id)).toEqual(
       expect.arrayContaining([betaAdmin.id, betaMember.id]),
     );
-    expect(panel.accounts.every((account) => account.organizationId === beta.id)).toBe(true);
-    expect(panel.accounts.map((account) => account.id)).not.toContain(alphaAdmin.id);
+    expect(
+      panel.accounts.every((account) => account.organizationId === beta.id),
+    ).toBe(true);
+    expect(panel.accounts.map((account) => account.id)).not.toContain(
+      alphaAdmin.id,
+    );
 
     const betaMemberSession = db.createAuthSession(betaMember.id).token;
     const permissionUpdate = await fetch(
       `${base}/enterprise/platform/organizations/${encodeURIComponent(beta.id)}/accounts/${encodeURIComponent(betaMember.id)}`,
       {
         method: 'PATCH',
-        headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+        headers: {
+          'x-otto-admin-token': ADMIN_TOKEN,
+          'content-type': 'application/json',
+        },
         body: JSON.stringify({
           role: '客户成功负责人',
           isAdmin: true,
@@ -4769,7 +6473,10 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       `${base}/enterprise/platform/organizations/${encodeURIComponent(beta.id)}/accounts/${encodeURIComponent(alphaAdmin.id)}`,
       {
         method: 'PATCH',
-        headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+        headers: {
+          'x-otto-admin-token': ADMIN_TOKEN,
+          'content-type': 'application/json',
+        },
         body: JSON.stringify({ isAdmin: false }),
       },
     );
@@ -4790,7 +6497,10 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       `${base}/enterprise/platform/organizations/${encodeURIComponent(beta.id)}/accounts/${encodeURIComponent(betaMember.id)}`,
       {
         method: 'PATCH',
-        headers: { authorization: `Bearer ${alphaAdminToken}`, 'content-type': 'application/json' },
+        headers: {
+          authorization: `Bearer ${alphaAdminToken}`,
+          'content-type': 'application/json',
+        },
         body: JSON.stringify({ isAdmin: false }),
       },
     );
@@ -4800,7 +6510,10 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       `${base}/enterprise/platform/organizations/${encodeURIComponent(alpha.id)}/accounts/${encodeURIComponent(alphaAdmin.id)}`,
       {
         method: 'PATCH',
-        headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+        headers: {
+          'x-otto-admin-token': ADMIN_TOKEN,
+          'content-type': 'application/json',
+        },
         body: JSON.stringify({ isAdmin: false }),
       },
     );
@@ -4823,8 +6536,14 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
   it('平台账号删除严格限定所选企业，不能用另一企业的账号 id 越权', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN, null);
     const db = await import('./db.js');
-    const alpha = db.createOrganization({ name: 'Alpha 删除边界', slug: 'alpha-delete' });
-    const beta = db.createOrganization({ name: 'Beta 删除边界', slug: 'beta-delete' });
+    const alpha = db.createOrganization({
+      name: 'Alpha 删除边界',
+      slug: 'alpha-delete',
+    });
+    const beta = db.createOrganization({
+      name: 'Beta 删除边界',
+      slug: 'beta-delete',
+    });
     const alphaAdmin = db.createAccount({
       organizationId: alpha.id,
       username: 'alpha.delete.owner',
@@ -4880,7 +6599,10 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
 
     const provision = await fetch(`${base}/enterprise/organizations`, {
       method: 'POST',
-      headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+      headers: {
+        'x-otto-admin-token': ADMIN_TOKEN,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({
         name: '不应残留的企业',
         slug: 'must-rollback',
@@ -4894,18 +6616,32 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
 
     expect(provision.status).toBe(409);
     expect(db.listOrganizations()).toEqual(before);
-    expect(db.listOrganizations().some((organization) => organization.slug === 'must-rollback')).toBe(false);
-    expect((db.getDB().prepare(
-      `SELECT COUNT(*) AS count FROM organization_invites
+    expect(
+      db
+        .listOrganizations()
+        .some((organization) => organization.slug === 'must-rollback'),
+    ).toBe(false);
+    expect(
+      (
+        db
+          .getDB()
+          .prepare(
+            `SELECT COUNT(*) AS count FROM organization_invites
        WHERE organization_id NOT IN (SELECT id FROM organizations)`,
-    ).get() as { count: number }).count).toBe(0);
+          )
+          .get() as { count: number }
+      ).count,
+    ).toBe(0);
   });
   it('platform can provision a park admin organization and park admins can list tenant organizations', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN, null);
     const db = await import('./db.js');
     const parkProvision = await fetch(`${base}/enterprise/organizations`, {
       method: 'POST',
-      headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+      headers: {
+        'x-otto-admin-token': ADMIN_TOKEN,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({
         name: 'Hongchuang Park Operator',
         slug: 'hongchuang-park-operator',
@@ -4922,8 +6658,14 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       `${base}/enterprise/platform/organizations/${encodeURIComponent(parkProvisioned.organization.id)}/park`,
       {
         method: 'POST',
-        headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
-        body: JSON.stringify({ name: 'Hongchuang Park', brandName: 'Hongchuang Park Services' }),
+        headers: {
+          'x-otto-admin-token': ADMIN_TOKEN,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: 'Hongchuang Park',
+          brandName: 'Hongchuang Park Services',
+        }),
       },
     );
     expect(provisionPark.status).toBe(201);
@@ -4938,7 +6680,10 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       `${base}/enterprise/platform/organizations/${encodeURIComponent(parkProvisioned.organization.id)}/park`,
       {
         method: 'PATCH',
-        headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+        headers: {
+          'x-otto-admin-token': ADMIN_TOKEN,
+          'content-type': 'application/json',
+        },
         body: JSON.stringify({
           name: 'Hongchuang Innovation Park',
           brandName: 'Hongchuang Enterprise Services',
@@ -4962,21 +6707,30 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       `${base}/enterprise/platform/organizations/${encodeURIComponent(parkProvisioned.organization.id)}/park`,
       {
         method: 'PATCH',
-        headers: { authorization: `Bearer ${parkAdminToken}`, 'content-type': 'application/json' },
+        headers: {
+          authorization: `Bearer ${parkAdminToken}`,
+          'content-type': 'application/json',
+        },
         body: JSON.stringify({ name: 'Unauthorized Rename' }),
       },
     );
     expect(enterpriseAdminCannotUpdatePark.status).toBe(403);
     const inviteResponse = await fetch(`${base}/enterprise/park/invite`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${parkAdminToken}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${parkAdminToken}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({ maxUses: 2 }),
     });
     expect(inviteResponse.status).toBe(201);
     const invite = (await inviteResponse.json()).invite;
     const tenantProvision = await fetch(`${base}/enterprise/organizations`, {
       method: 'POST',
-      headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+      headers: {
+        'x-otto-admin-token': ADMIN_TOKEN,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({
         name: 'Tenant Company',
         slug: 'tenant-company',
@@ -4989,17 +6743,25 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     });
     expect(tenantProvision.status).toBe(201);
     const tenantProvisioned = await tenantProvision.json();
-    const tenantAdminToken = db.createAuthSession(tenantProvisioned.admin.id).token;
+    const tenantAdminToken = db.createAuthSession(
+      tenantProvisioned.admin.id,
+    ).token;
     const incompleteJoin = await fetch(`${base}/enterprise/park/join`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${tenantAdminToken}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${tenantAdminToken}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({ inviteCode: invite.code }),
     });
     expect(incompleteJoin.status).toBe(400);
     expect(await incompleteJoin.json()).toEqual({ error: '企业地址不能为空' });
     const join = await fetch(`${base}/enterprise/park/join`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${tenantAdminToken}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${tenantAdminToken}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({
         inviteCode: invite.code,
         address: '科技大厦 A 座',
@@ -5014,7 +6776,10 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     });
     const profileUpdate = await fetch(`${base}/enterprise/park/profile`, {
       method: 'PATCH',
-      headers: { authorization: `Bearer ${tenantAdminToken}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${tenantAdminToken}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({ address: '科技大厦 B 座', roomNumber: '1508 室' }),
     });
     expect(profileUpdate.status).toBe(200);
@@ -5037,13 +6802,15 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     });
     expect(tenants.status).toBe(200);
     expect(await tenants.json()).toMatchObject({
-      organizations: [expect.objectContaining({
-        id: tenantProvisioned.organization.id,
-        name: 'Tenant Company',
-        parkId: park.id,
-        parkAddress: '科技大厦 B 座',
-        parkRoomNumber: '1508 室',
-      })],
+      organizations: [
+        expect.objectContaining({
+          id: tenantProvisioned.organization.id,
+          name: 'Tenant Company',
+          parkId: park.id,
+          parkAddress: '科技大厦 B 座',
+          parkRoomNumber: '1508 室',
+        }),
+      ],
     });
     const tenantCannotList = await fetch(`${base}/enterprise/park/tenants`, {
       headers: { authorization: `Bearer ${tenantAdminToken}` },
@@ -5083,7 +6850,9 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
         quantity: '2',
       },
     });
-    const meetingDate = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
+    const meetingDate = new Date(Date.now() + 2 * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
     const meetingRoom = db.listParkMeetingRooms(park.adminOrganizationId)[0];
     expect(meetingRoom).toBeDefined();
     const bookedMeetingTicket = db.createTicket({
@@ -5113,11 +6882,16 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       slotKey: 'morning',
       ticketId: bookedMeetingTicket.id,
     });
-    const expectedMeetingAmount = Number(bookedMeetingTicket.formData.amountCny);
+    const expectedMeetingAmount = Number(
+      bookedMeetingTicket.formData.amountCny,
+    );
 
-    const statisticsResponse = await fetch(base + '/enterprise/park/statistics', {
-      headers: { authorization: 'Bearer ' + parkAdminToken },
-    });
+    const statisticsResponse = await fetch(
+      base + '/enterprise/park/statistics',
+      {
+        headers: { authorization: 'Bearer ' + parkAdminToken },
+      },
+    );
     expect(statisticsResponse.status).toBe(200);
     const statistics = (await statisticsResponse.json()).statistics;
     expect(statistics).toMatchObject({
@@ -5135,8 +6909,12 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       services: expect.arrayContaining([
         expect.objectContaining({ serviceId: 'vehicle-visit', count: 1 }),
         expect.objectContaining({
-          serviceId: 'parking', count: 1, amountCny: 520, recurringMonthlyCny: 520,
-          firstUsedAt: expect.any(String), lastUsedAt: expect.any(String),
+          serviceId: 'parking',
+          count: 1,
+          amountCny: 520,
+          recurringMonthlyCny: 520,
+          firstUsedAt: expect.any(String),
+          lastUsedAt: expect.any(String),
         }),
         expect.objectContaining({ serviceId: 'meeting-room', count: 1 }),
       ]),
@@ -5155,37 +6933,53 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
           lastUsedAt: expect.any(String),
           services: expect.arrayContaining([
             expect.objectContaining({ serviceId: 'vehicle-visit', count: 1 }),
-            expect.objectContaining({ serviceId: 'parking', count: 1, amountCny: 520 }),
+            expect.objectContaining({
+              serviceId: 'parking',
+              count: 1,
+              amountCny: 520,
+            }),
             expect.objectContaining({ serviceId: 'meeting-room', count: 1 }),
           ]),
         }),
       ],
     });
-    const tenantCannotReadStatistics = await fetch(base + '/enterprise/park/statistics', {
-      headers: { authorization: 'Bearer ' + tenantAdminToken },
-    });
+    const tenantCannotReadStatistics = await fetch(
+      base + '/enterprise/park/statistics',
+      {
+        headers: { authorization: 'Bearer ' + tenantAdminToken },
+      },
+    );
     expect(tenantCannotReadStatistics.status).toBe(403);
 
-    const platformTenantProvision = await fetch(`${base}/enterprise/organizations`, {
-      method: 'POST',
-      headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        name: 'Platform Joined Company',
-        slug: 'platform-joined-company',
-        admin: {
-          username: 'platform.tenant.owner',
-          password: 'tenant-owner-password',
-          name: 'Platform Tenant Owner',
+    const platformTenantProvision = await fetch(
+      `${base}/enterprise/organizations`,
+      {
+        method: 'POST',
+        headers: {
+          'x-otto-admin-token': ADMIN_TOKEN,
+          'content-type': 'application/json',
         },
-      }),
-    });
+        body: JSON.stringify({
+          name: 'Platform Joined Company',
+          slug: 'platform-joined-company',
+          admin: {
+            username: 'platform.tenant.owner',
+            password: 'tenant-owner-password',
+            name: 'Platform Tenant Owner',
+          },
+        }),
+      },
+    );
     expect(platformTenantProvision.status).toBe(201);
     const platformTenantProvisioned = await platformTenantProvision.json();
     const platformJoin = await fetch(
       `${base}/enterprise/platform/organizations/${encodeURIComponent(platformTenantProvisioned.organization.id)}/park/join`,
       {
         method: 'POST',
-        headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+        headers: {
+          'x-otto-admin-token': ADMIN_TOKEN,
+          'content-type': 'application/json',
+        },
         body: JSON.stringify({
           inviteCode: invite.code,
           address: '创新中心 C 座',
@@ -5202,7 +6996,10 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       `${base}/enterprise/platform/organizations/${encodeURIComponent(platformTenantProvisioned.organization.id)}/park`,
       {
         method: 'PATCH',
-        headers: { 'x-otto-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' },
+        headers: {
+          'x-otto-admin-token': ADMIN_TOKEN,
+          'content-type': 'application/json',
+        },
         body: JSON.stringify({ name: 'Tenant Controlled Park' }),
       },
     );
@@ -5228,14 +7025,20 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     });
     expect(platformParkOverviewBody.park.tenants).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: platformTenantProvisioned.organization.id }),
+        expect.objectContaining({
+          id: platformTenantProvisioned.organization.id,
+        }),
       ]),
     );
   }, 30_000);
 });
 
 describe('企业 Skill 市场 HTTP 闭环', () => {
-  async function login(base: string, identifier: string, password: string): Promise<string> {
+  async function login(
+    base: string,
+    identifier: string,
+    password: string,
+  ): Promise<string> {
     const response = await fetch(`${base}/enterprise/auth/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -5249,21 +7052,50 @@ describe('企业 Skill 市场 HTTP 闭环', () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
     const database = await import('./db.js');
     const author = database.createAccount({
-      username: 'skill.author', password: 'skill-author-password', name: '分享者', department: '财务部',
+      username: 'skill.author',
+      password: 'skill-author-password',
+      name: '分享者',
+      department: '财务部',
     });
     const buyer = database.createAccount({
-      username: 'skill.buyer', password: 'skill-buyer-password', name: '使用者', department: '财务部',
+      username: 'skill.buyer',
+      password: 'skill-buyer-password',
+      name: '使用者',
+      department: '财务部',
     });
     const outsider = database.createAccount({
-      username: 'skill.outsider', password: 'skill-outsider-password', name: '其他部门', department: '研发部',
+      username: 'skill.outsider',
+      password: 'skill-outsider-password',
+      name: '其他部门',
+      department: '研发部',
     });
     const admin = database.createAccount({
-      username: 'skill.admin', password: 'skill-admin-password', name: '审核员', department: '管理层', isAdmin: true,
+      username: 'skill.admin',
+      password: 'skill-admin-password',
+      name: '审核员',
+      department: '管理层',
+      isAdmin: true,
     });
-    const authorToken = await login(base, author.username, 'skill-author-password');
-    const buyerToken = await login(base, buyer.username, 'skill-buyer-password');
-    const outsiderToken = await login(base, outsider.username, 'skill-outsider-password');
-    const adminToken = await login(base, admin.username, 'skill-admin-password');
+    const authorToken = await login(
+      base,
+      author.username,
+      'skill-author-password',
+    );
+    const buyerToken = await login(
+      base,
+      buyer.username,
+      'skill-buyer-password',
+    );
+    const outsiderToken = await login(
+      base,
+      outsider.username,
+      'skill-outsider-password',
+    );
+    const adminToken = await login(
+      base,
+      admin.username,
+      'skill-admin-password',
+    );
     const auth = (token: string) => ({
       authorization: `Bearer ${token}`,
       'content-type': 'application/json',
@@ -5281,59 +7113,99 @@ describe('企业 Skill 市场 HTTP 闭环', () => {
     });
     expect(submitted.status).toBe(201);
     const submittedBody = await submitted.json();
-    expect(submittedBody.skill).toMatchObject({ status: 'pending_review', department: '财务部' });
+    expect(submittedBody.skill).toMatchObject({
+      status: 'pending_review',
+      department: '财务部',
+    });
     const skillId = submittedBody.skill.id as string;
 
-    const memberReview = await fetch(`${base}/enterprise/skills?scope=review`, { headers: auth(buyerToken) });
+    const memberReview = await fetch(`${base}/enterprise/skills?scope=review`, {
+      headers: auth(buyerToken),
+    });
     expect(memberReview.status).toBe(403);
-    const beforeReview = await fetch(`${base}/enterprise/skills`, { headers: auth(buyerToken) });
+    const beforeReview = await fetch(`${base}/enterprise/skills`, {
+      headers: auth(buyerToken),
+    });
     expect((await beforeReview.json()).skills).toEqual([]);
 
-    const reviewed = await fetch(`${base}/enterprise/skills/${skillId}/review`, {
-      method: 'POST',
-      headers: auth(adminToken),
-      body: JSON.stringify({ action: 'approve', visibility: 'department' }),
-    });
+    const reviewed = await fetch(
+      `${base}/enterprise/skills/${skillId}/review`,
+      {
+        method: 'POST',
+        headers: auth(adminToken),
+        body: JSON.stringify({ action: 'approve', visibility: 'department' }),
+      },
+    );
     expect(reviewed.status).toBe(200);
-    const buyerMarket = await fetch(`${base}/enterprise/skills`, { headers: auth(buyerToken) });
+    const buyerMarket = await fetch(`${base}/enterprise/skills`, {
+      headers: auth(buyerToken),
+    });
     expect((await buyerMarket.json()).skills).toHaveLength(1);
-    const outsiderMarket = await fetch(`${base}/enterprise/skills`, { headers: auth(outsiderToken) });
+    const outsiderMarket = await fetch(`${base}/enterprise/skills`, {
+      headers: auth(outsiderToken),
+    });
     expect((await outsiderMarket.json()).skills).toEqual([]);
 
-    const install = await fetch(`${base}/enterprise/skills/${skillId}/install`, {
-      method: 'POST', headers: auth(buyerToken), body: '{}',
-    });
+    const install = await fetch(
+      `${base}/enterprise/skills/${skillId}/install`,
+      {
+        method: 'POST',
+        headers: auth(buyerToken),
+        body: '{}',
+      },
+    );
     expect(install.status).toBe(200);
     expect((await install.json()).skill).toMatchObject({
       content: expect.stringContaining('先核对事实'),
       installedVersion: 1,
     });
     const rated = await fetch(`${base}/enterprise/skills/${skillId}/rating`, {
-      method: 'POST', headers: auth(buyerToken), body: JSON.stringify({ score: 5 }),
+      method: 'POST',
+      headers: auth(buyerToken),
+      body: JSON.stringify({ score: 5 }),
     });
     expect(rated.status).toBe(200);
-    expect((await rated.json()).skill).toMatchObject({ rating: 5, ratingCount: 1 });
+    expect((await rated.json()).skill).toMatchObject({
+      rating: 5,
+      ratingCount: 1,
+    });
 
     const usageEvent = 'b'.repeat(64);
     for (const success of [true, true]) {
       const usage = await fetch(`${base}/enterprise/skills/${skillId}/usage`, {
-        method: 'POST', headers: auth(buyerToken), body: JSON.stringify({ success, eventId: usageEvent }),
+        method: 'POST',
+        headers: auth(buyerToken),
+        body: JSON.stringify({ success, eventId: usageEvent }),
       });
       expect(usage.status).toBe(200);
     }
-    const invalidUsage = await fetch(`${base}/enterprise/skills/${skillId}/usage`, {
-      method: 'POST', headers: auth(buyerToken), body: '{}',
-    });
+    const invalidUsage = await fetch(
+      `${base}/enterprise/skills/${skillId}/usage`,
+      {
+        method: 'POST',
+        headers: auth(buyerToken),
+        body: '{}',
+      },
+    );
     expect(invalidUsage.status).toBe(400);
 
-    const leaderboard = await fetch(`${base}/enterprise/skills/leaderboard`, { headers: auth(buyerToken) });
+    const leaderboard = await fetch(`${base}/enterprise/skills/leaderboard`, {
+      headers: auth(buyerToken),
+    });
     expect(leaderboard.status).toBe(200);
     expect((await leaderboard.json()).skills[0]).toMatchObject({
-      id: skillId, rank: 1, usageCount: 1, successCount: 1,
+      id: skillId,
+      rank: 1,
+      usageCount: 1,
+      successCount: 1,
     });
 
-    database.updateOrganizationFeatures(database.DEFAULT_ORGANIZATION_ID, { skill_market: false });
-    const disabledMarket = await fetch(`${base}/enterprise/skills`, { headers: auth(buyerToken) });
+    database.updateOrganizationFeatures(database.DEFAULT_ORGANIZATION_ID, {
+      skill_market: false,
+    });
+    const disabledMarket = await fetch(`${base}/enterprise/skills`, {
+      headers: auth(buyerToken),
+    });
     expect(disabledMarket.status).toBe(403);
   }, 30_000);
 });

@@ -2,10 +2,12 @@
   "name": "@otto/native",
   "version": "0.1.0",
   "description": "Rust native bindings for Otto - Session store, encryption, tokenizer, agent pool",
+  "type": "commonjs",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node dist/test.js",
     "prepublishOnly": "npm run build"
   },

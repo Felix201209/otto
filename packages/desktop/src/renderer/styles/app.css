@@ -743,6 +743,7 @@ h6.otto-prose__h {
 .otto-auth-consent { display:flex; align-items:flex-start; gap:9px; color:#9aabc2; font-size:10px; line-height:1.5; cursor:pointer; }
 .otto-auth-consent input { width:15px; height:15px; margin:0; accent-color:var(--auth-electric); flex:0 0 auto; }
 .otto-auth-consent button { padding:0 2px; border:0; color:var(--auth-electric); background:transparent; font:inherit; cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
+.otto-auth-consent small { display:block; margin-top:3px; color:#71839c; overflow-wrap:anywhere; }
 
 /* 身份控制台 */
 .otto-viewall--accounts.is-active { color: var(--otto-accent); background: var(--otto-accent-soft); }
@@ -2966,7 +2967,7 @@ h6.otto-prose__h {
  * ════════════════════════════════════════════════════════════════════════ */
 
 /* 模态遮罩 + 卡片 */
-/* —— 「查看全部对话」检索面板 —— */
+/* —— 统一消息中心 —— */
 .otto-allconv-overlay {
   position: absolute;
   inset: 0;
@@ -3032,6 +3033,29 @@ h6.otto-prose__h {
 .otto-allconv__close:hover {
   background: rgba(0, 0, 0, 0.05);
   color: var(--otto-text);
+}
+.otto-allconv__filters {
+  display: flex;
+  gap: 6px;
+  padding: 9px 14px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--otto-border);
+}
+.otto-allconv__filter {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-pill);
+  background: transparent;
+  color: var(--otto-text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.otto-allconv__filter:hover,
+.otto-allconv__filter.is-active {
+  border-color: color-mix(in srgb, var(--otto-accent) 45%, var(--otto-border));
+  background: var(--otto-accent-soft);
+  color: var(--otto-accent-hover);
 }
 .otto-allconv__list {
   flex: 1;
@@ -5785,7 +5809,22 @@ h6.otto-prose__h {
 .otto-hub__privacy-activities summary{min-height:54px;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 15px;cursor:pointer;list-style:none}.otto-hub__privacy-activities summary::-webkit-details-marker{display:none}.otto-hub__privacy-activities summary>span{display:grid;gap:3px}.otto-hub__privacy-activities summary small{color:var(--otto-text-tertiary);font-size:11px}
 .otto-hub__privacy-activities dl{margin:0;padding:0 15px 14px;display:grid;gap:8px}.otto-hub__privacy-activities dl>div{display:grid;grid-template-columns:82px minmax(0,1fr);gap:10px}.otto-hub__privacy-activities dt{color:var(--otto-text-tertiary);font-size:11px}.otto-hub__privacy-activities dd{margin:0;color:var(--otto-text-secondary);font-size:11.5px}
 .otto-hub__privacy-delete{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto auto;gap:8px;width:100%}
-@media(max-width:720px){.otto-hub__privacy-summary{grid-template-columns:1fr}.otto-hub__privacy-summary>div{border-right:0;border-bottom:1px solid var(--otto-border)!important}.otto-hub__privacy-summary>div:last-child{border-bottom:0!important}.otto-hub__privacy-delete{grid-template-columns:1fr}.otto-hub__privacy-activities summary{align-items:flex-start;flex-direction:column}.otto-hub__privacy-activities dl>div{grid-template-columns:1fr;gap:2px}}
+.otto-hub__e2ee-card{display:grid;gap:0;overflow:hidden}
+.otto-hub__e2ee-device-list{display:grid}
+.otto-hub__e2ee-device{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:12px;padding:13px 15px;border-bottom:1px solid var(--otto-border)}
+.otto-hub__e2ee-device>div:first-child{min-width:0;display:grid;gap:4px}.otto-hub__e2ee-device strong{font-size:12px}.otto-hub__e2ee-device>div:first-child span{overflow:hidden;color:var(--otto-text-tertiary);font:10px/1.4 var(--otto-font-mono);text-overflow:ellipsis;white-space:nowrap}
+.otto-hub__e2ee-confirm{display:flex;gap:6px}
+.otto-hub__e2ee-verification{grid-column:1/-1;display:grid!important;grid-template-columns:150px minmax(0,1fr);gap:14px;align-items:center;padding:12px;border:1px solid var(--otto-border);border-radius:10px;background:var(--otto-bg-secondary)}
+.otto-hub__e2ee-verification>div{display:grid;gap:8px}.otto-hub__e2ee-verification code{font:12px/1.7 var(--otto-font-mono);word-spacing:3px}.otto-hub__e2ee-verification span{color:var(--otto-text-tertiary);font-size:11px;line-height:1.5}.otto-hub__e2ee-verification .otto-hub__btn{justify-self:start}
+.otto-hub__e2ee-qr{display:block;width:150px;height:150px;border-radius:6px;background:#fff}
+.otto-hub__e2ee-recovery{display:grid;gap:12px;padding:15px}
+.otto-hub__e2ee-recovery-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:8px;align-items:start}
+.otto-hub__e2ee-recovery-grid--import{grid-template-columns:minmax(0,2fr) minmax(0,1fr) auto;padding-top:12px;border-top:1px solid var(--otto-border)}
+.otto-hub__e2ee-recovery-grid textarea.otto-hub__input{min-height:68px;padding-top:10px;resize:vertical}
+.otto-hub__e2ee-transparency{display:grid;gap:12px;padding:15px;border-top:1px solid var(--otto-border)}
+.otto-hub__e2ee-chain-head{display:flex;align-items:center;gap:10px;min-width:0}.otto-hub__e2ee-chain-head code{min-width:0;overflow:hidden;color:var(--otto-text-tertiary);font:10px/1.4 var(--otto-font-mono);text-overflow:ellipsis;white-space:nowrap}
+.otto-hub__e2ee-log{display:grid;border:1px solid var(--otto-border);border-radius:var(--otto-radius-sm);overflow:hidden}.otto-hub__e2ee-log-entry{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid var(--otto-border)}.otto-hub__e2ee-log-entry:last-child{border-bottom:0}.otto-hub__e2ee-log-entry>div{display:grid;gap:3px;min-width:0}.otto-hub__e2ee-log-entry strong{font-size:11.5px}.otto-hub__e2ee-log-entry span,.otto-hub__e2ee-log-entry time{color:var(--otto-text-tertiary);font:10px/1.4 var(--otto-font-mono)}.otto-hub__e2ee-log-entry span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.otto-hub__e2ee-log-entry time{flex-shrink:0}
+@media(max-width:720px){.otto-hub__privacy-summary{grid-template-columns:1fr}.otto-hub__privacy-summary>div{border-right:0;border-bottom:1px solid var(--otto-border)!important}.otto-hub__privacy-summary>div:last-child{border-bottom:0!important}.otto-hub__privacy-delete,.otto-hub__e2ee-recovery-grid,.otto-hub__e2ee-verification{grid-template-columns:1fr}.otto-hub__e2ee-device{grid-template-columns:minmax(0,1fr) auto}.otto-hub__e2ee-device>.otto-hub__btn,.otto-hub__e2ee-confirm{grid-column:1/-1;justify-self:start}.otto-hub__privacy-activities summary{align-items:flex-start;flex-direction:column}.otto-hub__privacy-activities dl>div{grid-template-columns:1fr;gap:2px}}
 
 /* ── 园区服务插件（右下角悬浮小钮 + 居中对话框）─────────────────── */
 /* 入口小钮：默认弱化只露图标，不抢聊天注意力；hover 提亮并横向展开标签。 */
@@ -7479,6 +7518,7 @@ h6.otto-prose__h {
   display: flex;
   justify-content: flex-end;
 }
+.otto-first-run{z-index:91}.otto-first-run__body{display:grid;gap:18px;padding:4px 0}.otto-first-run__body p{margin:0;color:var(--otto-text-secondary);font-size:13px;line-height:1.7}.otto-first-run__progress{display:flex;gap:7px}.otto-first-run__progress span{width:28px;height:4px;border-radius:var(--otto-radius-pill);background:var(--otto-border)}.otto-first-run__progress span.is-active{background:var(--otto-accent)}.otto-first-run__actions{display:flex;justify-content:space-between;gap:10px;margin-top:18px}
 
 /* ══════════════ v1.7 个人/企业双模式工作区 ══════════════ */
 .otto-orgtree {
@@ -9056,6 +9096,9 @@ h6.otto-prose__h {
   margin-left: 8px;
   padding-left: 8px;
   border-left: 1px solid var(--otto-border);
+  max-width: min(42vw, 440px);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .otto-topbar__actions {

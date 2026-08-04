@@ -227,7 +227,13 @@ function cleanupUnpackedOutput(name) {
   log('BUILD', `已清理可再生中间目录: ${name}`);
 }
 
-function runBuildStep(command, args, unpackedOutput, env = process.env) {
+function runBuildStep(
+  command,
+  args,
+  unpackedOutput,
+  env = process.env,
+  verifyUnpacked,
+) {
   try {
     execFileSync(command, args, {
       cwd: DESKTOP_DIR,
@@ -235,9 +241,27 @@ function runBuildStep(command, args, unpackedOutput, env = process.env) {
       env,
       ...EXEC_FILE_OPTIONS,
     });
+    verifyUnpacked?.();
   } finally {
     cleanupUnpackedOutput(unpackedOutput);
   }
+}
+
+function verifySignedMacApplication(unpackedOutput) {
+  const appPath = path.join(RELEASE_DIR, unpackedOutput, 'Otto.app');
+  if (!existsSync(appPath)) {
+    throw new Error(`缺少待验证的 macOS 应用包: ${appPath}`);
+  }
+  execFileSync('codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath], {
+    stdio: 'inherit',
+  });
+  execFileSync('xcrun', ['stapler', 'validate', appPath], {
+    stdio: 'inherit',
+  });
+  execFileSync('spctl', ['--assess', '--type', 'execute', '--verbose=4', appPath], {
+    stdio: 'inherit',
+  });
+  log('BUILD', `Developer ID 与公证票据验证通过: ${unpackedOutput}/Otto.app`);
 }
 
 async function writeBuildProvenance(sourceCommit) {
@@ -334,6 +358,8 @@ async function build(sourceCommit) {
     NPX_BIN,
     ['electron-builder', '--mac', 'dmg', '--arm64', '--publish', 'never'],
     'mac-arm64',
+    process.env,
+    () => verifySignedMacApplication('mac-arm64'),
   );
   execFileSync(
     process.execPath,
@@ -353,7 +379,21 @@ async function build(sourceCommit) {
     NPX_BIN,
     ['electron-builder', '--mac', 'dmg', '--x64', '--publish', 'never'],
     'mac',
+    process.env,
+    () => verifySignedMacApplication('mac'),
   );
+  execFileSync(
+    process.execPath,
+    [
+      path.join(__dirname, 'smoke-packaged-electron.mjs'),
+      path.join(RELEASE_DIR, `Otto-${VERSION}-x64.dmg`),
+    ],
+    {
+      cwd: DESKTOP_DIR,
+      stdio: 'inherit',
+    },
+  );
+  log('BUILD', 'Mac x64 最终 DMG 的 preload、IPC 与 WS 动态验收通过');
 
   log('BUILD', '构建 Windows x64...');
   const windowsSigningEnv = {

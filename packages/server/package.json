@@ -5,13 +5,23 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "otto-server": "dist/bin.js"
+    "otto-server": "dist/bin.js",
+    "otto-database-encryption": "dist/src/modules/data_platform/databaseEncryptionCli.js",
+    "otto-enterprise-infrastructure": "dist/src/modules/data_platform/enterpriseInfrastructureCli.js",
+    "otto-enterprise-postgres": "dist/src/modules/data_platform/postgresDatabaseCli.js",
+    "otto-enterprise-postgres-import": "dist/src/modules/data_platform/sqlitePostgresImportCli.js",
+    "otto-enterprise-postgres-promote": "dist/src/enterprise/postgresPromotionCli.js"
   },
   "scripts": {
     "build": "node ../../scripts/build_package.js",
     "start": "node dist/bin.js start",
     "enterprise": "node dist/src/enterprise/bin.js",
     "enterprise:seed": "node dist/src/enterprise/bin.js --seed",
+    "enterprise:postgres:prepare": "node dist/src/enterprise/postgresPrepareCli.js",
+    "enterprise:postgres:import": "node dist/src/modules/data_platform/sqlitePostgresImportCli.js",
+    "enterprise:postgres:attachments": "node dist/src/enterprise/postgresAttachmentImportCli.js",
+    "enterprise:postgres:promote": "node dist/src/enterprise/postgresPromotionCli.js",
+    "enterprise:infrastructure:check": "node dist/src/modules/data_platform/enterpriseInfrastructureCli.js",
     "lint": "eslint . --ext .ts,.tsx",
     "format": "prettier --write .",
     "test": "vitest run",
@@ -22,13 +32,19 @@
     "dist"
   ],
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1100.0",
+    "@aws-sdk/s3-request-presigner": "3.1100.0",
     "@google/genai": "1.35.0",
     "@larksuiteoapi/node-sdk": "^1.71.1",
+    "better-sqlite3": "12.11.1",
     "otto-core": "file:../core",
+    "pg": "8.22.0",
+    "redis": "4.7.1",
     "ws": "^8.21.1"
   },
   "devDependencies": {
     "@types/node": "^26.1.0",
+    "@types/pg": "8.11.0",
     "@types/ws": "^8.5.12",
     "typescript": "5.9.3",
     "vitest": "^3.2.7"

@@ -28,6 +28,9 @@ const SOURCE_LABELS: Record<AtoaContextSource, string> = {
   work_logs: '工作日志',
   schedules: '日程',
 };
+const CONSULT_CONTEXT_SOURCES = ATOA_CONTEXT_SOURCES.filter(
+  (source) => source !== 'current_chat',
+);
 
 export function AtoaConsultDialog({
   account,
@@ -75,7 +78,7 @@ export function AtoaConsultDialog({
     setSources((current) =>
       current.includes(source)
         ? current.filter((item) => item !== source)
-        : ATOA_CONTEXT_SOURCES.filter(
+        : CONSULT_CONTEXT_SOURCES.filter(
             (item) => item === source || current.includes(item),
           ),
     );
@@ -171,7 +174,7 @@ export function AtoaConsultDialog({
         <fieldset>
           <legend>允许我的 Otto 用于提案的资料（默认不选）</legend>
           <div className="otto-a2a-consult__sources">
-            {ATOA_CONTEXT_SOURCES.map((source) => (
+            {CONSULT_CONTEXT_SOURCES.map((source) => (
               <label key={source}>
                 <input
                   type="checkbox"

@@ -1,0 +1,2510 @@
+/**
+ * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
+ *
+ * Electron-main ownership boundary for the release-gated MLS candidate. The
+ * renderer and enterprise server receive public KeyPackages/ciphertext only;
+ * native state keys are wrapped by Electron safeStorage before touching disk.
+ */
+
+import { createHash } from 'node:crypto';
+import path from 'node:path';
+
+import {
+  FileMlsStatePersistence,
+  OpenMlsNativeKernel,
+  type MlsDeviceScope,
+  type MlsEpochUpdate,
+  type MlsGroupInspection,
+  type MlsGroupState,
+  type MlsKeyPackage,
+  type MlsMemberInvitation,
+  type MlsPendingApplication,
+  type MlsPendingReceivedApplication,
+  type MlsStagedReceivedApplication,
+  type MlsStatePersistence,
+} from '@otto/native';
+
+export const ENTERPRISE_MLS_CIPHERSUITE =
+  'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519' as const;
+
+export type EnterpriseMlsTransportEventType =
+  'welcome' | 'commit' | 'application';
+
+export interface EnterpriseMlsPublishedKeyPackage {
+  reference: string;
+  accountId: string;
+  deviceId: string;
+  ciphersuite: typeof ENTERPRISE_MLS_CIPHERSUITE;
+  keyPackage: string;
+  createdAt: string;
+  claimedAt: string | null;
+  expiresAt: string;
+}
+
+export interface EnterpriseMlsKeyPackageInventoryEntry {
+  reference: string;
+  expiresAt: string;
+}
+
+export interface EnterpriseMlsKeyPackageInventory {
+  deviceId: string;
+  keyPackages: EnterpriseMlsKeyPackageInventoryEntry[];
+}
+
+export interface EnterpriseMlsAppendTransportEventInput {
+  senderDeviceId: string;
+  eventId: string;
+  eventType: EnterpriseMlsTransportEventType;
+  epoch: number;
+  groupId: string;
+  payload: string;
+  recipientAccountId?: string | null;
+  recipientDeviceId?: string | null;
+  keyPackageReference?: string | null;
+  resetFromGroupId?: string | null;
+}
+
+export interface EnterpriseMlsTransportEvent {
+  sequence: number;
+  eventId: string;
+  conversationId: string;
+  sessionGeneration: number;
+  senderAccountId: string;
+  senderDeviceId: string;
+  recipientAccountId: string | null;
+  recipientDeviceId: string | null;
+  eventType: EnterpriseMlsTransportEventType;
+  epoch: number;
+  groupId: string;
+  payload: string;
+  keyPackageReference: string | null;
+  memberAddDeviceId?: string | null;
+  memberAddAccountId?: string | null;
+  resetFromGroupId?: string | null;
+  memberAddKeyPackageReference?: string | null;
+  createdAt: string;
+  expiresAt: string;
+}
+
+const MLS_MEMBER_ADD_ENVELOPE_V1_PREFIX = 'otto:mls:member-add:v1:';
+const MLS_MEMBER_ADD_ENVELOPE_PREFIX = 'otto:mls:member-add:v2:';
+
+function parseMemberAddCommitEnvelope(payload: string): {
+  commit: string;
+  recipientAccountId: string | null;
+  recipientDeviceId: string;
+  keyPackageReference: string;
+  resetFromGroupId: string | null;
+} | null {
+  const decoded = Buffer.from(payload, 'base64').toString('utf8');
+  const prefix = decoded.startsWith(MLS_MEMBER_ADD_ENVELOPE_PREFIX)
+    ? MLS_MEMBER_ADD_ENVELOPE_PREFIX
+    : decoded.startsWith(MLS_MEMBER_ADD_ENVELOPE_V1_PREFIX)
+      ? MLS_MEMBER_ADD_ENVELOPE_V1_PREFIX
+      : null;
+  if (!prefix) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(decoded.slice(prefix.length));
+  } catch {
+    throw new Error('enterprise MLS member-add Commit envelope is invalid');
+  }
+  const envelope = parsed as {
+    commit?: unknown;
+    recipientAccountId?: unknown;
+    recipientDeviceId?: unknown;
+    keyPackageReference?: unknown;
+    resetFromGroupId?: unknown;
+  };
+  if (
+    typeof envelope.commit !== 'string' ||
+    !isMlsBase64(envelope.commit, 1024 * 1024) ||
+    (prefix === MLS_MEMBER_ADD_ENVELOPE_PREFIX &&
+      (typeof envelope.recipientAccountId !== 'string' ||
+        !IDENTIFIER.test(envelope.recipientAccountId))) ||
+    typeof envelope.recipientDeviceId !== 'string' ||
+    !IDENTIFIER.test(envelope.recipientDeviceId) ||
+    typeof envelope.keyPackageReference !== 'string' ||
+    !isMlsReference(envelope.keyPackageReference) ||
+    (prefix === MLS_MEMBER_ADD_ENVELOPE_PREFIX &&
+      envelope.resetFromGroupId !== null &&
+      (typeof envelope.resetFromGroupId !== 'string' ||
+        !isMlsBase64(envelope.resetFromGroupId, 255)))
+  ) {
+    throw new Error('enterprise MLS member-add Commit envelope is invalid');
+  }
+  return {
+    commit: envelope.commit,
+    recipientAccountId:
+      prefix === MLS_MEMBER_ADD_ENVELOPE_PREFIX
+        ? (envelope.recipientAccountId as string)
+        : null,
+    recipientDeviceId: envelope.recipientDeviceId,
+    keyPackageReference: envelope.keyPackageReference,
+    resetFromGroupId:
+      prefix === MLS_MEMBER_ADD_ENVELOPE_PREFIX &&
+      typeof envelope.resetFromGroupId === 'string'
+        ? envelope.resetFromGroupId
+        : null,
+  };
+}
+
+export interface EnterpriseMlsTransportClient {
+  publishMlsKeyPackage(
+    deviceId: string,
+    keyPackage: MlsKeyPackage,
+  ): Promise<EnterpriseMlsPublishedKeyPackage>;
+  listMlsKeyPackageInventory(
+    deviceId: string,
+  ): Promise<EnterpriseMlsKeyPackageInventory>;
+  retireMlsKeyPackage(deviceId: string, reference: string): Promise<void>;
+  claimMlsKeyPackage(
+    requesterDeviceId: string,
+    recipientAccountId: string,
+    recipientDeviceId?: string,
+    conversationPeerAccountId?: string,
+  ): Promise<EnterpriseMlsPublishedKeyPackage | null>;
+  listApprovedMlsDeviceIds?(accountId: string): Promise<string[]>;
+  appendMlsTransportEvent(
+    peerAccountId: string,
+    input: EnterpriseMlsAppendTransportEventInput,
+  ): Promise<EnterpriseMlsTransportEvent>;
+  listMlsTransportEvents(
+    peerAccountId: string,
+    afterSequence?: number,
+    limit?: number,
+  ): Promise<EnterpriseMlsTransportEvent[]>;
+  listMlsInboundConversationPeers(deviceId: string): Promise<string[]>;
+}
+
+export interface EnterpriseMlsDecryptedTransportMessage {
+  sequence: number;
+  eventId: string;
+  senderAccountId: string;
+  senderDeviceId: string;
+  plaintext: Uint8Array;
+  createdAt: string;
+}
+
+export interface EnterpriseMlsPollResult {
+  previousSequence: number;
+  nextSequence: number;
+  processedEvents: number;
+  messages: EnterpriseMlsDecryptedTransportMessage[];
+}
+
+export type EnterpriseMlsSessionEstablishment =
+  | {
+      state: 'ready';
+      group: MlsGroupState;
+    }
+  | {
+      state: 'waiting-for-peer-key-package';
+      group: MlsGroupState;
+    }
+  | {
+      state: 'waiting-for-peer-commit';
+      group: null;
+    };
+
+export interface EnterpriseMlsKernel {
+  init(): Promise<void>;
+  createKeyPackage(): Promise<MlsKeyPackage>;
+  listKeyPackages(): Promise<MlsKeyPackage[]>;
+  consumeKeyPackage(reference: string): Promise<void>;
+  createGroup(conversationId: string): Promise<MlsGroupState>;
+  addMember(
+    conversationId: string,
+    keyPackage: MlsKeyPackage,
+  ): Promise<MlsMemberInvitation>;
+  createEpochUpdate(
+    conversationId: string,
+    peerAccountId: string,
+  ): Promise<MlsEpochUpdate>;
+  mergePendingEpochUpdate(
+    conversationId: string,
+    peerAccountId: string,
+  ): Promise<MlsGroupState>;
+  mergePendingCommit(
+    conversationId: string,
+    peerAccountId: string,
+  ): Promise<MlsGroupState>;
+  inspectGroup(conversationId: string): Promise<MlsGroupInspection | null>;
+  joinGroup(
+    conversationId: string,
+    peerAccountId: string,
+    keyPackageReference: string,
+    expectedGroupId: string,
+    welcome: string,
+  ): Promise<MlsGroupState>;
+  encryptTransportApplication(
+    conversationId: string,
+    peerAccountId: string,
+    plaintext: Uint8Array,
+  ): Promise<MlsPendingApplication>;
+  listPendingApplications(
+    conversationId: string,
+    peerAccountId: string,
+  ): Promise<MlsPendingApplication[]>;
+  listPendingApplicationPeers(): Promise<string[]>;
+  listConversationPeers(): Promise<string[]>;
+  bindConversationPeer(
+    conversationId: string,
+    peerAccountId: string,
+  ): Promise<boolean>;
+  acknowledgePendingApplication(
+    conversationId: string,
+    peerAccountId: string,
+    eventId: string,
+  ): Promise<void>;
+  receiveTransportApplication(
+    conversationId: string,
+    peerAccountId: string,
+    eventId: string,
+    ciphertext: string,
+    sequence: number,
+    expectedGroupId: string,
+    expectedEpoch: number,
+    senderDeviceId: string,
+    createdAt: string,
+    senderAccountId?: string,
+  ): Promise<MlsPendingReceivedApplication>;
+  stageTransportApplication(
+    conversationId: string,
+    peerAccountId: string,
+    eventId: string,
+    ciphertext: string,
+    sequence: number,
+    expectedGroupId: string,
+    expectedEpoch: number,
+    senderDeviceId: string,
+    createdAt: string,
+    senderAccountId?: string,
+  ): Promise<MlsStagedReceivedApplication>;
+  listPendingReceivedApplications(
+    conversationId: string,
+    peerAccountId: string,
+  ): Promise<MlsPendingReceivedApplication[]>;
+  acknowledgeReceivedApplication(
+    conversationId: string,
+    peerAccountId: string,
+    eventId: string,
+  ): Promise<void>;
+  resetConversation?(
+    conversationId: string,
+    peerAccountId: string,
+  ): Promise<MlsGroupInspection>;
+  abandonConversationForReset?(
+    conversationId: string,
+    peerAccountId: string,
+    previousGroupId: string,
+  ): Promise<void>;
+  transportCursor(conversationId: string): Promise<number>;
+  acknowledgeTransportEvent(
+    conversationId: string,
+    sequence: number,
+  ): Promise<void>;
+  receiveTransportCommit(
+    conversationId: string,
+    peerAccountId: string,
+    commit: string,
+    sequence: number,
+    expectedGroupId: string,
+    expectedEpoch: number,
+    senderDeviceId: string,
+    expectedAddedDeviceId?: string | null,
+    expectedAddedKeyPackageReference?: string | null,
+    senderAccountId?: string,
+    expectedAddedAccountId?: string | null,
+  ): Promise<MlsGroupState>;
+  reset(): Promise<void>;
+  close(): Promise<void>;
+}
+
+export interface EnterpriseMlsSecureStorage {
+  assertAvailable(): void;
+  protect(plaintext: string): string;
+  unprotect(protectedValue: string): string;
+}
+
+export interface EnterpriseMlsKernelFactoryInput {
+  scope: MlsDeviceScope;
+  statePath: string;
+  persistence: MlsStatePersistence;
+  binaryPath?: string;
+}
+
+export type EnterpriseMlsKernelFactory = (
+  input: EnterpriseMlsKernelFactoryInput,
+) => EnterpriseMlsKernel;
+
+export interface EnterpriseMlsIdentity extends MlsDeviceScope {
+  approvalState: 'pending' | 'approved';
+}
+
+export type EnterpriseMlsStatus =
+  | { state: 'inactive'; protocol: 'mls10-openmls-0.8' }
+  | {
+      state: 'ready';
+      protocol: 'mls10-openmls-0.8';
+      identityHash: string;
+    }
+  | {
+      state: 'blocked';
+      protocol: 'mls10-openmls-0.8';
+      reason:
+        | 'device-not-approved'
+        | 'secure-storage-unavailable'
+        | 'native-initialization-failed'
+        | 'security-state-reset-failed';
+    };
+
+export interface EnterpriseMlsSessionManagerOptions {
+  stateDirectory: string;
+  secureStorage: EnterpriseMlsSecureStorage;
+  binaryPath?: string;
+  kernelFactory?: EnterpriseMlsKernelFactory;
+}
+
+interface ActiveEnterpriseMlsKernel {
+  identityHash: string;
+  scope: MlsDeviceScope;
+  kernel: EnterpriseMlsKernel;
+}
+
+const PROTOCOL = 'mls10-openmls-0.8' as const;
+const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
+
+function normalizeIdentity(input: EnterpriseMlsIdentity): MlsDeviceScope {
+  let server: URL;
+  try {
+    server = new URL(input.serverUrl.trim());
+  } catch {
+    throw new Error('MLS server URL is invalid');
+  }
+  if (
+    !['https:', 'http:'].includes(server.protocol) ||
+    server.username ||
+    server.password ||
+    server.search ||
+    server.hash
+  ) {
+    throw new Error('MLS server URL is invalid');
+  }
+  const identifiers = [
+    input.organizationId,
+    input.accountId,
+    input.deviceId,
+  ].map((value) => value.trim());
+  if (identifiers.some((value) => !IDENTIFIER.test(value))) {
+    throw new Error('MLS device identity is invalid');
+  }
+  return {
+    serverUrl: `${server.origin}${server.pathname.replace(/\/+$/, '')}`,
+    organizationId: identifiers[0]!,
+    accountId: identifiers[1]!,
+    deviceId: identifiers[2]!,
+  };
+}
+
+function identityHash(scope: MlsDeviceScope): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify([
+        scope.serverUrl,
+        scope.organizationId,
+        scope.accountId,
+        scope.deviceId,
+      ]),
+      'utf8',
+    )
+    .digest('hex');
+}
+
+export function enterpriseMlsDirectConversationId(input: {
+  organizationId: string;
+  accountId: string;
+  peerAccountId: string;
+}): string {
+  const identifiers = [
+    input.organizationId,
+    input.accountId,
+    input.peerAccountId,
+  ].map((value) => value.trim());
+  if (identifiers.some((value) => !IDENTIFIER.test(value))) {
+    throw new Error('MLS conversation identity is invalid');
+  }
+  if (identifiers[1] === identifiers[2]) {
+    throw new Error('MLS participants must be different');
+  }
+  const [participantAAccountId, participantBAccountId] = [
+    identifiers[1]!,
+    identifiers[2]!,
+  ].sort() as [string, string];
+  return createHash('sha256')
+    .update('otto:mls-direct-conversation:v1\n')
+    .update(identifiers[0]!)
+    .update('\n')
+    .update(participantAAccountId)
+    .update('\n')
+    .update(participantBAccountId)
+    .digest('hex');
+}
+
+export function parseEnterpriseMlsPublishedKeyPackage(
+  value: unknown,
+): EnterpriseMlsPublishedKeyPackage {
+  const keyPackage = value as Partial<EnterpriseMlsPublishedKeyPackage>;
+  if (
+    !keyPackage ||
+    !IDENTIFIER.test(keyPackage.accountId ?? '') ||
+    !IDENTIFIER.test(keyPackage.deviceId ?? '') ||
+    keyPackage.ciphersuite !== ENTERPRISE_MLS_CIPHERSUITE ||
+    !isMlsReference(keyPackage.reference) ||
+    !isMlsBase64(keyPackage.keyPackage, 64 * 1024) ||
+    !isIsoTime(keyPackage.createdAt) ||
+    (keyPackage.claimedAt !== null && !isIsoTime(keyPackage.claimedAt)) ||
+    !isIsoTime(keyPackage.expiresAt)
+  ) {
+    throw new Error('enterprise MLS KeyPackage response is invalid');
+  }
+  return { ...keyPackage } as EnterpriseMlsPublishedKeyPackage;
+}
+
+export function parseEnterpriseMlsKeyPackageInventory(
+  value: unknown,
+  expectedDeviceId: string,
+  nowMs = Date.now(),
+): EnterpriseMlsKeyPackageInventory {
+  const inventory = value as Partial<EnterpriseMlsKeyPackageInventory>;
+  if (
+    !inventory ||
+    !IDENTIFIER.test(expectedDeviceId) ||
+    inventory.deviceId !== expectedDeviceId ||
+    !Array.isArray(inventory.keyPackages) ||
+    inventory.keyPackages.length > 100 ||
+    !Number.isSafeInteger(nowMs) ||
+    nowMs < 0
+  ) {
+    throw new Error('enterprise MLS KeyPackage inventory is invalid');
+  }
+  let previousReference = '';
+  const keyPackages = inventory.keyPackages.map((value) => {
+    const entry = value as Partial<EnterpriseMlsKeyPackageInventoryEntry>;
+    if (
+      !entry ||
+      !isMlsReference(entry.reference) ||
+      entry.reference <= previousReference ||
+      !isIsoTime(entry.expiresAt) ||
+      Date.parse(entry.expiresAt) <= nowMs
+    ) {
+      throw new Error('enterprise MLS KeyPackage inventory is invalid');
+    }
+    previousReference = entry.reference;
+    return {
+      reference: entry.reference,
+      expiresAt: entry.expiresAt,
+    };
+  });
+  return { deviceId: expectedDeviceId, keyPackages };
+}
+
+export function parseEnterpriseMlsTransportEvent(
+  value: unknown,
+): EnterpriseMlsTransportEvent {
+  const event = value as Partial<EnterpriseMlsTransportEvent>;
+  if (
+    !event ||
+    !Number.isSafeInteger(event.sequence) ||
+    (event.sequence ?? 0) < 1 ||
+    !IDENTIFIER.test(event.eventId ?? '') ||
+    !/^[0-9a-f]{64}$/.test(event.conversationId ?? '') ||
+    !Number.isSafeInteger(event.sessionGeneration) ||
+    (event.sessionGeneration ?? 0) < 1 ||
+    !IDENTIFIER.test(event.senderAccountId ?? '') ||
+    !IDENTIFIER.test(event.senderDeviceId ?? '') ||
+    (event.recipientAccountId !== null &&
+      !IDENTIFIER.test(event.recipientAccountId ?? '')) ||
+    (event.recipientDeviceId !== null &&
+      !IDENTIFIER.test(event.recipientDeviceId ?? '')) ||
+    !['welcome', 'commit', 'application'].includes(event.eventType ?? '') ||
+    !Number.isSafeInteger(event.epoch) ||
+    (event.epoch ?? -1) < 0 ||
+    !isMlsBase64(event.groupId, 255) ||
+    !isMlsBase64(event.payload, 1024 * 1024) ||
+    (event.keyPackageReference !== null &&
+      !isMlsReference(event.keyPackageReference)) ||
+    !isIsoTime(event.createdAt) ||
+    !isIsoTime(event.expiresAt)
+  ) {
+    throw new Error('enterprise MLS transport event response is invalid');
+  }
+  if (
+    event.eventType === 'welcome'
+      ? !event.recipientAccountId ||
+        !event.recipientDeviceId ||
+        !event.keyPackageReference
+      : event.recipientAccountId !== null ||
+        event.recipientDeviceId !== null ||
+        event.keyPackageReference !== null
+  ) {
+    throw new Error('enterprise MLS transport event binding is invalid');
+  }
+  const memberAdd =
+    event.eventType === 'commit'
+      ? parseMemberAddCommitEnvelope(event.payload!)
+      : null;
+  return {
+    ...event,
+    payload: memberAdd?.commit ?? event.payload,
+    ...(memberAdd
+      ? {
+          memberAddDeviceId: memberAdd.recipientDeviceId,
+          memberAddAccountId: memberAdd.recipientAccountId,
+          memberAddKeyPackageReference: memberAdd.keyPackageReference,
+          resetFromGroupId: memberAdd.resetFromGroupId,
+        }
+      : {}),
+  } as EnterpriseMlsTransportEvent;
+}
+
+export function parseEnterpriseMlsInboundConversationPeerPage(
+  value: unknown,
+  afterPeerAccountId = '',
+): string[] {
+  if (!Array.isArray(value) || value.length > 500) {
+    throw new Error('enterprise MLS inbound conversation list is invalid');
+  }
+  let previous = afterPeerAccountId;
+  return value.map((peerAccountId) => {
+    if (
+      typeof peerAccountId !== 'string' ||
+      !IDENTIFIER.test(peerAccountId) ||
+      peerAccountId <= previous
+    ) {
+      throw new Error('enterprise MLS inbound conversation list is invalid');
+    }
+    previous = peerAccountId;
+    return peerAccountId;
+  });
+}
+
+function isMlsReference(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+}
+
+function isMlsBase64(value: unknown, maxBytes: number): value is string {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length % 4 !== 0 ||
+    !/^[A-Za-z0-9+/]*={0,2}$/.test(value)
+  ) {
+    return false;
+  }
+  return Buffer.byteLength(Buffer.from(value, 'base64')) <= maxBytes;
+}
+
+function isIsoTime(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    Number.isFinite(Date.parse(value))
+  );
+}
+
+export function enterpriseMlsTransportEventId(input: {
+  conversationId: string;
+  eventType: EnterpriseMlsTransportEventType;
+  groupId: string;
+  epoch: number;
+  payload: string;
+  keyPackageReference?: string | null;
+  recipientDeviceId?: string | null;
+}): string {
+  return `mls-${createHash('sha256')
+    .update('otto:mls-transport-event:v1\n')
+    .update(
+      JSON.stringify([
+        input.conversationId,
+        input.eventType,
+        input.groupId,
+        input.epoch,
+        input.payload,
+        input.keyPackageReference ?? null,
+        input.recipientDeviceId ?? null,
+      ]),
+    )
+    .digest('hex')}`;
+}
+
+function defaultKernelFactory(
+  input: EnterpriseMlsKernelFactoryInput,
+): EnterpriseMlsKernel {
+  return new OpenMlsNativeKernel(
+    input.scope,
+    input.binaryPath,
+    input.persistence,
+  );
+}
+
+export class EnterpriseMlsSessionManager {
+  private active: ActiveEnterpriseMlsKernel | null = null;
+  private currentStatus: EnterpriseMlsStatus = {
+    state: 'inactive',
+    protocol: PROTOCOL,
+  };
+  private operation: Promise<void> = Promise.resolve();
+  private readonly stateDirectory: string;
+  private readonly kernelFactory: EnterpriseMlsKernelFactory;
+
+  constructor(private readonly options: EnterpriseMlsSessionManagerOptions) {
+    this.stateDirectory = path.resolve(options.stateDirectory);
+    this.kernelFactory = options.kernelFactory ?? defaultKernelFactory;
+  }
+
+  status(): EnterpriseMlsStatus {
+    return { ...this.currentStatus };
+  }
+
+  activate(identity: EnterpriseMlsIdentity): Promise<EnterpriseMlsStatus> {
+    return this.exclusive(async () => {
+      if (identity.approvalState !== 'approved') {
+        await this.closeActive();
+        this.currentStatus = {
+          state: 'blocked',
+          protocol: PROTOCOL,
+          reason: 'device-not-approved',
+        };
+        throw new Error('MLS requires an approved E2EE device');
+      }
+
+      try {
+        this.options.secureStorage.assertAvailable();
+      } catch (error) {
+        await this.closeActive();
+        this.currentStatus = {
+          state: 'blocked',
+          protocol: PROTOCOL,
+          reason: 'secure-storage-unavailable',
+        };
+        throw error;
+      }
+
+      const scope = normalizeIdentity(identity);
+      const hash = identityHash(scope);
+      if (this.active?.identityHash === hash) return this.status();
+      await this.closeActive();
+
+      const statePath = path.join(this.stateDirectory, `state-${hash}.json`);
+      const persistence = new FileMlsStatePersistence({
+        filePath: statePath,
+        protectStateKey: (plaintext) => {
+          this.options.secureStorage.assertAvailable();
+          return this.options.secureStorage.protect(plaintext);
+        },
+        unprotectStateKey: (protectedValue) => {
+          this.options.secureStorage.assertAvailable();
+          return this.options.secureStorage.unprotect(protectedValue);
+        },
+      });
+      const kernel = this.kernelFactory({
+        scope,
+        statePath,
+        persistence,
+        binaryPath: this.options.binaryPath,
+      });
+      try {
+        await kernel.init();
+      } catch (error) {
+        await kernel.close().catch(() => undefined);
+        this.currentStatus = {
+          state: 'blocked',
+          protocol: PROTOCOL,
+          reason: 'native-initialization-failed',
+        };
+        throw error;
+      }
+      this.active = { identityHash: hash, scope, kernel };
+      this.currentStatus = {
+        state: 'ready',
+        protocol: PROTOCOL,
+        identityHash: hash,
+      };
+      return this.status();
+    });
+  }
+
+  createKeyPackage(): Promise<MlsKeyPackage> {
+    return this.withReadyKernel((active) => active.kernel.createKeyPackage());
+  }
+
+  listKeyPackages(): Promise<MlsKeyPackage[]> {
+    return this.withReadyKernel((active) => active.kernel.listKeyPackages());
+  }
+
+  consumeKeyPackage(reference: string): Promise<void> {
+    return this.withReadyKernel((active) =>
+      active.kernel.consumeKeyPackage(reference),
+    );
+  }
+
+  createGroup(peerAccountId: string): Promise<MlsGroupState> {
+    return this.withReadyKernel((active) =>
+      active.kernel.createGroup(this.conversationId(active, peerAccountId)),
+    );
+  }
+
+  addMember(
+    peerAccountId: string,
+    keyPackage: MlsKeyPackage,
+  ): Promise<MlsMemberInvitation> {
+    return this.withReadyKernel((active) =>
+      active.kernel.addMember(
+        this.conversationId(active, peerAccountId),
+        keyPackage,
+      ),
+    );
+  }
+
+  createEpochUpdate(peerAccountId: string): Promise<MlsEpochUpdate> {
+    return this.withReadyKernel((active) =>
+      active.kernel.createEpochUpdate(
+        this.conversationId(active, peerAccountId),
+        peerAccountId,
+      ),
+    );
+  }
+
+  mergePendingEpochUpdate(peerAccountId: string): Promise<MlsGroupState> {
+    return this.withReadyKernel((active) =>
+      active.kernel.mergePendingEpochUpdate(
+        this.conversationId(active, peerAccountId),
+        peerAccountId,
+      ),
+    );
+  }
+
+  mergePendingCommit(peerAccountId: string): Promise<MlsGroupState> {
+    return this.withReadyKernel((active) =>
+      active.kernel.mergePendingCommit(
+        this.conversationId(active, peerAccountId),
+        peerAccountId,
+      ),
+    );
+  }
+
+  inspectGroup(peerAccountId: string): Promise<MlsGroupInspection | null> {
+    return this.withReadyKernel(async (active) => {
+      const conversationId = this.conversationId(active, peerAccountId);
+      const inspection = await active.kernel.inspectGroup(conversationId);
+      if (
+        inspection &&
+        !inspection.pending_commit &&
+        inspection.member_count >= 2
+      ) {
+        await active.kernel.bindConversationPeer(conversationId, peerAccountId);
+      }
+      return inspection;
+    });
+  }
+
+  joinGroup(
+    peerAccountId: string,
+    keyPackageReference: string,
+    expectedGroupId: string,
+    welcome: string,
+  ): Promise<MlsGroupState> {
+    return this.withReadyKernel((active) =>
+      active.kernel.joinGroup(
+        this.conversationId(active, peerAccountId),
+        peerAccountId,
+        keyPackageReference,
+        expectedGroupId,
+        welcome,
+      ),
+    );
+  }
+
+  encryptTransportApplication(
+    peerAccountId: string,
+    plaintext: Uint8Array,
+  ): Promise<MlsPendingApplication> {
+    return this.withReadyKernel((active) =>
+      active.kernel.encryptTransportApplication(
+        this.conversationId(active, peerAccountId),
+        peerAccountId,
+        plaintext,
+      ),
+    );
+  }
+
+  listPendingApplications(
+    peerAccountId: string,
+  ): Promise<MlsPendingApplication[]> {
+    return this.withReadyKernel((active) =>
+      active.kernel.listPendingApplications(
+        this.conversationId(active, peerAccountId),
+        peerAccountId,
+      ),
+    );
+  }
+
+  listPendingApplicationPeers(): Promise<string[]> {
+    return this.withReadyKernel((active) =>
+      active.kernel.listPendingApplicationPeers(),
+    );
+  }
+
+  listConversationPeers(): Promise<string[]> {
+    return this.withReadyKernel((active) =>
+      active.kernel.listConversationPeers(),
+    );
+  }
+
+  acknowledgePendingApplication(
+    peerAccountId: string,
+    eventId: string,
+  ): Promise<void> {
+    return this.withReadyKernel((active) =>
+      active.kernel.acknowledgePendingApplication(
+        this.conversationId(active, peerAccountId),
+        peerAccountId,
+        eventId,
+      ),
+    );
+  }
+
+  resetSecurityState(): Promise<void> {
+    return this.exclusive(async () => {
+      const active = this.requireReadyKernel();
+      try {
+        await active.kernel.reset();
+        await this.closeActive();
+        this.currentStatus = { state: 'inactive', protocol: PROTOCOL };
+      } catch (error) {
+        await this.closeActive().catch(() => undefined);
+        this.currentStatus = {
+          state: 'blocked',
+          protocol: PROTOCOL,
+          reason: 'security-state-reset-failed',
+        };
+        throw error;
+      }
+    });
+  }
+
+  activeScope(): MlsDeviceScope {
+    const active = this.requireReadyKernel();
+    return { ...active.scope };
+  }
+
+  transportCursor(peerAccountId: string): Promise<number> {
+    return this.withReadyKernel((active) =>
+      active.kernel.transportCursor(this.conversationId(active, peerAccountId)),
+    );
+  }
+
+  advanceTransportCursor(
+    peerAccountId: string,
+    sequence: number,
+  ): Promise<void> {
+    return this.withReadyKernel((active) =>
+      active.kernel.acknowledgeTransportEvent(
+        this.conversationId(active, peerAccountId),
+        sequence,
+      ),
+    );
+  }
+
+  receiveTransportCommit(
+    peerAccountId: string,
+    commit: string,
+    sequence: number,
+    expectedGroupId: string,
+    expectedEpoch: number,
+    senderDeviceId: string,
+    expectedAddedDeviceId: string | null = null,
+    expectedAddedKeyPackageReference: string | null = null,
+    senderAccountId: string = peerAccountId,
+    expectedAddedAccountId: string | null = expectedAddedDeviceId === null
+      ? null
+      : peerAccountId,
+  ): Promise<MlsGroupState> {
+    return this.withReadyKernel((active) =>
+      active.kernel.receiveTransportCommit(
+        this.conversationId(active, peerAccountId),
+        peerAccountId,
+        commit,
+        sequence,
+        expectedGroupId,
+        expectedEpoch,
+        senderDeviceId,
+        expectedAddedDeviceId,
+        expectedAddedKeyPackageReference,
+        senderAccountId,
+        expectedAddedAccountId,
+      ),
+    );
+  }
+
+  receiveTransportApplication(
+    peerAccountId: string,
+    eventId: string,
+    ciphertext: string,
+    sequence: number,
+    expectedGroupId: string,
+    expectedEpoch: number,
+    senderDeviceId: string,
+    createdAt: string,
+    senderAccountId: string = peerAccountId,
+  ): Promise<MlsPendingReceivedApplication> {
+    return this.withReadyKernel((active) =>
+      active.kernel.receiveTransportApplication(
+        this.conversationId(active, peerAccountId),
+        peerAccountId,
+        eventId,
+        ciphertext,
+        sequence,
+        expectedGroupId,
+        expectedEpoch,
+        senderDeviceId,
+        createdAt,
+        senderAccountId,
+      ),
+    );
+  }
+
+  stageTransportApplication(
+    peerAccountId: string,
+    eventId: string,
+    ciphertext: string,
+    sequence: number,
+    expectedGroupId: string,
+    expectedEpoch: number,
+    senderDeviceId: string,
+    createdAt: string,
+    senderAccountId: string = peerAccountId,
+  ): Promise<MlsStagedReceivedApplication> {
+    return this.withReadyKernel((active) =>
+      active.kernel.stageTransportApplication(
+        this.conversationId(active, peerAccountId),
+        peerAccountId,
+        eventId,
+        ciphertext,
+        sequence,
+        expectedGroupId,
+        expectedEpoch,
+        senderDeviceId,
+        createdAt,
+        senderAccountId,
+      ),
+    );
+  }
+
+  listPendingReceivedApplications(
+    peerAccountId: string,
+  ): Promise<MlsPendingReceivedApplication[]> {
+    return this.withReadyKernel((active) =>
+      active.kernel.listPendingReceivedApplications(
+        this.conversationId(active, peerAccountId),
+        peerAccountId,
+      ),
+    );
+  }
+
+  acknowledgeReceivedApplication(
+    peerAccountId: string,
+    eventId: string,
+  ): Promise<void> {
+    return this.withReadyKernel((active) =>
+      active.kernel.acknowledgeReceivedApplication(
+        this.conversationId(active, peerAccountId),
+        peerAccountId,
+        eventId,
+      ),
+    );
+  }
+
+  resetConversation(peerAccountId: string): Promise<MlsGroupInspection> {
+    return this.withReadyKernel((active) => {
+      if (!active.kernel.resetConversation) {
+        throw new Error('MLS conversation reset is unavailable');
+      }
+      return active.kernel.resetConversation(
+        this.conversationId(active, peerAccountId),
+        peerAccountId,
+      );
+    });
+  }
+
+  abandonConversationForReset(
+    peerAccountId: string,
+    previousGroupId: string,
+  ): Promise<void> {
+    return this.withReadyKernel((active) => {
+      if (!active.kernel.abandonConversationForReset) {
+        throw new Error('MLS remote conversation reset is unavailable');
+      }
+      return active.kernel.abandonConversationForReset(
+        this.conversationId(active, peerAccountId),
+        peerAccountId,
+        previousGroupId,
+      );
+    });
+  }
+
+  close(): Promise<void> {
+    return this.exclusive(async () => {
+      await this.closeActive();
+      this.currentStatus = { state: 'inactive', protocol: PROTOCOL };
+    });
+  }
+
+  private async closeActive(): Promise<void> {
+    const active = this.active;
+    this.active = null;
+    if (active) await active.kernel.close();
+  }
+
+  private conversationId(
+    active: ActiveEnterpriseMlsKernel,
+    peerAccountId: string,
+  ): string {
+    return enterpriseMlsDirectConversationId({
+      organizationId: active.scope.organizationId,
+      accountId: active.scope.accountId,
+      peerAccountId,
+    });
+  }
+
+  private requireReadyKernel(): ActiveEnterpriseMlsKernel {
+    if (!this.active || this.currentStatus.state !== 'ready') {
+      throw new Error('MLS desktop session is not ready');
+    }
+    return this.active;
+  }
+
+  private withReadyKernel<T>(
+    operation: (active: ActiveEnterpriseMlsKernel) => Promise<T>,
+  ): Promise<T> {
+    return this.exclusive(() => operation(this.requireReadyKernel()));
+  }
+
+  private exclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.operation.then(operation, operation);
+    this.operation = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+}
+
+export interface EnterpriseMlsSessionOperations {
+  activeScope(): MlsDeviceScope;
+  createKeyPackage(): Promise<MlsKeyPackage>;
+  listKeyPackages(): Promise<MlsKeyPackage[]>;
+  createGroup(peerAccountId: string): Promise<MlsGroupState>;
+  addMember(
+    peerAccountId: string,
+    keyPackage: MlsKeyPackage,
+  ): Promise<MlsMemberInvitation>;
+  createEpochUpdate?(peerAccountId: string): Promise<MlsEpochUpdate>;
+  mergePendingEpochUpdate?(peerAccountId: string): Promise<MlsGroupState>;
+  mergePendingCommit(peerAccountId: string): Promise<MlsGroupState>;
+  inspectGroup(peerAccountId: string): Promise<MlsGroupInspection | null>;
+  joinGroup(
+    peerAccountId: string,
+    keyPackageReference: string,
+    expectedGroupId: string,
+    welcome: string,
+  ): Promise<MlsGroupState>;
+  encryptTransportApplication(
+    peerAccountId: string,
+    plaintext: Uint8Array,
+  ): Promise<MlsPendingApplication>;
+  listPendingApplications(
+    peerAccountId: string,
+  ): Promise<MlsPendingApplication[]>;
+  listPendingApplicationPeers(): Promise<string[]>;
+  listConversationPeers(): Promise<string[]>;
+  acknowledgePendingApplication(
+    peerAccountId: string,
+    eventId: string,
+  ): Promise<void>;
+  transportCursor(peerAccountId: string): Promise<number>;
+  advanceTransportCursor(
+    peerAccountId: string,
+    sequence: number,
+  ): Promise<void>;
+  receiveTransportCommit(
+    peerAccountId: string,
+    commit: string,
+    sequence: number,
+    expectedGroupId: string,
+    expectedEpoch: number,
+    senderDeviceId: string,
+    expectedAddedDeviceId?: string | null,
+    expectedAddedKeyPackageReference?: string | null,
+    senderAccountId?: string,
+    expectedAddedAccountId?: string | null,
+  ): Promise<MlsGroupState>;
+  receiveTransportApplication(
+    peerAccountId: string,
+    eventId: string,
+    ciphertext: string,
+    sequence: number,
+    expectedGroupId: string,
+    expectedEpoch: number,
+    senderDeviceId: string,
+    createdAt: string,
+    senderAccountId?: string,
+  ): Promise<MlsPendingReceivedApplication>;
+  stageTransportApplication(
+    peerAccountId: string,
+    eventId: string,
+    ciphertext: string,
+    sequence: number,
+    expectedGroupId: string,
+    expectedEpoch: number,
+    senderDeviceId: string,
+    createdAt: string,
+    senderAccountId?: string,
+  ): Promise<MlsStagedReceivedApplication>;
+  listPendingReceivedApplications(
+    peerAccountId: string,
+  ): Promise<MlsPendingReceivedApplication[]>;
+  acknowledgeReceivedApplication(
+    peerAccountId: string,
+    eventId: string,
+  ): Promise<void>;
+  resetConversation?(peerAccountId: string): Promise<MlsGroupInspection>;
+  abandonConversationForReset?(
+    peerAccountId: string,
+    previousGroupId: string,
+  ): Promise<void>;
+}
+
+/**
+ * Crash-resumable transport orchestration for the capability-gated MLS path.
+ */
+export class EnterpriseMlsSessionCoordinator {
+  private readonly peerOperations = new Map<string, Promise<void>>();
+  private readonly publicationOperations = new Map<string, Promise<void>>();
+
+  constructor(
+    private readonly sessions: EnterpriseMlsSessionOperations,
+    private readonly transport: EnterpriseMlsTransportClient,
+  ) {}
+
+  activeScope(): MlsDeviceScope {
+    return this.sessions.activeScope();
+  }
+
+  async listActiveConversationPeers(): Promise<string[]> {
+    const scope = this.sessions.activeScope();
+    const [localPeers, inboundPeers] = await Promise.all([
+      this.sessions.listConversationPeers(),
+      this.transport.listMlsInboundConversationPeers(scope.deviceId),
+    ]);
+    return [...new Set([...localPeers, ...inboundPeers])].sort();
+  }
+
+  ensurePublishedKeyPackageInventory(
+    target = 10,
+    minimumRemainingMs = 60 * 60 * 1_000,
+  ): Promise<number> {
+    if (
+      !Number.isSafeInteger(target) ||
+      target < 1 ||
+      target > 50 ||
+      !Number.isSafeInteger(minimumRemainingMs) ||
+      minimumRemainingMs < 0 ||
+      minimumRemainingMs > 24 * 60 * 60 * 1_000
+    ) {
+      throw new Error('MLS KeyPackage inventory policy is invalid');
+    }
+    const scope = this.sessions.activeScope();
+    const key = JSON.stringify([
+      scope.serverUrl,
+      scope.organizationId,
+      scope.accountId,
+      scope.deviceId,
+    ]);
+    return this.exclusive(this.publicationOperations, key, async () => {
+      const nowMs = Date.now();
+      const inventory = await this.transport.listMlsKeyPackageInventory(
+        scope.deviceId,
+      );
+      if (inventory.deviceId !== scope.deviceId) {
+        throw new Error('MLS KeyPackage inventory device binding is invalid');
+      }
+      const existing = await this.sessions.listKeyPackages();
+      if (existing.length > 100) {
+        throw new Error(
+          'local MLS KeyPackage inventory exceeds the safe limit',
+        );
+      }
+      const localReferences = new Set(
+        existing.map((keyPackage) => keyPackage.reference),
+      );
+      if (localReferences.size !== existing.length) {
+        throw new Error('local MLS KeyPackage inventory contains duplicates');
+      }
+      const serverReferences = new Set<string>();
+      const usableReferences = new Set<string>();
+      for (const keyPackage of inventory.keyPackages) {
+        if (!localReferences.has(keyPackage.reference)) {
+          await this.transport.retireMlsKeyPackage(
+            scope.deviceId,
+            keyPackage.reference,
+          );
+          continue;
+        }
+        serverReferences.add(keyPackage.reference);
+        if (Date.parse(keyPackage.expiresAt) - nowMs >= minimumRemainingMs) {
+          usableReferences.add(keyPackage.reference);
+        }
+      }
+      if (usableReferences.size >= target) return usableReferences.size;
+      for (const keyPackage of existing) {
+        if (serverReferences.has(keyPackage.reference)) continue;
+        try {
+          const published = await this.transport.publishMlsKeyPackage(
+            scope.deviceId,
+            keyPackage,
+          );
+          serverReferences.add(published.reference);
+          if (Date.parse(published.expiresAt) - nowMs >= minimumRemainingMs) {
+            usableReferences.add(published.reference);
+          }
+          if (usableReferences.size >= target) return usableReferences.size;
+        } catch (error) {
+          if (!this.isKeyPackageReuse(error)) throw error;
+        }
+      }
+      for (let attempt = 0; attempt < target * 2; attempt += 1) {
+        const created = await this.sessions.createKeyPackage();
+        try {
+          const published = await this.transport.publishMlsKeyPackage(
+            scope.deviceId,
+            created,
+          );
+          serverReferences.add(published.reference);
+          if (Date.parse(published.expiresAt) - nowMs >= minimumRemainingMs) {
+            usableReferences.add(published.reference);
+          }
+          if (usableReferences.size >= target) return usableReferences.size;
+        } catch (error) {
+          if (!this.isKeyPackageReuse(error)) throw error;
+        }
+      }
+      throw new Error('MLS KeyPackage inventory could not reach its target');
+    });
+  }
+
+  async establishDirectSession(
+    peerAccountId: string,
+  ): Promise<EnterpriseMlsSessionEstablishment> {
+    const establishment = await this.establishDirectSessionOnce(peerAccountId);
+    if (establishment.state !== 'waiting-for-peer-commit') {
+      return establishment;
+    }
+
+    // Poll only after releasing the establishment lock: pollTransportOnly()
+    // serializes on the same peer key and would otherwise deadlock.
+    await this.pollTransportOnly(peerAccountId);
+    return this.exclusive<EnterpriseMlsSessionEstablishment>(
+      this.peerOperations,
+      peerAccountId,
+      async () => {
+        const group = await this.sessions.inspectGroup(peerAccountId);
+        if (!group) return establishment;
+        if (
+          group.pending_commit ||
+          group.pending_invitation ||
+          group.member_count < 2
+        ) {
+          throw new Error(
+            'MLS received handshake did not establish a ready direct session',
+          );
+        }
+        return { state: 'ready', group };
+      },
+    );
+  }
+
+  private establishDirectSessionOnce(
+    peerAccountId: string,
+  ): Promise<EnterpriseMlsSessionEstablishment> {
+    return this.exclusive(this.peerOperations, peerAccountId, async () => {
+      const scope = this.sessions.activeScope();
+      const conversationId = enterpriseMlsDirectConversationId({
+        organizationId: scope.organizationId,
+        accountId: scope.accountId,
+        peerAccountId,
+      });
+      let inspection = await this.sessions.inspectGroup(peerAccountId);
+      if (!inspection) {
+        if (scope.accountId > peerAccountId) {
+          return { state: 'waiting-for-peer-commit', group: null };
+        }
+        const group = await this.sessions.createGroup(peerAccountId);
+        inspection = {
+          ...group,
+          pending_commit: false,
+          pending_invitation: null,
+        };
+      }
+      if (
+        inspection.pending_commit !== Boolean(inspection.pending_invitation)
+      ) {
+        throw new Error(
+          'MLS pending member state is incomplete; security state reset is required',
+        );
+      }
+      if (
+        inspection.pending_commit &&
+        (inspection.epoch !== 0 || inspection.member_count !== 1)
+      ) {
+        throw new Error(
+          'MLS pending invitation is not an initial direct-session commit',
+        );
+      }
+      if (!inspection.pending_commit && inspection.member_count >= 2) {
+        return { state: 'ready', group: inspection };
+      }
+      if (
+        !inspection.pending_commit &&
+        (inspection.epoch !== 0 || inspection.member_count !== 1)
+      ) {
+        throw new Error(
+          'MLS group is not eligible for initial member establishment',
+        );
+      }
+
+      let invitation = inspection.pending_invitation;
+      if (!invitation) {
+        const claimed = await this.transport.claimMlsKeyPackage(
+          scope.deviceId,
+          peerAccountId,
+        );
+        if (!claimed) {
+          return { state: 'waiting-for-peer-key-package', group: inspection };
+        }
+        invitation = await this.sessions.addMember(peerAccountId, {
+          protocol: PROTOCOL,
+          ciphersuite: ENTERPRISE_MLS_CIPHERSUITE,
+          reference: claimed.reference,
+          key_package: claimed.keyPackage,
+        });
+        if (
+          invitation.key_package_reference !== claimed.reference ||
+          invitation.recipient_account_id !== claimed.accountId ||
+          invitation.recipient_device_id !== claimed.deviceId ||
+          claimed.accountId !== peerAccountId
+        ) {
+          throw new Error(
+            'MLS claimed KeyPackage credential binding is invalid',
+          );
+        }
+      }
+
+      const targetEpoch = invitation.epoch + 1;
+      const commitId = enterpriseMlsTransportEventId({
+        conversationId,
+        eventType: 'commit',
+        groupId: invitation.group_id,
+        epoch: targetEpoch,
+        payload: invitation.commit,
+      });
+      await this.transport.appendMlsTransportEvent(peerAccountId, {
+        senderDeviceId: scope.deviceId,
+        eventId: commitId,
+        eventType: 'commit',
+        epoch: targetEpoch,
+        groupId: invitation.group_id,
+        payload: invitation.commit,
+        recipientDeviceId: invitation.recipient_device_id,
+        keyPackageReference: invitation.key_package_reference,
+        resetFromGroupId: inspection.reset_from_group_id ?? null,
+      });
+      const welcomeId = enterpriseMlsTransportEventId({
+        conversationId,
+        eventType: 'welcome',
+        groupId: invitation.group_id,
+        epoch: targetEpoch,
+        payload: invitation.welcome,
+        keyPackageReference: invitation.key_package_reference,
+        recipientDeviceId: invitation.recipient_device_id,
+      });
+      await this.transport.appendMlsTransportEvent(peerAccountId, {
+        senderDeviceId: scope.deviceId,
+        eventId: welcomeId,
+        eventType: 'welcome',
+        epoch: targetEpoch,
+        groupId: invitation.group_id,
+        payload: invitation.welcome,
+        recipientDeviceId: invitation.recipient_device_id,
+        keyPackageReference: invitation.key_package_reference,
+      });
+      const group = await this.sessions.mergePendingCommit(peerAccountId);
+      if (
+        group.group_id !== invitation.group_id ||
+        group.epoch !== targetEpoch ||
+        group.member_count < 2
+      ) {
+        throw new Error('MLS merged group state does not match the invitation');
+      }
+      return { state: 'ready', group };
+    });
+  }
+
+  async resetDirectSession(peerAccountId: string): Promise<MlsGroupInspection> {
+    const resetConversation = this.sessions.resetConversation?.bind(
+      this.sessions,
+    );
+    if (!resetConversation) {
+      throw new Error('MLS conversation reset is unavailable');
+    }
+    await this.exclusive(this.peerOperations, peerAccountId, () =>
+      resetConversation(peerAccountId),
+    );
+    const establishment = await this.establishDirectSession(peerAccountId);
+    if (establishment.state !== 'ready') {
+      throw new Error('MLS reset is waiting for the peer device KeyPackage');
+    }
+    return this.ensureApprovedDeviceMembership(peerAccountId);
+  }
+
+  async refreshEpoch(peerAccountId: string): Promise<MlsGroupState> {
+    return this.exclusive(this.peerOperations, peerAccountId, async () => {
+      const createEpochUpdate = this.sessions.createEpochUpdate?.bind(
+        this.sessions,
+      );
+      const mergePendingEpochUpdate =
+        this.sessions.mergePendingEpochUpdate?.bind(this.sessions);
+      if (!createEpochUpdate || !mergePendingEpochUpdate) {
+        throw new Error('MLS epoch refresh is unavailable');
+      }
+      const scope = this.sessions.activeScope();
+      const group = await this.sessions.inspectGroup(peerAccountId);
+      if (
+        !group ||
+        group.member_count < 2 ||
+        (group.pending_commit && !group.pending_epoch_update) ||
+        (!group.pending_commit && group.pending_epoch_update)
+      ) {
+        throw new Error('MLS direct session is not ready for epoch refresh');
+      }
+      if (
+        !group.member_device_scopes ||
+        group.member_device_scopes.length !== group.member_count
+      ) {
+        throw new Error('MLS epoch-refresh member roster is unavailable');
+      }
+      const members = group.member_device_scopes
+        .map((memberScope) => {
+          const parts = memberScope.split('/');
+          if (parts.length !== 4 || !parts[2] || !parts[3]) {
+            throw new Error('MLS epoch-refresh member roster is invalid');
+          }
+          return `${parts[2]}/${parts[3]}`;
+        })
+        .sort();
+      if (`${scope.accountId}/${scope.deviceId}` !== members[0]) {
+        return group;
+      }
+      const pending =
+        group.pending_epoch_update ?? (await createEpochUpdate(peerAccountId));
+      if (
+        pending.group_id !== group.group_id ||
+        pending.epoch !== group.epoch + 1
+      ) {
+        throw new Error('MLS pending epoch refresh binding is invalid');
+      }
+      const conversationId = enterpriseMlsDirectConversationId({
+        organizationId: scope.organizationId,
+        accountId: scope.accountId,
+        peerAccountId,
+      });
+      const eventId = enterpriseMlsTransportEventId({
+        conversationId,
+        eventType: 'commit',
+        groupId: pending.group_id,
+        epoch: pending.epoch,
+        payload: pending.commit,
+      });
+      const event = await this.transport.appendMlsTransportEvent(
+        peerAccountId,
+        {
+          senderDeviceId: scope.deviceId,
+          eventId,
+          eventType: 'commit',
+          epoch: pending.epoch,
+          groupId: pending.group_id,
+          payload: pending.commit,
+        },
+      );
+      if (
+        event.eventId !== eventId ||
+        event.groupId !== pending.group_id ||
+        event.epoch !== pending.epoch ||
+        event.senderAccountId !== scope.accountId ||
+        event.senderDeviceId !== scope.deviceId ||
+        event.eventType !== 'commit' ||
+        event.memberAddDeviceId != null ||
+        event.memberAddKeyPackageReference != null
+      ) {
+        throw new Error('MLS epoch-refresh transport binding is invalid');
+      }
+      const merged = await mergePendingEpochUpdate(peerAccountId);
+      if (
+        merged.group_id !== pending.group_id ||
+        merged.epoch !== pending.epoch ||
+        merged.member_count !== group.member_count
+      ) {
+        throw new Error('MLS epoch-refresh merge result is invalid');
+      }
+      return merged;
+    });
+  }
+
+  async ensureApprovedDeviceMembership(
+    peerAccountId: string,
+  ): Promise<MlsGroupInspection> {
+    const establishment = await this.establishDirectSession(peerAccountId);
+    if (establishment.state !== 'ready') {
+      throw new Error(
+        'MLS direct session is waiting for an approved device KeyPackage',
+      );
+    }
+    return this.exclusive(this.peerOperations, peerAccountId, async () => {
+      const scope = this.sessions.activeScope();
+      const listApprovedMlsDeviceIds =
+        this.transport.listApprovedMlsDeviceIds?.bind(this.transport);
+      if (!listApprovedMlsDeviceIds) {
+        throw new Error('MLS approved device directory is unavailable');
+      }
+      const approved = (
+        await Promise.all(
+          [scope.accountId, peerAccountId].map(async (accountId) => ({
+            accountId,
+            deviceIds: await listApprovedMlsDeviceIds(accountId),
+          })),
+        )
+      ).flatMap(({ accountId, deviceIds }) =>
+        deviceIds.map((deviceId) => ({ accountId, deviceId })),
+      );
+      if (approved.length < 2 || approved.length > 100) {
+        throw new Error('MLS approved device roster exceeds the safe limit');
+      }
+      let group = await this.sessions.inspectGroup(peerAccountId);
+      this.assertApplicationGroupReady(group);
+      if (!group.member_device_scopes) {
+        throw new Error('MLS native member roster is unavailable');
+      }
+      const memberScopes = new Set(
+        group.member_device_scopes.map((memberScope) => {
+          const parts = memberScope.split('/');
+          if (parts.length !== 4 || !parts[2] || !parts[3]) {
+            throw new Error('MLS native member roster is invalid');
+          }
+          return `${parts[2]}/${parts[3]}`;
+        }),
+      );
+      const missing = approved.filter(
+        ({ accountId, deviceId }) =>
+          !memberScopes.has(`${accountId}/${deviceId}`),
+      );
+      for (const target of missing) {
+        const claimed = await this.transport.claimMlsKeyPackage(
+          scope.deviceId,
+          target.accountId,
+          target.deviceId,
+          peerAccountId,
+        );
+        if (!claimed) {
+          throw new Error(
+            `MLS approved device ${target.accountId}/${target.deviceId} has no usable KeyPackage`,
+          );
+        }
+        const invitation = await this.sessions.addMember(peerAccountId, {
+          protocol: PROTOCOL,
+          ciphersuite: ENTERPRISE_MLS_CIPHERSUITE,
+          reference: claimed.reference,
+          key_package: claimed.keyPackage,
+        });
+        if (
+          invitation.recipient_account_id !== target.accountId ||
+          invitation.recipient_device_id !== target.deviceId ||
+          invitation.key_package_reference !== claimed.reference ||
+          invitation.group_id !== group.group_id ||
+          invitation.epoch !== group.epoch
+        ) {
+          throw new Error(
+            'MLS device membership invitation binding is invalid',
+          );
+        }
+        const nextEpoch = group.epoch + 1;
+        const conversationId = enterpriseMlsDirectConversationId({
+          organizationId: scope.organizationId,
+          accountId: scope.accountId,
+          peerAccountId,
+        });
+        const commitId = enterpriseMlsTransportEventId({
+          conversationId,
+          eventType: 'commit',
+          groupId: group.group_id,
+          epoch: nextEpoch,
+          payload: invitation.commit,
+        });
+        await this.transport.appendMlsTransportEvent(peerAccountId, {
+          senderDeviceId: scope.deviceId,
+          eventId: commitId,
+          eventType: 'commit',
+          epoch: nextEpoch,
+          groupId: group.group_id,
+          payload: invitation.commit,
+          recipientAccountId: target.accountId,
+          recipientDeviceId: target.deviceId,
+          keyPackageReference: claimed.reference,
+        });
+        const welcomeId = enterpriseMlsTransportEventId({
+          conversationId,
+          eventType: 'welcome',
+          groupId: group.group_id,
+          epoch: nextEpoch,
+          payload: invitation.welcome,
+          keyPackageReference: claimed.reference,
+          recipientDeviceId: target.deviceId,
+        });
+        await this.transport.appendMlsTransportEvent(peerAccountId, {
+          senderDeviceId: scope.deviceId,
+          eventId: welcomeId,
+          eventType: 'welcome',
+          epoch: nextEpoch,
+          groupId: group.group_id,
+          payload: invitation.welcome,
+          recipientAccountId: target.accountId,
+          recipientDeviceId: target.deviceId,
+          keyPackageReference: claimed.reference,
+        });
+        const merged = await this.sessions.mergePendingCommit(peerAccountId);
+        const inspected = await this.sessions.inspectGroup(peerAccountId);
+        this.assertApplicationGroupReady(inspected);
+        if (
+          merged.group_id !== group.group_id ||
+          merged.epoch !== nextEpoch ||
+          inspected.epoch !== nextEpoch ||
+          inspected.member_count !== memberScopes.size + 1 ||
+          !inspected.member_device_scopes?.some((memberScope) =>
+            memberScope.endsWith(`/${target.accountId}/${target.deviceId}`),
+          )
+        ) {
+          throw new Error('MLS merged device membership state is invalid');
+        }
+        group = inspected;
+        memberScopes.add(`${target.accountId}/${target.deviceId}`);
+      }
+      const inspected = await this.sessions.inspectGroup(peerAccountId);
+      this.assertApplicationGroupReady(inspected);
+      return inspected;
+    });
+  }
+
+  async flushPendingApplications(
+    peerAccountId: string,
+  ): Promise<EnterpriseMlsTransportEvent[]> {
+    return this.exclusive(this.peerOperations, peerAccountId, async () => {
+      const scope = this.sessions.activeScope();
+      return this.flushPendingApplicationsUnlocked(peerAccountId, scope);
+    });
+  }
+
+  async flushAllPendingApplications(): Promise<number> {
+    const peers = await this.sessions.listPendingApplicationPeers();
+    let deliveredEvents = 0;
+    const failures: unknown[] = [];
+    for (const peerAccountId of peers) {
+      try {
+        deliveredEvents += (await this.flushPendingApplications(peerAccountId))
+          .length;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures,
+        `MLS outbox delivery failed for ${failures.length} peer session(s)`,
+      );
+    }
+    return deliveredEvents;
+  }
+
+  async sendApplication(
+    peerAccountId: string,
+    plaintext: Uint8Array,
+  ): Promise<EnterpriseMlsTransportEvent> {
+    return this.exclusive(this.peerOperations, peerAccountId, async () => {
+      const scope = this.sessions.activeScope();
+      await this.flushPendingApplicationsUnlocked(peerAccountId, scope);
+      const group = await this.sessions.inspectGroup(peerAccountId);
+      this.assertApplicationGroupReady(group);
+      const pending = await this.sessions.encryptTransportApplication(
+        peerAccountId,
+        plaintext,
+      );
+      this.assertPendingApplicationMatchesGroup(
+        peerAccountId,
+        scope,
+        pending,
+        group,
+      );
+      return this.deliverPendingApplication(peerAccountId, scope, pending);
+    });
+  }
+
+  poll(peerAccountId: string, limit = 100): Promise<EnterpriseMlsPollResult> {
+    return this.pollPeer(peerAccountId, limit, true);
+  }
+
+  private pollTransportOnly(
+    peerAccountId: string,
+    limit = 100,
+  ): Promise<EnterpriseMlsPollResult> {
+    // The background scheduler may stage ciphertext but must not materialize
+    // pending inbox plaintext in the Electron main process.
+    return this.pollPeer(peerAccountId, limit, false);
+  }
+
+  private pollPeer(
+    peerAccountId: string,
+    limit: number,
+    exposePendingPlaintext: boolean,
+  ): Promise<EnterpriseMlsPollResult> {
+    return this.exclusive(this.peerOperations, peerAccountId, async () => {
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
+        throw new Error('MLS poll limit is invalid');
+      }
+      const scope = this.sessions.activeScope();
+      const previousSequence =
+        await this.sessions.transportCursor(peerAccountId);
+      let nextSequence = previousSequence;
+      const messages = exposePendingPlaintext
+        ? (
+            await this.sessions.listPendingReceivedApplications(peerAccountId)
+          ).map((pending) =>
+            this.receivedApplicationMessage(
+              peerAccountId,
+              scope.accountId,
+              pending,
+            ),
+          )
+        : [];
+      const events = await this.transport.listMlsTransportEvents(
+        peerAccountId,
+        previousSequence,
+        limit,
+      );
+      for (const event of events) {
+        if (event.sequence <= nextSequence) {
+          throw new Error(
+            'MLS transport returned a non-monotonic event cursor',
+          );
+        }
+        const ownDeviceEvent =
+          event.senderAccountId === scope.accountId &&
+          event.senderDeviceId === scope.deviceId;
+        if (event.eventType === 'commit') {
+          const group = await this.sessions.inspectGroup(peerAccountId);
+          if (event.resetFromGroupId && !ownDeviceEvent) {
+            if (group && group.group_id !== event.groupId) {
+              if (group.group_id !== event.resetFromGroupId) {
+                throw new Error('MLS reset source does not match local state');
+              }
+              const abandon = this.sessions.abandonConversationForReset?.bind(
+                this.sessions,
+              );
+              if (!abandon) {
+                throw new Error('MLS remote conversation reset is unavailable');
+              }
+              await abandon(peerAccountId, event.resetFromGroupId);
+            }
+            await this.sessions.advanceTransportCursor(
+              peerAccountId,
+              event.sequence,
+            );
+            nextSequence = event.sequence;
+            continue;
+          }
+          if (!ownDeviceEvent && group) {
+            if (group.pending_commit || group.group_id !== event.groupId) {
+              throw new Error(
+                'remote MLS Commit does not match active group state',
+              );
+            }
+            if (event.epoch !== group.epoch + 1) {
+              throw new Error(
+                'remote MLS Commit does not advance the next epoch',
+              );
+            }
+            const updated = await this.sessions.receiveTransportCommit(
+              peerAccountId,
+              event.payload,
+              event.sequence,
+              event.groupId,
+              event.epoch,
+              event.senderDeviceId,
+              event.memberAddDeviceId ?? null,
+              event.memberAddKeyPackageReference ?? null,
+              event.senderAccountId,
+              event.memberAddDeviceId
+                ? (event.memberAddAccountId ?? peerAccountId)
+                : null,
+            );
+            const expectedMemberCount =
+              group.member_count + (event.memberAddKeyPackageReference ? 1 : 0);
+            if (
+              updated.group_id !== event.groupId ||
+              updated.epoch !== event.epoch ||
+              updated.member_count !== expectedMemberCount
+            ) {
+              throw new Error(
+                'remote MLS Commit result does not match transport bindings',
+              );
+            }
+          } else {
+            await this.sessions.advanceTransportCursor(
+              peerAccountId,
+              event.sequence,
+            );
+          }
+        } else if (event.eventType === 'welcome') {
+          await this.processWelcome(
+            peerAccountId,
+            event,
+            scope,
+            ownDeviceEvent,
+          );
+          await this.sessions.advanceTransportCursor(
+            peerAccountId,
+            event.sequence,
+          );
+        } else if (ownDeviceEvent) {
+          await this.sessions.advanceTransportCursor(
+            peerAccountId,
+            event.sequence,
+          );
+        } else {
+          const group = await this.sessions.inspectGroup(peerAccountId);
+          if (!group) {
+            // A newly approved device cannot decrypt history before the
+            // Welcome that adds it. Advance past older events without
+            // weakening authentication of the eventual Welcome.
+            await this.sessions.advanceTransportCursor(
+              peerAccountId,
+              event.sequence,
+            );
+            nextSequence = event.sequence;
+            continue;
+          }
+          if (
+            group.pending_commit ||
+            group.group_id !== event.groupId ||
+            group.epoch !== event.epoch
+          ) {
+            throw new Error(
+              'MLS application event does not match active group state',
+            );
+          }
+          if (exposePendingPlaintext) {
+            const received = await this.sessions.receiveTransportApplication(
+              peerAccountId,
+              event.eventId,
+              event.payload,
+              event.sequence,
+              event.groupId,
+              event.epoch,
+              event.senderDeviceId,
+              event.createdAt,
+              event.senderAccountId,
+            );
+            this.assertReceivedApplicationBinding(
+              peerAccountId,
+              scope.accountId,
+              received,
+              event,
+            );
+            messages.push(
+              this.receivedApplicationMessage(
+                peerAccountId,
+                scope.accountId,
+                received,
+              ),
+            );
+          } else {
+            const staged = await this.sessions.stageTransportApplication(
+              peerAccountId,
+              event.eventId,
+              event.payload,
+              event.sequence,
+              event.groupId,
+              event.epoch,
+              event.senderDeviceId,
+              event.createdAt,
+              event.senderAccountId,
+            );
+            this.assertReceivedApplicationBinding(
+              peerAccountId,
+              scope.accountId,
+              staged,
+              event,
+            );
+          }
+        }
+        nextSequence = event.sequence;
+      }
+      return {
+        previousSequence,
+        nextSequence,
+        processedEvents: events.length,
+        messages,
+      };
+    });
+  }
+
+  acknowledgeReceivedApplication(
+    peerAccountId: string,
+    eventId: string,
+  ): Promise<void> {
+    return this.exclusive(this.peerOperations, peerAccountId, () =>
+      this.sessions.acknowledgeReceivedApplication(peerAccountId, eventId),
+    );
+  }
+
+  async pollAllActiveSessions(limit = 100): Promise<number> {
+    const peers = await this.listActiveConversationPeers();
+    let processedEvents = 0;
+    const failures: unknown[] = [];
+    for (const peerAccountId of peers) {
+      try {
+        processedEvents += (await this.pollTransportOnly(peerAccountId, limit))
+          .processedEvents;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures,
+        `MLS inbound polling failed for ${failures.length} peer session(s)`,
+      );
+    }
+    return processedEvents;
+  }
+
+  private async processWelcome(
+    peerAccountId: string,
+    event: EnterpriseMlsTransportEvent,
+    scope: MlsDeviceScope,
+    ownEvent: boolean,
+  ): Promise<void> {
+    const group = await this.sessions.inspectGroup(peerAccountId);
+    if (ownEvent) {
+      if (event.senderDeviceId !== scope.deviceId) return;
+      const invitation = group?.pending_invitation;
+      if (invitation) {
+        if (
+          invitation.group_id !== event.groupId ||
+          invitation.epoch + 1 !== event.epoch ||
+          invitation.key_package_reference !== event.keyPackageReference ||
+          invitation.recipient_device_id !== event.recipientDeviceId ||
+          invitation.welcome !== event.payload
+        ) {
+          throw new Error(
+            'MLS pending invitation does not match Welcome event',
+          );
+        }
+        await this.sessions.mergePendingCommit(peerAccountId);
+        return;
+      }
+      if (group?.group_id === event.groupId && group.epoch >= event.epoch)
+        return;
+      throw new Error('MLS outgoing Welcome has no matching local invitation');
+    }
+    if (event.recipientDeviceId !== scope.deviceId) {
+      return;
+    }
+    if (group) {
+      if (
+        !group.pending_commit &&
+        group.group_id === event.groupId &&
+        group.epoch >= event.epoch
+      ) {
+        return;
+      }
+      throw new Error(
+        'MLS Welcome conflicts with local group; security state reset is required',
+      );
+    }
+    const joined = await this.sessions.joinGroup(
+      peerAccountId,
+      event.keyPackageReference!,
+      event.groupId,
+      event.payload,
+    );
+    if (joined.group_id !== event.groupId || joined.epoch !== event.epoch) {
+      throw new Error('MLS joined group does not match Welcome event');
+    }
+  }
+
+  private receivedApplicationMessage(
+    peerAccountId: string,
+    localAccountId: string,
+    received: MlsPendingReceivedApplication,
+  ): EnterpriseMlsDecryptedTransportMessage {
+    const sender = this.receivedApplicationSender(
+      peerAccountId,
+      localAccountId,
+      received,
+    );
+    return {
+      sequence: received.sequence,
+      eventId: received.eventId,
+      senderAccountId: sender.accountId,
+      senderDeviceId: sender.deviceId,
+      plaintext: received.plaintext,
+      createdAt: received.createdAt,
+    };
+  }
+
+  private assertReceivedApplicationBinding(
+    peerAccountId: string,
+    localAccountId: string,
+    received: MlsStagedReceivedApplication,
+    event: EnterpriseMlsTransportEvent,
+  ): void {
+    const sender = this.receivedApplicationSender(
+      peerAccountId,
+      localAccountId,
+      received,
+    );
+    if (
+      received.eventId !== event.eventId ||
+      received.sequence !== event.sequence ||
+      received.groupId !== event.groupId ||
+      received.epoch !== event.epoch ||
+      sender.accountId !== event.senderAccountId ||
+      sender.deviceId !== event.senderDeviceId ||
+      received.createdAt !== event.createdAt
+    ) {
+      throw new Error('MLS application sender binding is invalid');
+    }
+  }
+
+  private receivedApplicationSender(
+    peerAccountId: string,
+    localAccountId: string,
+    received: MlsStagedReceivedApplication,
+  ): { accountId: string; deviceId: string } {
+    const sender = received.senderDeviceScope.split('/');
+    if (
+      received.peerAccountId !== peerAccountId ||
+      sender.length !== 4 ||
+      (sender[2] !== peerAccountId && sender[2] !== localAccountId) ||
+      !sender[3]
+    ) {
+      throw new Error('MLS application sender binding is invalid');
+    }
+    return { accountId: sender[2], deviceId: sender[3] };
+  }
+
+  private async flushPendingApplicationsUnlocked(
+    peerAccountId: string,
+    scope: MlsDeviceScope,
+  ): Promise<EnterpriseMlsTransportEvent[]> {
+    const pending = await this.sessions.listPendingApplications(peerAccountId);
+    if (pending.length === 0) return [];
+    const group = await this.sessions.inspectGroup(peerAccountId);
+    this.assertApplicationGroupReady(group);
+    const delivered: EnterpriseMlsTransportEvent[] = [];
+    for (const application of pending) {
+      this.assertPendingApplicationMatchesGroup(
+        peerAccountId,
+        scope,
+        application,
+        group,
+      );
+      delivered.push(
+        await this.deliverPendingApplication(peerAccountId, scope, application),
+      );
+    }
+    return delivered;
+  }
+
+  private async deliverPendingApplication(
+    peerAccountId: string,
+    scope: MlsDeviceScope,
+    pending: MlsPendingApplication,
+  ): Promise<EnterpriseMlsTransportEvent> {
+    const event = await this.transport.appendMlsTransportEvent(peerAccountId, {
+      senderDeviceId: scope.deviceId,
+      eventId: pending.event_id,
+      eventType: 'application',
+      epoch: pending.epoch,
+      groupId: pending.group_id,
+      payload: pending.ciphertext,
+    });
+    if (
+      event.eventId !== pending.event_id ||
+      event.conversationId !== pending.conversation_id ||
+      event.senderAccountId !== scope.accountId ||
+      event.senderDeviceId !== scope.deviceId ||
+      event.recipientAccountId !== null ||
+      event.recipientDeviceId !== null ||
+      event.eventType !== 'application' ||
+      event.epoch !== pending.epoch ||
+      event.groupId !== pending.group_id ||
+      event.payload !== pending.ciphertext ||
+      event.keyPackageReference !== null
+    ) {
+      throw new Error('MLS application acknowledgement binding is invalid');
+    }
+    await this.sessions.acknowledgePendingApplication(
+      peerAccountId,
+      pending.event_id,
+    );
+    return event;
+  }
+
+  private assertApplicationGroupReady(
+    group: MlsGroupInspection | null,
+  ): asserts group is MlsGroupInspection {
+    if (!group || group.pending_commit || group.member_count < 2) {
+      throw new Error(
+        'MLS direct session is not ready for application messages',
+      );
+    }
+  }
+
+  private assertPendingApplicationMatchesGroup(
+    peerAccountId: string,
+    scope: MlsDeviceScope,
+    pending: MlsPendingApplication,
+    group: MlsGroupInspection,
+  ): void {
+    const conversationId = enterpriseMlsDirectConversationId({
+      organizationId: scope.organizationId,
+      accountId: scope.accountId,
+      peerAccountId,
+    });
+    if (
+      pending.conversation_id !== conversationId ||
+      pending.peer_account_id !== peerAccountId ||
+      pending.group_id !== group.group_id ||
+      pending.epoch !== group.epoch
+    ) {
+      throw new Error(
+        'MLS pending application does not match active group state; security state reset is required',
+      );
+    }
+  }
+
+  private isKeyPackageReuse(error: unknown): boolean {
+    return (
+      error instanceof Error &&
+      /MLS KeyPackage reference conflict or reuse/i.test(error.message)
+    );
+  }
+
+  private exclusive<T>(
+    operations: Map<string, Promise<void>>,
+    key: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = operations.get(key) ?? Promise.resolve();
+    const result = previous.then(operation, operation);
+    const settled = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    operations.set(key, settled);
+    void settled.finally(() => {
+      if (operations.get(key) === settled) operations.delete(key);
+    });
+    return result;
+  }
+}
+
+export interface EnterpriseMlsOutboxRetryOperations {
+  flushAllPendingApplications(): Promise<number>;
+}
+
+export interface EnterpriseMlsOutboxRetrySchedulerOptions {
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+  idleDelayMs?: number;
+  jitterRatio?: number;
+  random?: () => number;
+  onError?: (error: unknown) => void;
+}
+
+/**
+ * Process-local retry loop for ciphertext that is already durable in the
+ * encrypted native outbox. It never accepts plaintext and waits for an active
+ * delivery to settle during shutdown so the MLS kernel cannot change identity
+ * underneath an acknowledgement.
+ */
+export class EnterpriseMlsOutboxRetryScheduler {
+  private readonly baseDelayMs: number;
+  private readonly maxDelayMs: number;
+  private readonly idleDelayMs: number;
+  private readonly jitterRatio: number;
+  private readonly random: () => number;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private inFlight: Promise<void> | null = null;
+  private running = false;
+  private generation = 0;
+  private failures = 0;
+  private wakeRequested = false;
+
+  constructor(
+    private readonly operations: EnterpriseMlsOutboxRetryOperations,
+    private readonly options: EnterpriseMlsOutboxRetrySchedulerOptions = {},
+  ) {
+    this.baseDelayMs = options.baseDelayMs ?? 1_000;
+    this.maxDelayMs = options.maxDelayMs ?? 60_000;
+    this.idleDelayMs = options.idleDelayMs ?? 30_000;
+    this.jitterRatio = options.jitterRatio ?? 0.2;
+    this.random = options.random ?? Math.random;
+    if (
+      !Number.isSafeInteger(this.baseDelayMs) ||
+      this.baseDelayMs < 1 ||
+      !Number.isSafeInteger(this.maxDelayMs) ||
+      this.maxDelayMs < this.baseDelayMs ||
+      !Number.isSafeInteger(this.idleDelayMs) ||
+      this.idleDelayMs < 1 ||
+      !Number.isFinite(this.jitterRatio) ||
+      this.jitterRatio < 0 ||
+      this.jitterRatio > 0.5
+    ) {
+      throw new Error('MLS outbox retry policy is invalid');
+    }
+  }
+
+  start(): void {
+    if (this.running) return;
+    this.running = true;
+    this.generation += 1;
+    this.failures = 0;
+    this.wakeRequested = false;
+    this.schedule(0, this.generation);
+  }
+
+  wake(): void {
+    if (!this.running) return;
+    this.failures = 0;
+    if (this.inFlight) {
+      this.wakeRequested = true;
+      return;
+    }
+    this.schedule(0, this.generation);
+  }
+
+  async stop(): Promise<void> {
+    this.running = false;
+    this.generation += 1;
+    this.wakeRequested = false;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = undefined;
+    }
+    await this.inFlight;
+  }
+
+  private schedule(delayMs: number, generation: number): void {
+    if (!this.running || generation !== this.generation) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      void this.run(generation);
+    }, delayMs);
+    this.timer.unref?.();
+  }
+
+  private async run(generation: number): Promise<void> {
+    if (!this.running || generation !== this.generation || this.inFlight)
+      return;
+    let failed = false;
+    const operation = (async () => {
+      try {
+        await this.operations.flushAllPendingApplications();
+        this.failures = 0;
+      } catch (error) {
+        failed = true;
+        this.failures += 1;
+        try {
+          this.options.onError?.(error);
+        } catch {
+          // Observability callbacks must not terminate the security retry loop.
+        }
+      }
+    })();
+    this.inFlight = operation;
+    await operation;
+    if (this.inFlight === operation) this.inFlight = null;
+    if (!this.running || generation !== this.generation) return;
+    if (this.wakeRequested) {
+      this.wakeRequested = false;
+      this.schedule(0, generation);
+      return;
+    }
+    this.schedule(failed ? this.retryDelay() : this.idleDelayMs, generation);
+  }
+
+  private retryDelay(): number {
+    const exponent = Math.min(Math.max(this.failures - 1, 0), 30);
+    const raw = Math.min(this.baseDelayMs * 2 ** exponent, this.maxDelayMs);
+    const sample = this.random();
+    const normalized = Number.isFinite(sample)
+      ? Math.min(Math.max(sample, 0), 1)
+      : 0.5;
+    const jitter = raw * this.jitterRatio * (normalized * 2 - 1);
+    return Math.min(this.maxDelayMs, Math.max(1, Math.round(raw + jitter)));
+  }
+}
+
+export interface EnterpriseMlsInboundPollOperations {
+  pollAllActiveSessions(limit?: number): Promise<number>;
+}
+
+export type EnterpriseMlsInboundPollSchedulerOptions =
+  EnterpriseMlsOutboxRetrySchedulerOptions;
+
+/**
+ * Background receive loop for active, persistently peer-bound conversations.
+ * Application plaintext is never acknowledged here: poll() places it in the
+ * encrypted native inbox first, and the eventual consumer must explicitly
+ * acknowledge each event after durable delivery to the chat layer.
+ */
+export class EnterpriseMlsInboundPollScheduler {
+  private readonly baseDelayMs: number;
+  private readonly maxDelayMs: number;
+  private readonly idleDelayMs: number;
+  private readonly jitterRatio: number;
+  private readonly random: () => number;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private inFlight: Promise<void> | null = null;
+  private running = false;
+  private generation = 0;
+  private failures = 0;
+  private wakeRequested = false;
+
+  constructor(
+    private readonly operations: EnterpriseMlsInboundPollOperations,
+    private readonly options: EnterpriseMlsInboundPollSchedulerOptions = {},
+  ) {
+    this.baseDelayMs = options.baseDelayMs ?? 1_000;
+    this.maxDelayMs = options.maxDelayMs ?? 60_000;
+    this.idleDelayMs = options.idleDelayMs ?? 5_000;
+    this.jitterRatio = options.jitterRatio ?? 0.2;
+    this.random = options.random ?? Math.random;
+    if (
+      !Number.isSafeInteger(this.baseDelayMs) ||
+      this.baseDelayMs < 1 ||
+      !Number.isSafeInteger(this.maxDelayMs) ||
+      this.maxDelayMs < this.baseDelayMs ||
+      !Number.isSafeInteger(this.idleDelayMs) ||
+      this.idleDelayMs < 1 ||
+      !Number.isFinite(this.jitterRatio) ||
+      this.jitterRatio < 0 ||
+      this.jitterRatio > 0.5
+    ) {
+      throw new Error('MLS inbound polling policy is invalid');
+    }
+  }
+
+  start(): void {
+    if (this.running) return;
+    this.running = true;
+    this.generation += 1;
+    this.failures = 0;
+    this.wakeRequested = false;
+    this.schedule(0, this.generation);
+  }
+
+  wake(): void {
+    if (!this.running) return;
+    this.failures = 0;
+    if (this.inFlight) {
+      this.wakeRequested = true;
+      return;
+    }
+    this.schedule(0, this.generation);
+  }
+
+  async stop(): Promise<void> {
+    this.running = false;
+    this.generation += 1;
+    this.wakeRequested = false;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = undefined;
+    }
+    await this.inFlight;
+  }
+
+  private schedule(delayMs: number, generation: number): void {
+    if (!this.running || generation !== this.generation) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      void this.run(generation);
+    }, delayMs);
+    this.timer.unref?.();
+  }
+
+  private async run(generation: number): Promise<void> {
+    if (!this.running || generation !== this.generation || this.inFlight)
+      return;
+    let failed = false;
+    const operation = (async () => {
+      try {
+        await this.operations.pollAllActiveSessions();
+        this.failures = 0;
+      } catch (error) {
+        failed = true;
+        this.failures += 1;
+        try {
+          this.options.onError?.(error);
+        } catch {
+          // Observability callbacks must not terminate the security retry loop.
+        }
+      }
+    })();
+    this.inFlight = operation;
+    await operation;
+    if (this.inFlight === operation) this.inFlight = null;
+    if (!this.running || generation !== this.generation) return;
+    if (this.wakeRequested) {
+      this.wakeRequested = false;
+      this.schedule(0, generation);
+      return;
+    }
+    this.schedule(failed ? this.retryDelay() : this.idleDelayMs, generation);
+  }
+
+  private retryDelay(): number {
+    const exponent = Math.min(Math.max(this.failures - 1, 0), 30);
+    const raw = Math.min(this.baseDelayMs * 2 ** exponent, this.maxDelayMs);
+    const sample = this.random();
+    const normalized = Number.isFinite(sample)
+      ? Math.min(Math.max(sample, 0), 1)
+      : 0.5;
+    const jitter = raw * this.jitterRatio * (normalized * 2 - 1);
+    return Math.min(this.maxDelayMs, Math.max(1, Math.round(raw + jitter)));
+  }
+}

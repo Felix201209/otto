@@ -274,7 +274,8 @@ AES-256-GCM 加密，服务启动时会先迁移旧明文数据并验证密钥�
 如配置 `OTTO_TELEMETRY_ENDPOINT`，地址必须使用 HTTPS。遥测请求除 Bearer 令牌外还
 携带 HMAC-SHA256 签名、时间戳和一次性随机数；接收端只接受 5 分钟窗口内且未重放的
 请求，本地遥测保留期由 `OTTO_TELEMETRY_RETENTION_DAYS` 控制。正式交付前必须填写
-`OTTO_DATA_CONTROLLER_NAME` 和 `OTTO_PRIVACY_CONTACT`，
+`OTTO_DATA_CONTROLLER_NAME` 和 `OTTO_PRIVACY_CONTACT`，由部署方法务确认当前完整正文后再把
+`OTTO_LEGAL_DOCUMENTS_APPROVED` 设为 `true`，
 并确认 `OTTO_DATA_REGION`、`OTTO_DATA_RESIDENCY` 与
 `OTTO_CROSS_BORDER_DATA_ENABLED` 符合客户实际数据流。只有数据目录所在磁盘已经启用
 LUKS、云盘加密卷或等价保护后，才能把 `OTTO_STORAGE_VOLUME_ENCRYPTED` 设为 `true`；

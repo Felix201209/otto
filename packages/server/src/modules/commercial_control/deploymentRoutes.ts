@@ -13,6 +13,7 @@ export interface DeploymentRoutePrincipal {
 export interface DeploymentRouteServices {
   getPrivateDeploymentStatus(): PrivateDeploymentStatus;
   getDataProtectionStatus(): unknown;
+  getOperationsSecurityStatus(): unknown;
   runDataProtectionBackup(
     reason?: 'scheduled' | 'manual' | 'startup',
   ): Promise<unknown>;
@@ -106,6 +107,7 @@ export async function handleDeploymentRoute({
     sendJSON(res, 200, {
       ...services.getPrivateDeploymentStatus(),
       dataProtection: services.getDataProtectionStatus(),
+      operationsSecurity: services.getOperationsSecurityStatus(),
     });
     return true;
   }

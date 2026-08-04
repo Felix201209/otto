@@ -92,6 +92,7 @@ export function isMemberRoute(path: string): boolean {
     path.startsWith('/enterprise/skills/') ||
     path.startsWith('/enterprise/knowledge/') ||
     path === '/enterprise/atoa/inbox' ||
+    path.startsWith('/enterprise/e2ee/') ||
     path.startsWith('/enterprise/messages/') ||
     path.startsWith('/enterprise/message-attachments/') ||
     (path.startsWith('/enterprise/federation/') &&

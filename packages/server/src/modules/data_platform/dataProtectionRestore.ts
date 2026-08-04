@@ -4,11 +4,19 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 
 import { extractEncryptedBackupArchive } from './encryptedBackupArchive.js';
 import { createEncryptedObjectStore } from './encryptedObjectStore.js';
 import { createFileEncryptionKeyProvider } from './fileEncryptionKeyProvider.js';
+import { Database, type DatabaseHandle } from './sqliteCompat.js';
+
+export type OpenProtectedDatabase = (
+  databasePath: string,
+  databaseKeyRecoveryPath?: string,
+) => DatabaseHandle;
+
+const openPlainDatabase: OpenProtectedDatabase = (databasePath) =>
+  new Database(databasePath, { readOnly: true });
 
 export interface DataProtectionRestoreReceipt {
   restoredAt: string;
@@ -20,7 +28,9 @@ export interface DataProtectionRestoreReceipt {
   privacyDeletionLedgerRestored: boolean;
 }
 
-function assertServiceStopped(dataDirectory: string): void {
+export function assertDataProtectionServiceStopped(
+  dataDirectory: string,
+): void {
   const lockPath = path.join(dataDirectory, 'enterprise-runtime.json');
   if (!fs.existsSync(lockPath)) return;
   try {
@@ -63,10 +73,15 @@ function assertServiceStopped(dataDirectory: string): void {
 
 function validateAttachmentObjects(input: {
   databasePath: string;
+  databaseKeyRecoveryPath?: string;
   attachmentsDirectory: string;
   attachmentKeyPath: string;
+  openDatabase?: OpenProtectedDatabase;
 }): void {
-  const database = new DatabaseSync(input.databasePath, { readOnly: true });
+  const database = (input.openDatabase ?? openPlainDatabase)(
+    input.databasePath,
+    input.databaseKeyRecoveryPath,
+  );
   let rows: Array<{ storage_key: string; byte_size: number }> = [];
   try {
     const columns = new Set(
@@ -118,10 +133,12 @@ function validateAttachmentObjects(input: {
 function validateRestoredDatabase(
   databasePath: string,
   maximumSchemaVersion: number,
+  openDatabase: OpenProtectedDatabase = openPlainDatabase,
+  databaseKeyRecoveryPath?: string,
 ): number {
   if (!fs.existsSync(databasePath))
     throw new Error('backup does not contain database/data.db');
-  const database = new DatabaseSync(databasePath, { readOnly: true });
+  const database = openDatabase(databasePath, databaseKeyRecoveryPath);
   try {
     const quickCheck = database.prepare('PRAGMA quick_check').get() as
       { quick_check?: string } | undefined;
@@ -148,8 +165,12 @@ function validateRestoredDatabase(
   }
 }
 
-function databaseContainsEncryptedMessages(databasePath: string): boolean {
-  const database = new DatabaseSync(databasePath, { readOnly: true });
+function databaseContainsEncryptedMessages(
+  databasePath: string,
+  openDatabase: OpenProtectedDatabase = openPlainDatabase,
+  databaseKeyRecoveryPath?: string,
+): boolean {
+  const database = openDatabase(databasePath, databaseKeyRecoveryPath);
   try {
     const columns = new Set(
       (
@@ -159,9 +180,13 @@ function databaseContainsEncryptedMessages(databasePath: string): boolean {
       ).map((column) => column.name),
     );
     if (!columns.has('content_ciphertext')) return false;
-    return Boolean(database.prepare(
-      'SELECT 1 FROM direct_messages WHERE content_ciphertext IS NOT NULL LIMIT 1',
-    ).get());
+    return Boolean(
+      database
+        .prepare(
+          'SELECT 1 FROM direct_messages WHERE content_ciphertext IS NOT NULL LIMIT 1',
+        )
+        .get(),
+    );
   } finally {
     database.close();
   }
@@ -201,6 +226,7 @@ export async function verifyDataProtectionBackup(input: {
   key: Buffer;
   maximumSchemaVersion: number;
   temporaryRoot?: string;
+  openDatabase?: OpenProtectedDatabase;
 }): Promise<{
   schemaVersion: number;
   attachmentObjects: number;
@@ -219,19 +245,31 @@ export async function verifyDataProtectionBackup(input: {
       targetDirectory: extractionDirectory,
       key: input.key,
     });
+    const databaseKeyRecoveryPath = path.join(
+      extractionDirectory,
+      'keys',
+      'database.keyring',
+    );
+    const openDatabase = input.openDatabase ?? openPlainDatabase;
     const schemaVersion = validateRestoredDatabase(
       path.join(extractionDirectory, 'database', 'data.db'),
       input.maximumSchemaVersion,
+      openDatabase,
+      databaseKeyRecoveryPath,
     );
     if (
       databaseContainsEncryptedMessages(
         path.join(extractionDirectory, 'database', 'data.db'),
+        openDatabase,
+        databaseKeyRecoveryPath,
       ) &&
       !fs.existsSync(
         path.join(extractionDirectory, 'keys', 'field-encryption.key'),
       )
     ) {
-      throw new Error('backup with encrypted fields is missing its encryption key');
+      throw new Error(
+        'backup with encrypted fields is missing its encryption key',
+      );
     }
     const attachmentObjects = listAttachmentObjects(
       path.join(extractionDirectory, 'attachments'),
@@ -246,12 +284,14 @@ export async function verifyDataProtectionBackup(input: {
     }
     validateAttachmentObjects({
       databasePath: path.join(extractionDirectory, 'database', 'data.db'),
+      databaseKeyRecoveryPath,
       attachmentsDirectory: path.join(extractionDirectory, 'attachments'),
       attachmentKeyPath: path.join(
         extractionDirectory,
         'keys',
         'attachment-storage.key',
       ),
+      openDatabase,
     });
     return {
       schemaVersion,
@@ -291,7 +331,11 @@ function restoreEncryptionKey(input: {
       `customer-managed ${input.label} encryption key path is unsafe`,
     );
   }
-  if (!fs.readFileSync(input.configuredPath).equals(fs.readFileSync(input.sourcePath))) {
+  if (
+    !fs
+      .readFileSync(input.configuredPath)
+      .equals(fs.readFileSync(input.sourcePath))
+  ) {
     throw new Error(
       `customer-managed ${input.label} encryption key does not match the backup`,
     );
@@ -310,6 +354,8 @@ export async function restoreDataProtectionBackup(input: {
   accountSyncKeyPath?: string;
   attachmentKeyPath?: string;
   fieldEncryptionKeyPath?: string;
+  databaseKeyPath?: string;
+  openDatabase?: OpenProtectedDatabase;
   now?: () => Date;
 }): Promise<DataProtectionRestoreReceipt> {
   const archivePath = path.resolve(input.archivePath);
@@ -318,7 +364,14 @@ export async function restoreDataProtectionBackup(input: {
     dataDirectory,
     'field-encryption.key',
   );
-  const defaultAccountSyncKeyPath = path.join(dataDirectory, 'account-sync.key');
+  const defaultDatabaseKeyPath = path.join(dataDirectory, 'database.keyring');
+  const databaseKeyPath = path.resolve(
+    input.databaseKeyPath || defaultDatabaseKeyPath,
+  );
+  const defaultAccountSyncKeyPath = path.join(
+    dataDirectory,
+    'account-sync.key',
+  );
   const accountSyncKeyPath = path.resolve(
     input.accountSyncKeyPath || defaultAccountSyncKeyPath,
   );
@@ -332,7 +385,7 @@ export async function restoreDataProtectionBackup(input: {
   const fieldEncryptionKeyPath = path.resolve(
     input.fieldEncryptionKeyPath || defaultFieldEncryptionKeyPath,
   );
-  assertServiceStopped(dataDirectory);
+  assertDataProtectionServiceStopped(dataDirectory);
   if (
     !fs.existsSync(archivePath) ||
     fs.lstatSync(archivePath).isSymbolicLink()
@@ -360,17 +413,36 @@ export async function restoreDataProtectionBackup(input: {
       key: input.key,
     });
     const restoredDatabase = path.join(stagingDirectory, 'database', 'data.db');
+    const restoredDatabaseKey = path.join(
+      stagingDirectory,
+      'keys',
+      'database.keyring',
+    );
+    if (input.databaseKeyPath && !fs.existsSync(restoredDatabaseKey)) {
+      throw new Error(
+        'encrypted database backup is missing its recovery keyring',
+      );
+    }
+    const openDatabase = input.openDatabase ?? openPlainDatabase;
     const schemaVersion = validateRestoredDatabase(
       restoredDatabase,
       input.maximumSchemaVersion,
+      openDatabase,
+      restoredDatabaseKey,
     );
     if (
-      databaseContainsEncryptedMessages(restoredDatabase) &&
+      databaseContainsEncryptedMessages(
+        restoredDatabase,
+        openDatabase,
+        restoredDatabaseKey,
+      ) &&
       !fs.existsSync(
         path.join(stagingDirectory, 'keys', 'field-encryption.key'),
       )
     ) {
-      throw new Error('backup with encrypted fields is missing its encryption key');
+      throw new Error(
+        'backup with encrypted fields is missing its encryption key',
+      );
     }
     const restoredAttachments = path.join(stagingDirectory, 'attachments');
     const attachmentObjects = listAttachmentObjects(restoredAttachments);
@@ -384,8 +456,10 @@ export async function restoreDataProtectionBackup(input: {
     }
     validateAttachmentObjects({
       databasePath: restoredDatabase,
+      databaseKeyRecoveryPath: restoredDatabaseKey,
       attachmentsDirectory: restoredAttachments,
       attachmentKeyPath: restoredAttachmentKey,
+      openDatabase,
     });
     const restoredPrivacyLedger = path.join(
       stagingDirectory,
@@ -422,6 +496,7 @@ export async function restoreDataProtectionBackup(input: {
       'data.db-wal',
       'data.db-shm',
       'attachments',
+      'database.keyring',
       'account-sync.key',
       'attachment-storage.key',
       'field-encryption.key',
@@ -437,6 +512,12 @@ export async function restoreDataProtectionBackup(input: {
         restoredAttachments,
         path.join(dataDirectory, 'attachments'),
       );
+      restoreEncryptionKey({
+        sourcePath: restoredDatabaseKey,
+        configuredPath: databaseKeyPath,
+        defaultPath: defaultDatabaseKeyPath,
+        label: 'database',
+      });
       restoreEncryptionKey({
         sourcePath: path.join(stagingDirectory, 'keys', 'account-sync.key'),
         configuredPath: accountSyncKeyPath,
@@ -471,6 +552,7 @@ export async function restoreDataProtectionBackup(input: {
         'data.db-wal',
         'data.db-shm',
         'attachments',
+        'database.keyring',
         'account-sync.key',
         'attachment-storage.key',
         'field-encryption.key',
@@ -517,7 +599,7 @@ export function rollbackDataProtectionRestore(input: {
 }): void {
   const dataDirectory = path.resolve(input.dataDirectory);
   const rollbackDirectory = path.resolve(input.rollbackDirectory);
-  assertServiceStopped(dataDirectory);
+  assertDataProtectionServiceStopped(dataDirectory);
   const expectedRoot = path.join(dataDirectory, 'backups', 'restore-rollbacks');
   if (!rollbackDirectory.startsWith(`${expectedRoot}${path.sep}`)) {
     throw new Error('restore rollback directory is outside the protected root');
@@ -526,14 +608,15 @@ export function rollbackDataProtectionRestore(input: {
   if (!fs.existsSync(receiptPath)) {
     throw new Error('restore rollback receipt is missing');
   }
-  const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Partial<
-    DataProtectionRestoreReceipt
-  >;
+  const receipt = JSON.parse(
+    fs.readFileSync(receiptPath, 'utf8'),
+  ) as Partial<DataProtectionRestoreReceipt>;
   for (const name of [
     'data.db',
     'data.db-wal',
     'data.db-shm',
     'attachments',
+    'database.keyring',
     'account-sync.key',
     'attachment-storage.key',
     'field-encryption.key',

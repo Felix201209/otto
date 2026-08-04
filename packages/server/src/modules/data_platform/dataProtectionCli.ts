@@ -12,6 +12,10 @@ import {
   verifyDataProtectionBackup,
 } from './dataProtectionRestore.js';
 import { loadExistingDataProtectionEncryptionKey } from './dataProtectionService.js';
+import {
+  createSqlCipherFileRuntime,
+  parseSqlCipherRuntimeMode,
+} from './sqlCipherRuntime.js';
 
 function argument(name: string): string | null {
   const index = process.argv.indexOf(name);
@@ -46,6 +50,10 @@ async function main(): Promise<void> {
     throw new Error('--max-schema must be a positive integer');
   }
   const archivePath = path.resolve(requiredArgument('--archive'));
+  const sqlCipherRuntime =
+    parseSqlCipherRuntimeMode() === 'required'
+      ? createSqlCipherFileRuntime({ dataDirectory })
+      : null;
   const key = loadExistingDataProtectionEncryptionKey({
     dataDirectory,
     encryptionKey: process.env.OTTO_BACKUP_ENCRYPTION_KEY,
@@ -57,6 +65,9 @@ async function main(): Promise<void> {
       key,
       maximumSchemaVersion,
       temporaryRoot: path.join(dataDirectory, 'backups'),
+      ...(sqlCipherRuntime
+        ? { openDatabase: sqlCipherRuntime.openProtectedDatabase }
+        : {}),
     });
     process.stdout.write(
       `${JSON.stringify({ verified: true, archivePath, ...result })}\n`,
@@ -77,6 +88,12 @@ async function main(): Promise<void> {
       process.env.OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE?.trim() || undefined,
     fieldEncryptionKeyPath:
       process.env.OTTO_FIELD_ENCRYPTION_KEY_FILE?.trim() || undefined,
+    ...(sqlCipherRuntime
+      ? {
+          databaseKeyPath: sqlCipherRuntime.keyPath,
+          openDatabase: sqlCipherRuntime.openProtectedDatabase,
+        }
+      : {}),
   });
   const receiptPath = argument('--receipt');
   if (receiptPath) {

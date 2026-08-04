@@ -50,6 +50,7 @@ import { useSettingsData } from './state/useSettingsData.js';
 import { useSoftwareUpdate } from './state/useSoftwareUpdate.js';
 import { SettingsHubPage, type TabId as HubTabId } from './components/SettingsHubPage.js';
 import { WhatsNewDialog } from './components/WhatsNewDialog.js';
+import { FirstRunGuide } from './components/FirstRunGuide.js';
 import { ProactiveToast } from './components/ProactiveToast.js';
 import { useProductWorkspace } from './state/useProductWorkspace.js';
 import { DayAgenda } from './components/DayAgenda.js';
@@ -208,12 +209,17 @@ function OttoWorkspaceApp({
   const permissionResolver = useRef<((decision: AtoaPermissionDecision) => void) | null>(null);
   const [pendingAtoaPermission, setPendingAtoaPermission] = useState<AtoaPermissionRequest | null>(null);
   const requestAtoaPermission = useCallback(
-    (request: AtoaPermissionRequest): Promise<AtoaPermissionDecision> =>
-      new Promise((resolve) => {
+    async (
+      request: Omit<AtoaPermissionRequest, 'messages'>,
+    ): Promise<AtoaPermissionDecision> => {
+      const messages = await window.otto.enterpriseMessagesList(request.peer.id);
+      return new Promise((resolve) => {
+        // 服务器一次只 claim 一条；若界面状态异常叠加，旧请求按拒绝收口。
         permissionResolver.current?.({ kind: 'deny' });
         permissionResolver.current = resolve;
-        setPendingAtoaPermission(request);
-      }),
+        setPendingAtoaPermission({ ...request, messages });
+      });
+    },
     [],
   );
   const completeAtoaPermission = useCallback(
@@ -349,9 +355,10 @@ function OttoWorkspaceApp({
         await processEnterpriseAtoaRequest({
           request,
           requestPermission: requestAtoaPermission,
-          collectContext: (sources) =>
+          collectContext: (sources, authorizedMessageIds) =>
             collectAuthorizedAtoaContext({
               sources,
+              authorizedMessageIds,
               peerAccountId: request.peerAccountId,
               currentAccountId: account.id,
               currentAccountName: account.name,
@@ -434,6 +441,7 @@ function OttoWorkspaceApp({
     return () => window.clearTimeout(timer);
   }, [softwareUpdate.actions]);
 
+  // —— 统一消息中心：会话历史、未读状态与企业通知 ——
   const [allConvOpen, setAllConvOpen] = useState(false);
   const [mainView, setMainView] = useState<MainView>('chat');
   const [organizationRefreshRevision, setOrganizationRefreshRevision] = useState(0);
@@ -441,7 +449,7 @@ function OttoWorkspaceApp({
     peerAccountId: string;
     requestId: number;
   }>();
-  useEffect(() => window.otto.onNotificationSessionOpen((sessionId) => {
+  const openNotificationSession = useCallback((sessionId: string): void => {
     const prefix = 'enterprise:message:';
     if (!sessionId.startsWith(prefix)) return;
     const peerAccountId = sessionId.slice(prefix.length);
@@ -451,7 +459,12 @@ function OttoWorkspaceApp({
       peerAccountId,
       requestId: (current?.requestId ?? 0) + 1,
     }));
-  }), []);
+  }, []);
+  useEffect(
+    () => window.otto.onNotificationSessionOpen(openNotificationSession),
+    [openNotificationSession],
+  );
+  // 打开「设置与诊断中心」时默认停在哪个 tab（斜杠命令 /doctor /memory /skills 直达用）。
   const [hubInitialTab, setHubInitialTab] = useState<HubTabId>('prefs');
   const openHub = (tab: HubTabId = 'prefs'): void => {
     setHubInitialTab(tab);
@@ -716,7 +729,6 @@ function OttoWorkspaceApp({
 
       void executeEnterpriseCollaborationRelay(tool.parameters, account, {
         getOrganizationView: window.otto.enterpriseOrganizationView,
-        listMessages: window.otto.enterpriseMessagesList,
         sendMessage: window.otto.enterpriseMessageSend,
         requestConsult: requestToolConsult,
         updateAccount: window.otto.enterpriseAccountUpdate,
@@ -847,7 +859,7 @@ function OttoWorkspaceApp({
           onBack={() => setMainView('chat')}
         />
       ) : mainView === 'workspace' ? (
-        <section className="otto-workspace-page" aria-label="Workspace">
+        <section className="otto-workspace-page" aria-label="工作台">
           <header className="otto-workspace-page__head">
             <div>
               <div className="otto-workspace-page__title">专家与工作区</div>
@@ -910,6 +922,7 @@ function OttoWorkspaceApp({
               models={state.models}
               currentModel={state.currentModel}
               userInitial={account.name.slice(0, 1).toUpperCase() || 'O'}
+              identityLabel={centralIdentity.identityLabel}
               modelManagementLabel="模型与个人 API 设置"
               busy={busy}
               onSend={handleSend}
@@ -964,10 +977,12 @@ function OttoWorkspaceApp({
           sessions={selectSortedSessions(state)}
           activeSessionId={state.activeSessionId}
           unreadSessions={state.unreadSessions}
+          enterpriseUnreadCounts={enterpriseUnreadCounts}
           onSelect={(id) => {
             setMainView('chat');
             actions.selectSession(id);
           }}
+          onOpenNotification={openNotificationSession}
           onClose={() => setAllConvOpen(false)}
           onDelete={actions.deleteSession}
         />
@@ -1036,6 +1051,8 @@ function OttoWorkspaceApp({
       ) : null}
 
       <WhatsNewDialog />
+      <FirstRunGuide />
+      {/* 主动服务提醒：右下角 toast（日程/洞察/日报等） */}
       <ProactiveToast />
     </div>
   );

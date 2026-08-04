@@ -198,8 +198,8 @@ describe('服务端 Agent profile 白名单', () => {
     expect(prompt).toContain('enterprise_collaboration');
     expect(prompt).toContain('必须先获得用户确认');
     expect(prompt).toContain('尊重对方的隐私授权范围');
-    expect(prompt).toContain('当前私聊、企业知识、工作日志和日程四类');
-    expect(prompt).toContain('不包括文件、API 密钥或其他聊天');
+    expect(prompt).toContain('本机明确选择并解密的消息片段');
+    expect(prompt).toContain('不包括文件、API 密钥、其他聊天');
     expect(prompt).toContain('不得声称已经发送');
   });
 
