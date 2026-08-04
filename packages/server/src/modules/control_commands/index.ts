@@ -7,6 +7,7 @@ export * from './controlCommandQueue.js';
 export * from './controlCommandReceipt.js';
 export * from './controlCommandSignature.js';
 export * from './controlCommandComposition.js';
+export * from './controlCommandHttp.js';
 export * from './controlCommandOutbox.js';
 export * from './controlCommandReceiptQuery.js';
 export * from './controlCommandScheduler.js';
