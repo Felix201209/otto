@@ -8,6 +8,7 @@
 | --- | --- | --- |
 | [api-spec.md](./api-spec.md) | 实现者 / 集成方 | 版本化接口契约：信封 schema、签名覆盖、队列与回执状态机、事务性 outbox、HTTP 端点、版本与演进 |
 | [operations-runbook.md](./operations-runbook.md) | 运维 / 值班 | 配置项、健康检查、死信处理、崩溃恢复、撤销、密钥轮换、回执核对、故障速查 |
+| [integration-guide.md](./integration-guide.md) | Control 集成方（签发侧） | 端到端对接：准备、信封与签名、下发时序、幂等/重试、安全约定、最小示例、排查速查 |
 
 ## 代码位置
 
