@@ -101,6 +101,7 @@ export function validateServerIntegrationBaseline({
   ciWorkflow,
   verifyGitRefs = false,
   remoteBranchTips,
+  candidateHead: candidateHeadOverride,
 } = {}) {
   const errors = [];
   const actualLedger =
@@ -381,20 +382,24 @@ export function validateServerIntegrationBaseline({
       }
     }
 
-    let candidateHead;
-    try {
-      candidateHead = execFileSync(
-        'git',
-        ['rev-parse', 'HEAD'],
-        {
-          cwd: rootDir,
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'ignore'],
-        },
-      ).trim();
-    } catch {
-      errors.push('unable to resolve candidate HEAD for branch delta validation');
-      candidateHead = 'HEAD';
+    let candidateHead =
+      candidateHeadOverride ??
+      (remoteBranchTips ? liveBranchTips.get('origin/internal') : null);
+    if (!candidateHead) {
+      try {
+        candidateHead = execFileSync(
+          'git',
+          ['rev-parse', 'HEAD'],
+          {
+            cwd: rootDir,
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+          },
+        ).trim();
+      } catch {
+        errors.push('unable to resolve candidate HEAD for branch delta validation');
+        candidateHead = 'HEAD';
+      }
     }
 
     for (const branch of actualLedger.branches ?? []) {
