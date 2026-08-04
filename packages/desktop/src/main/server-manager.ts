@@ -32,6 +32,7 @@
  */
 
 import * as childProcess from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import * as http from 'node:http';
 import type { Server as HttpServer } from 'node:http';
 import * as fs from 'node:fs';
@@ -112,6 +113,79 @@ function logsDir(): string {
 
 function serverLogPath(): string {
   return path.join(logsDir(), 'otto-server.log');
+}
+
+export function prepareDesktopSqlCipherRuntime(
+  environment: NodeJS.ProcessEnv = process.env,
+  options: {
+    homeDirectory?: string;
+    resourcesPath?: string;
+  } = {},
+): { keyPath: string | null; nativeBindingPath: string | null } {
+  const encryptionMode = environment.OTTO_DATABASE_ENCRYPTION
+    ?.trim()
+    .toLowerCase();
+  if (['disabled', 'off', 'false', '0'].includes(encryptionMode ?? '')) {
+    return { keyPath: null, nativeBindingPath: null };
+  }
+
+  let keyPath = environment.OTTO_DATABASE_ENCRYPTION_KEY_FILE?.trim() || null;
+  if (!keyPath) {
+    const userDirectory =
+      environment.OTTO_USER_DIR?.trim() ||
+      path.join(options.homeDirectory ?? os.homedir(), '.otto-user');
+    const custodyDirectory = path.join(userDirectory, 'custody');
+    keyPath = path.join(custodyDirectory, 'database-sqlcipher.key');
+    fs.mkdirSync(custodyDirectory, { recursive: true, mode: 0o700 });
+    const custodyMetadata = fs.lstatSync(custodyDirectory);
+    if (custodyMetadata.isSymbolicLink() || !custodyMetadata.isDirectory()) {
+      throw new Error('desktop SQLCipher custody directory must be a real directory');
+    }
+
+    const key = randomBytes(32);
+    try {
+      try {
+        fs.writeFileSync(keyPath, key, { flag: 'wx', mode: 0o600 });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      }
+    } finally {
+      key.fill(0);
+    }
+
+    const keyMetadata = fs.lstatSync(keyPath);
+    if (
+      keyMetadata.isSymbolicLink() ||
+      !keyMetadata.isFile() ||
+      keyMetadata.size !== 32
+    ) {
+      throw new Error('desktop SQLCipher custody key must be a 32-byte regular file');
+    }
+    try {
+      fs.chmodSync(custodyDirectory, 0o700);
+      fs.chmodSync(keyPath, 0o600);
+    } catch {
+      // Windows protects these paths with the current user's directory ACL.
+    }
+    environment.OTTO_DATABASE_ENCRYPTION_KEY_FILE = keyPath;
+    environment.OTTO_DATABASE_ENCRYPTION_KEY_ID ??= 'desktop-local-custody';
+  }
+
+  let nativeBindingPath =
+    environment.OTTO_SQLCIPHER_NATIVE_BINDING?.trim() || null;
+  if (!nativeBindingPath && options.resourcesPath) {
+    const packagedBinding = path.join(
+      options.resourcesPath,
+      'sqlcipher',
+      'better_sqlite3.node',
+    );
+    if (fs.existsSync(packagedBinding)) {
+      nativeBindingPath = packagedBinding;
+      environment.OTTO_SQLCIPHER_NATIVE_BINDING = packagedBinding;
+    }
+  }
+
+  return { keyPath, nativeBindingPath };
 }
 
 /** 一次健康探测的超时（ms）。 */
@@ -238,6 +312,12 @@ export class ServerManager {
   private readonly onHealthChange?: (status: string) => void;
 
   constructor(options: ServerManagerOptions = {}) {
+    if (process.env.NODE_ENV !== 'test') {
+      prepareDesktopSqlCipherRuntime(process.env, {
+        homeDirectory: os.homedir(),
+        resourcesPath: process.resourcesPath,
+      });
+    }
     this.kernelUpdateRoot = options.kernelUpdateRoot;
     this.dependencies = options.dependencies ?? {
       ...DEFAULT_DEPENDENCIES,
