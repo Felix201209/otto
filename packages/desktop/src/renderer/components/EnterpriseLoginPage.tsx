@@ -93,26 +93,6 @@ function enterpriseServerHost(serverUrl: string): string {
   }
 }
 
-function enterpriseLegalUrl(serverUrl: string): string | null {
-  try {
-    const url = new URL(serverUrl.trim());
-    const isLocalDevelopment = url.hostname === 'localhost'
-      || url.hostname === '127.0.0.1'
-      || url.hostname === '[::1]';
-    if (
-      (url.protocol !== 'https:' && !isLocalDevelopment) ||
-      url.username ||
-      url.password ||
-      url.search ||
-      url.hash
-    ) return null;
-    url.pathname = `${url.pathname.replace(/\/+$/u, '')}/enterprise/legal`;
-    return url.toString();
-  } catch {
-    return null;
-  }
-}
-
 // Typewriter timing adapted from 21st.dev by designali-in (MIT), with reduced-motion handling.
 function CapabilityTypewriter(): React.JSX.Element {
   const [frame, setFrame] = useState<TypewriterFrame>({ phraseIndex: 0, charIndex: 0, deleting: false });
@@ -200,7 +180,6 @@ export function EnterpriseLoginPage({
   const [loginNotice, setLoginNotice] = useState('');
   const [loginCountdown, setLoginCountdown] = useState(0);
   const [loginRequesting, setLoginRequesting] = useState(false);
-  const [serverUrl, setServerUrl] = useState(initialServerUrl);
   const [name, setName] = useState('');
   const [registrationPassword, setRegistrationPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -220,8 +199,7 @@ export function EnterpriseLoginPage({
   const requestEpochRef = useRef(0);
   const submitLockedRef = useRef(false);
   const formPending = busy || submitting;
-  const serverHost = enterpriseServerHost(serverUrl);
-  const legalUrl = enterpriseLegalUrl(serverUrl);
+  const serverHost = enterpriseServerHost(initialServerUrl);
 
   useEffect(() => {
     if (!initialInviteCode) return;
@@ -261,7 +239,7 @@ export function EnterpriseLoginPage({
     setNotice('');
     try {
       const result = await onRequestRegistrationCode({
-        serverUrl: serverUrl.trim(),
+        serverUrl: initialServerUrl.trim(),
         phone: phone.trim(),
         ...(mode === 'join' ? { inviteCode } : {}),
       });
@@ -297,7 +275,7 @@ export function EnterpriseLoginPage({
     setLoginNotice('');
     try {
       const result = await onRequestLoginCode({
-        serverUrl: serverUrl.trim(),
+        serverUrl: initialServerUrl.trim(),
         phone: loginPhone.trim(),
       });
       setLoginChallengeId(result.challengeId);
@@ -321,32 +299,8 @@ export function EnterpriseLoginPage({
     setCountdown(0);
   };
 
-  useEffect(() => {
-    setServerUrl(initialServerUrl);
-    requestEpochRef.current += 1;
-    setLoginChallengeId('');
-    setLoginCode('');
-    setLoginNotice('');
-    setLoginCountdown(0);
-    setLoginRequesting(false);
-    setRequesting(false);
-    setChallengeId('');
-    setCode('');
-    setNotice('');
-    setOrganizationName('');
-    setCountdown(0);
-  }, [initialServerUrl]);
-
-  const updateServerUrl = (value: string): void => {
-    setServerUrl(value);
-    invalidateLoginChallenge();
-    invalidateRegistrationChallenge();
-    onClearError();
-  };
-
   const submitAuth = async (): Promise<void> => {
     if (formPending || requesting || loginRequesting || submitLockedRef.current) return;
-    if (!serverUrl.trim()) return;
     if ((mode === 'register' || mode === 'join') && !isRegistrationReady({
       inviteCode,
       inviteRequired: mode === 'join',
@@ -381,7 +335,7 @@ export function EnterpriseLoginPage({
         });
       } else if (loginMethod === 'password') {
         await onPasswordLogin({
-          serverUrl: serverUrl.trim(),
+          serverUrl: initialServerUrl.trim(),
           identifier: identifier.trim(),
           password: loginPassword,
         });
@@ -441,25 +395,14 @@ export function EnterpriseLoginPage({
             <span><strong>OTTO SECURE ACCESS</strong><small>企业身份门禁</small></span>
             <b>{mode === 'login' ? 'AUTHORIZED' : mode === 'join' ? 'JOIN COMPANY' : 'NEW ACCOUNT'}</b>
           </header>
-          <label
+          <div
             className="otto-auth-server"
+            aria-label="当前企业服务器"
+            title={initialServerUrl.trim()}
           >
-            <span>企业服务器地址</span>
-            <input
-              aria-label="企业服务器地址"
-              type="url"
-              inputMode="url"
-              autoCapitalize="none"
-              autoComplete="url"
-              spellCheck={false}
-              value={serverUrl}
-              disabled={formPending}
-              onChange={(event) => updateServerUrl(event.target.value)}
-              placeholder="https://enterprise.example.com"
-              required
-            />
-            <strong>{serverHost || '请输入管理员提供的 HTTPS 地址'}</strong>
-          </label>
+            <span>当前企业服务器</span>
+            <strong>{serverHost}</strong>
+          </div>
           <div className="otto-auth-card__topline">
             <span className="otto-auth-status-dot" />
             {mode === 'login'
@@ -622,13 +565,7 @@ export function EnterpriseLoginPage({
                   }}
                 />
                 <span>我已阅读并同意
-                  <button
-                    type="button"
-                    disabled={!legalUrl}
-                    onClick={() => {
-                      if (legalUrl) void window.otto.openExternal(legalUrl);
-                    }}
-                  >《用户服务协议》与《隐私规则》</button>
+                  <button type="button" onClick={() => void window.otto.openExternal(`${initialServerUrl.replace(/\/+$/u, '')}/enterprise/legal`)}>《用户服务协议》与《隐私规则》</button>
                   <small>
                     {legalDocuments.length === 2
                       ? `当前版本 ${legalDocuments.map((document) => `${document.id}:${document.version}#${document.hash.slice(0, 8)}`).join(' · ')}`
