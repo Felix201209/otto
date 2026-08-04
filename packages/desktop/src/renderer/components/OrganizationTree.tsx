@@ -487,8 +487,13 @@ function compareEnterpriseMembers(
   a: EnterpriseOrganizationView['members'][number],
   b: EnterpriseOrganizationView['members'][number],
 ): number {
+  // 管理员/管理层在各层级置顶
+  const adminRank = Number(Boolean(b.isAdmin)) - Number(Boolean(a.isAdmin));
+  if (adminRank !== 0) return adminRank;
+  // 在线成员优先
   const onlineRank = Number(Boolean(b.ottoOnline)) - Number(Boolean(a.ottoOnline));
   if (onlineRank !== 0) return onlineRank;
+  // 最近活跃成员优先
   const unreadRank = Number(Boolean(b.ottoLastSeenAt)) - Number(Boolean(a.ottoLastSeenAt));
   if (unreadRank !== 0) return unreadRank;
   return a.name.localeCompare(b.name, 'zh-CN');
