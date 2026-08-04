@@ -200,26 +200,43 @@ function normalizeEnterpriseMessageAttachments(
     const size = Number(candidate.size);
     const data =
       typeof candidate.data === 'string' ? candidate.data.trim() : '';
+    const sourcePath =
+      typeof candidate.sourcePath === 'string'
+        ? candidate.sourcePath.trim()
+        : '';
     if (
       !fileName ||
       fileName.length > 260 ||
       !mimeType ||
       !Number.isInteger(size) ||
-      size < 1 ||
+      size < 0 ||
       size > ENTERPRISE_MESSAGE_ATTACHMENT_MAX_FILE_BYTES ||
-      !data
+      (!data && !sourcePath) ||
+      (data && sourcePath)
     ) {
       throw new Error('附件信息不正确或单个附件超过 10 MB');
     }
-    const buffer = Buffer.from(data, 'base64');
-    if (buffer.length !== size || buffer.toString('base64') !== data) {
-      throw new Error('附件内容不完整');
+    if (sourcePath) {
+      const granted = fileAccessGrants.resolve(
+        sourcePath,
+        ENTERPRISE_MESSAGE_ATTACHMENT_MAX_FILE_BYTES,
+      );
+      if (granted.size !== size) {
+        throw new Error('附件在选择后发生变化，请重新选择');
+      }
+    } else {
+      const buffer = Buffer.from(data, 'base64');
+      if (buffer.length !== size || buffer.toString('base64') !== data) {
+        throw new Error('附件内容不完整');
+      }
     }
     totalBytes += size;
     if (totalBytes > ENTERPRISE_MESSAGE_ATTACHMENT_MAX_TOTAL_BYTES) {
       throw new Error('每条消息的附件总大小不能超过 20 MB');
     }
-    return { fileName, mimeType, size, data };
+    return sourcePath
+      ? { fileName, mimeType, size, sourcePath }
+      : { fileName, mimeType, size, data };
   });
 }
 
@@ -832,6 +849,16 @@ const enterpriseMlsMessageHistory = new FileEnterpriseMlsMessageHistory({
 const enterpriseMlsPrivateMessages = new EnterpriseMlsPrivateMessageService(
   enterpriseMlsCoordinator,
   enterpriseMlsMessageHistory,
+  {
+    attachmentDirectory: path.join(
+      app.getPath('userData'),
+      'enterprise-mls-attachment-outbox',
+    ),
+    attachmentTransport: {
+      upload: (input) => enterpriseClient.uploadMlsAttachmentObject(input),
+      download: (input) => enterpriseClient.downloadMlsAttachmentObject(input),
+    },
+  },
 );
 const enterpriseMlsOutboxRetry = new EnterpriseMlsOutboxRetryScheduler(
   enterpriseMlsCoordinator,
@@ -2928,6 +2955,9 @@ function registerIpc(): void {
         attachmentId.length > 160
       ) {
         throw new Error('附件信息不正确');
+      }
+      if (enterpriseClient.supportsMlsPrivateMessages()) {
+        return enterpriseMlsPrivateMessages.readAttachment(attachmentId);
       }
       return enterpriseClient.getDirectMessageAttachment(attachmentId);
     },

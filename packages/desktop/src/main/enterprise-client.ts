@@ -6,6 +6,8 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 import type { MlsKeyPackage } from '@otto/native';
 
@@ -21,14 +23,20 @@ import {
   ENTERPRISE_MLS_CIPHERSUITE,
   enterpriseMlsDirectConversationId,
   parseEnterpriseMlsInboundConversationPeerPage,
+  parseEnterpriseMlsAttachmentSession,
   parseEnterpriseMlsKeyPackageInventory,
   parseEnterpriseMlsPublishedKeyPackage,
   parseEnterpriseMlsTransportEvent,
   type EnterpriseMlsAppendTransportEventInput,
+  type EnterpriseMlsAttachmentSession,
   type EnterpriseMlsKeyPackageInventory,
   type EnterpriseMlsPublishedKeyPackage,
   type EnterpriseMlsTransportEvent,
 } from './enterprise-mls.js';
+import {
+  validateEnterpriseMlsAttachmentManifest,
+  type EnterpriseMlsAttachmentManifest,
+} from './enterprise-mls-attachments.js';
 
 export type {
   EnterpriseE2eeKeyTransparencyEntry,
@@ -660,7 +668,8 @@ export interface EnterpriseDirectMessageAttachmentUpload {
   fileName: string;
   mimeType: string;
   size: number;
-  data: string;
+  data?: string;
+  sourcePath?: string;
 }
 
 export interface EnterpriseDirectMessageAttachmentDownload extends EnterpriseDirectMessageAttachment {
@@ -1361,6 +1370,398 @@ export class EnterpriseClient {
       throw new Error('enterprise MLS inbound conversation limit exceeded');
     }
     return peerAccountIds;
+  }
+
+  async getMlsAttachmentSession(
+    peerAccountId: string,
+    deviceId: string,
+  ): Promise<EnterpriseMlsAttachmentSession> {
+    const account = await this.requireMlsTransportAccount();
+    const conversationId = enterpriseMlsDirectConversationId({
+      organizationId: account.organizationId,
+      accountId: account.id,
+      peerAccountId,
+    });
+    const response = await this.request<{ session: unknown }>(
+      `/enterprise/e2ee/mls/conversations/${encodeURIComponent(peerAccountId)}/attachment-session?deviceId=${encodeURIComponent(deviceId)}`,
+    );
+    const session = parseEnterpriseMlsAttachmentSession(response.session);
+    if (
+      session.conversationId !== conversationId ||
+      !session.participantAccountIds.includes(account.id) ||
+      !session.participantAccountIds.includes(peerAccountId) ||
+      !session.authorizedDevices.some(
+        (device) =>
+          device.accountId === account.id && device.deviceId === deviceId,
+      )
+    ) {
+      throw new Error('enterprise MLS attachment session binding is invalid');
+    }
+    return session;
+  }
+
+  async uploadMlsAttachmentObject(input: {
+    peerAccountId: string;
+    deviceId: string;
+    manifest: EnterpriseMlsAttachmentManifest;
+    ciphertextPath: string;
+    authorizedDevices: Array<{ accountId: string; deviceId: string }>;
+  }): Promise<EnterpriseMlsAttachmentManifest['object']> {
+    await this.requireMlsTransportAccount();
+    await this.assertCompatibleServer(this.serverUrl, [
+      'e2ee_mls_transport_v1',
+      'e2ee_attachment_objects_v1',
+      's3_multipart_uploads_v1',
+    ]);
+    const manifest = validateEnterpriseMlsAttachmentManifest(input.manifest);
+    const metadata = await fs.promises.lstat(input.ciphertextPath);
+    if (
+      metadata.isSymbolicLink() ||
+      !metadata.isFile() ||
+      metadata.size !== manifest.ciphertextBytes
+    ) {
+      throw new Error('MLS attachment ciphertext size changed before upload');
+    }
+    type UploadedPart = {
+      partNumber: number;
+      eTag: string;
+      ciphertextBytes: number;
+      ciphertextSha256: string;
+    };
+    const mlsRequestIdentity = {
+      peerAccountId: input.peerAccountId,
+      deviceId: input.deviceId,
+    };
+    let existingParts: UploadedPart[] = [];
+    try {
+      const resumed = await this.request<{
+        upload: {
+          state?: 'available';
+          attachmentId: string;
+          ciphertextBytes: number;
+          ciphertextSha256: string;
+          parts: UploadedPart[];
+        };
+      }>(
+        `/enterprise/attachments/${encodeURIComponent(manifest.id)}/resume?${new URLSearchParams(mlsRequestIdentity).toString()}`,
+      );
+      if (
+        resumed.upload.attachmentId !== manifest.id ||
+        resumed.upload.ciphertextBytes !== manifest.ciphertextBytes ||
+        resumed.upload.ciphertextSha256 !== manifest.ciphertextSha256 ||
+        !Array.isArray(resumed.upload.parts)
+      ) {
+        throw new Error('MLS attachment resume metadata is invalid');
+      }
+      if (resumed.upload.state === 'available') {
+        return manifest.object;
+      }
+      existingParts = resumed.upload.parts;
+    } catch (error) {
+      if (!(error instanceof EnterpriseRequestError) || error.status !== 404) {
+        throw error;
+      }
+      const initialized = await this.request<{
+        upload: { attachmentId: string };
+      }>('/enterprise/attachments/uploads', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...mlsRequestIdentity,
+          attachmentId: manifest.id,
+          ciphertextBytes: manifest.ciphertextBytes,
+          ciphertextSha256: manifest.ciphertextSha256,
+          mlsBinding: manifest.binding,
+          authorizedDevices: input.authorizedDevices,
+        }),
+      });
+      if (initialized.upload.attachmentId !== manifest.id) {
+        throw new Error('MLS attachment upload initialization is invalid');
+      }
+    }
+    const partBytes = 5 * 1024 * 1024;
+    const partCount = Math.ceil(manifest.ciphertextBytes / partBytes);
+    const persisted = new Map(
+      existingParts.map((part) => [part.partNumber, part]),
+    );
+    if (
+      existingParts.length > partCount ||
+      persisted.size !== existingParts.length ||
+      existingParts.some(
+        (part) =>
+          !Number.isSafeInteger(part.partNumber) ||
+          part.partNumber < 1 ||
+          part.partNumber > partCount ||
+          typeof part.eTag !== 'string' ||
+          !part.eTag ||
+          part.eTag.length > 512 ||
+          !Number.isSafeInteger(part.ciphertextBytes) ||
+          part.ciphertextBytes < 1 ||
+          !/^[0-9a-f]{64}$/.test(part.ciphertextSha256),
+      )
+    ) {
+      throw new Error('MLS attachment resume parts are invalid');
+    }
+    const completed: UploadedPart[] = [];
+    const overallDigest = createHash('sha256');
+    const file = await fs.promises.open(input.ciphertextPath, 'r');
+    try {
+      for (let index = 0; index < partCount; index += 1) {
+        const partNumber = index + 1;
+        const length = Math.min(
+          partBytes,
+          manifest.ciphertextBytes - index * partBytes,
+        );
+        const chunk = Buffer.allocUnsafe(length);
+        let offset = 0;
+        try {
+          while (offset < length) {
+            const result = await file.read(
+              chunk,
+              offset,
+              length - offset,
+              index * partBytes + offset,
+            );
+            if (result.bytesRead === 0) {
+              throw new Error('MLS attachment ciphertext ended unexpectedly');
+            }
+            offset += result.bytesRead;
+          }
+          overallDigest.update(chunk);
+          const checksum = createHash('sha256').update(chunk).digest('hex');
+          const previous = persisted.get(partNumber);
+          if (
+            previous &&
+            previous.ciphertextBytes === length &&
+            previous.ciphertextSha256 === checksum &&
+            previous.eTag
+          ) {
+            completed.push(previous);
+            continue;
+          }
+          const presigned = await this.request<{
+            request: {
+              method: 'PUT';
+              url: string;
+              expiresInSeconds: number;
+              requiredHeaders: Record<string, string>;
+            };
+          }>(
+            `/enterprise/attachments/${encodeURIComponent(manifest.id)}/parts/${partNumber}/presign`,
+            {
+              method: 'POST',
+              body: JSON.stringify({
+                ...mlsRequestIdentity,
+                ciphertextBytes: length,
+                ciphertextSha256: checksum,
+              }),
+            },
+          );
+          if (
+            presigned.request.method !== 'PUT' ||
+            !presigned.request.url ||
+            !presigned.request.requiredHeaders
+          ) {
+            throw new Error('MLS attachment presigned upload is invalid');
+          }
+          const uploaded = await this.fetchImpl(presigned.request.url, {
+            method: 'PUT',
+            headers: presigned.request.requiredHeaders,
+            body: chunk,
+          });
+          if (!uploaded.ok) {
+            throw new Error(
+              `MLS attachment part upload failed: ${uploaded.status}`,
+            );
+          }
+          const eTag = uploaded.headers.get('etag')?.trim() ?? '';
+          if (!eTag || eTag.length > 512) {
+            throw new Error('MLS attachment upload ETag is invalid');
+          }
+          const part = {
+            partNumber,
+            eTag,
+            ciphertextBytes: length,
+            ciphertextSha256: checksum,
+          };
+          await this.request(
+            `/enterprise/attachments/${encodeURIComponent(manifest.id)}/parts`,
+            {
+              method: 'POST',
+              body: JSON.stringify({ ...mlsRequestIdentity, ...part }),
+            },
+          );
+          completed.push(part);
+        } finally {
+          chunk.fill(0);
+        }
+      }
+    } finally {
+      await file.close();
+    }
+    if (overallDigest.digest('hex') !== manifest.ciphertextSha256) {
+      throw new Error('MLS attachment ciphertext checksum changed before upload');
+    }
+    const finalized = await this.request<{
+      attachment: {
+        id: string;
+        ciphertextBytes: number;
+        ciphertextSha256: string;
+      };
+    }>(
+      `/enterprise/attachments/${encodeURIComponent(manifest.id)}/complete`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ ...mlsRequestIdentity, parts: completed }),
+      },
+      { timeoutMs: 60_000 },
+    );
+    if (
+      finalized.attachment.id !== manifest.object.id ||
+      finalized.attachment.ciphertextBytes !== manifest.object.ciphertextBytes ||
+      finalized.attachment.ciphertextSha256 !==
+        manifest.object.ciphertextSha256
+    ) {
+      throw new Error('MLS attachment completion metadata is invalid');
+    }
+    return manifest.object;
+  }
+
+  async downloadMlsAttachmentObject(input: {
+    peerAccountId: string;
+    deviceId: string;
+    manifest: EnterpriseMlsAttachmentManifest;
+    ciphertextPath: string;
+  }): Promise<EnterpriseMlsAttachmentManifest['object']> {
+    await this.requireMlsTransportAccount();
+    await this.assertCompatibleServer(this.serverUrl, [
+      'e2ee_mls_transport_v1',
+      'e2ee_attachment_objects_v1',
+    ]);
+    const manifest = validateEnterpriseMlsAttachmentManifest(input.manifest);
+    const query = new URLSearchParams({
+      peerAccountId: input.peerAccountId,
+      deviceId: input.deviceId,
+    });
+    const response = await this.request<{
+      attachment: {
+        kind: 'presigned' | 'ciphertext';
+        ciphertextBytes: number;
+        ciphertextSha256: string;
+        encryption: string;
+        ciphertext?: string;
+        request?: {
+          method: 'GET';
+          url: string;
+          expiresInSeconds: number;
+          requiredHeaders: Record<string, string>;
+        };
+      };
+    }>(
+      `/enterprise/attachments/${encodeURIComponent(manifest.id)}/download?${query.toString()}`,
+      {},
+      { timeoutMs: 60_000 },
+    );
+    const attachment = response.attachment;
+    if (
+      attachment.encryption !== 'mls-client-v1' ||
+      attachment.ciphertextBytes !== manifest.object.ciphertextBytes ||
+      attachment.ciphertextSha256 !== manifest.object.ciphertextSha256
+    ) {
+      throw new Error('MLS attachment download metadata is invalid');
+    }
+    await fs.promises.mkdir(path.dirname(input.ciphertextPath), {
+      recursive: true,
+      mode: 0o700,
+    });
+    const temporary = `${input.ciphertextPath}.${randomUUID()}.tmp`;
+    const digest = createHash('sha256');
+    let written = 0;
+    let target: fs.promises.FileHandle | null = null;
+    const writeChunk = async (chunk: Buffer): Promise<void> => {
+      written += chunk.length;
+      if (written > manifest.ciphertextBytes) {
+        throw new Error('MLS attachment download exceeds manifest size');
+      }
+      digest.update(chunk);
+      let offset = 0;
+      while (offset < chunk.length) {
+        const result = await target!.write(
+          chunk,
+          offset,
+          chunk.length - offset,
+        );
+        if (result.bytesWritten === 0) {
+          throw new Error('MLS attachment download write made no progress');
+        }
+        offset += result.bytesWritten;
+      }
+    };
+    try {
+      target = await fs.promises.open(temporary, 'wx', 0o600);
+      if (attachment.kind === 'presigned') {
+        if (
+          attachment.request?.method !== 'GET' ||
+          !attachment.request.url ||
+          !attachment.request.requiredHeaders
+        ) {
+          throw new Error('MLS attachment presigned download is invalid');
+        }
+        const downloaded = await this.fetchImpl(attachment.request.url, {
+          method: 'GET',
+          headers: attachment.request.requiredHeaders,
+        });
+        if (!downloaded.ok || !downloaded.body) {
+          throw new Error(
+            `MLS attachment object download failed: ${downloaded.status}`,
+          );
+        }
+        const reader = downloaded.body.getReader();
+        try {
+          for (;;) {
+            const next = await reader.read();
+            if (next.done) break;
+            const chunk = Buffer.from(next.value);
+            try {
+              await writeChunk(chunk);
+            } finally {
+              chunk.fill(0);
+            }
+          }
+        } finally {
+          reader.releaseLock();
+        }
+      } else {
+        if (typeof attachment.ciphertext !== 'string') {
+          throw new Error('MLS attachment ciphertext is unavailable');
+        }
+        const chunk = Buffer.from(attachment.ciphertext, 'base64');
+        try {
+          if (chunk.toString('base64') !== attachment.ciphertext) {
+            throw new Error('MLS attachment ciphertext encoding is invalid');
+          }
+          await writeChunk(chunk);
+        } finally {
+          chunk.fill(0);
+        }
+      }
+      if (
+        written !== manifest.ciphertextBytes ||
+        digest.digest('hex') !== manifest.ciphertextSha256
+      ) {
+        throw new Error('MLS attachment download integrity check failed');
+      }
+      await target.sync();
+      await target.close();
+      target = null;
+      await fs.promises.rename(temporary, input.ciphertextPath);
+      await fs.promises.chmod(input.ciphertextPath, 0o600).catch(() => undefined);
+      return manifest.object;
+    } catch (error) {
+      await target?.close().catch(() => undefined);
+      target = null;
+      await fs.promises.rm(temporary, { force: true }).catch(() => undefined);
+      throw error;
+    }
   }
 
   private async requireMlsTransportAccount(): Promise<EnterpriseAccount> {
@@ -2749,6 +3150,27 @@ export class EnterpriseClient {
     const { crypto, account, serverScope } = this.requireE2eeContext();
     const devices = await this.e2eeDevicesForConversation(peerAccountId);
     const protocol = e2eeProtocolMetadata(content);
+    const legacyAttachments = await Promise.all(
+      attachments.map(async (attachment) => {
+        if (attachment.data) return { ...attachment, data: attachment.data };
+        if (!attachment.sourcePath) {
+          throw new Error('E2EE attachment content is unavailable');
+        }
+        const content = await fs.promises.readFile(attachment.sourcePath);
+        if (content.length !== attachment.size) {
+          content.fill(0);
+          throw new Error('E2EE attachment size changed after selection');
+        }
+        const data = content.toString('base64');
+        content.fill(0);
+        return {
+          fileName: attachment.fileName,
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+          data,
+        };
+      }),
+    );
     const encrypted = crypto.encryptMessage({
       serverScope,
       organizationId: account.organizationId,
@@ -2758,7 +3180,7 @@ export class EnterpriseClient {
       contentType: protocol.contentType,
       inReplyToMessageId: protocol.inReplyToMessageId,
       devices,
-      attachments,
+      attachments: legacyAttachments,
     });
     const attachmentReferences = usesSharedAttachmentObjects
       ? await Promise.all(

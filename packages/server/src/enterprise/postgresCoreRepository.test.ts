@@ -136,6 +136,25 @@ describe('PostgreSQL enterprise core authority', () => {
     expect(migration!.sql).not.toContain('payload_plaintext');
   });
 
+  it('binds MLS attachment objects to one generation and device roster', () => {
+    const migration = ENTERPRISE_POSTGRES_MIGRATIONS.find(
+      (candidate) => candidate.version === 14,
+    );
+    expect(migration).toMatchObject({
+      version: 14,
+      name: 'mls-attachment-object-authority',
+    });
+    expect(migration!.sql).toContain("'mls-client-v1'");
+    expect(migration!.sql).toContain('mls_authorized_devices JSONB');
+    expect(migration!.sql).toContain('mls_participant_account_ids JSONB');
+    expect(migration!.sql).toContain(
+      'REFERENCES mls_group_sessions(organization_id, conversation_id, generation)',
+    );
+    expect(migration!.sql).toContain(
+      'attachment_objects_mls_authorization_all_or_none',
+    );
+  });
+
   it('requires an exact policy hash before PostgreSQL reports current consent', async () => {
     const references = currentLegalDocumentReferences();
     const pool: PostgresPoolLike = {

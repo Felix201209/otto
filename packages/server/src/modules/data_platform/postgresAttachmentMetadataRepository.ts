@@ -35,6 +35,13 @@ interface AttachmentRow extends Record<string, unknown> {
   expires_at: Date | string;
   legacy_delete_after: Date | string | null;
   legal_hold: boolean;
+  mls_conversation_id: string | null;
+  mls_session_generation: number | string | null;
+  mls_group_id: string | null;
+  mls_epoch: number | string | null;
+  mls_message_id: string | null;
+  mls_participant_account_ids: unknown;
+  mls_authorized_devices: unknown;
 }
 
 const ATTACHMENT_COLUMNS = `
@@ -52,7 +59,14 @@ const ATTACHMENT_COLUMNS = `
   legacy_storage_key,
   expires_at,
   legacy_delete_after,
-  legal_hold`;
+  legal_hold,
+  mls_conversation_id,
+  mls_session_generation,
+  mls_group_id,
+  mls_epoch,
+  mls_message_id,
+  mls_participant_account_ids,
+  mls_authorized_devices`;
 
 const ATTACHMENT_STATES = new Set<AttachmentMetadataState>([
   'reserved',
@@ -65,6 +79,7 @@ const ATTACHMENT_STATES = new Set<AttachmentMetadataState>([
 const ENCRYPTION_TYPES = new Set<AttachmentCiphertextEncryption>([
   'e2ee-client-v1',
   'server-envelope-v1',
+  'mls-client-v1',
 ]);
 const BACKENDS = new Set<AttachmentObjectBackend>([
   'encrypted-filesystem',
@@ -129,6 +144,62 @@ function mapAttachment(row: AttachmentRow): AttachmentMetadataRecord {
   if (!ENCRYPTION_TYPES.has(row.encryption as AttachmentCiphertextEncryption)) {
     throw new Error('PostgreSQL attachment encryption type is invalid');
   }
+  const mlsFields = [
+    row.mls_conversation_id,
+    row.mls_session_generation,
+    row.mls_group_id,
+    row.mls_epoch,
+    row.mls_message_id,
+    row.mls_participant_account_ids,
+    row.mls_authorized_devices,
+  ];
+  const hasMlsAuthorization = mlsFields.some(
+    (value) => value !== null && value !== undefined,
+  );
+  let mlsAuthorization: AttachmentMetadataRecord['mlsAuthorization'] = null;
+  if (hasMlsAuthorization) {
+    if (
+      row.encryption !== 'mls-client-v1' ||
+      !Array.isArray(row.mls_participant_account_ids) ||
+      row.mls_participant_account_ids.length !== 2 ||
+      row.mls_participant_account_ids.some((value) => typeof value !== 'string') ||
+      !Array.isArray(row.mls_authorized_devices) ||
+      row.mls_authorized_devices.length < 2 ||
+      row.mls_authorized_devices.length > 100 ||
+      row.mls_authorized_devices.some(
+        (value) =>
+          !value ||
+          typeof value !== 'object' ||
+          typeof (value as Record<string, unknown>).accountId !== 'string' ||
+          typeof (value as Record<string, unknown>).deviceId !== 'string',
+      )
+    ) {
+      throw new Error('PostgreSQL MLS attachment authorization is invalid');
+    }
+    mlsAuthorization = {
+      conversationId: requiredString(
+        row.mls_conversation_id,
+        'MLS conversation id',
+      ),
+      sessionGeneration: safePositiveInteger(
+        row.mls_session_generation,
+        'MLS session generation',
+      ),
+      groupId: requiredString(row.mls_group_id, 'MLS group id'),
+      epoch: safePositiveInteger(row.mls_epoch, 'MLS epoch'),
+      messageId: requiredString(row.mls_message_id, 'MLS message id'),
+      participantAccountIds: [
+        row.mls_participant_account_ids[0] as string,
+        row.mls_participant_account_ids[1] as string,
+      ],
+      authorizedDevices: row.mls_authorized_devices.map((value) => ({
+        accountId: (value as Record<string, string>).accountId,
+        deviceId: (value as Record<string, string>).deviceId,
+      })),
+    };
+  } else if (row.encryption === 'mls-client-v1') {
+    throw new Error('PostgreSQL MLS attachment authorization is missing');
+  }
   return {
     id: requiredString(row.id, 'id'),
     organizationId: requiredString(row.organization_id, 'organization id'),
@@ -152,6 +223,7 @@ function mapAttachment(row: AttachmentRow): AttachmentMetadataRecord {
       'legacy deletion time',
     ),
     legalHold: row.legal_hold,
+    mlsAuthorization,
   };
 }
 
@@ -212,8 +284,14 @@ export function createPostgresAttachmentMetadataRepository(input: {
         const inserted = await client.query<AttachmentRow>(
           `INSERT INTO attachment_objects (
              id, organization_id, owner_account_id, state, encryption,
-             ciphertext_bytes, ciphertext_sha256, expires_at
-           ) VALUES ($1, $2, $3, 'reserved', $4, $5, $6, $7)
+             ciphertext_bytes, ciphertext_sha256, expires_at,
+             mls_conversation_id, mls_session_generation, mls_group_id,
+             mls_epoch, mls_message_id, mls_participant_account_ids,
+             mls_authorized_devices
+           ) VALUES (
+             $1, $2, $3, 'reserved', $4, $5, $6, $7,
+             $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb
+           )
            RETURNING ${ATTACHMENT_COLUMNS}`,
           [
             reservation.attachmentId,
@@ -223,6 +301,17 @@ export function createPostgresAttachmentMetadataRepository(input: {
             reservation.ciphertextBytes,
             reservation.ciphertextSha256,
             reservation.expiresAt,
+            reservation.mlsAuthorization?.conversationId ?? null,
+            reservation.mlsAuthorization?.sessionGeneration ?? null,
+            reservation.mlsAuthorization?.groupId ?? null,
+            reservation.mlsAuthorization?.epoch ?? null,
+            reservation.mlsAuthorization?.messageId ?? null,
+            reservation.mlsAuthorization
+              ? JSON.stringify(reservation.mlsAuthorization.participantAccountIds)
+              : null,
+            reservation.mlsAuthorization
+              ? JSON.stringify(reservation.mlsAuthorization.authorizedDevices)
+              : null,
           ],
         );
         await client.query(

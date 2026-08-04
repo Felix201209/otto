@@ -22,6 +22,26 @@ export interface AttachmentStoragePointer {
 export type AttachmentMetadataState =
   'reserved' | 'uploading' | 'verifying' | 'cleaning' | 'available' | 'failed';
 
+export interface AttachmentMlsDeviceAuthorization {
+  accountId: string;
+  deviceId: string;
+}
+
+export interface AttachmentMlsAuthorization {
+  conversationId: string;
+  sessionGeneration: number;
+  groupId: string;
+  epoch: number;
+  messageId: string;
+  participantAccountIds: [string, string];
+  authorizedDevices: AttachmentMlsDeviceAuthorization[];
+}
+
+export interface AttachmentMlsAccessContext {
+  deviceId: string;
+  session: Omit<AttachmentMlsAuthorization, 'messageId'>;
+}
+
 export interface AttachmentMetadataRecord {
   id: string;
   organizationId: string;
@@ -36,6 +56,7 @@ export interface AttachmentMetadataRecord {
   expiresAt: string;
   legacyDeleteAfter: string | null;
   legalHold: boolean;
+  mlsAuthorization: AttachmentMlsAuthorization | null;
 }
 
 export interface AttachmentMetadataRepository {
@@ -49,6 +70,7 @@ export interface AttachmentMetadataRepository {
     ciphertextBytes: number;
     ciphertextSha256: string;
     expiresAt: string;
+    mlsAuthorization: AttachmentMlsAuthorization | null;
   }): Promise<AttachmentMetadataRecord>;
   attachMultipartUpload(input: {
     attachmentId: string;
@@ -142,6 +164,70 @@ function validateSize(value: number, maximum: number): number {
     throw new Error('attachment ciphertext size exceeds the configured limit');
   }
   return value;
+}
+
+const ATTACHMENT_AUTHORITY_IDENTIFIER =
+  /^[A-Za-z0-9][A-Za-z0-9._:+/=-]{0,399}$/u;
+
+function validateMlsAuthorization(
+  value: AttachmentMlsAuthorization,
+): AttachmentMlsAuthorization {
+  if (
+    !value ||
+    !ATTACHMENT_AUTHORITY_IDENTIFIER.test(value.conversationId) ||
+    !Number.isSafeInteger(value.sessionGeneration) ||
+    value.sessionGeneration <= 0 ||
+    !ATTACHMENT_AUTHORITY_IDENTIFIER.test(value.groupId) ||
+    !Number.isSafeInteger(value.epoch) ||
+    value.epoch <= 0 ||
+    !ATTACHMENT_AUTHORITY_IDENTIFIER.test(value.messageId) ||
+    !Array.isArray(value.participantAccountIds) ||
+    value.participantAccountIds.length !== 2 ||
+    value.participantAccountIds[0] >= value.participantAccountIds[1] ||
+    value.participantAccountIds.some(
+      (accountId) => !ATTACHMENT_AUTHORITY_IDENTIFIER.test(accountId),
+    ) ||
+    !Array.isArray(value.authorizedDevices) ||
+    value.authorizedDevices.length < 2 ||
+    value.authorizedDevices.length > 100
+  ) {
+    throw new Error('MLS attachment authorization is invalid');
+  }
+  const devices = value.authorizedDevices.map((device) => ({
+    accountId: device?.accountId,
+    deviceId: device?.deviceId,
+  }));
+  if (
+    devices.some(
+      (device) =>
+        !ATTACHMENT_AUTHORITY_IDENTIFIER.test(device.accountId) ||
+        !ATTACHMENT_AUTHORITY_IDENTIFIER.test(device.deviceId) ||
+        !value.participantAccountIds.includes(device.accountId),
+    ) ||
+    devices.some(
+      (device, index) =>
+        index > 0 &&
+        `${devices[index - 1]!.accountId}\u0000${devices[index - 1]!.deviceId}` >=
+          `${device.accountId}\u0000${device.deviceId}`,
+    ) ||
+    value.participantAccountIds.some(
+      (accountId) => !devices.some((device) => device.accountId === accountId),
+    )
+  ) {
+    throw new Error('MLS attachment authorized device roster is invalid');
+  }
+  return {
+    ...value,
+    participantAccountIds: [...value.participantAccountIds],
+    authorizedDevices: devices,
+  };
+}
+
+function sameMlsParticipants(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return left.length === 2 && right.length === 2 && left.every((id, index) => id === right[index]);
 }
 
 function validateMultipartParts(
@@ -248,6 +334,7 @@ export function createAttachmentStorageService(input: {
     attachmentId: string;
     organizationId: string;
     accountId: string;
+    mlsAccess?: AttachmentMlsAccessContext;
   }): Promise<AttachmentMetadataRecord> {
     const attachmentId = validateAttachmentId(inputRecord.attachmentId);
     const result = await input.metadata.getAuthorizedAttachment({
@@ -255,6 +342,38 @@ export function createAttachmentStorageService(input: {
       attachmentId,
     });
     if (!result || result.organizationId !== inputRecord.organizationId) {
+      throw new AttachmentAccessDeniedError();
+    }
+    if (!result.mlsAuthorization) {
+      if (inputRecord.mlsAccess) throw new AttachmentAccessDeniedError();
+      return result;
+    }
+    if (!inputRecord.mlsAccess) throw new AttachmentAccessDeniedError();
+    const authorization = validateMlsAuthorization(result.mlsAuthorization);
+    const session = validateMlsAuthorization({
+      ...inputRecord.mlsAccess.session,
+      messageId: authorization.messageId,
+    });
+    const exactBinding =
+      session.conversationId === authorization.conversationId &&
+      session.sessionGeneration === authorization.sessionGeneration &&
+      session.groupId === authorization.groupId &&
+      session.epoch >= authorization.epoch &&
+      sameMlsParticipants(
+        session.participantAccountIds,
+        authorization.participantAccountIds,
+      );
+    const deviceIsCurrentlyApproved = session.authorizedDevices.some(
+      (device) =>
+        device.accountId === inputRecord.accountId &&
+        device.deviceId === inputRecord.mlsAccess!.deviceId,
+    );
+    const deviceWasAuthorizedAtSend = authorization.authorizedDevices.some(
+      (device) =>
+        device.accountId === inputRecord.accountId &&
+        device.deviceId === inputRecord.mlsAccess!.deviceId,
+    );
+    if (!exactBinding || !deviceIsCurrentlyApproved || !deviceWasAuthorizedAtSend) {
       throw new AttachmentAccessDeniedError();
     }
     return result;
@@ -268,6 +387,7 @@ export function createAttachmentStorageService(input: {
     ciphertextSha256: string;
     encryption: AttachmentCiphertextEncryption;
     authorizedAccountIds?: string[];
+    mlsAuthorization?: AttachmentMlsAuthorization;
   }): Promise<AttachmentMetadataRecord> {
     const attachmentId = validateAttachmentId(inputRecord.attachmentId);
     const ciphertextBytes = validateSize(
@@ -294,6 +414,22 @@ export function createAttachmentStorageService(input: {
     ) {
       throw new Error('attachment authorized accounts are invalid');
     }
+    const mlsAuthorization = inputRecord.mlsAuthorization
+      ? validateMlsAuthorization(inputRecord.mlsAuthorization)
+      : null;
+    if ((inputRecord.encryption === 'mls-client-v1') !== Boolean(mlsAuthorization)) {
+      throw new Error('MLS attachment authorization is required');
+    }
+    if (
+      mlsAuthorization &&
+      (!mlsAuthorization.participantAccountIds.includes(inputRecord.accountId) ||
+        authorizedAccountIds.length !== 2 ||
+        !authorizedAccountIds.every((accountId) =>
+          mlsAuthorization.participantAccountIds.includes(accountId),
+        ))
+    ) {
+      throw new Error('MLS attachment participant ACL is invalid');
+    }
     return input.metadata.reserveUpload({
       ...inputRecord,
       attachmentId,
@@ -301,6 +437,7 @@ export function createAttachmentStorageService(input: {
       ciphertextSha256,
       authorizedAccountIds,
       expiresAt,
+      mlsAuthorization,
     });
   }
 
@@ -312,6 +449,7 @@ export function createAttachmentStorageService(input: {
     ciphertextSha256: string;
     encryption: AttachmentCiphertextEncryption;
     authorizedAccountIds?: string[];
+    mlsAuthorization?: AttachmentMlsAuthorization;
   }) {
     const metadata = await reserve(inputRecord);
     const store = storeFor(input.primaryBackend);
@@ -361,6 +499,7 @@ export function createAttachmentStorageService(input: {
     ciphertextSha256: string;
     encryption: AttachmentCiphertextEncryption;
     authorizedAccountIds?: string[];
+    mlsAuthorization?: AttachmentMlsAuthorization;
   }): Promise<AttachmentMetadataRecord> {
     verifyCiphertext(inputRecord);
     const metadata = await reserve({
@@ -398,6 +537,7 @@ export function createAttachmentStorageService(input: {
     partNumber: number;
     ciphertextBytes: number;
     ciphertextSha256: string;
+    mlsAccess?: AttachmentMlsAccessContext;
   }): Promise<AttachmentPresignedRequest> {
     const metadata = await authorized(inputRecord);
     assertActiveUpload(metadata);
@@ -416,6 +556,7 @@ export function createAttachmentStorageService(input: {
     accountId: string;
     attachmentId: string;
     parts: AttachmentMultipartPart[];
+    mlsAccess?: AttachmentMlsAccessContext;
   }): Promise<AttachmentMetadataRecord> {
     const metadata = await authorized(inputRecord);
     assertActiveUpload(metadata);
@@ -480,6 +621,7 @@ export function createAttachmentStorageService(input: {
     accountId: string;
     attachmentId: string;
     part: AttachmentMultipartPart;
+    mlsAccess?: AttachmentMlsAccessContext;
   }): Promise<void> {
     const metadata = await authorized(inputRecord);
     assertActiveUpload(metadata);
@@ -513,8 +655,18 @@ export function createAttachmentStorageService(input: {
     organizationId: string;
     accountId: string;
     attachmentId: string;
+    mlsAccess?: AttachmentMlsAccessContext;
   }) {
     const metadata = await authorized(inputRecord);
+    if (metadata.state === 'available') {
+      return {
+        state: 'available' as const,
+        attachmentId: metadata.id,
+        ciphertextBytes: metadata.ciphertextBytes,
+        ciphertextSha256: metadata.ciphertextSha256,
+        parts: [],
+      };
+    }
     assertActiveUpload(metadata);
     return {
       attachmentId: metadata.id,
@@ -560,6 +712,7 @@ export function createAttachmentStorageService(input: {
     organizationId: string;
     accountId: string;
     attachmentId: string;
+    mlsAccess?: AttachmentMlsAccessContext;
   }) {
     const metadata = await authorized(inputRecord);
     if (metadata.state !== 'available' || !metadata.location) {

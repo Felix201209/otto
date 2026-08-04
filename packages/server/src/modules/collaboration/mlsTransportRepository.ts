@@ -144,6 +144,22 @@ export interface ListMlsInboundConversationPeersInput {
   limit?: number;
 }
 
+export interface GetMlsAttachmentSessionInput {
+  organizationId: string;
+  accountId: string;
+  peerAccountId: string;
+  deviceId: string;
+}
+
+export interface MlsAttachmentSessionView {
+  conversationId: string;
+  sessionGeneration: number;
+  groupId: string;
+  epoch: number;
+  participantAccountIds: [string, string];
+  authorizedDevices: Array<{ accountId: string; deviceId: string }>;
+}
+
 interface KeyPackageRow {
   key_package_reference: string;
   account_id: string;
@@ -1437,6 +1453,100 @@ export function listMlsTransportEventsInRepository(
   ).map(eventView);
 }
 
+/**
+ * Returns the current direct-session binding used for MLS attachment AAD and
+ * object ACL snapshots. Pending and revoked devices are deliberately omitted,
+ * and the requesting device must belong to the authenticated account.
+ */
+export function getMlsAttachmentSessionInRepository(
+  store: MlsTransportStore,
+  raw: GetMlsAttachmentSessionInput,
+): MlsAttachmentSessionView {
+  const organizationId = requireMlsIdentifier(
+    raw.organizationId,
+    'organization id',
+  );
+  const accountId = requireMlsIdentifier(raw.accountId, 'account id');
+  const peerAccountId = requireMlsIdentifier(
+    raw.peerAccountId,
+    'peer account id',
+  );
+  const deviceId = requireMlsIdentifier(raw.deviceId, 'device id');
+  requireParticipants(store, organizationId, accountId, peerAccountId);
+  const database = store.db();
+  try {
+    requireActiveApprovedDevice(database, organizationId, accountId, deviceId);
+  } catch {
+    throw new Error('MLS attachment device binding is invalid');
+  }
+  const direct = mlsDirectConversation({
+    organizationId,
+    accountId,
+    peerAccountId,
+  });
+  const conversation = database
+    .prepare(
+      `SELECT conversation_id, group_id, current_epoch, active_generation,
+              participant_a_account_id, participant_b_account_id
+       FROM mls_conversations
+       WHERE organization_id = ? AND conversation_id = ?`,
+    )
+    .get(organizationId, direct.conversationId) as
+    | {
+        conversation_id: string;
+        group_id: string;
+        current_epoch: number;
+        active_generation: number;
+        participant_a_account_id: string;
+        participant_b_account_id: string;
+      }
+    | undefined;
+  if (!conversation) {
+    throw new Error('MLS attachment session is unavailable');
+  }
+  const authorizedDevices = database
+    .prepare(
+      `SELECT device.account_id, device.device_id
+       FROM e2ee_devices AS device
+       JOIN accounts AS account
+         ON account.organization_id = device.organization_id
+        AND account.id = device.account_id
+        AND account.status = 'active'
+       WHERE device.organization_id = ?
+         AND device.account_id IN (?, ?)
+         AND device.approval_state = 'approved'
+         AND device.revoked_at IS NULL
+       ORDER BY device.account_id, device.device_id`,
+    )
+    .all(
+      organizationId,
+      conversation.participant_a_account_id,
+      conversation.participant_b_account_id,
+    ) as Array<{ account_id: string; device_id: string }>;
+  if (
+    authorizedDevices.length < 2 ||
+    authorizedDevices.length > 100 ||
+    !authorizedDevices.some((device) => device.account_id === accountId) ||
+    !authorizedDevices.some((device) => device.account_id === peerAccountId)
+  ) {
+    throw new Error('MLS attachment approved device roster is unavailable');
+  }
+  return {
+    conversationId: conversation.conversation_id,
+    sessionGeneration: Number(conversation.active_generation),
+    groupId: conversation.group_id,
+    epoch: Number(conversation.current_epoch),
+    participantAccountIds: [
+      conversation.participant_a_account_id,
+      conversation.participant_b_account_id,
+    ],
+    authorizedDevices: authorizedDevices.map((device) => ({
+      accountId: device.account_id,
+      deviceId: device.device_id,
+    })),
+  };
+}
+
 export function listMlsInboundConversationPeersInRepository(
   store: MlsTransportStore,
   raw: ListMlsInboundConversationPeersInput,
@@ -1665,6 +1775,8 @@ export function createMlsTransportFacade(store: MlsTransportStore) {
     listMlsTransportEvents: (
       input: Parameters<typeof listMlsTransportEventsInRepository>[1],
     ) => listMlsTransportEventsInRepository(store, input),
+    getMlsAttachmentSession: (input: GetMlsAttachmentSessionInput) =>
+      getMlsAttachmentSessionInRepository(store, input),
     listMlsInboundConversationPeers: (
       input: ListMlsInboundConversationPeersInput,
     ) => listMlsInboundConversationPeersInRepository(store, input),
