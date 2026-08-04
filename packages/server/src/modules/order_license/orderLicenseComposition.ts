@@ -20,6 +20,7 @@ import {
   getEventState,
   persistOrderEntitlement,
   getOrderEntitlement,
+  loadAllOrderRecords,
   type OrderLicenseStore,
   type StoredOrderEntitlement,
 } from './orderLicenseRepository.js';
@@ -29,7 +30,7 @@ import {
   licensePayloadDigest,
   type IssuedLicenseEnvelope,
 } from './licenseIssuance.js';
-import type { OrderEvent } from './orderLicenseTypes.js';
+import type { OrderEvent, OrderRecord } from './orderLicenseTypes.js';
 
 export interface OrderLicenseProcessorDeps {
   db(): Database;
@@ -67,13 +68,28 @@ export function createOrderLicenseProcessor(
   const now = deps.now ?? (() => Date.now());
   const store: OrderLicenseStore = { db: deps.db };
 
-  /** TODO(控制面持久化投影) —— 本实现以 DB 行作为投影源，重建内存投影用于推导。 */
+  /** 重建状态机投影：以 DB 持久化的订单记录为既有上下文，保证多事件生命周期正确。 */
   function buildProjection(): OrderProjection {
     const projection: OrderProjection = {
       records: new Map(),
       processedEventIds: new Set(),
     };
-    // 从 order_licenses 重建记录；事件去重以 DB order_events 为准，此处不重复加载。
+    for (const rec of loadAllOrderRecords(store)) {
+      const record: OrderRecord = {
+        orderId: rec.orderId,
+        state: rec.state,
+        latestVersion: rec.latestVersion,
+        deploymentId: rec.deploymentId,
+        customer: rec.customer,
+        plan: rec.plan,
+        seatLimit: rec.seatLimit,
+        modules: rec.modules,
+        issuedAtMs: rec.issuedAtMs,
+        expiresAtMs: rec.expiresAtMs,
+        gracePeriodMs: rec.gracePeriodMs,
+      };
+      projection.records.set(record.orderId, record);
+    }
     return projection;
   }
 
