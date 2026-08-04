@@ -381,6 +381,22 @@ export function validateServerIntegrationBaseline({
       }
     }
 
+    let candidateHead;
+    try {
+      candidateHead = execFileSync(
+        'git',
+        ['rev-parse', 'HEAD'],
+        {
+          cwd: rootDir,
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        },
+      ).trim();
+    } catch {
+      errors.push('unable to resolve candidate HEAD for branch delta validation');
+      candidateHead = 'HEAD';
+    }
+
     for (const branch of actualLedger.branches ?? []) {
       let fetchedTip;
       try {
@@ -424,7 +440,7 @@ export function validateServerIntegrationBaseline({
             'rev-list',
             '--right-only',
             '--cherry-pick',
-            `origin/internal...${branch.name}`,
+            `${candidateHead}...${branch.name}`,
           ],
           { cwd: rootDir, encoding: 'utf8' },
         )
