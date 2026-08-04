@@ -768,7 +768,10 @@ export interface EnterpriseDirectMessageAttachmentUpload {
   fileName: string;
   mimeType: string;
   size: number;
-  data: string;
+  data?: string;
+  sourcePath?: string;
+  /** Renderer-only object URL; Electron main ignores this field. */
+  previewUrl?: string;
 }
 
 export interface EnterpriseDirectMessageAttachmentDownload extends EnterpriseDirectMessageAttachment {

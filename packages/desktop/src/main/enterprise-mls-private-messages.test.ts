@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   EnterpriseMlsPrivateMessageService,
   FileEnterpriseMlsMessageHistory,
+  type EnterpriseMlsAttachmentObjectTransport,
   type EnterpriseMlsPrivateMessageCoordinator,
 } from './enterprise-mls-private-messages.js';
 
@@ -40,7 +41,24 @@ function coordinator(): EnterpriseMlsPrivateMessageCoordinator {
         member_count: 2,
       },
     })),
-    refreshEpoch: vi.fn(async () => undefined),
+    refreshEpoch: vi.fn(async () => ({
+      protocol: 'mls10-openmls-0.8' as const,
+      conversation_id: 'a'.repeat(64),
+      group_id: Buffer.from('group-a').toString('base64'),
+      epoch: 2,
+      member_count: 2,
+    })),
+    getAttachmentSession: vi.fn(async () => ({
+      conversationId: 'a'.repeat(64),
+      sessionGeneration: 1,
+      groupId: Buffer.from('group-a').toString('base64'),
+      epoch: 2,
+      participantAccountIds: ['alice', 'bob'] as [string, string],
+      authorizedDevices: [
+        { accountId: 'alice', deviceId: 'alice-device' },
+        { accountId: 'bob', deviceId: 'bob-device' },
+      ],
+    })),
     sendApplication: vi.fn(async () => ({
       sequence: 1,
       eventId: 'transport-event-a',
@@ -86,6 +104,16 @@ function history(): FileEnterpriseMlsMessageHistory {
 describe('EnterpriseMlsPrivateMessageService', () => {
   it('persists an outgoing message before sending it through MLS', async () => {
     const transport = coordinator();
+    let sentApplication = Buffer.alloc(0);
+    const sendApplication = vi
+      .mocked(transport.sendApplication)
+      .getMockImplementation()!;
+    vi.mocked(transport.sendApplication).mockImplementation(
+      async (peerAccountId, plaintext) => {
+        sentApplication = Buffer.from(plaintext);
+        return sendApplication(peerAccountId, plaintext);
+      },
+    );
     const store = history();
     const service = new EnterpriseMlsPrivateMessageService(transport, store, {
       randomId: () => '018f0000-0000-7000-8000-000000000001',
@@ -104,9 +132,7 @@ describe('EnterpriseMlsPrivateMessageService', () => {
     });
     expect(transport.sendApplication).toHaveBeenCalledOnce();
     expect(transport.refreshEpoch).toHaveBeenCalledWith('bob');
-    const plaintext = Buffer.from(
-      vi.mocked(transport.sendApplication).mock.calls[0]![1],
-    ).toString('utf8');
+    const plaintext = sentApplication.toString('utf8');
     expect(JSON.parse(plaintext)).toMatchObject({
       format: 1,
       id: message.id,
@@ -203,24 +229,90 @@ describe('EnterpriseMlsPrivateMessageService', () => {
     expect(transport.acknowledgeReceivedApplication).not.toHaveBeenCalled();
   });
 
-  it('rejects attachments instead of falling back to the legacy envelope protocol', async () => {
+  it('encrypts and uploads an attachment before sending its manifest inside MLS', async () => {
     const transport = coordinator();
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-mls-file-'));
+    temporaryDirectories.push(directory);
+    const sourcePath = path.join(directory, 'secret.txt');
+    fs.writeFileSync(sourcePath, 'secret');
+    let uploadedCiphertext = Buffer.alloc(0);
+    const upload = vi.fn<EnterpriseMlsAttachmentObjectTransport['upload']>(
+      async ({ manifest, ciphertextPath }) => {
+        expect(fs.statSync(ciphertextPath).size).toBe(
+          manifest.ciphertextBytes,
+        );
+        expect(fs.readFileSync(ciphertextPath).toString('utf8')).not.toContain(
+          'secret',
+        );
+        uploadedCiphertext = fs.readFileSync(ciphertextPath);
+        return manifest.object;
+      },
+    );
+    const download = vi.fn(async ({ manifest, ciphertextPath }) => {
+      fs.writeFileSync(ciphertextPath, uploadedCiphertext);
+      return manifest.object;
+    });
+    let sentPlaintext = Buffer.alloc(0);
+    const defaultSend = vi
+      .mocked(transport.sendApplication)
+      .getMockImplementation()!;
+    vi.mocked(transport.sendApplication).mockImplementation(
+      async (peerAccountId, plaintext) => {
+        sentPlaintext = Buffer.from(plaintext);
+        return defaultSend(peerAccountId, plaintext);
+      },
+    );
     const service = new EnterpriseMlsPrivateMessageService(
       transport,
       history(),
+      {
+        randomId: () => '018f0000-0000-7000-8000-000000000010',
+        randomAttachmentId: () =>
+          '018f0000-0000-7000-8000-000000000011',
+        now: () => new Date('2026-08-03T00:00:00.000Z'),
+        attachmentDirectory: path.join(directory, 'encrypted-outbox'),
+        attachmentTransport: { upload, download },
+      },
     );
 
-    await expect(
-      service.send('bob', 'file', [
-        {
-          fileName: 'secret.txt',
-          mimeType: 'text/plain',
-          size: 6,
-          data: Buffer.from('secret').toString('base64'),
-        },
-      ]),
-    ).rejects.toThrow('MLS attachment transport is not active');
-    expect(transport.sendApplication).not.toHaveBeenCalled();
+    const message = await service.send('bob', 'file', [
+      {
+        fileName: 'secret.txt',
+        mimeType: 'text/plain',
+        size: 6,
+        sourcePath,
+      },
+    ]);
+
+    expect(message.attachments).toEqual([
+      {
+        id: 'mls-attachment-018f0000-0000-7000-8000-000000000011',
+        fileName: 'secret.txt',
+        mimeType: 'text/plain',
+        size: 6,
+      },
+    ]);
+    expect(upload).toHaveBeenCalledOnce();
+    const plaintext = JSON.parse(
+      sentPlaintext.toString('utf8'),
+    ) as { format: number; attachments: Array<Record<string, unknown>> };
+    expect(plaintext.format).toBe(2);
+    expect(plaintext.attachments[0]).toMatchObject({
+      id: message.attachments![0]!.id,
+      fileName: 'secret.txt',
+      mimeType: 'text/plain',
+      plaintextBytes: 6,
+      dek: expect.any(String),
+      object: expect.objectContaining({ id: message.attachments![0]!.id }),
+    });
+    expect(JSON.stringify(vi.mocked(upload).mock.calls[0]![0])).not.toContain(
+      sourcePath,
+    );
+    await expect(service.readAttachment(message.attachments![0]!.id)).resolves.toEqual({
+      ...message.attachments![0],
+      data: Buffer.from('secret').toString('base64'),
+    });
+    expect(download).toHaveBeenCalledOnce();
   });
 
   it('exposes an explicit peer-bound MLS security-state reset', async () => {

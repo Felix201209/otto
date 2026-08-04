@@ -986,4 +986,88 @@ describe('clustered PostgreSQL enterprise server', () => {
       }),
     );
   });
+
+  it('atomically binds an MLS upload to the authoritative generation and device roster', async () => {
+    const session = {
+      conversationId: 'a'.repeat(64),
+      sessionGeneration: 2,
+      groupId: 'Z3JvdXAtMQ==',
+      epoch: 4,
+      participantAccountIds: ['acc_admin', 'acc_peer'] as [string, string],
+      authorizedDevices: [
+        { accountId: 'acc_admin', deviceId: 'device-admin' },
+        { accountId: 'acc_peer', deviceId: 'device-peer' },
+      ],
+    };
+    const getMlsAttachmentSession = vi.fn(async () => session);
+    const repo = {
+      ...repository(),
+      getMlsAttachmentSession,
+    } as PostgresEnterpriseCoreRepository;
+    const initiateMultipartUpload = vi.fn(async () => ({
+      attachmentId: 'mls-att-1',
+      key: 'opaque',
+      uploadId: 'upload-1',
+    }));
+    const attachmentStorage = {
+      initiateMultipartUpload,
+    } as unknown as NonNullable<
+      Parameters<typeof createClusteredEnterpriseServer>[1]
+    >['attachmentStorage'];
+    const { baseUrl } = await listen(repo, { attachmentStorage });
+
+    const response = await fetch(`${baseUrl}/enterprise/attachments/uploads`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer clustered-session-token',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        peerAccountId: 'acc_peer',
+        deviceId: 'device-admin',
+        attachmentId: 'mls-att-1',
+        ciphertextBytes: 80,
+        ciphertextSha256: 'b'.repeat(64),
+        mlsBinding: {
+          organizationId: 'org_default',
+          conversationId: session.conversationId,
+          sessionGeneration: 2,
+          groupId: session.groupId,
+          epoch: 4,
+          messageId: 'mls-message-1',
+        },
+        authorizedDevices: session.authorizedDevices,
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({
+      upload: { attachmentId: 'mls-att-1' },
+    });
+    expect(getMlsAttachmentSession).toHaveBeenCalledWith({
+      organizationId: 'org_default',
+      accountId: 'acc_admin',
+      peerAccountId: 'acc_peer',
+      deviceId: 'device-admin',
+    });
+    expect(initiateMultipartUpload).toHaveBeenCalledWith({
+      organizationId: 'org_default',
+      accountId: 'acc_admin',
+      attachmentId: 'mls-att-1',
+      ciphertextBytes: 80,
+      ciphertextSha256: 'b'.repeat(64),
+      encryption: 'mls-client-v1',
+      authorizedAccountIds: ['acc_peer'],
+      mlsAuthorization: {
+        ...session,
+        messageId: 'mls-message-1',
+      },
+    });
+    expect(JSON.stringify(initiateMultipartUpload.mock.calls)).not.toContain(
+      'fileName',
+    );
+    expect(JSON.stringify(initiateMultipartUpload.mock.calls)).not.toContain(
+      'dek',
+    );
+  });
 });

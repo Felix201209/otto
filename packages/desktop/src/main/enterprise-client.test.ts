@@ -3,6 +3,9 @@
  */
 
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   EnterpriseClient,
@@ -2147,6 +2150,254 @@ describe('EnterpriseClient', () => {
     expect(JSON.stringify(messageBody)).not.toContain(
       encryptedAttachment.ciphertext,
     );
+  });
+
+  it('uploads an MLS attachment through resumable presigned multipart requests', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-mls-upload-'));
+    const ciphertextPath = path.join(directory, 'ciphertext.bin');
+    const ciphertext = Buffer.alloc(96, 7);
+    fs.writeFileSync(ciphertextPath, ciphertext);
+    const checksum = createHash('sha256').update(ciphertext).digest('hex');
+    const attachmentId =
+      'mls-attachment-018f0000-0000-7000-8000-000000000020';
+    const manifest = {
+      format: 1 as const,
+      cipher: 'aes-256-gcm-chunked' as const,
+      id: attachmentId,
+      fileName: 'secret.bin',
+      mimeType: 'application/octet-stream',
+      plaintextBytes: 80,
+      ciphertextBytes: ciphertext.length,
+      ciphertextSha256: checksum,
+      chunkBytes: 64 * 1024,
+      chunkCount: 1,
+      dek: Buffer.alloc(32, 1).toString('base64'),
+      noncePrefix: Buffer.alloc(8, 2).toString('base64'),
+      binding: {
+        organizationId: 'org_1',
+        conversationId: 'a'.repeat(64),
+        sessionGeneration: 2,
+        groupId: Buffer.from('group-a').toString('base64'),
+        epoch: 4,
+        messageId: 'mls-message-018f0000-0000-7000-8000-000000000021',
+      },
+      object: {
+        id: attachmentId,
+        ciphertextBytes: ciphertext.length,
+        ciphertextSha256: checksum,
+      },
+    };
+    let uploadedCiphertext: Buffer | null = null;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          ...API_V2_HEALTH,
+          capabilities: [
+            ...API_V2_HEALTH.capabilities,
+            'e2ee_mls_transport_v1',
+            'e2ee_attachment_objects_v1',
+            's3_multipart_uploads_v1',
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          account: ACCOUNT,
+          token: 'session-token',
+          expiresAt: '2099-01-01',
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(404, { error: 'attachment access denied' }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(201, { upload: { attachmentId } }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          request: {
+            method: 'PUT',
+            url: 'https://private-s3.test/upload-part',
+            expiresInSeconds: 300,
+            requiredHeaders: {
+              'content-length': String(ciphertext.length),
+              'x-amz-checksum-sha256': Buffer.from(checksum, 'hex').toString(
+                'base64',
+              ),
+            },
+          },
+        }),
+      )
+      .mockImplementationOnce((_url, init) => {
+        uploadedCiphertext = Buffer.from(init?.body as Buffer);
+        return Promise.resolve(
+          new Response(null, {
+            status: 200,
+            headers: { etag: '"part-1"' },
+          }),
+        );
+      })
+      .mockResolvedValueOnce(jsonResponse(200, { recorded: true }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          attachment: {
+            id: attachmentId,
+            ciphertextBytes: ciphertext.length,
+            ciphertextSha256: checksum,
+          },
+        }),
+      );
+    const client = new EnterpriseClient(
+      fetchMock as typeof fetch,
+      () => undefined,
+    );
+    try {
+      await client.loginWithPassword(
+        'https://enterprise.otto.test',
+        'staff01',
+        'password',
+      );
+      await expect(
+        client.uploadMlsAttachmentObject({
+          peerAccountId: 'acc_peer',
+          deviceId: 'device-1',
+          manifest,
+          ciphertextPath,
+          authorizedDevices: [
+            { accountId: 'acc_1', deviceId: 'device-1' },
+            { accountId: 'acc_peer', deviceId: 'peer-device' },
+          ],
+        }),
+      ).resolves.toEqual(manifest.object);
+      expect(fetchMock.mock.calls[2]?.[0]).toContain(
+        `/enterprise/attachments/${attachmentId}/resume`,
+      );
+      expect(fetchMock.mock.calls[3]?.[0]).toBe(
+        'https://enterprise.otto.test/enterprise/attachments/uploads',
+      );
+      expect(fetchMock.mock.calls[5]?.[0]).toBe(
+        'https://private-s3.test/upload-part',
+      );
+      expect(uploadedCiphertext).toEqual(ciphertext);
+      const initBody = JSON.parse(
+        String((fetchMock.mock.calls[3]?.[1] as RequestInit).body),
+      ) as Record<string, unknown>;
+      expect(initBody).toMatchObject({
+        peerAccountId: 'acc_peer',
+        deviceId: 'device-1',
+        attachmentId,
+        ciphertextBytes: ciphertext.length,
+        ciphertextSha256: checksum,
+        mlsBinding: manifest.binding,
+      });
+      expect(JSON.stringify(initBody)).not.toContain(manifest.dek);
+      expect(JSON.stringify(initBody)).not.toContain(manifest.fileName);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('streams and verifies an MLS object download before local decryption', async () => {
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'otto-mls-download-'),
+    );
+    const ciphertextPath = path.join(directory, 'ciphertext.bin');
+    const ciphertext = Buffer.alloc(96, 9);
+    const checksum = createHash('sha256').update(ciphertext).digest('hex');
+    const attachmentId =
+      'mls-attachment-018f0000-0000-7000-8000-000000000030';
+    const manifest = {
+      format: 1 as const,
+      cipher: 'aes-256-gcm-chunked' as const,
+      id: attachmentId,
+      fileName: 'secret.bin',
+      mimeType: 'application/octet-stream',
+      plaintextBytes: 80,
+      ciphertextBytes: 96,
+      ciphertextSha256: checksum,
+      chunkBytes: 64 * 1024,
+      chunkCount: 1,
+      dek: Buffer.alloc(32, 1).toString('base64'),
+      noncePrefix: Buffer.alloc(8, 2).toString('base64'),
+      binding: {
+        organizationId: 'org_1',
+        conversationId: 'a'.repeat(64),
+        sessionGeneration: 2,
+        groupId: Buffer.from('group-a').toString('base64'),
+        epoch: 4,
+        messageId: 'mls-message-018f0000-0000-7000-8000-000000000031',
+      },
+      object: {
+        id: attachmentId,
+        ciphertextBytes: 96,
+        ciphertextSha256: checksum,
+      },
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          ...API_V2_HEALTH,
+          capabilities: [
+            ...API_V2_HEALTH.capabilities,
+            'e2ee_mls_transport_v1',
+            'e2ee_attachment_objects_v1',
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          account: ACCOUNT,
+          token: 'session-token',
+          expiresAt: '2099-01-01',
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          attachment: {
+            kind: 'presigned',
+            ciphertextBytes: 96,
+            ciphertextSha256: checksum,
+            encryption: 'mls-client-v1',
+            request: {
+              method: 'GET',
+              url: 'https://private-s3.test/download',
+              expiresInSeconds: 300,
+              requiredHeaders: {},
+            },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(new Response(ciphertext, { status: 200 }));
+    const client = new EnterpriseClient(
+      fetchMock as typeof fetch,
+      () => undefined,
+    );
+    try {
+      await client.loginWithPassword(
+        'https://enterprise.otto.test',
+        'staff01',
+        'password',
+      );
+      await expect(
+        client.downloadMlsAttachmentObject({
+          peerAccountId: 'acc_peer',
+          deviceId: 'device-1',
+          manifest,
+          ciphertextPath,
+        }),
+      ).resolves.toEqual(manifest.object);
+      expect(fs.readFileSync(ciphertextPath)).toEqual(ciphertext);
+      expect(fetchMock.mock.calls[2]?.[0]).toContain(
+        `peerAccountId=acc_peer&deviceId=device-1`,
+      );
+      expect(fetchMock.mock.calls[3]?.[0]).toBe(
+        'https://private-s3.test/download',
+      );
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it('stops before local decryption when a presigned attachment fails integrity checks', async () => {

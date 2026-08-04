@@ -30,6 +30,13 @@ const attachmentRow = {
   expires_at: new Date('2026-08-01T00:00:00.000Z'),
   legacy_delete_after: null,
   legal_hold: false,
+  mls_conversation_id: null,
+  mls_session_generation: null,
+  mls_group_id: null,
+  mls_epoch: null,
+  mls_message_id: null,
+  mls_participant_account_ids: null,
+  mls_authorized_devices: null,
 };
 
 class ScriptedPool implements PostgresPoolLike, PostgresClientLike {
@@ -100,6 +107,73 @@ describe('PostgreSQL attachment metadata repository', () => {
       ),
     ).toBe(false);
     expect(pool.released).toBe(1);
+  });
+
+  it('stores MLS generation authorization atomically without a file DEK', async () => {
+    const mlsAuthorization = {
+      conversationId: 'a'.repeat(64),
+      sessionGeneration: 2,
+      groupId: 'Z3JvdXAtMQ==',
+      epoch: 4,
+      messageId: 'mls-message-1',
+      participantAccountIds: ['acc-owner', 'acc-recipient'] as [string, string],
+      authorizedDevices: [
+        { accountId: 'acc-owner', deviceId: 'device-owner' },
+        { accountId: 'acc-recipient', deviceId: 'device-recipient' },
+      ],
+    };
+    const pool = new ScriptedPool((sql) => {
+      if (sql.includes('UPDATE attachment_storage_quotas')) {
+        return { rows: [{}], rowCount: 1 };
+      }
+      if (sql.includes('INSERT INTO attachment_objects')) {
+        return {
+          rows: [
+            {
+              ...attachmentRow,
+              encryption: 'mls-client-v1',
+              mls_conversation_id: mlsAuthorization.conversationId,
+              mls_session_generation: '2',
+              mls_group_id: mlsAuthorization.groupId,
+              mls_epoch: '4',
+              mls_message_id: mlsAuthorization.messageId,
+              mls_participant_account_ids:
+                mlsAuthorization.participantAccountIds,
+              mls_authorized_devices: mlsAuthorization.authorizedDevices,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const repository = createPostgresAttachmentMetadataRepository({
+      pool,
+      defaultQuotaBytes: 1_000,
+    });
+
+    await expect(
+      repository.reserveUpload({
+        attachmentId: 'att-mls-1',
+        organizationId: 'org-1',
+        accountId: 'acc-owner',
+        authorizedAccountIds: ['acc-owner', 'acc-recipient'],
+        encryption: 'mls-client-v1',
+        ciphertextBytes: 20,
+        ciphertextSha256: 'a'.repeat(64),
+        expiresAt: '2026-08-01T00:00:00.000Z',
+        mlsAuthorization,
+      }),
+    ).resolves.toMatchObject({
+      encryption: 'mls-client-v1',
+      mlsAuthorization,
+    });
+    const insert = pool.statements.find(({ sql }) =>
+      sql.includes('INSERT INTO attachment_objects'),
+    );
+    expect(insert?.sql).toContain('mls_authorized_devices');
+    expect(JSON.stringify(insert?.values)).not.toMatch(/dek|fileName/i);
+    expect(pool.statements.at(-1)?.sql).toBe('COMMIT');
   });
 
   it('authorizes by exact tenant/account metadata and maps bigint values', async () => {

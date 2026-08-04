@@ -20,11 +20,22 @@ import path from 'node:path';
 import type { MlsDeviceScope, MlsGroupState } from '@otto/native';
 
 import type {
+  EnterpriseMlsAttachmentSession,
   EnterpriseMlsPollResult,
   EnterpriseMlsSessionEstablishment,
   EnterpriseMlsTransportEvent,
 } from './enterprise-mls.js';
-import type { EnterpriseDirectMessageAttachmentUpload } from './enterprise-client.js';
+import {
+  decryptEnterpriseMlsAttachmentFile,
+  encryptEnterpriseMlsAttachmentFile,
+  validateEnterpriseMlsAttachmentManifest,
+  type EnterpriseMlsAttachmentManifest,
+} from './enterprise-mls-attachments.js';
+import type {
+  EnterpriseDirectMessageAttachment,
+  EnterpriseDirectMessageAttachmentDownload,
+  EnterpriseDirectMessageAttachmentUpload,
+} from './enterprise-client.js';
 
 const PROTOCOL = 'mls10-openmls-0.8' as const;
 const HISTORY_CIPHER = 'aes-256-gcm' as const;
@@ -34,6 +45,9 @@ const MAX_CONTENT_BYTES = 256 * 1024;
 const MAX_APPLICATION_BYTES = 512 * 1024;
 const MAX_HISTORY_BYTES = 64 * 1024 * 1024;
 const MAX_HISTORY_MESSAGES = 10_000;
+const MAX_ATTACHMENTS = 6;
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const MAX_TOTAL_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 
 export type EnterpriseMlsContentType =
   'message' | 'atoa_request' | 'atoa_response';
@@ -45,7 +59,7 @@ export interface EnterpriseMlsPrivateMessage {
   content: string;
   createdAt: string;
   readAt: string | null;
-  attachments?: [];
+  attachments?: EnterpriseDirectMessageAttachment[];
   e2ee: true;
   e2eeProtocol: typeof PROTOCOL;
   contentType: EnterpriseMlsContentType;
@@ -54,9 +68,10 @@ export interface EnterpriseMlsPrivateMessage {
 
 export interface StoredEnterpriseMlsPrivateMessage extends EnterpriseMlsPrivateMessage {
   deliveryState: 'pending' | 'delivered';
+  attachmentManifests?: EnterpriseMlsAttachmentManifest[];
 }
 
-interface EnterpriseMlsApplicationPayload {
+interface EnterpriseMlsApplicationPayloadV1 {
   format: 1;
   id: string;
   senderAccountId: string;
@@ -67,13 +82,40 @@ interface EnterpriseMlsApplicationPayload {
   createdAt: string;
 }
 
+interface EnterpriseMlsApplicationPayloadV2
+  extends Omit<EnterpriseMlsApplicationPayloadV1, 'format'> {
+  format: 2;
+  attachments: EnterpriseMlsAttachmentManifest[];
+}
+
+type EnterpriseMlsApplicationPayload =
+  | EnterpriseMlsApplicationPayloadV1
+  | EnterpriseMlsApplicationPayloadV2;
+type EnterpriseMlsApplicationFields = Omit<
+  EnterpriseMlsApplicationPayloadV1,
+  'format'
+>;
+
+function createApplicationPayload(
+  fields: EnterpriseMlsApplicationFields,
+  attachments: EnterpriseMlsAttachmentManifest[],
+): EnterpriseMlsApplicationPayload {
+  return attachments.length > 0
+    ? { format: 2, ...fields, attachments }
+    : { format: 1, ...fields };
+}
+
 export interface EnterpriseMlsPrivateMessageCoordinator {
   activeScope(): MlsDeviceScope;
   establishDirectSession(
     peerAccountId: string,
   ): Promise<EnterpriseMlsSessionEstablishment>;
   ensureApprovedDeviceMembership?(peerAccountId: string): Promise<unknown>;
-  refreshEpoch(peerAccountId: string): Promise<unknown>;
+  refreshEpoch(peerAccountId: string): Promise<MlsGroupState>;
+  getAttachmentSession?(
+    peerAccountId: string,
+    expectedGroup: MlsGroupState,
+  ): Promise<EnterpriseMlsAttachmentSession>;
   resetDirectSession?(peerAccountId: string): Promise<unknown>;
   sendApplication(
     peerAccountId: string,
@@ -87,6 +129,22 @@ export interface EnterpriseMlsPrivateMessageCoordinator {
   listActiveConversationPeers(): Promise<string[]>;
 }
 
+export interface EnterpriseMlsAttachmentObjectTransport {
+  upload(input: {
+    peerAccountId: string;
+    deviceId: string;
+    manifest: EnterpriseMlsAttachmentManifest;
+    ciphertextPath: string;
+    authorizedDevices: Array<{ accountId: string; deviceId: string }>;
+  }): Promise<EnterpriseMlsAttachmentManifest['object']>;
+  download?(input: {
+    peerAccountId: string;
+    deviceId: string;
+    manifest: EnterpriseMlsAttachmentManifest;
+    ciphertextPath: string;
+  }): Promise<EnterpriseMlsAttachmentManifest['object']>;
+}
+
 export interface EnterpriseMlsMessageHistory {
   list(
     scope: MlsDeviceScope,
@@ -98,6 +156,10 @@ export interface EnterpriseMlsMessageHistory {
     message: StoredEnterpriseMlsPrivateMessage,
   ): Promise<void>;
   pendingOutgoing(
+    scope: MlsDeviceScope,
+    peerAccountId: string,
+  ): Promise<StoredEnterpriseMlsPrivateMessage[]>;
+  discardPendingOutgoing?(
     scope: MlsDeviceScope,
     peerAccountId: string,
   ): Promise<StoredEnterpriseMlsPrivateMessage[]>;
@@ -210,8 +272,47 @@ function historyFileName(scope: MlsDeviceScope): string {
 function publicMessage(
   message: StoredEnterpriseMlsPrivateMessage,
 ): EnterpriseMlsPrivateMessage {
-  const { deliveryState: _deliveryState, ...view } = message;
+  const {
+    deliveryState: _deliveryState,
+    attachmentManifests: _attachmentManifests,
+    ...view
+  } = message;
   return view;
+}
+
+function publicAttachment(
+  manifest: EnterpriseMlsAttachmentManifest,
+): EnterpriseDirectMessageAttachment {
+  return {
+    id: manifest.id,
+    fileName: manifest.fileName,
+    mimeType: manifest.mimeType,
+    size: manifest.plaintextBytes,
+  };
+}
+
+function validateStoredAttachments(
+  message: Partial<StoredEnterpriseMlsPrivateMessage>,
+): {
+  attachments: EnterpriseDirectMessageAttachment[];
+  manifests: EnterpriseMlsAttachmentManifest[];
+} {
+  const attachments = message.attachments ?? [];
+  const rawManifests = message.attachmentManifests ?? [];
+  if (
+    !Array.isArray(attachments) ||
+    !Array.isArray(rawManifests) ||
+    attachments.length > MAX_ATTACHMENTS ||
+    rawManifests.length !== attachments.length
+  ) {
+    throw new Error('MLS private-message attachment history is invalid');
+  }
+  const manifests = rawManifests.map(validateEnterpriseMlsAttachmentManifest);
+  const expected = manifests.map(publicAttachment);
+  if (JSON.stringify(attachments) !== JSON.stringify(expected)) {
+    throw new Error('MLS private-message attachment history is invalid');
+  }
+  return { attachments: expected, manifests };
 }
 
 function validateStoredMessage(
@@ -242,13 +343,16 @@ function validateStoredMessage(
     (message.inReplyToMessageId !== null &&
       (typeof message.inReplyToMessageId !== 'string' ||
         message.inReplyToMessageId.length > 200)) ||
-    !['pending', 'delivered'].includes(message.deliveryState ?? '') ||
-    (message.attachments !== undefined &&
-      (!Array.isArray(message.attachments) || message.attachments.length !== 0))
+    !['pending', 'delivered'].includes(message.deliveryState ?? '')
   ) {
     throw new Error('MLS private-message history entry is invalid');
   }
-  return { ...message, attachments: [] } as StoredEnterpriseMlsPrivateMessage;
+  const attachments = validateStoredAttachments(message);
+  return {
+    ...message,
+    attachments: attachments.attachments,
+    attachmentManifests: attachments.manifests,
+  } as StoredEnterpriseMlsPrivateMessage;
 }
 
 function parseHistoryState(value: unknown, expectedHash: string): HistoryState {
@@ -361,7 +465,9 @@ export class FileEnterpriseMlsMessageHistory implements EnterpriseMlsMessageHist
             existing.content === message.content &&
             existing.contentType === message.contentType &&
             existing.inReplyToMessageId === message.inReplyToMessageId &&
-            existing.createdAt === message.createdAt;
+            existing.createdAt === message.createdAt &&
+            JSON.stringify(existing.attachmentManifests ?? []) ===
+              JSON.stringify(message.attachmentManifests ?? []);
           if (!samePayload) {
             throw new Error(
               'MLS private-message id conflicts with local history',
@@ -407,6 +513,35 @@ export class FileEnterpriseMlsMessageHistory implements EnterpriseMlsMessageHist
     });
   }
 
+  discardPendingOutgoing(
+    scope: MlsDeviceScope,
+    peerAccountId: string,
+  ): Promise<StoredEnterpriseMlsPrivateMessage[]> {
+    return this.exclusive(async () => {
+      const loaded = await this.load(scope);
+      try {
+        const pending = this.peerMessages(
+          loaded.state,
+          scope,
+          peerAccountId,
+        ).filter(
+          (message) =>
+            message.senderAccountId === scope.accountId &&
+            message.deliveryState === 'pending',
+        );
+        if (pending.length === 0) return [];
+        const ids = new Set(pending.map((message) => message.id));
+        loaded.state.messages = loaded.state.messages.filter(
+          (message) => !ids.has(message.id),
+        );
+        await this.save(scope, loaded);
+        return pending;
+      } finally {
+        loaded.stateKey?.fill(0);
+      }
+    });
+  }
+
   markOutgoingDelivered(
     scope: MlsDeviceScope,
     peerAccountId: string,
@@ -441,7 +576,7 @@ export class FileEnterpriseMlsMessageHistory implements EnterpriseMlsMessageHist
             (message) =>
               message.recipientAccountId === scope.accountId && !message.readAt,
           )
-          .map((message) => ({ ...message, attachments: [] }));
+          .map((message) => ({ ...message }));
       } finally {
         loaded.stateKey?.fill(0);
       }
@@ -495,7 +630,7 @@ export class FileEnterpriseMlsMessageHistory implements EnterpriseMlsMessageHist
           left.createdAt.localeCompare(right.createdAt) ||
           left.id.localeCompare(right.id),
       )
-      .map((message) => ({ ...message, attachments: [] }));
+      .map((message) => ({ ...message }));
   }
 
   private assertMessageParticipants(
@@ -631,12 +766,18 @@ export class FileEnterpriseMlsMessageHistory implements EnterpriseMlsMessageHist
 
 export interface EnterpriseMlsPrivateMessageServiceOptions {
   randomId?: () => string;
+  randomAttachmentId?: () => string;
   now?: () => Date;
+  attachmentDirectory?: string;
+  attachmentTransport?: EnterpriseMlsAttachmentObjectTransport;
 }
 
 export class EnterpriseMlsPrivateMessageService {
   private readonly randomId: () => string;
+  private readonly randomAttachmentId: () => string;
   private readonly now: () => Date;
+  private readonly attachmentDirectory: string | null;
+  private readonly attachmentTransport: EnterpriseMlsAttachmentObjectTransport | null;
 
   constructor(
     private readonly coordinator: EnterpriseMlsPrivateMessageCoordinator,
@@ -644,7 +785,12 @@ export class EnterpriseMlsPrivateMessageService {
     options: EnterpriseMlsPrivateMessageServiceOptions = {},
   ) {
     this.randomId = options.randomId ?? randomUUID;
+    this.randomAttachmentId = options.randomAttachmentId ?? randomUUID;
     this.now = options.now ?? (() => new Date());
+    this.attachmentDirectory = options.attachmentDirectory
+      ? path.resolve(options.attachmentDirectory)
+      : null;
+    this.attachmentTransport = options.attachmentTransport ?? null;
   }
 
   async send(
@@ -654,26 +800,29 @@ export class EnterpriseMlsPrivateMessageService {
   ): Promise<EnterpriseMlsPrivateMessage> {
     const scope = this.coordinator.activeScope();
     const peerAccountId = this.requirePeer(scope, rawPeerAccountId);
-    if (attachments.length > 0) {
-      throw new Error(
-        'MLS attachment transport is not active; refusing protocol downgrade',
-      );
-    }
     if (
-      !content.trim() ||
+      (!content.trim() && attachments.length === 0) ||
       Buffer.byteLength(content, 'utf8') > MAX_CONTENT_BYTES
     ) {
       throw new Error('MLS private-message content is invalid');
     }
+    this.validateAttachmentUploads(attachments);
     const establishment =
       await this.coordinator.establishDirectSession(peerAccountId);
     this.requireReady(establishment);
     await this.coordinator.ensureApprovedDeviceMembership?.(peerAccountId);
-    await this.coordinator.refreshEpoch(peerAccountId);
+    const group = await this.coordinator.refreshEpoch(peerAccountId);
     const metadata = messageMetadata(content);
-    const payload: EnterpriseMlsApplicationPayload = {
-      format: 1,
-      id: `mls-message-${this.randomId()}`,
+    const messageId = `mls-message-${this.randomId()}`;
+    const manifests = await this.prepareAttachments({
+      scope,
+      peerAccountId,
+      messageId,
+      group,
+      attachments,
+    });
+    const fields: EnterpriseMlsApplicationFields = {
+      id: messageId,
       senderAccountId: scope.accountId,
       recipientAccountId: peerAccountId,
       content,
@@ -681,20 +830,31 @@ export class EnterpriseMlsPrivateMessageService {
       inReplyToMessageId: metadata.inReplyToMessageId,
       createdAt: this.now().toISOString(),
     };
+    const payload = createApplicationPayload(fields, manifests);
     const pending: StoredEnterpriseMlsPrivateMessage = {
-      ...payload,
-      readAt: payload.createdAt,
-      attachments: [],
+      ...fields,
+      readAt: fields.createdAt,
+      attachments: manifests.map(publicAttachment),
+      attachmentManifests: manifests,
       e2ee: true,
       e2eeProtocol: PROTOCOL,
       deliveryState: 'pending',
     };
-    await this.history.put(scope, peerAccountId, pending);
-    await this.coordinator.sendApplication(
-      peerAccountId,
-      this.encodePayload(payload),
-    );
+    try {
+      await this.history.put(scope, peerAccountId, pending);
+    } catch (error) {
+      await this.cleanupAttachmentCiphertexts(manifests);
+      throw error;
+    }
+    await this.uploadAttachments(scope, peerAccountId, manifests);
+    const encoded = this.encodePayload(payload);
+    try {
+      await this.coordinator.sendApplication(peerAccountId, encoded);
+    } finally {
+      encoded.fill(0);
+    }
     await this.history.markOutgoingDelivered(scope, peerAccountId, payload.id);
+    await this.cleanupAttachmentCiphertexts(manifests);
     return publicMessage({ ...pending, deliveryState: 'delivered' });
   }
 
@@ -726,6 +886,81 @@ export class EnterpriseMlsPrivateMessageService {
     return this.history.unread(scope);
   }
 
+  async readAttachment(
+    rawAttachmentId: string,
+  ): Promise<EnterpriseDirectMessageAttachmentDownload> {
+    const scope = this.coordinator.activeScope();
+    if (
+      !/^mls-attachment-[0-9a-f-]{36}$/.test(rawAttachmentId) ||
+      !this.attachmentDirectory ||
+      !this.attachmentTransport?.download
+    ) {
+      throw new Error('MLS attachment download is unavailable');
+    }
+    const matches: Array<{
+      peerAccountId: string;
+      manifest: EnterpriseMlsAttachmentManifest;
+    }> = [];
+    const peers = await this.coordinator.listActiveConversationPeers();
+    for (const peerAccountId of peers) {
+      const messages = await this.history.list(scope, peerAccountId);
+      for (const message of messages) {
+        for (const manifest of message.attachmentManifests ?? []) {
+          if (manifest.id === rawAttachmentId) {
+            matches.push({ peerAccountId, manifest });
+          }
+        }
+      }
+    }
+    if (matches.length !== 1) {
+      throw new Error('MLS attachment manifest is unavailable or ambiguous');
+    }
+    const { peerAccountId, manifest } = matches[0]!;
+    const ciphertextPath = this.attachmentCiphertextPath(manifest.id);
+    const plaintextPath = path.join(
+      this.attachmentDirectory,
+      `${manifest.id}.${this.randomAttachmentId()}.plaintext`,
+    );
+    try {
+      const downloaded = await this.attachmentTransport.download({
+        peerAccountId,
+        deviceId: scope.deviceId,
+        manifest,
+        ciphertextPath,
+      });
+      if (
+        downloaded.id !== manifest.object.id ||
+        downloaded.ciphertextBytes !== manifest.object.ciphertextBytes ||
+        downloaded.ciphertextSha256 !== manifest.object.ciphertextSha256
+      ) {
+        throw new Error('MLS attachment download metadata is invalid');
+      }
+      await decryptEnterpriseMlsAttachmentFile({
+        ciphertextPath,
+        outputPath: plaintextPath,
+        manifest,
+        expectedBinding: manifest.binding,
+      });
+      const plaintext = await fs.promises.readFile(plaintextPath);
+      try {
+        if (plaintext.length !== manifest.plaintextBytes) {
+          throw new Error('MLS attachment plaintext size is invalid');
+        }
+        return {
+          ...publicAttachment(manifest),
+          data: plaintext.toString('base64'),
+        };
+      } finally {
+        plaintext.fill(0);
+      }
+    } finally {
+      await Promise.all([
+        fs.promises.rm(ciphertextPath, { force: true }).catch(() => undefined),
+        fs.promises.rm(plaintextPath, { force: true }).catch(() => undefined),
+      ]);
+    }
+  }
+
   async reset(rawPeerAccountId: string): Promise<void> {
     const scope = this.coordinator.activeScope();
     const peerAccountId = this.requirePeer(scope, rawPeerAccountId);
@@ -735,7 +970,179 @@ export class EnterpriseMlsPrivateMessageService {
     if (!resetDirectSession) {
       throw new Error('MLS conversation reset is unavailable');
     }
+    const discarded = this.history.discardPendingOutgoing
+      ? await this.history.discardPendingOutgoing(scope, peerAccountId)
+      : [];
+    await this.cleanupAttachmentCiphertexts(
+      discarded.flatMap((message) => message.attachmentManifests ?? []),
+    );
     await resetDirectSession(peerAccountId);
+  }
+
+  private validateAttachmentUploads(
+    attachments: EnterpriseDirectMessageAttachmentUpload[],
+  ): void {
+    if (!Array.isArray(attachments) || attachments.length > MAX_ATTACHMENTS) {
+      throw new Error('MLS attachment count exceeds the configured limit');
+    }
+    let total = 0;
+    for (const attachment of attachments) {
+      if (
+        !attachment ||
+        !attachment.fileName?.trim() ||
+        attachment.fileName.length > 260 ||
+        !attachment.mimeType?.trim() ||
+        !Number.isSafeInteger(attachment.size) ||
+        attachment.size < 0 ||
+        attachment.size > MAX_ATTACHMENT_BYTES ||
+        !attachment.sourcePath ||
+        attachment.data
+      ) {
+        throw new Error(
+          'MLS attachments require an authorized streaming file source',
+        );
+      }
+      total += attachment.size;
+    }
+    if (total > MAX_TOTAL_ATTACHMENT_BYTES) {
+      throw new Error('MLS attachment total size exceeds the configured limit');
+    }
+  }
+
+  private async prepareAttachments(input: {
+    scope: MlsDeviceScope;
+    peerAccountId: string;
+    messageId: string;
+    group: MlsGroupState;
+    attachments: EnterpriseDirectMessageAttachmentUpload[];
+  }): Promise<EnterpriseMlsAttachmentManifest[]> {
+    if (input.attachments.length === 0) return [];
+    const sessionLookup = this.coordinator.getAttachmentSession?.bind(
+      this.coordinator,
+    );
+    if (!this.attachmentDirectory || !this.attachmentTransport || !sessionLookup) {
+      throw new Error(
+        'MLS attachment transport is not active; refusing protocol downgrade',
+      );
+    }
+    const session = await sessionLookup(input.peerAccountId, input.group);
+    if (
+      session.groupId !== input.group.group_id ||
+      session.epoch !== input.group.epoch ||
+      session.conversationId !== input.group.conversation_id ||
+      !session.participantAccountIds.includes(input.scope.accountId) ||
+      !session.participantAccountIds.includes(input.peerAccountId) ||
+      !session.authorizedDevices.some(
+        (device) =>
+          device.accountId === input.scope.accountId &&
+          device.deviceId === input.scope.deviceId,
+      )
+    ) {
+      throw new Error('MLS attachment session binding is invalid');
+    }
+    const prepared: EnterpriseMlsAttachmentManifest[] = [];
+    try {
+      for (const attachment of input.attachments) {
+        const attachmentId = `mls-attachment-${this.randomAttachmentId()}`;
+        const ciphertextPath = this.attachmentCiphertextPath(attachmentId);
+        const manifest = await encryptEnterpriseMlsAttachmentFile({
+          sourcePath: attachment.sourcePath!,
+          ciphertextPath,
+          attachmentId,
+          fileName: attachment.fileName,
+          mimeType: attachment.mimeType,
+          binding: {
+            organizationId: input.scope.organizationId,
+            conversationId: session.conversationId,
+            sessionGeneration: session.sessionGeneration,
+            groupId: session.groupId,
+            epoch: session.epoch,
+            messageId: input.messageId,
+          },
+          maxPlaintextBytes: MAX_ATTACHMENT_BYTES,
+        });
+        if (manifest.plaintextBytes !== attachment.size) {
+          await fs.promises.rm(ciphertextPath, { force: true });
+          throw new Error('MLS attachment size changed after selection');
+        }
+        prepared.push(manifest);
+      }
+      return prepared;
+    } catch (error) {
+      await this.cleanupAttachmentCiphertexts(prepared);
+      throw error;
+    }
+  }
+
+  private async uploadAttachments(
+    scope: MlsDeviceScope,
+    peerAccountId: string,
+    manifests: EnterpriseMlsAttachmentManifest[],
+  ): Promise<void> {
+    if (manifests.length === 0) return;
+    if (!this.attachmentTransport) {
+      throw new Error('MLS attachment object transport is unavailable');
+    }
+    const sessionLookup = this.coordinator.getAttachmentSession?.bind(
+      this.coordinator,
+    );
+    if (!sessionLookup) {
+      throw new Error('MLS attachment session authority is unavailable');
+    }
+    const first = manifests[0]!;
+    const expectedGroup: MlsGroupState = {
+      protocol: PROTOCOL,
+      conversation_id: first.binding.conversationId,
+      group_id: first.binding.groupId,
+      epoch: first.binding.epoch,
+      member_count: 2,
+    };
+    const session = await sessionLookup(peerAccountId, expectedGroup);
+    for (const manifest of manifests) {
+      if (
+        manifest.binding.organizationId !== scope.organizationId ||
+        manifest.binding.conversationId !== session.conversationId ||
+        manifest.binding.sessionGeneration !== session.sessionGeneration ||
+        manifest.binding.groupId !== session.groupId ||
+        manifest.binding.epoch !== session.epoch
+      ) {
+        throw new Error('MLS attachment upload session changed');
+      }
+      const uploaded = await this.attachmentTransport.upload({
+        peerAccountId,
+        deviceId: scope.deviceId,
+        manifest,
+        ciphertextPath: this.attachmentCiphertextPath(manifest.id),
+        authorizedDevices: session.authorizedDevices,
+      });
+      if (
+        uploaded.id !== manifest.object.id ||
+        uploaded.ciphertextBytes !== manifest.object.ciphertextBytes ||
+        uploaded.ciphertextSha256 !== manifest.object.ciphertextSha256
+      ) {
+        throw new Error('MLS attachment upload metadata is invalid');
+      }
+    }
+  }
+
+  private attachmentCiphertextPath(attachmentId: string): string {
+    if (!this.attachmentDirectory || !/^mls-attachment-[0-9a-f-]{36}$/.test(attachmentId)) {
+      throw new Error('MLS attachment ciphertext path is invalid');
+    }
+    return path.join(this.attachmentDirectory, `${attachmentId}.bin`);
+  }
+
+  private async cleanupAttachmentCiphertexts(
+    manifests: EnterpriseMlsAttachmentManifest[],
+  ): Promise<void> {
+    if (!this.attachmentDirectory) return;
+    await Promise.all(
+      manifests.map((manifest) =>
+        fs.promises
+          .rm(this.attachmentCiphertextPath(manifest.id), { force: true })
+          .catch(() => undefined),
+      ),
+    );
   }
 
   private async receivePeer(
@@ -745,6 +1152,8 @@ export class EnterpriseMlsPrivateMessageService {
     const result = await this.coordinator.poll(peerAccountId);
     for (const received of result.messages) {
       const payload = this.parsePayload(received.plaintext);
+      const manifests =
+        payload.format === 2 ? payload.attachments : [];
       const expectedParticipants = [scope.accountId, peerAccountId]
         .sort()
         .join('\n');
@@ -761,10 +1170,52 @@ export class EnterpriseMlsPrivateMessageService {
       ) {
         throw new Error('MLS private-message sender binding is invalid');
       }
+      if (manifests.length > 0) {
+        const first = manifests[0]!;
+        if (
+          first.binding.organizationId !== scope.organizationId ||
+          first.binding.messageId !== payload.id ||
+          manifests.some(
+            (manifest) =>
+              JSON.stringify(manifest.binding) !==
+              JSON.stringify(first.binding),
+          )
+        ) {
+          throw new Error('MLS attachment application binding is invalid');
+        }
+        const lookup = this.coordinator.getAttachmentSession?.bind(
+          this.coordinator,
+        );
+        if (!lookup) {
+          throw new Error('MLS attachment session authority is unavailable');
+        }
+        const session = await lookup(peerAccountId, {
+          protocol: PROTOCOL,
+          conversation_id: first.binding.conversationId,
+          group_id: first.binding.groupId,
+          epoch: first.binding.epoch,
+          member_count: 2,
+        });
+        if (
+          session.sessionGeneration !== first.binding.sessionGeneration ||
+          session.conversationId !== first.binding.conversationId ||
+          session.groupId !== first.binding.groupId ||
+          session.epoch < first.binding.epoch
+        ) {
+          throw new Error('MLS attachment receive session changed');
+        }
+      }
       await this.history.put(scope, peerAccountId, {
-        ...payload,
+        id: payload.id,
+        senderAccountId: payload.senderAccountId,
+        recipientAccountId: payload.recipientAccountId,
+        content: payload.content,
+        contentType: payload.contentType,
+        inReplyToMessageId: payload.inReplyToMessageId,
+        createdAt: payload.createdAt,
         readAt: null,
-        attachments: [],
+        attachments: manifests.map(publicAttachment),
+        attachmentManifests: manifests,
         e2ee: true,
         e2eeProtocol: PROTOCOL,
         deliveryState: 'delivered',
@@ -786,8 +1237,8 @@ export class EnterpriseMlsPrivateMessageService {
     await this.coordinator.ensureApprovedDeviceMembership?.(peerAccountId);
     const pending = await this.history.pendingOutgoing(scope, peerAccountId);
     for (const message of pending) {
-      const payload: EnterpriseMlsApplicationPayload = {
-        format: 1,
+      const manifests = message.attachmentManifests ?? [];
+      const payload = createApplicationPayload({
         id: message.id,
         senderAccountId: message.senderAccountId,
         recipientAccountId: message.recipientAccountId,
@@ -795,16 +1246,20 @@ export class EnterpriseMlsPrivateMessageService {
         contentType: message.contentType,
         inReplyToMessageId: message.inReplyToMessageId,
         createdAt: message.createdAt,
-      };
-      await this.coordinator.sendApplication(
-        peerAccountId,
-        this.encodePayload(payload),
-      );
+      }, manifests);
+      await this.uploadAttachments(scope, peerAccountId, manifests);
+      const encoded = this.encodePayload(payload);
+      try {
+        await this.coordinator.sendApplication(peerAccountId, encoded);
+      } finally {
+        encoded.fill(0);
+      }
       await this.history.markOutgoingDelivered(
         scope,
         peerAccountId,
         message.id,
       );
+      await this.cleanupAttachmentCiphertexts(manifests);
     }
   }
 
@@ -832,7 +1287,7 @@ export class EnterpriseMlsPrivateMessageService {
     }
     const payload = parsed as Partial<EnterpriseMlsApplicationPayload>;
     if (
-      payload?.format !== 1 ||
+      ![1, 2].includes(payload?.format ?? 0) ||
       typeof payload.id !== 'string' ||
       !MESSAGE_ID.test(payload.id) ||
       typeof payload.senderAccountId !== 'string' ||
@@ -853,7 +1308,35 @@ export class EnterpriseMlsPrivateMessageService {
       throw new Error('MLS private-message application is invalid');
     }
     requireIsoTime(payload.createdAt, 'MLS private-message timestamp');
-    return payload as EnterpriseMlsApplicationPayload;
+    if (payload.format === 2) {
+      const rawAttachments = (payload as Partial<EnterpriseMlsApplicationPayloadV2>)
+        .attachments;
+      if (
+        !Array.isArray(rawAttachments) ||
+        rawAttachments.length < 1 ||
+        rawAttachments.length > MAX_ATTACHMENTS
+      ) {
+        throw new Error('MLS private-message attachment application is invalid');
+      }
+      const attachments = rawAttachments.map(
+        validateEnterpriseMlsAttachmentManifest,
+      );
+      if (
+        attachments.some(
+          (attachment) => attachment.binding.messageId !== payload.id,
+        )
+      ) {
+        throw new Error('MLS private-message attachment application is invalid');
+      }
+      return {
+        ...(payload as EnterpriseMlsApplicationPayloadV2),
+        attachments,
+      };
+    }
+    if ('attachments' in (payload as object)) {
+      throw new Error('MLS private-message application is invalid');
+    }
+    return payload as EnterpriseMlsApplicationPayloadV1;
   }
 
   private requirePeer(scope: MlsDeviceScope, rawPeerAccountId: string): string {

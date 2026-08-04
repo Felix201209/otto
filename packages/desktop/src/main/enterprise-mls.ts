@@ -86,6 +86,15 @@ export interface EnterpriseMlsTransportEvent {
   expiresAt: string;
 }
 
+export interface EnterpriseMlsAttachmentSession {
+  conversationId: string;
+  sessionGeneration: number;
+  groupId: string;
+  epoch: number;
+  participantAccountIds: [string, string];
+  authorizedDevices: Array<{ accountId: string; deviceId: string }>;
+}
+
 const MLS_MEMBER_ADD_ENVELOPE_V1_PREFIX = 'otto:mls:member-add:v1:';
 const MLS_MEMBER_ADD_ENVELOPE_PREFIX = 'otto:mls:member-add:v2:';
 
@@ -175,6 +184,10 @@ export interface EnterpriseMlsTransportClient {
     limit?: number,
   ): Promise<EnterpriseMlsTransportEvent[]>;
   listMlsInboundConversationPeers(deviceId: string): Promise<string[]>;
+  getMlsAttachmentSession?(
+    peerAccountId: string,
+    deviceId: string,
+  ): Promise<EnterpriseMlsAttachmentSession>;
 }
 
 export interface EnterpriseMlsDecryptedTransportMessage {
@@ -587,6 +600,69 @@ export function parseEnterpriseMlsInboundConversationPeerPage(
     previous = peerAccountId;
     return peerAccountId;
   });
+}
+
+export function parseEnterpriseMlsAttachmentSession(
+  value: unknown,
+): EnterpriseMlsAttachmentSession {
+  const session = value as Partial<EnterpriseMlsAttachmentSession>;
+  if (
+    !session ||
+    !/^[0-9a-f]{64}$/.test(session.conversationId ?? '') ||
+    !Number.isSafeInteger(session.sessionGeneration) ||
+    (session.sessionGeneration ?? 0) < 1 ||
+    !isMlsBase64(session.groupId, 255) ||
+    !Number.isSafeInteger(session.epoch) ||
+    (session.epoch ?? 0) < 1 ||
+    !Array.isArray(session.participantAccountIds) ||
+    session.participantAccountIds.length !== 2 ||
+    session.participantAccountIds.some(
+      (accountId) => typeof accountId !== 'string' || !IDENTIFIER.test(accountId),
+    ) ||
+    session.participantAccountIds[0]! >= session.participantAccountIds[1]! ||
+    !Array.isArray(session.authorizedDevices) ||
+    session.authorizedDevices.length < 2 ||
+    session.authorizedDevices.length > 100
+  ) {
+    throw new Error('enterprise MLS attachment session is invalid');
+  }
+  let previous = '';
+  const authorizedDevices = session.authorizedDevices.map((entry) => {
+    const accountId = entry?.accountId;
+    const deviceId = entry?.deviceId;
+    const key = `${accountId}/${deviceId}`;
+    if (
+      typeof accountId !== 'string' ||
+      !IDENTIFIER.test(accountId) ||
+      typeof deviceId !== 'string' ||
+      !IDENTIFIER.test(deviceId) ||
+      !session.participantAccountIds!.includes(accountId) ||
+      key <= previous
+    ) {
+      throw new Error('enterprise MLS attachment session is invalid');
+    }
+    previous = key;
+    return { accountId, deviceId };
+  });
+  if (
+    session.participantAccountIds.some(
+      (accountId) =>
+        !authorizedDevices.some((device) => device.accountId === accountId),
+    )
+  ) {
+    throw new Error('enterprise MLS attachment session is invalid');
+  }
+  return {
+    conversationId: session.conversationId!,
+    sessionGeneration: session.sessionGeneration!,
+    groupId: session.groupId!,
+    epoch: session.epoch!,
+    participantAccountIds: [
+      session.participantAccountIds[0]!,
+      session.participantAccountIds[1]!,
+    ],
+    authorizedDevices,
+  };
 }
 
 function isMlsReference(value: unknown): value is string {
@@ -1200,6 +1276,42 @@ export class EnterpriseMlsSessionCoordinator {
 
   activeScope(): MlsDeviceScope {
     return this.sessions.activeScope();
+  }
+
+  async getAttachmentSession(
+    peerAccountId: string,
+    expectedGroup: MlsGroupState,
+  ): Promise<EnterpriseMlsAttachmentSession> {
+    const lookup = this.transport.getMlsAttachmentSession?.bind(
+      this.transport,
+    );
+    if (!lookup) {
+      throw new Error('MLS attachment session authority is unavailable');
+    }
+    const scope = this.sessions.activeScope();
+    const session = parseEnterpriseMlsAttachmentSession(
+      await lookup(peerAccountId, scope.deviceId),
+    );
+    const conversationId = enterpriseMlsDirectConversationId({
+      organizationId: scope.organizationId,
+      accountId: scope.accountId,
+      peerAccountId,
+    });
+    if (
+      session.conversationId !== conversationId ||
+      session.groupId !== expectedGroup.group_id ||
+      session.epoch < expectedGroup.epoch ||
+      !session.participantAccountIds.includes(scope.accountId) ||
+      !session.participantAccountIds.includes(peerAccountId) ||
+      !session.authorizedDevices.some(
+        (device) =>
+          device.accountId === scope.accountId &&
+          device.deviceId === scope.deviceId,
+      )
+    ) {
+      throw new Error('MLS attachment session binding is invalid');
+    }
+    return session;
   }
 
   async listActiveConversationPeers(): Promise<string[]> {

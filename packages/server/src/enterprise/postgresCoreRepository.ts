@@ -46,6 +46,8 @@ import {
   type ClaimMlsKeyPackageInput,
   type MlsKeyPackageView,
   type MlsKeyPackageInventoryEntry,
+  type GetMlsAttachmentSessionInput,
+  type MlsAttachmentSessionView,
   type MlsResourceCleanupResult,
   type MlsResourceGovernancePolicy,
   type MlsResourceRateAction,
@@ -2741,6 +2743,102 @@ export function createPostgresEnterpriseCoreRepository(input: {
     return events.rows.map(mlsEventView);
   }
 
+  async function getMlsAttachmentSession(
+    raw: GetMlsAttachmentSessionInput,
+  ): Promise<MlsAttachmentSessionView> {
+    const organizationId = requiredIdentifier(
+      raw.organizationId,
+      'organization id',
+    );
+    const accountId = requiredIdentifier(raw.accountId, 'account id');
+    const peerAccountId = requiredIdentifier(
+      raw.peerAccountId,
+      'peer account id',
+    );
+    const deviceId = requiredIdentifier(raw.deviceId, 'device id');
+    await requirePostgresMlsParticipants(
+      input.pool,
+      organizationId,
+      accountId,
+      peerAccountId,
+    );
+    try {
+      await requirePostgresMlsDevice(
+        input.pool,
+        organizationId,
+        accountId,
+        deviceId,
+      );
+    } catch {
+      throw new Error('MLS attachment device binding is invalid');
+    }
+    const direct = mlsDirectConversation({
+      organizationId,
+      accountId,
+      peerAccountId,
+    });
+    const conversation = await input.pool.query<
+      {
+        conversation_id: string;
+        group_id: string;
+        current_epoch: number | string;
+        active_generation: number | string;
+        participant_a_account_id: string;
+        participant_b_account_id: string;
+      } & Record<string, unknown>
+    >(
+      `SELECT conversation_id, group_id, current_epoch, active_generation,
+              participant_a_account_id, participant_b_account_id
+       FROM mls_conversations
+       WHERE organization_id = $1 AND conversation_id = $2`,
+      [organizationId, direct.conversationId],
+    );
+    const row = conversation.rows[0];
+    if (!row) throw new Error('MLS attachment session is unavailable');
+    const devices = await input.pool.query<
+      { account_id: string; device_id: string } & Record<string, unknown>
+    >(
+      `SELECT device.account_id, device.device_id
+       FROM e2ee_devices AS device
+       JOIN accounts AS account
+         ON account.organization_id = device.organization_id
+        AND account.id = device.account_id
+        AND account.status = 'active'
+        AND account.deleted_at IS NULL
+       WHERE device.organization_id = $1
+         AND device.account_id = ANY($2::text[])
+         AND device.approval_state = 'approved'
+         AND device.revoked_at IS NULL
+       ORDER BY device.account_id COLLATE "C", device.device_id COLLATE "C"`,
+      [
+        organizationId,
+        [row.participant_a_account_id, row.participant_b_account_id],
+      ],
+    );
+    if (
+      devices.rows.length < 2 ||
+      devices.rows.length > 100 ||
+      !devices.rows.some((device) => device.account_id === accountId) ||
+      !devices.rows.some((device) => device.account_id === peerAccountId)
+    ) {
+      throw new Error('MLS attachment approved device roster is unavailable');
+    }
+    return {
+      conversationId: row.conversation_id,
+      sessionGeneration: Number(row.active_generation),
+      groupId: row.group_id,
+      epoch: Number(row.current_epoch),
+      participantAccountIds: [
+        row.participant_a_account_id,
+        row.participant_b_account_id,
+      ],
+      authorizedDevices: devices.rows.map((device) => ({
+        accountId: device.account_id,
+        deviceId: device.device_id,
+      })),
+    };
+  }
+
   async function listMlsInboundConversationPeers(raw: {
     organizationId: string;
     accountId: string;
@@ -3769,6 +3867,7 @@ export function createPostgresEnterpriseCoreRepository(input: {
     claimMlsKeyPackage,
     appendMlsTransportEvent,
     listMlsTransportEvents,
+    getMlsAttachmentSession,
     listMlsInboundConversationPeers,
     cleanupExpiredMlsResources,
     sendE2eeDirectMessage,
