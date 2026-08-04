@@ -1,5 +1,5 @@
 export const ENTERPRISE_TRAY_POPOVER_WIDTH = 420;
-export const ENTERPRISE_TRAY_POPOVER_MAX_CONTACTS = 6;
+export const ENTERPRISE_TRAY_POPOVER_MAX_CONTACTS = 5;
 
 const ATOA_REQUEST_PREFIX = 'OTTO_ATOA_REQUEST ';
 const ATOA_RESPONSE_PREFIX = 'OTTO_ATOA_RESPONSE ';
@@ -10,6 +10,14 @@ export interface EnterpriseTrayContact {
   preview: string;
   count: number;
   createdAt: string;
+}
+
+/** 非企业消息的托盘提醒摘要（园区工单等）。 */
+export interface EnterpriseTraySummarySection {
+  kind: 'collaboration' | 'park-ticket' | 'other';
+  label: string;
+  count: number;
+  preview: string;
 }
 
 interface EnterpriseUnreadMessageLike {
@@ -151,13 +159,20 @@ export function positionEnterpriseTrayPopover(
 
 export function renderEnterpriseTrayPopoverHtml(
   contacts: readonly EnterpriseTrayContact[],
-  options: { now?: number } = {},
+  options: {
+    now?: number;
+    summarySections?: readonly EnterpriseTraySummarySection[];
+    otherUnreadCount?: number;
+  } = {},
 ): string {
   const now = options.now ?? Date.now();
-  const totalUnread = contacts.reduce((total, contact) => total + contact.count, 0);
+  const summarySections = options.summarySections ?? [];
+  const otherUnreadCount = options.otherUnreadCount ?? 0;
+  const enterpriseUnread = contacts.reduce((total, contact) => total + contact.count, 0);
+  const totalUnread = enterpriseUnread + otherUnreadCount;
   const visibleContacts = contacts.slice(0, ENTERPRISE_TRAY_POPOVER_MAX_CONTACTS);
   const hiddenContacts = Math.max(0, contacts.length - visibleContacts.length);
-  const rows = visibleContacts.length > 0
+  const enterpriseRows = visibleContacts.length > 0
     ? visibleContacts.map((contact) => {
       const name = escapeHtml(contact.name);
       const preview = escapeHtml(contact.preview);
@@ -178,15 +193,45 @@ export function renderEnterpriseTrayPopoverHtml(
           <span class="chevron" aria-hidden="true">›</span>
         </a>`;
     }).join('')
+    : '';
+
+  const enterpriseSectionHeader = enterpriseUnread > 0
+    ? `<div class="section-title">企业消息 <span>${enterpriseUnread} 条</span></div>`
+    : '';
+
+  const summaryRows = summarySections.length > 0
+    ? summarySections.map((section) => {
+      const href = section.kind === 'park-ticket'
+        ? 'otto-tray://park'
+        : 'otto-tray://open';
+      return `
+        <a class="message summary-item" href="${href}" aria-label="${section.label} ${section.count} 条">
+          <span class="avatar tone-3">${escapeHtml(section.label.slice(0, 1))}</span>
+          <span class="message-body">
+            <span class="message-heading">
+              <strong>${escapeHtml(section.label)}</strong>
+            </span>
+            <span class="preview">${escapeHtml(section.preview)}</span>
+          </span>
+          <span class="unread-count" aria-label="${section.count} 条未读">${section.count > 99 ? '99+' : String(section.count)}</span>
+          <span class="chevron" aria-hidden="true">›</span>
+        </a>`;
+    }).join('')
+    : '';
+
+  const hasContent = enterpriseRows || summaryRows;
+  const rows = hasContent
+    ? `${enterpriseSectionHeader}${enterpriseRows}${summaryRows}`
     : `
       <div class="empty">
         <span class="empty-icon">✓</span>
         <strong>消息都已读完</strong>
         <span>有新消息时会在这里显示发送人和内容摘要</span>
       </div>`;
+
   const hiddenLabel = hiddenContacts > 0
     ? `<span class="more">另有 ${hiddenContacts} 位联系人</span>`
-    : '<span class="privacy"><i></i>仅展示企业消息摘要</span>';
+    : (hasContent ? '<span class="privacy"><i></i>仅展示消息摘要</span>' : '');
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -194,7 +239,7 @@ export function renderEnterpriseTrayPopoverHtml(
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
   <meta name="color-scheme" content="light dark">
-  <title>Otto 未读消息</title>
+  <title>Otto 未读提醒</title>
   <style>
     :root {
       color-scheme: light dark;
@@ -279,6 +324,18 @@ export function renderEnterpriseTrayPopoverHtml(
     .open-all:hover { transform: translateY(-1px); background: rgba(91, 100, 244, .17); }
     main { min-width: 0; min-height: 0; padding: 7px; overflow: auto; scrollbar-width: none; }
     main::-webkit-scrollbar { display: none; }
+    .section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 4px 2px;
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .section-title span { font-weight: 500; }
     .message {
       position: relative;
       display: grid;
@@ -398,8 +455,8 @@ export function renderEnterpriseTrayPopoverHtml(
       <div class="title">
         <span class="logo">O</span>
         <span class="title-copy">
-          <span class="eyebrow">OTTO MESSAGES</span>
-          <h1>未读消息 <span>${totalUnread} 条</span></h1>
+          <span class="eyebrow">OTTO NOTIFICATIONS</span>
+          <h1>未读提醒 <span>${totalUnread} 条</span></h1>
         </span>
       </div>
       <a class="open-all" href="otto-tray://open">打开 Otto</a>

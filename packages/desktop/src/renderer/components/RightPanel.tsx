@@ -106,6 +106,8 @@ export interface RightPanelProps {
   /** 中心会话签发的组织 id，用于按租户缓存功能开关。 */
   enterpriseOrganizationId?: string | null;
   workspace?: ProductWorkspaceSnapshot | null;
+  /** 园区工单未读总数（待处理 + 有更新的申请）。 */
+  parkTicketUnreadCount?: number;
   profiles?: readonly AgentProfile[];
   customAgents?: readonly CustomAgentDefinition[];
   onLaunchAgentProfile?: (profile: AgentProfile) => void;
@@ -143,6 +145,7 @@ export function RightPanel({
   enterpriseRole,
   enterpriseOrganizationId: authenticatedOrganizationId,
   workspace = null,
+  parkTicketUnreadCount = 0,
   profiles: providedProfiles,
   customAgents = [],
   onLaunchAgentProfile = () => undefined,
@@ -610,8 +613,9 @@ export function RightPanel({
           ‹
         </button>
         {tabs.map((tab) => (
-          <button key={tab} type="button" className="otto-right-panel__railitem" onClick={() => { setActiveTab(tab); setCollapsed(false); }} title={TAB_LABEL[tab]}>
+          <button key={tab} type="button" className={`otto-right-panel__railitem${tab === 'agents' && parkTicketUnreadCount > 0 ? ' has-unread' : ''}`} onClick={() => { setActiveTab(tab); setCollapsed(false); }} title={TAB_LABEL[tab] + (tab === 'agents' && parkTicketUnreadCount > 0 ? ` · ${parkTicketUnreadCount} 条未读` : '')}>
             {TAB_LABEL[tab].slice(0, 1)}
+            {tab === 'agents' && parkTicketUnreadCount > 0 ? <span className="otto-right-panel__rail-badge" aria-label={`${parkTicketUnreadCount} 条未读`} /> : null}
           </button>
         ))}
       </aside>
@@ -642,11 +646,16 @@ export function RightPanel({
             </div>
             {parkBrand ? <><button
               type="button"
-              className="otto-right-panel__grouphead"
+              className={`otto-right-panel__grouphead${parkTicketUnreadCount > 0 ? ' has-unread' : ''}`}
               onClick={() => setParkOpen((value) => !value)}
               aria-expanded={parkOpen}
             >
               <span>园区服务</span>
+              {!parkOpen && parkTicketUnreadCount > 0 ? (
+                <span className="otto-right-panel__grouphead-badge" aria-label={`${parkTicketUnreadCount} 条未读`}>
+                  {parkTicketUnreadCount > 99 ? '99+' : parkTicketUnreadCount}
+                </span>
+              ) : null}
               <IconChevronDown
                 size={14}
                 className={`otto-right-panel__grouphead-chev${parkOpen ? '' : ' is-collapsed'}`}

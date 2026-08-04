@@ -168,6 +168,28 @@ export function OrganizationTree({
   const organization = hasLocalEnterpriseWorkspace && !hasAuthenticatedOrganization
     ? workspace?.managerWorkspace?.organization
     : undefined;
+
+  // ── 聚合未读计数 ──
+  const totalOrgUnread = useMemo(() => {
+    let total = 0;
+    for (const [key, count] of Object.entries(unreadCounts)) {
+      if (key.startsWith('enterprise:message:') && count > 0) total += count;
+    }
+    return total;
+  }, [unreadCounts]);
+
+  // 追踪未读变化用于触发父级闪烁（不清除已存在的高亮）
+  const prevTotalUnread = useRef(totalOrgUnread);
+  const [orgToggleAttention, setOrgToggleAttention] = useState(false);
+  useEffect(() => {
+    if (totalOrgUnread > prevTotalUnread.current && !open) {
+      setOrgToggleAttention(true);
+      const timer = window.setTimeout(() => setOrgToggleAttention(false), 3000);
+      prevTotalUnread.current = totalOrgUnread;
+      return () => window.clearTimeout(timer);
+    }
+    prevTotalUnread.current = totalOrgUnread;
+  }, [totalOrgUnread, open]);
   const currentOrganizationDepartment = orgView?.members.find(
     (member) => member.id === enterpriseAccount?.id && member.status === 'active',
   )?.department || enterpriseAccount?.department || '未分配部门';
@@ -279,11 +301,17 @@ export function OrganizationTree({
     <section className="otto-orgtree" aria-label="企业组织架构">
       <button
         type="button"
-        className="otto-orgtree__toggle"
+        className={
+          'otto-orgtree__toggle'
+          + (orgToggleAttention ? ' is-attention' : '')
+        }
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
       >
         <span className="otto-orgtree__company">企业组织</span>
+        {!open && totalOrgUnread > 0 ? (
+          <UnreadBadge count={totalOrgUnread} />
+        ) : null}
         <IconChevronDown
           size={13}
           className={'otto-orgtree__chevron' + (open ? '' : ' is-collapsed')}
@@ -317,11 +345,21 @@ export function OrganizationTree({
               {groupEnterpriseMembersForDisplay(
                 orgView.members,
                 orgView.structure,
-              ).map((department) => (
+              ).map((department) => {
+                  // 聚合该部门下所有成员的未读总数
+                  const deptUnread = department.positions.reduce(
+                    (sum, pos) => sum + pos.members.reduce(
+                      (s, m) => s + (unreadCounts[`enterprise:message:${m.id}`] ?? 0),
+                      0,
+                    ),
+                    0,
+                  );
+                  return (
                   <DepartmentSection
                     key={department.key}
                     name={department.name}
                     memberCount={department.memberCount}
+                    unreadCount={deptUnread}
                     defaultExpanded={department.name === currentOrganizationDepartment}
                   >
                     {department.positions.map((position) => (
@@ -362,7 +400,8 @@ export function OrganizationTree({
                       </OrganizationPositionGroup>
                     ))}
                   </DepartmentSection>
-                ))}
+                  );
+                })}
             </div>
           ) : orgLoading ? (
             <div className="otto-orgtree__vacant">正在加载组织信息…</div>
@@ -1327,21 +1366,40 @@ function MemberIdentity({ member }: { member: EnterpriseOrganizationMember }): R
 function DepartmentSection({
   name,
   memberCount,
+  unreadCount = 0,
   defaultExpanded = false,
   children,
 }: {
   name: string;
   memberCount?: number;
+  /** 该部门子树下所有成员的未读消息总数。 */
+  unreadCount?: number;
   defaultExpanded?: boolean;
   children: React.ReactNode;
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(defaultExpanded);
+  // 追踪未读变化，在折叠态触发短暂闪烁
+  const prevUnread = useRef(unreadCount);
+  const [attention, setAttention] = useState(false);
+  useEffect(() => {
+    if (unreadCount > prevUnread.current && !expanded) {
+      setAttention(true);
+      const timer = window.setTimeout(() => setAttention(false), 3000);
+      prevUnread.current = unreadCount;
+      return () => window.clearTimeout(timer);
+    }
+    prevUnread.current = unreadCount;
+  }, [unreadCount, expanded]);
+
   return (
     <div className="otto-orgtree__department">
       <button
         type="button"
-        className="otto-orgtree__department-name otto-orgtree__department-toggle"
-        aria-label={name}
+        className={
+          'otto-orgtree__department-name otto-orgtree__department-toggle'
+          + (attention ? ' is-attention' : '')
+        }
+        aria-label={name + (unreadCount > 0 ? `，${unreadCount} 条未读` : '')}
         aria-expanded={expanded}
         onClick={() => setExpanded((value) => !value)}
       >
@@ -1350,6 +1408,9 @@ function DepartmentSection({
           className={'otto-orgtree__chevron' + (expanded ? '' : ' is-collapsed')}
         />
         <span>{name}</span>
+        {!expanded && unreadCount > 0 ? (
+          <UnreadBadge count={unreadCount} />
+        ) : null}
         {memberCount !== undefined ? <small>{memberCount}</small> : null}
       </button>
       {expanded ? children : null}

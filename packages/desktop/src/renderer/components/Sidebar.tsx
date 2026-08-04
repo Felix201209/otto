@@ -16,9 +16,10 @@
  * 会话项因此从 <button> 改为 role=button 的 <div>：按钮不能嵌按钮/输入框（无效 HTML）。
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { SessionSummary } from 'otto-server';
 import { type SessionGroup } from '../state/useOttoStore.js';
+import { computeNavBadgeCounts } from '../attentionCenter.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import {
   IconPlus,
@@ -82,6 +83,8 @@ interface SidebarProps {
   updateBadge?: boolean;
   enterpriseAccount?: EnterpriseAccount;
   enterpriseUnreadCounts?: EnterpriseUnreadCounts;
+  /** 园区工单未读总数（待处理 + 有更新的申请）。 */
+  parkTicketUnreadCount?: number;
   onSelect: (id: string) => void;
   onNewChat: () => void;
   onOpenHub: () => void;
@@ -103,6 +106,7 @@ export function Sidebar({
   accountManagementActive = false,
   enterpriseAccount,
   enterpriseUnreadCounts = {},
+  parkTicketUnreadCount = 0,
   onSelect,
   onNewChat,
   onOpenAccounts,
@@ -155,34 +159,13 @@ export function Sidebar({
 
       {/* 主导航：五个一级入口，各自映射到主内容区的完整页面。 */}
       {onNavigate ? (
-        <nav className="otto-sidebar__nav" aria-label="主导航">
-          {([
-            { key: 'chat', label: '工作台', view: 'chat' },
-            { key: 'organization', label: '组织架构', view: 'organization' },
-            { key: 'inbox', label: '我的消息', view: 'inbox' },
-            { key: 'work', label: '我的工作', view: 'work' },
-            { key: 'hub', label: '设置', view: 'hub' },
-          ] as const).map((item) => {
-            const isActive = activeView === item.view;
-            const unread = item.key === 'inbox'
-              ? Object.values(enterpriseUnreadCounts).reduce((s, c) => s + c, 0)
-              : 0;
-            return (
-              <button
-                key={item.key}
-                type="button"
-                className={`otto-sidebar__navitem${isActive ? ' is-active' : ''}`}
-                aria-current={isActive ? 'page' : undefined}
-                onClick={() => onNavigate(item.view)}
-              >
-                <span>{item.label}</span>
-                {unread > 0 ? (
-                  <b role="status" aria-label={`${unread} 条未读`}>{unread > 99 ? '99+' : unread}</b>
-                ) : null}
-              </button>
-            );
-          })}
-        </nav>
+        <NavItems
+          activeView={activeView}
+          enterpriseUnreadCounts={enterpriseUnreadCounts}
+          parkTicketUnreadCount={parkTicketUnreadCount}
+          unreadSessions={unreadSessions}
+          onNavigate={onNavigate}
+        />
       ) : null}
 
       <div className="otto-sidebar__workspace">
@@ -307,6 +290,85 @@ export function Sidebar({
         />
       ) : null}
     </aside>
+  );
+}
+
+function NavItems({
+  activeView,
+  enterpriseUnreadCounts,
+  parkTicketUnreadCount,
+  unreadSessions,
+  onNavigate,
+}: {
+  activeView: string;
+  enterpriseUnreadCounts: EnterpriseUnreadCounts;
+  parkTicketUnreadCount: number;
+  unreadSessions?: string[];
+  onNavigate: (view: 'chat' | 'organization' | 'inbox' | 'work' | 'hub') => void;
+}): React.JSX.Element {
+  const { inboxUnread, workUnread } = computeNavBadgeCounts(
+    enterpriseUnreadCounts,
+    { actionableCount: parkTicketUnreadCount, creatorUpdateCount: 0, latestTimestamp: '', latestPreview: '' },
+    unreadSessions,
+  );
+
+  // 追踪各入口的未读计数，变化时触发短暂 attention 动画。
+  const [attentionKeys, setAttentionKeys] = useState<Set<string>>(new Set());
+  const prevCounts = useRef<Record<string, number>>({ inbox: 0, work: 0 });
+
+  useEffect(() => {
+    const next: Record<string, number> = { inbox: inboxUnread, work: workUnread };
+    const prev = prevCounts.current;
+    const pulsed = new Set<string>();
+    for (const key of ['inbox', 'work'] as const) {
+      if (next[key] > prev[key]) pulsed.add(key);
+    }
+    if (pulsed.size === 0) return;
+    prevCounts.current = next;
+    setAttentionKeys(pulsed);
+    const timer = window.setTimeout(() => setAttentionKeys(new Set()), 3000);
+    return () => window.clearTimeout(timer);
+  }, [inboxUnread, workUnread]);
+
+  const navItems = [
+    { key: 'chat', label: '工作台', view: 'chat', unread: 0 },
+    { key: 'organization', label: '组织架构', view: 'organization', unread: 0 },
+    { key: 'inbox', label: '我的消息', view: 'inbox', unread: inboxUnread },
+    { key: 'work', label: '我的工作', view: 'work', unread: workUnread },
+    { key: 'hub', label: '设置', view: 'hub', unread: 0 },
+  ] as const;
+
+  return (
+    <nav className="otto-sidebar__nav" aria-label="主导航">
+      {navItems.map((item) => {
+        const isActive = activeView === item.view;
+        const hasAttention = attentionKeys.has(item.key) && !isActive;
+        return (
+          <button
+            key={item.key}
+            type="button"
+            className={
+              'otto-sidebar__navitem'
+              + (isActive ? ' is-active' : '')
+              + (hasAttention ? ' is-attention' : '')
+            }
+            aria-current={isActive ? 'page' : undefined}
+            onClick={() => onNavigate(item.view)}
+          >
+            <span>{item.label}</span>
+            {item.unread > 0 ? (
+              <b
+                className="otto-attention-badge"
+                role="status"
+                aria-label={`${item.unread} 条未读`}
+              >
+                {item.unread > 99 ? '99+' : item.unread}
+              </b>
+            ) : null}
+          </button>
+        );
+      })}
+    </nav>
   );
 }
 

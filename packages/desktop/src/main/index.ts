@@ -1129,16 +1129,20 @@ function loadTrayIcon(): NativeImage {
 }
 
 function trayTooltip(unreadCount: number): string {
-  if (!enterpriseTrayContacts.length) {
-    return unreadCount > 0 ? `Otto · ${unreadCount} 条未读消息` : 'Otto';
+  if (unreadCount <= 0) return 'Otto';
+  const lines: string[] = [`Otto · ${unreadCount} 条未读消息`];
+  if (enterpriseTrayContacts.length > 0) {
+    const contacts = enterpriseTrayContacts.slice(0, 4).map((item) => (
+      `${item.name} ${item.count} 条：${item.preview}`
+    ));
+    lines.push(...contacts);
+    if (enterpriseTrayContacts.length > contacts.length) {
+      lines.push(`还有 ${enterpriseTrayContacts.length - contacts.length} 位联系人`);
+    }
   }
-  const contacts = enterpriseTrayContacts.slice(0, 5).map((item) => (
-    `${item.name} ${item.count} 条：${item.preview}`
-  ));
-  const more = enterpriseTrayContacts.length > contacts.length
-    ? `还有 ${enterpriseTrayContacts.length - contacts.length} 位联系人`
-    : null;
-  return ['Otto 企业消息', ...contacts, ...(more ? [more] : [])].join('\n');
+  // 提示用户 hover 或点击可以查看详情
+  lines.push('单击托盘图标查看未读详情');
+  return lines.join('\n');
 }
 
 async function refreshEnterpriseTrayContacts(): Promise<void> {
@@ -1269,6 +1273,10 @@ function handleEnterpriseTrayNavigation(targetUrl: string): void {
     if (target.protocol !== 'otto-tray:') return;
     if (target.hostname === 'open') {
       showMainWindow();
+      return;
+    }
+    if (target.hostname === 'park') {
+      openNotificationSession('park:service');
       return;
     }
     if (target.hostname !== 'message') return;

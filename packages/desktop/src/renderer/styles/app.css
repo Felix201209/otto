@@ -4491,6 +4491,28 @@ h6.otto-prose__h {
   transform: rotate(-90deg);
 }
 
+/* 园区服务未读角标 */
+.otto-right-panel__grouphead-badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.otto-right-panel__grouphead.has-unread {
+  color: var(--otto-text);
+}
+
 /* 腰线：企业专家与自主开发之间的分隔。 */
 .otto-right-panel__waist {
   height: 1px;
@@ -7538,6 +7560,23 @@ h6.otto-prose__h {
 .otto-orgtree__department-toggle:hover { color: var(--otto-accent-hover); }
 .otto-orgtree__department-toggle > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .otto-orgtree__department-toggle > small { margin-left: auto; min-width: 18px; border-radius: 999px; background: var(--otto-bg); color: var(--otto-text-tertiary); font-size: 8.5px; font-weight: 700; line-height: 18px; text-align: center; }
+
+/* 折叠态新增未读脉冲 */
+.otto-orgtree__toggle.is-attention,
+.otto-orgtree__department-toggle.is-attention {
+  animation: ottoOrgAttentionPulse 1.2s ease-in-out 3;
+}
+
+@keyframes ottoOrgAttentionPulse {
+  0%, 100% { box-shadow: none; }
+  50% { box-shadow: 0 0 0 3px rgba(239, 68, 68, .15); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .otto-orgtree__toggle.is-attention,
+  .otto-orgtree__department-toggle.is-attention { animation: none; }
+}
+
 .otto-orgtree__position-group { position: relative; margin: 5px 0 2px 7px; padding-left: 10px; }
 .otto-orgtree__position-group::before { content: ''; position: absolute; inset: 5px auto 4px 0; width: 2px; border-radius: 2px; background: color-mix(in srgb, var(--otto-accent) 34%, var(--otto-border)); }
 .otto-orgtree__position-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 20px; color: var(--otto-text-secondary); }
@@ -8064,8 +8103,22 @@ h6.otto-prose__h {
 .otto-right-panel--collapsed { width: 38px; min-width: 38px; align-items: center; padding-top: 32px; gap: 4px; }
 .otto-right-panel__edge { position: absolute; left: -13px; top: 56px; z-index: 5; width: 26px; height: 34px; border-radius: 12px; border: 1px solid var(--otto-border); background: var(--otto-surface); color: var(--otto-text-secondary); box-shadow: var(--otto-shadow-sm); cursor: pointer; }
 .otto-right-panel--collapsed .otto-right-panel__edge { left: 6px; top: 8px; }
-.otto-right-panel__railitem { width: 28px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--otto-text-secondary); cursor: pointer; }
+.otto-right-panel__railitem { width: 28px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--otto-text-secondary); cursor: pointer; position: relative; }
 .otto-right-panel__railitem:hover { background: var(--otto-accent-soft); color: var(--otto-accent); }
+
+.otto-right-panel__rail-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ef4444;
+}
+
+.otto-right-panel__railitem.has-unread {
+  color: var(--otto-accent);
+}
 .otto-profile-list { display: flex; flex-direction: column; gap: 7px; }
 .otto-profile-card { width: 100%; border: 1px solid var(--otto-border); border-radius: 10px; background: var(--otto-surface); color: var(--otto-text); padding: 8px; display: flex; gap: 9px; text-align: left; cursor: pointer; }
 .otto-profile-card:hover { border-color: var(--otto-accent); transform: translateY(-1px); }
@@ -9889,6 +9942,36 @@ h6.otto-prose__h {
 .otto-sidebar__navitem:focus-visible {
   outline: 2px solid var(--otto-accent);
   outline-offset: 1px;
+}
+
+/* ── 统一未读角标 ── */
+.otto-attention-badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* 新增未读时的脉冲动画 */
+.otto-sidebar__navitem.is-attention {
+  animation: ottoAttentionPulse 1.2s ease-in-out 3;
+}
+
+@keyframes ottoAttentionPulse {
+  0%, 100% { box-shadow: none; }
+  50% { box-shadow: 0 0 0 4px rgba(239, 68, 68, .18); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .otto-sidebar__navitem.is-attention { animation: none; }
 }
 
 /* ══════════════ 组织架构全页（OrganizationPage） ══════════════ */
