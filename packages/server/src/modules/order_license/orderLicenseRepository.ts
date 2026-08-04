@@ -160,3 +160,54 @@ export function getOrderEntitlement(
     ).get(orderId) as StoredOrderEntitlement | undefined
   ) ?? null;
 }
+
+/** 读取所有已持久化订单记录（用于重建状态机投影，保证多事件生命周期上下文）。 */
+export function loadAllOrderRecords(
+  store: OrderLicenseStore,
+): Array<{
+  orderId: string;
+  state: OrderLifecycleState;
+  latestVersion: number;
+  deploymentId: string;
+  customer: { id: string; name: string };
+  plan: string;
+  seatLimit: number;
+  modules: string[];
+  issuedAtMs: number;
+  expiresAtMs: number;
+  gracePeriodMs: number;
+}> {
+  const database = store.db();
+  ensureTable(database);
+  const rows = database.prepare(
+    `SELECT order_id, order_state, version, deployment_id, customer_id, customer_name,
+            plan, seat_limit, modules_json, issued_at_ms, expires_at_ms, grace_period_ms
+     FROM order_licenses`,
+  ).all() as Array<{
+    order_id: string;
+    order_state: OrderLifecycleState;
+    version: number;
+    deployment_id: string;
+    customer_id: string;
+    customer_name: string;
+    plan: string;
+    seat_limit: number;
+    modules_json: string;
+    issued_at_ms: number;
+    expires_at_ms: number;
+    grace_period_ms: number;
+  }>;
+  return rows.map((r) => ({
+    orderId: r.order_id,
+    state: r.order_state,
+    latestVersion: r.version,
+    deploymentId: r.deployment_id,
+    customer: { id: r.customer_id, name: r.customer_name },
+    plan: r.plan,
+    seatLimit: r.seat_limit,
+    modules: JSON.parse(r.modules_json) as string[],
+    issuedAtMs: r.issued_at_ms,
+    expiresAtMs: r.expires_at_ms,
+    gracePeriodMs: r.grace_period_ms,
+  }));
+}

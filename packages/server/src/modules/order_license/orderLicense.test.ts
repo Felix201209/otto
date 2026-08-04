@@ -186,4 +186,50 @@ describe('order license processor (CONTROL-11)', () => {
     expect(ent!.license_id).toBeTruthy();
     expect(ent!.deployment_id).toBe('dep-1');
   });
+
+  it('审核修复：多事件生命周期保留既有上下文（篡改客户被拒）', () => {
+    const p = makeDeps();
+    p.ingest(makeEvent()); // v1 payment
+    // 同 order 第二事件（plan_change v2）篡改客户 → 必须 rejected_tampered
+    const tampered = p.ingest({
+      ...makeEvent({
+        eventId: 'evt-2',
+        version: 2,
+        type: 'plan_change',
+        customer: { id: 'cus-9', name: 'Evil' },
+      }),
+    });
+    expect(tampered.kind).toBe('rejected_tampered');
+  });
+
+  it('审核修复：多事件生命周期降配（减席位）在编排层被拒', () => {
+    const p = makeDeps();
+    p.ingest(makeEvent({ seatLimit: 50 })); // v1 50 席位
+    const downgrade = p.ingest({
+      ...makeEvent({
+        eventId: 'evt-2',
+        version: 2,
+        type: 'seat_change',
+        seatLimit: 10,
+      }),
+    });
+    expect(downgrade.kind).toBe('rejected_tampered');
+  });
+
+  it('审核修复：同 order 升配（加席位）编排层接受并递增版本', () => {
+    const p = makeDeps();
+    p.ingest(makeEvent({ seatLimit: 50 }));
+    const upgrade = p.ingest({
+      ...makeEvent({
+        eventId: 'evt-2',
+        version: 2,
+        type: 'seat_change',
+        seatLimit: 100,
+      }),
+    });
+    expect(upgrade.kind).toBe('license_issued');
+    expect(upgrade.licenseId).toBeTruthy();
+    const ent = p.latestEntitlement('ord-1');
+    expect(ent!.seat_limit).toBe(100);
+  });
 });
