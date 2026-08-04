@@ -97,6 +97,17 @@ async function getJSON(
   return { status: res.status, body: await res.json() as ParkEndpointResponse };
 }
 
+async function createMemberHeaders(): Promise<Record<string, string>> {
+  const db = await import('./db.js');
+  const account = db.createAccount({
+    username: 'park-requester',
+    password: 'park-requester-password',
+    name: '园区服务申请人',
+  });
+  const session = db.createAuthSession(account.id);
+  return { authorization: `Bearer ${session.token}` };
+}
+
 // The first isolated import compiles the large enterprise graph under Vitest
 // coverage. Production uses prebuilt JavaScript, but CI needs a wider startup
 // budget on slower Windows runners.
@@ -200,10 +211,12 @@ describe('Park endpoints', { timeout: 30_000 }, () => {
       adminHeaders,
     );
 
-    // Create service request (no admin token needed)
+    // Create service request as an authenticated member.
+    const memberHeaders = await createMemberHeaders();
     const { status, body } = await postJSON(
       base, '/enterprise/park/services/request',
       { parkId, enterpriseId: 'ent-1', type: '维修', description: '空调故障' },
+      memberHeaders,
     );
     expect(status).toBe(201);
     expect(body.request.status).toBe('assigned');
@@ -220,9 +233,11 @@ describe('Park endpoints', { timeout: 30_000 }, () => {
       adminHeaders,
     );
 
+    const memberHeaders = await createMemberHeaders();
     const { status, body } = await postJSON(
       base, '/enterprise/park/services/request',
       { parkId: parkBody.park.id, enterpriseId: 'ent-1', type: '保洁', description: '打扫' },
+      memberHeaders,
     );
     expect(status).toBe(201);
     expect(body.request.status).toBe('assigned');
@@ -245,9 +260,11 @@ describe('Park endpoints', { timeout: 30_000 }, () => {
     );
 
     // Create request
+    const memberHeaders = await createMemberHeaders();
     await postJSON(
       base, '/enterprise/park/services/request',
       { parkId: parkBody.park.id, enterpriseId: 'ent-1', type: '维修', description: '修理' },
+      memberHeaders,
     );
 
     const { status, body } = await getJSON(

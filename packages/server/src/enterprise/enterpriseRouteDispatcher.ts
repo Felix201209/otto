@@ -238,6 +238,7 @@ export async function dispatchEnterpriseRoute({
       res,
       url,
       adminPrincipal,
+      memberAccount,
       isPublicSimplePark,
       readBody,
       sendJSON,

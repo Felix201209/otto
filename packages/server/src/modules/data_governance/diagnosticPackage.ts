@@ -10,11 +10,7 @@
  *  - 附带 redaction 清单，说明为何脱敏以及管理员如何获取脱敏后的副本。
  */
 
-import type {
-  Database,
-  EncryptedFieldCipher,
-  EncryptedObjectStore,
-} from '../data_platform/index.js';
+import type { Database } from '../data_platform/index.js';
 import {
   CURRENT_LEGAL_DOCUMENTS,
   dataGovernanceConfiguration,
@@ -48,19 +44,6 @@ export interface RedactedDiagnosticPackage {
     note: string;
   };
 }
-
-/** 诊断包里的保留字段（仅无敏感信息的业务元数据）。 */
-const DIAGNOSTIC_ALLOWLIST: ReadonlySet<string> = new Set([
-  'id',
-  'organization_id',
-  'account_type',
-  'status',
-  'created_at',
-  'updated_at',
-  'department',
-  'position_title',
-  'is_admin',
-]);
 
 function countIf(database: Database, table: string, where = ''): number {
   try {

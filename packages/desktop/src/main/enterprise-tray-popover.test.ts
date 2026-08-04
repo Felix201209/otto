@@ -69,7 +69,7 @@ describe('enterprise tray message popover', () => {
       },
     ], { now: Date.parse('2026-07-26T08:05:00.000Z') });
 
-    expect(html).toContain('未读消息');
+    expect(html).toContain('未读提醒');
     expect(html).toContain('5 分钟前');
     expect(html).toContain('&lt;Alice&gt;');
     expect(html).toContain('&lt;img src=x onerror=alert(1)&gt; 项目方案已更新');

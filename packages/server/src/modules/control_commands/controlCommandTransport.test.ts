@@ -20,7 +20,6 @@ import {
   createControlCommandScheduler,
   type ControlCommandQueueStore,
   type ControlCommandOutboxStore,
-  type ControlCommandRunResult,
 } from './index.js';
 
 const NOW_MS = 1_700_000_000_000;

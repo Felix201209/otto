@@ -13,6 +13,7 @@ export interface SimpleParkCompatibilityRouteDeps {
   res: ServerResponse;
   url: URL;
   adminPrincipal: SimpleParkCompatibilityPrincipal | null;
+  memberAccount: db.AccountView | null;
   isPublicSimplePark: boolean;
   readBody(req: IncomingMessage): Promise<Record<string, unknown>>;
   sendJSON(res: ServerResponse, status: number, data: unknown): void;
@@ -26,6 +27,7 @@ export async function handleSimpleParkCompatibilityRoute({
   res,
   url,
   adminPrincipal,
+  memberAccount,
   isPublicSimplePark,
   readBody,
   sendJSON,
@@ -128,16 +130,24 @@ export async function handleSimpleParkCompatibilityRoute({
   }
 
   if (path === '/enterprise/park/services/request' && method === 'POST') {
-    const body = await readBody(req);
-    const parkId = typeof body.parkId === 'string' ? body.parkId : '';
-    const enterpriseId = typeof body.enterpriseId === 'string' ? body.enterpriseId : '';
-    const type = typeof body.type === 'string' ? body.type : '';
-    const description = typeof body.description === 'string' ? body.description : '';
-    if (!parkId || !enterpriseId || !type || !description) {
-      sendJSON(res, 400, { error: '园区ID、企业ID、服务类型和描述不能为空' });
+    if (!memberAccount) {
+      sendJSON(res, 401, { error: '登录已失效，请重新登录' });
       return true;
     }
-    const request = simplePark.createServiceRequest({ parkId, enterpriseId, type, description });
+    const body = await readBody(req);
+    const parkId = typeof body.parkId === 'string' ? body.parkId : '';
+    const type = typeof body.type === 'string' ? body.type : '';
+    const description = typeof body.description === 'string' ? body.description : '';
+    if (!parkId || !type || !description) {
+      sendJSON(res, 400, { error: '园区ID、服务类型和描述不能为空' });
+      return true;
+    }
+    const request = simplePark.createServiceRequest({
+      parkId,
+      enterpriseId: memberAccount.organizationId,
+      type,
+      description,
+    });
     const routed = simplePark.routeServiceRequest(request.id);
     sendJSON(res, 201, { request: routed });
     return true;

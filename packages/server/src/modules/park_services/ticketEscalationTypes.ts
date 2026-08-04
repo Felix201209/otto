@@ -107,7 +107,7 @@ export interface EscalationChannelSender {
 }
 
 /** Opaque store abstraction so the facade is testable without a real DB. */
-export interface EscalationRepositoryStore<TJob extends EscalationJob = EscalationJob> {
+export interface EscalationRepositoryStore {
   db(): EscalationDatabase;
   createJobId(): string;
   now(): Date;

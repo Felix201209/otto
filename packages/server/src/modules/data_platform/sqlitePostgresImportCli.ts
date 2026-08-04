@@ -157,7 +157,9 @@ export function safeSqlitePostgresImportErrorMessage(
 ): string {
   let message = safePostgresErrorMessage(error, environment.OTTO_POSTGRES_URL);
   if (sourcePath) {
-    const sourceName = path.basename(sourcePath);
+    const sourceName = sourcePath.includes('\\')
+      ? path.win32.basename(sourcePath)
+      : path.basename(sourcePath);
     for (const candidate of [path.resolve(sourcePath), sourcePath].sort(
       (left, right) => right.length - left.length,
     )) {

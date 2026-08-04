@@ -107,8 +107,9 @@ export function claimReadyOutboxRows(
     `SELECT * FROM control_command_outbox
      WHERE state = 'pending'
        AND (next_attempt_at_ms IS NULL OR next_attempt_at_ms <= ?)
+       AND delivery_attempts < ?
      ORDER BY created_at_ms ASC LIMIT ?`,
-  ).all(now, batchSize) as ControlCommandOutboxRow[];
+  ).all(now, maxAttempts, batchSize) as ControlCommandOutboxRow[];
 
   const claimed: ControlCommandOutboxRow[] = [];
   const flip = database.prepare(

@@ -88,7 +88,7 @@ describe('ChatView 重新生成携带消息 id', () => {
     ).toBeTruthy();
     expect(screen.getByRole('button', { name: '导出会话为 Markdown' }).textContent).toBe('导出');
     expect(screen.getByRole('button', { name: '模型与个人 API 设置' }).textContent).toBe('设置');
-    expect(screen.getByRole('button', { name: '智能体面板' }).textContent).toBe('工作台');
+    expect(screen.getByRole('button', { name: '专家面板' }).textContent).toBe('专家');
   });
 
   it('空会话与未选择会话时恢复 v1.6 的 Otto 形象', () => {

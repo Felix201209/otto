@@ -69,10 +69,9 @@ import {
   startPrivateDeploymentRuntime,
 } from '../modules/commercial_control/index.js';
 import {
-  createControlCommandBoundary,
   controlPublicKeysFromEnv,
-  type ControlCommandBoundary,
 } from '../modules/control_commands/index.js';
+import { createEnterpriseControlCommandBoundary } from './controlCommandIntegration.js';
 
 export { adminAccountsHTML } from './adminAccountsPage.js';
 export {
@@ -689,11 +688,9 @@ export function createEnterpriseServer(opts: EnterpriseServerOptions = {}): {
       resultSummary: 'no executor configured',
       errorCategory: 'not_configured',
     }));
-  const controlBoundary = createControlCommandBoundary({
-    db: () => db.getDB(),
+  const controlBoundary = createEnterpriseControlCommandBoundary({
     deploymentId:
       process.env.OTTO_ENTERPRISE_DEPLOYMENT_ID || publicBaseUrl,
-    now: () => Date.now(),
     controlPublicKeys: controlKeys,
     signingPrivateKey: opts.controlSigningPrivateKey,
     execute: controlExecute,
