@@ -71,6 +71,18 @@ export interface EnterpriseRouteDispatcherDeps {
   readBody(req: IncomingMessage, maxLength?: number): Promise<Record<string, unknown>>;
   sendJSON(res: ServerResponse, status: number, data: unknown): void;
   extractToken(req: IncomingMessage): string;
+  /** CONTROL-12 签名指令队列 HTTP 端点（可选；未启用时为 undefined）。 */
+  controlCommandHandle?(
+    deps: {
+      path: string;
+      method: string;
+      url: URL;
+      req: IncomingMessage;
+      res: ServerResponse;
+      readBody(req: IncomingMessage): Promise<Record<string, unknown>>;
+      sendJSON(res: ServerResponse, status: number, data: unknown): void;
+    },
+  ): Promise<boolean>;
 }
 
 export async function dispatchEnterpriseRoute({
@@ -96,7 +108,25 @@ export async function dispatchEnterpriseRoute({
   readBody,
   sendJSON,
   extractToken,
+  controlCommandHandle,
 }: EnterpriseRouteDispatcherDeps): Promise<boolean> {
+  // CONTROL-12 签名指令队列端点（配置了 Control 信任根时先于企业路由处理）。
+  if (controlCommandHandle) {
+    if (
+      await controlCommandHandle({
+        path,
+        method,
+        url,
+        req,
+        res,
+        readBody,
+        sendJSON,
+      })
+    ) {
+      return true;
+    }
+  }
+
   if (
     handleHealthRoute({
       path,

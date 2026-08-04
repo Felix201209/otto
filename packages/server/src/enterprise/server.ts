@@ -68,6 +68,11 @@ import {
   commercialBillingOperationForRoute,
   startPrivateDeploymentRuntime,
 } from '../modules/commercial_control/index.js';
+import {
+  createControlCommandBoundary,
+  controlPublicKeysFromEnv,
+  type ControlCommandBoundary,
+} from '../modules/control_commands/index.js';
 
 export { adminAccountsHTML } from './adminAccountsPage.js';
 export {
@@ -108,8 +113,35 @@ export interface EnterpriseServerOptions {
   buildCommit?: string;
   /** Test seam for the signed commercial-control billing channel. */
   billingFetch?: typeof fetch;
+  /** Control 信任根公钥（PEM 列表）；不传则读 OTTO_ENTERPRISE_CONTROL_PUBLIC_KEYS。未配置时 CONTROL-12 端点 fail closed 不挂载。 */
+  controlPublicKeys?: string[];
+  /** 回执签名私钥（PEM）；不传则不签名（只含 digest）。 */
+  controlSigningPrivateKey?: string;
+  /** 执行 Control 下发指令的业务钩子（对接 SERVER-16 企业开通）。未传则 CONTROL-12 不启用执行。 */
+  controlCommandExecute?: (command: ControlCommandEnvelopeLike) => ControlCommandRunResultShim;
   /** 密码登录限流参数；生产使用安全默认值，测试可注入时钟和较小阈值。 */
   loginRateLimit?: PasswordLoginRateLimitOptions;
+}
+
+/** 与 control_command 边界的信封/执行结果类型对齐（避免 server.ts 循环依赖）。 */
+interface ControlCommandEnvelopeLike {
+  commandId: string;
+  deploymentId: string;
+  type: string;
+  schemaVersion: number;
+  sequence: number;
+  issuedAt: string;
+  expiresAt: string;
+  idempotencyKey?: string;
+  payloadDigest: string;
+  payload: Record<string, unknown>;
+  signature: string;
+}
+interface ControlCommandRunResultShim {
+  status: 'succeeded' | 'failed' | 'unknown_outcome' | 'expired' | 'cancelled';
+  resultSummary: string;
+  resourceId?: string;
+  errorCategory?: string;
 }
 
 export interface VerificationSmsSender {
@@ -159,6 +191,7 @@ const ENTERPRISE_CAPABILITIES = [
   'park_meeting_slots_v1',
   'modular_update_push_v1',
   'signed_update_policy_v1',
+  'control_command_queue_v1',
   'account_data_sync_v1',
   'enterprise_skill_market_v1',
   'federation_gateway_v1',
@@ -222,6 +255,15 @@ function makeHandler(
   localAgentPairingEnabled: boolean,
   featureFlags?: FeatureFlagManager,
   billingFetch: typeof fetch = fetch,
+  controlCommandHandle?: (deps: {
+    path: string;
+    method: string;
+    url: URL;
+    req: IncomingMessage;
+    res: ServerResponse;
+    readBody(req: IncomingMessage): Promise<Record<string, unknown>>;
+    sendJSON(res: ServerResponse, status: number, data: unknown): void;
+  }) => Promise<boolean>,
 ) {
   // 同一账号可能在多台桌面端同时在线。服务端对现有 direct_messages 队列做
   // 短租约 claim，保证一条 A2A 请求同一时刻只交给一个客户端；进程异常后
@@ -538,6 +580,7 @@ function makeHandler(
           readBody,
           sendJSON,
           extractToken,
+          controlCommandHandle,
         })
       ) {
         return;
@@ -632,6 +675,24 @@ export function createEnterpriseServer(opts: EnterpriseServerOptions = {}): {
   const featureFlags = new FeatureFlagManager(
     new ProjectSettingsManager(process.cwd()),
   );
+  // CONTROL-12：配置了 Control 信任根公钥 + 业务执行钩子时才启用端点（其余 fail closed）。
+  const controlKeys =
+    opts.controlPublicKeys ?? controlPublicKeysFromEnv(process.env);
+  const controlExecute =
+    opts.controlCommandExecute ?? (() => ({
+      status: 'failed' as const,
+      resultSummary: 'no executor configured',
+      errorCategory: 'not_configured',
+    }));
+  const controlBoundary = createControlCommandBoundary({
+    db: () => db.getDB(),
+    deploymentId:
+      process.env.OTTO_ENTERPRISE_DEPLOYMENT_ID || publicBaseUrl,
+    now: () => Date.now(),
+    controlPublicKeys: controlKeys,
+    signingPrivateKey: opts.controlSigningPrivateKey,
+    execute: controlExecute,
+  });
   const server = createServer(
     makeHandler(
       adminToken,
@@ -648,6 +709,7 @@ export function createEnterpriseServer(opts: EnterpriseServerOptions = {}): {
       opts.localAgentPairingEnabled === true,
       featureFlags,
       opts.billingFetch,
+      controlBoundary.enabled ? controlBoundary.handleRoute : undefined,
     ),
   );
   return { server, host, port, publicBaseUrl, adminToken, generatedToken };
