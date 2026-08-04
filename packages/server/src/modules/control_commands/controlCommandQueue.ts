@@ -192,11 +192,16 @@ export function claimPendingControlCommand(
   if (!row) return null;
 
   const attempt = (row.attempt ?? 0) + 1;
-  database.prepare(
+  const claim = database.prepare(
     `UPDATE control_command_queue
      SET status = 'running', attempt = ?, locked_until_ms = ?
      WHERE command_id = ? AND status = 'accepted'`,
-  ).run(attempt, now + leaseMs, row.command_id);
+  );
+  // 原子独占：仅当 UPDATE 命中（该指令仍处 accepted）才算领成功；
+  // 若命中 0 行说明其它实例已先行领取，应交回控制权（返回 null）防止重复执行。
+  if (Number(claim.run(attempt, now + leaseMs, row.command_id).changes) === 0) {
+    return null;
+  }
   return { ...row, status: 'running' as const, attempt, locked_until_ms: now + leaseMs };
 }
 

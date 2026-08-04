@@ -203,6 +203,26 @@ describe('control command queue (CONTROL-12)', () => {
     expect(claimPendingControlCommand(store, 60_000)).toBeNull();
   });
 
+  it('竞态下已由其他实例领取的指令不会被二次领取（单一执行者）', () => {
+    const { store } = makeStore();
+    acceptControlCommandInRepository(store, {
+      commandId: 'c1', type: 'enterprise.initiate', schemaVersion: 1,
+      sequence: 1, deploymentId: 'deploy-1', issuedAt: 'now', expiresAt: 'later',
+      idempotencyKey: 'k1', payloadDigest: 'd', payloadJson: '{}', signature: 'sig',
+    });
+    // 第一个实例领取成功。
+    const first = claimPendingControlCommand(store, 60_000);
+    expect(first).not.toBeNull();
+    // 第二个实例尝试领取同一指令 —— 必须收不到（不重复执行）。
+    expect(claimPendingControlCommand(store, 60_000)).toBeNull();
+    // 且数据库中状态仍是 running（未被二次侵占）。
+    const row = store.db().prepare(
+      'SELECT status, attempt FROM control_command_queue WHERE command_id = ?',
+    ).get('c1') as { status: string; attempt: number };
+    expect(row.status).toBe('running');
+    expect(row.attempt).toBe(1);
+  });
+
   it('重复 accept 同 commandId 幂等返回既有状态', () => {
     const { store } = makeStore();
     const input = {

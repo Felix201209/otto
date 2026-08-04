@@ -132,10 +132,15 @@ export function redeemFirstLoginTokenInRepository(
     return null;
   }
   const result = { accountId: row.account_id, organizationId: row.organization_id };
-  store.db().prepare(
+  const info = store.db().prepare(
     `UPDATE first_login_tokens SET used_at_ms = ?
      WHERE id = ? AND used_at_ms IS NULL AND revoked_at_ms IS NULL`,
-  ).run(now, row.id);
+  );
+  const changed = Number(info.run(now, row.id).changes);
+  // 原子单次：若 UPDATE 未命中（并发已核销/撤销），本次视为失败，返回 null。
+  if (changed === 0) {
+    return null;
+  }
   return result;
 }
 

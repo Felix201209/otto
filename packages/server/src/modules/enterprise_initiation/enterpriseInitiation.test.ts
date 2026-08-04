@@ -104,6 +104,32 @@ describe('enterprise initiation (SERVER-16)', () => {
     expect((db.prepare('SELECT COUNT(*) AS c FROM accounts').get() as { c: number }).c).toBe(1);
   });
 
+  it('并发竞态：幂等键已被占用时不抛错，返回首次结果', () => {
+    const { db, comp } = makeComp();
+    // 用另外的键模拟一个“并发已提交”的初始化记录。
+    const resultJson = JSON.stringify({
+      deploymentId: 'deploy-1',
+      commandId: 'cmd-race',
+      idempotencyKey: 'idem-race',
+      organizationId: 'org-other',
+      ceoAccountId: 'acct-other',
+      defaultDepartmentId: null,
+      roleAssignments: [],
+      replayed: false,
+      firstLoginToken: { tokenHashPrefix: 'x', expiresAt: 'now', purpose: 'ceo_password_set' },
+    });
+    db.prepare(
+      `INSERT INTO enterprise_initiations
+         (deployment_id, command_id, idempotency_key, schema_version, status,
+          organization_id, ceo_account_id, result_json, executed_at_ms)
+       VALUES ('deploy-1', 'cmd-race', 'idem-race', 1, 'completed', 'org-other', 'acct-other', ?, 0)`,
+    ).run(resultJson);
+    // 用同键再次调用应返回重放结果，而非抛唯一约束异常。
+    const replay = comp.executeInitiation({ ...baseCommand, commandId: 'cmd-race', idempotencyKey: 'idem-race' });
+    expect(replay.replayed).toBe(true);
+    expect(replay.organizationId).toBe('org-other');
+  });
+
   it('不同 idempotencyKey 创建不同企业', () => {
     const { db, comp } = makeComp();
     const first = comp.executeInitiation(baseCommand);

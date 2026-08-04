@@ -145,16 +145,6 @@ export function executeEnterpriseInitiationInRepository(
   const database = store.db();
   ensureInitiationTable(database);
 
-  // 幂等：已存在则直接返回首次结果。
-  const existing = initRowExists(database, {
-    deploymentId: command.deploymentId,
-    commandId: command.commandId,
-    idempotencyKey: command.idempotencyKey,
-  });
-  if (existing) {
-    return { ...JSON.parse(existing.result_json) as EnterpriseInitiationResult, replayed: true };
-  }
-
   const now = store.now();
 
   // 安全校验：CEO 权限来自注册表，Payload 禁止覆盖；其他角色权限必须是子集。
@@ -188,7 +178,18 @@ export function executeEnterpriseInitiationInRepository(
 
   database.exec('BEGIN IMMEDIATE');
   try {
-    // 幂等锁：尝试插入初始化记录；若被并发重复插入则视为 replays。
+    // 幂等（在写入锁内复查）：并发重复请求在获取写锁后能看到首次已提交的结果。
+    const afterLock = initRowExists(database, {
+      deploymentId: command.deploymentId,
+      commandId: command.commandId,
+      idempotencyKey: command.idempotencyKey,
+    });
+    if (afterLock) {
+      database.exec('COMMIT');
+      return { ...JSON.parse(afterLock.result_json) as EnterpriseInitiationResult, replayed: true };
+    }
+
+    // 占用唯一键（防双写；竞态下约束冲突由 catch 统一转成重放）。
     const insertProbe = database.prepare(
       `INSERT INTO enterprise_initiations
          (deployment_id, command_id, idempotency_key, schema_version, status,
@@ -196,15 +197,29 @@ export function executeEnterpriseInitiationInRepository(
           executed_at_ms)
        VALUES (?, ?, ?, ?, 'completed', ?, ?, NULL, '', ?)`,
     );
-    insertProbe.run(
-      command.deploymentId,
-      command.commandId,
-      command.idempotencyKey,
-      command.schemaVersion,
-      organizationId,
-      ceoAccountId,
-      now,
-    );
+    try {
+      insertProbe.run(
+        command.deploymentId,
+        command.commandId,
+        command.idempotencyKey,
+        command.schemaVersion,
+        organizationId,
+        ceoAccountId,
+        now,
+      );
+    } catch (probeError) {
+      // 幂等键被并发占用：回滚本次空事务，返回首次结果。
+      database.exec('ROLLBACK');
+      const winner = initRowExists(database, {
+        deploymentId: command.deploymentId,
+        commandId: command.commandId,
+        idempotencyKey: command.idempotencyKey,
+      });
+      if (winner) {
+        return { ...JSON.parse(winner.result_json) as EnterpriseInitiationResult, replayed: true };
+      }
+      throw probeError;
+    }
 
     // 1) 企业
     database.prepare(
