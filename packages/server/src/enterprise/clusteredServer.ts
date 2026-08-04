@@ -39,6 +39,8 @@ import {
   resolveEnterpriseDatabaseTopology,
   type ClusteredEnterpriseInfrastructureReadiness,
   type AttachmentMultipartPart,
+  type AttachmentMlsAccessContext,
+  type AttachmentMlsAuthorization,
   type createAttachmentStorageService,
   type PostgresDatabaseReadiness,
 } from '../modules/data_platform/index.js';
@@ -193,6 +195,85 @@ function safeRouteError(error: unknown): string {
   return message
     .replace(/https?:\/\/[^\s]+/giu, '[REDACTED]')
     .slice(0, 500);
+}
+
+function exactMlsDeviceRoster(
+  raw: unknown,
+  expected: Array<{ accountId: string; deviceId: string }>,
+): boolean {
+  return (
+    Array.isArray(raw) &&
+    raw.length === expected.length &&
+    raw.every((candidate, index) => {
+      const device = candidate as Record<string, unknown> | null;
+      return (
+        device?.accountId === expected[index]!.accountId &&
+        device?.deviceId === expected[index]!.deviceId
+      );
+    })
+  );
+}
+
+async function resolveMlsAttachmentAccess(
+  repository: PostgresEnterpriseCoreRepository,
+  member: PostgresEnterpriseAccountView,
+  peerAccountId: unknown,
+  deviceId: unknown,
+): Promise<AttachmentMlsAccessContext | undefined> {
+  const peer = typeof peerAccountId === 'string' ? peerAccountId : '';
+  const device = typeof deviceId === 'string' ? deviceId : '';
+  if (!peer && !device) return undefined;
+  if (!peer || !device) throw new Error('MLS attachment request identity is invalid');
+  const session = await repository.getMlsAttachmentSession({
+    organizationId: member.organizationId,
+    accountId: member.id,
+    peerAccountId: peer,
+    deviceId: device,
+  });
+  return { deviceId: device, session };
+}
+
+async function resolveMlsAttachmentAuthorization(
+  repository: PostgresEnterpriseCoreRepository,
+  member: PostgresEnterpriseAccountView,
+  body: JsonBody,
+): Promise<AttachmentMlsAuthorization> {
+  const binding =
+    body.mlsBinding && typeof body.mlsBinding === 'object'
+      ? (body.mlsBinding as Record<string, unknown>)
+      : null;
+  const peerAccountId =
+    typeof body.peerAccountId === 'string' ? body.peerAccountId : '';
+  const deviceId = typeof body.deviceId === 'string' ? body.deviceId : '';
+  if (!binding || !peerAccountId || !deviceId) {
+    throw new Error('MLS attachment binding is invalid');
+  }
+  const session = await repository.getMlsAttachmentSession({
+    organizationId: member.organizationId,
+    accountId: member.id,
+    peerAccountId,
+    deviceId,
+  });
+  if (
+    binding.organizationId !== member.organizationId ||
+    binding.conversationId !== session.conversationId ||
+    Number(binding.sessionGeneration) !== session.sessionGeneration ||
+    binding.groupId !== session.groupId ||
+    Number(binding.epoch) !== session.epoch ||
+    typeof binding.messageId !== 'string' ||
+    !exactMlsDeviceRoster(body.authorizedDevices, session.authorizedDevices)
+  ) {
+    throw new Error('MLS attachment session binding is invalid');
+  }
+  return {
+    conversationId: session.conversationId,
+    sessionGeneration: session.sessionGeneration,
+    groupId: session.groupId,
+    epoch: session.epoch,
+    messageId: binding.messageId,
+    participantAccountIds: session.participantAccountIds,
+    authorizedDevices: session.authorizedDevices,
+  };
 }
 
 async function requireMember(
@@ -1047,6 +1128,14 @@ export function createClusteredEnterpriseServer(
           sendJson(res, 400, { error: 'attachment peer must be another member' });
           return;
         }
+        const mlsAuthorization =
+          body.mlsBinding === undefined
+            ? undefined
+            : await resolveMlsAttachmentAuthorization(
+                repository,
+                member,
+                body,
+              );
         const upload = await options.attachmentStorage.initiateMultipartUpload({
           organizationId: member.organizationId,
           accountId: member.id,
@@ -1057,8 +1146,11 @@ export function createClusteredEnterpriseServer(
             typeof body.ciphertextSha256 === 'string'
               ? body.ciphertextSha256
               : '',
-          encryption: 'e2ee-client-v1',
+          encryption: mlsAuthorization
+            ? 'mls-client-v1'
+            : 'e2ee-client-v1',
           authorizedAccountIds: [peer.id],
+          mlsAuthorization,
         });
         sendJson(res, 201, { upload: { attachmentId: upload.attachmentId } });
         return;
@@ -1074,6 +1166,12 @@ export function createClusteredEnterpriseServer(
         method === 'POST'
       ) {
         const body = await readJsonBody(req, 16 * 1024);
+        const mlsAccess = await resolveMlsAttachmentAccess(
+          repository,
+          member,
+          body.peerAccountId,
+          body.deviceId,
+        );
         const request = await options.attachmentStorage.presignUploadPart({
           organizationId: member.organizationId,
           accountId: member.id,
@@ -1084,6 +1182,7 @@ export function createClusteredEnterpriseServer(
             typeof body.ciphertextSha256 === 'string'
               ? body.ciphertextSha256
               : '',
+          mlsAccess,
         });
         sendJson(res, 200, { request });
         return;
@@ -1097,6 +1196,12 @@ export function createClusteredEnterpriseServer(
         method === 'POST'
       ) {
         const body = await readJsonBody(req, 16 * 1024);
+        const mlsAccess = await resolveMlsAttachmentAccess(
+          repository,
+          member,
+          body.peerAccountId,
+          body.deviceId,
+        );
         await options.attachmentStorage.recordUploadedPart({
           organizationId: member.organizationId,
           accountId: member.id,
@@ -1110,6 +1215,7 @@ export function createClusteredEnterpriseServer(
                 ? body.ciphertextSha256
                 : '',
           },
+          mlsAccess,
         });
         sendJson(res, 200, { recorded: true });
         return;
@@ -1123,6 +1229,12 @@ export function createClusteredEnterpriseServer(
         method === 'POST'
       ) {
         const body = await readJsonBody(req, 512 * 1024);
+        const mlsAccess = await resolveMlsAttachmentAccess(
+          repository,
+          member,
+          body.peerAccountId,
+          body.deviceId,
+        );
         const metadata = await options.attachmentStorage.completeMultipartUpload({
           organizationId: member.organizationId,
           accountId: member.id,
@@ -1130,6 +1242,7 @@ export function createClusteredEnterpriseServer(
           parts: Array.isArray(body.parts)
             ? (body.parts as AttachmentMultipartPart[])
             : [],
+          mlsAccess,
         });
         sendJson(res, 200, {
           attachment: publicAttachmentMetadata(metadata),
@@ -1144,10 +1257,17 @@ export function createClusteredEnterpriseServer(
         attachmentResume &&
         method === 'GET'
       ) {
+        const mlsAccess = await resolveMlsAttachmentAccess(
+          repository,
+          member,
+          url.searchParams.get('peerAccountId'),
+          url.searchParams.get('deviceId'),
+        );
         const upload = await options.attachmentStorage.resumeMultipartUpload({
           organizationId: member.organizationId,
           accountId: member.id,
           attachmentId: decodeURIComponent(attachmentResume[1]!),
+          mlsAccess,
         });
         sendJson(res, 200, { upload });
         return;
@@ -1160,10 +1280,17 @@ export function createClusteredEnterpriseServer(
         attachmentDownload &&
         method === 'GET'
       ) {
+        const mlsAccess = await resolveMlsAttachmentAccess(
+          repository,
+          member,
+          url.searchParams.get('peerAccountId'),
+          url.searchParams.get('deviceId'),
+        );
         const download = await options.attachmentStorage.download({
           organizationId: member.organizationId,
           accountId: member.id,
           attachmentId: decodeURIComponent(attachmentDownload[1]!),
+          mlsAccess,
         });
         sendJson(res, 200, {
           attachment:
@@ -1481,6 +1608,25 @@ export function createClusteredEnterpriseServer(
           });
         res.setHeader('Cache-Control', 'no-store');
         sendJson(res, 200, { peerAccountIds });
+        return;
+      }
+
+      const mlsAttachmentSessionRoute =
+        /^\/enterprise\/e2ee\/mls\/conversations\/([^/]+)\/attachment-session$/.exec(
+          path,
+        );
+      if (mlsAttachmentSessionRoute && method === 'GET') {
+        const peerAccountId = decodeURIComponent(
+          mlsAttachmentSessionRoute[1]!,
+        );
+        const session = await repository.getMlsAttachmentSession({
+          organizationId: member.organizationId,
+          accountId: member.id,
+          peerAccountId,
+          deviceId: url.searchParams.get('deviceId') || '',
+        });
+        res.setHeader('Cache-Control', 'no-store');
+        sendJson(res, 200, { session });
         return;
       }
 

@@ -558,49 +558,50 @@ function normalizeDirectAttachment(
   }
   if (
     !Number.isInteger(attachment.size)
-    || attachment.size < 1
+    || attachment.size < 0
     || attachment.size > DIRECT_MESSAGE_MAX_FILE_BYTES
   ) {
     throw new Error('单个附件不能超过 10 MB');
   }
-  if (!attachment.data) throw new Error('附件内容为空');
+  if (!attachment.data && !attachment.sourcePath) {
+    throw new Error('附件内容为空');
+  }
   return {
     fileName,
     size: attachment.size,
-    data: attachment.data,
+    ...(attachment.data ? { data: attachment.data } : {}),
+    ...(attachment.sourcePath ? { sourcePath: attachment.sourcePath } : {}),
+    ...(attachment.previewUrl?.startsWith('blob:')
+      ? { previewUrl: attachment.previewUrl }
+      : {}),
     mimeType: directAttachmentMimeType(fileName),
   };
 }
 
-function browserFileToDirectAttachment(
+async function browserFileToDirectAttachment(
   file: File,
 ): Promise<EnterpriseDirectMessageAttachmentUpload> {
   if (file.size > DIRECT_MESSAGE_MAX_FILE_BYTES) {
-    return Promise.reject(new Error(file.name + ' 超过 10 MB'));
+    throw new Error(file.name + ' 超过 10 MB');
   }
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error || new Error('文件读取失败'));
-    reader.onload = () => {
-      const result = typeof reader.result === 'string' ? reader.result : '';
-      const separator = result.indexOf(',');
-      if (separator < 0) {
-        reject(new Error('文件读取失败'));
-        return;
-      }
-      try {
-        resolve(normalizeDirectAttachment({
-          fileName: file.name,
-          mimeType: file.type,
-          size: file.size,
-          data: result.slice(separator + 1),
-        }));
-      } catch (reason) {
-        reject(reason);
-      }
-    };
-    reader.readAsDataURL(file);
+  const sourcePath = await window.otto.authorizeFileForAttachment(file);
+  const attachment = normalizeDirectAttachment({
+    fileName: file.name,
+    mimeType: file.type,
+    size: file.size,
+    sourcePath,
   });
+  return file.type.startsWith('image/')
+    ? { ...attachment, previewUrl: URL.createObjectURL(file) }
+    : attachment;
+}
+
+function revokeDirectAttachmentPreview(
+  attachment: EnterpriseDirectMessageAttachmentUpload,
+): void {
+  if (attachment.previewUrl?.startsWith('blob:')) {
+    URL.revokeObjectURL(attachment.previewUrl);
+  }
 }
 
 function DirectMessageAttachmentCard({
@@ -729,6 +730,18 @@ export function DirectMessagePanel({
   const scrollPending = useRef(true);
   const knownMessageIds = useRef<Set<string> | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
+  const pendingAttachments = useRef(attachments);
+
+  useEffect(() => {
+    pendingAttachments.current = attachments;
+  }, [attachments]);
+
+  useEffect(
+    () => () => {
+      pendingAttachments.current.forEach(revokeDirectAttachmentPreview);
+    },
+    [],
+  );
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent): void => {
@@ -804,12 +817,17 @@ export function DirectMessagePanel({
       try {
         const normalized = normalizeDirectAttachment(candidate);
         const key = normalized.fileName + ':' + normalized.size;
-        if (keys.has(key)) continue;
+        if (keys.has(key)) {
+          revokeDirectAttachmentPreview(normalized);
+          continue;
+        }
         if (next.length >= DIRECT_MESSAGE_MAX_ATTACHMENTS) {
+          revokeDirectAttachmentPreview(normalized);
           firstError ||= '每条消息最多发送 6 个附件';
           break;
         }
         if (totalBytes + normalized.size > DIRECT_MESSAGE_MAX_TOTAL_BYTES) {
+          revokeDirectAttachmentPreview(normalized);
           firstError ||= '每条消息的附件总大小不能超过 20 MB';
           continue;
         }
@@ -939,6 +957,7 @@ export function DirectMessagePanel({
       scrollPending.current = true;
       setMessages((current) => [...current, message]);
       setDraft('');
+      attachments.forEach(revokeDirectAttachmentPreview);
       setAttachments([]);
       setAttachmentError('');
       setError('');
@@ -1211,12 +1230,16 @@ export function DirectMessagePanel({
           <div className="otto-direct-chat__pending-attachments">
             {attachments.map((attachment) => {
               const key = attachment.fileName + ':' + attachment.size;
-              const image = attachment.mimeType.startsWith('image/');
+              const preview = attachment.previewUrl ??
+                (attachment.data
+                  ? `data:${attachment.mimeType};base64,${attachment.data}`
+                  : '');
+              const image = attachment.mimeType.startsWith('image/') && preview;
               return (
                 <div className="otto-direct-chat__pending-attachment" key={key}>
                   {image ? (
                     <img
-                      src={'data:' + attachment.mimeType + ';base64,' + attachment.data}
+                      src={preview}
                       alt=""
                     />
                   ) : (
@@ -1231,6 +1254,7 @@ export function DirectMessagePanel({
                   <button
                     type="button"
                     onClick={() => {
+                      revokeDirectAttachmentPreview(attachment);
                       setAttachments((current) => current.filter(
                         (item) => item.fileName + ':' + item.size !== key,
                       ));

@@ -102,6 +102,70 @@ function createHarness(
 }
 
 describe('MLS ciphertext transport repository', () => {
+  it('returns an exact active-generation attachment session and approved device roster', () => {
+    const { database, facade } = createHarness();
+    try {
+      const published = facade.publishMlsKeyPackage({
+        organizationId: 'org-a',
+        accountId: 'bob',
+        deviceId: 'bob-1',
+        ciphersuite: MLS_SUITE,
+        keyPackage: opaque('attachment-session-package'),
+      });
+      facade.claimMlsKeyPackage({
+        organizationId: 'org-a',
+        requesterAccountId: 'alice',
+        requesterDeviceId: 'alice-1',
+        recipientAccountId: 'bob',
+      });
+      const groupId = opaque('attach');
+      facade.appendMlsTransportEvent({
+        organizationId: 'org-a',
+        senderAccountId: 'alice',
+        peerAccountId: 'bob',
+        senderDeviceId: 'alice-1',
+        eventId: 'attachment-session-commit',
+        eventType: 'commit',
+        epoch: 1,
+        groupId,
+        payload: opaque('attachment-session-commit'),
+        recipientDeviceId: 'bob-1',
+        keyPackageReference: published.reference,
+      });
+
+      expect(
+        facade.getMlsAttachmentSession({
+          organizationId: 'org-a',
+          accountId: 'alice',
+          peerAccountId: 'bob',
+          deviceId: 'alice-1',
+        }),
+      ).toEqual({
+        conversationId: expect.stringMatching(/^[0-9a-f]{64}$/),
+        sessionGeneration: 1,
+        groupId,
+        epoch: 1,
+        participantAccountIds: ['alice', 'bob'],
+        authorizedDevices: [
+          { accountId: 'alice', deviceId: 'alice-1' },
+          { accountId: 'alice', deviceId: 'alice-2' },
+          { accountId: 'bob', deviceId: 'bob-1' },
+          { accountId: 'bob', deviceId: 'bob-2' },
+        ],
+      });
+      expect(() =>
+        facade.getMlsAttachmentSession({
+          organizationId: 'org-a',
+          accountId: 'alice',
+          peerAccountId: 'bob',
+          deviceId: 'bob-1',
+        }),
+      ).toThrow(/device.*binding/i);
+    } finally {
+      database.close();
+    }
+  });
+
   it('claims an exact peer or same-account device only within the direct session', () => {
     const { database, facade } = createHarness();
     const publish = (accountId: string, deviceId: string, reference: string) =>

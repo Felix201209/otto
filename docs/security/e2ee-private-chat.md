@@ -37,6 +37,13 @@ stores those client-encrypted bytes under opaque object IDs. PostgreSQL, not an
 object path, remains authoritative for tenant access, upload state, and quota;
 optional storage-provider SSE-KMS is only a second layer beneath E2EE.
 
+The release-gated MLS candidate uses the separate, versioned
+[MLS attachment profile v1](./mls-attachment-protocol-v1.md). It gives every
+file an independent DEK, carries the DEK and human metadata only inside the MLS
+Application Message, and binds the private object to one conversation
+generation and send-time device roster. It never downgrades an MLS attachment
+to the protocol-v1 device-envelope path.
+
 ## Local key custody
 
 Private keys are stored below Electron `userData/enterprise-e2ee` only after

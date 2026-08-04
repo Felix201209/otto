@@ -428,6 +428,36 @@ export async function handleCommunicationRoute({
     return true;
   }
 
+  const mlsAttachmentSessionMatch = path.match(
+    /^\/enterprise\/e2ee\/mls\/conversations\/([^/]+)\/attachment-session$/,
+  );
+  if (mlsAttachmentSessionMatch && method === 'GET') {
+    let peerAccountId = '';
+    try {
+      peerAccountId = decodeURIComponent(mlsAttachmentSessionMatch[1] ?? '');
+    } catch {
+      // Invalid identifiers are rejected by the repository.
+    }
+    try {
+      const session = db.getMlsAttachmentSession({
+        organizationId: memberAccount.organizationId,
+        accountId: memberAccount.id,
+        peerAccountId,
+        deviceId: url.searchParams.get('deviceId') || '',
+      });
+      res.setHeader('Cache-Control', 'no-store');
+      sendJSON(res, 200, { session });
+    } catch (error) {
+      sendJSON(res, mlsErrorStatus(error), {
+        error:
+          error instanceof Error
+            ? error.message
+            : 'MLS attachment session lookup failed',
+      });
+    }
+    return true;
+  }
+
   const mlsEventsMatch = path.match(
     /^\/enterprise\/e2ee\/mls\/conversations\/([^/]+)\/events$/,
   );

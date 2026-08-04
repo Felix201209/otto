@@ -21,6 +21,12 @@
     "doubleRatchet": false,
     "mls10SessionProtocol": true,
     "multiDeviceSessions": true,
+    "mlsAttachmentProfile": "mls-attachment-v1-candidate",
+    "mlsAttachmentPerFileDek": true,
+    "mlsAttachmentChunkedAead": "aes-256-gcm",
+    "mlsAttachmentResumableObjects": true,
+    "mlsAttachmentGenerationAcl": true,
+    "mlsAttachmentExternalAuditCompleted": false,
     "safetyStateReset": true,
     "forwardSecrecy": true,
     "postCompromiseSecurity": true

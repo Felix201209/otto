@@ -924,6 +924,7 @@ export const {
   claimMlsKeyPackage,
   appendMlsTransportEvent,
   listMlsTransportEvents,
+  getMlsAttachmentSession,
   listMlsInboundConversationPeers,
   cleanupExpiredMlsResources,
   listE2eeDirectMessages,

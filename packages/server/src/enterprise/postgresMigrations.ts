@@ -868,6 +868,63 @@ CREATE INDEX enterprise_business_events_resource
   );
 `,
   },
+  {
+    version: 14,
+    name: 'mls-attachment-object-authority',
+    sql: `
+ALTER TABLE attachment_objects
+  DROP CONSTRAINT attachment_objects_encryption_check;
+ALTER TABLE attachment_objects
+  ADD CONSTRAINT attachment_objects_encryption_check
+  CHECK (encryption IN ('e2ee-client-v1', 'server-envelope-v1', 'mls-client-v1'));
+
+ALTER TABLE attachment_objects
+  ADD COLUMN mls_conversation_id TEXT,
+  ADD COLUMN mls_session_generation BIGINT,
+  ADD COLUMN mls_group_id TEXT,
+  ADD COLUMN mls_epoch BIGINT,
+  ADD COLUMN mls_message_id TEXT,
+  ADD COLUMN mls_participant_account_ids JSONB,
+  ADD COLUMN mls_authorized_devices JSONB;
+
+ALTER TABLE attachment_objects
+  ADD CONSTRAINT attachment_objects_mls_authorization_all_or_none CHECK (
+    (
+      encryption = 'mls-client-v1'
+      AND mls_conversation_id IS NOT NULL
+      AND mls_session_generation > 0
+      AND mls_group_id IS NOT NULL
+      AND mls_epoch > 0
+      AND mls_message_id IS NOT NULL
+      AND jsonb_typeof(mls_participant_account_ids) = 'array'
+      AND jsonb_array_length(mls_participant_account_ids) = 2
+      AND jsonb_typeof(mls_authorized_devices) = 'array'
+      AND jsonb_array_length(mls_authorized_devices) BETWEEN 2 AND 100
+    ) OR (
+      encryption <> 'mls-client-v1'
+      AND mls_conversation_id IS NULL
+      AND mls_session_generation IS NULL
+      AND mls_group_id IS NULL
+      AND mls_epoch IS NULL
+      AND mls_message_id IS NULL
+      AND mls_participant_account_ids IS NULL
+      AND mls_authorized_devices IS NULL
+    )
+  );
+
+ALTER TABLE attachment_objects
+  ADD CONSTRAINT attachment_objects_mls_group_session_fk
+  FOREIGN KEY (organization_id, mls_conversation_id, mls_session_generation)
+  REFERENCES mls_group_sessions(organization_id, conversation_id, generation)
+  ON DELETE RESTRICT;
+
+CREATE INDEX attachment_objects_mls_message
+  ON attachment_objects (
+    organization_id, mls_conversation_id, mls_session_generation,
+    mls_message_id, id
+  ) WHERE mls_conversation_id IS NOT NULL;
+`,
+  },
 ];
 
 export const ENTERPRISE_POSTGRES_SCHEMA_VERSION =

@@ -7,7 +7,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { EncryptedObjectStore } from './encryptedObjectStore.js';
 
 export type AttachmentCiphertextEncryption =
-  'e2ee-client-v1' | 'server-envelope-v1';
+  'e2ee-client-v1' | 'server-envelope-v1' | 'mls-client-v1';
 export type AttachmentObjectBackend = 'encrypted-filesystem' | 's3';
 
 export interface AttachmentObjectLocation {

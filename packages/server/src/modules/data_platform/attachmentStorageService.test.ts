@@ -36,6 +36,7 @@ function record(
     expiresAt: '2099-08-01T00:00:00.000Z',
     legacyDeleteAfter: null,
     legalHold: false,
+    mlsAuthorization: null,
     ...overrides,
   };
 }
@@ -154,6 +155,19 @@ function objectStore(
 }
 
 describe('attachment storage service', () => {
+  const mlsAuthorization = {
+    conversationId: 'a'.repeat(64),
+    sessionGeneration: 2,
+    groupId: 'Z3JvdXAtMQ==',
+    epoch: 4,
+    messageId: 'mls-message-1',
+    participantAccountIds: ['acc-1', 'acc-2'] as [string, string],
+    authorizedDevices: [
+      { accountId: 'acc-1', deviceId: 'device-1' },
+      { accountId: 'acc-2', deviceId: 'device-2' },
+    ],
+  };
+
   it('reserves tenant quota before creating a multipart upload', async () => {
     const metadata = metadataRepository();
     const s3 = objectStore('s3');
@@ -260,6 +274,111 @@ describe('attachment storage service', () => {
       accountId: 'acc-recipient',
       attachmentId: 'att-1',
     });
+  });
+
+  it('persists the MLS generation and send-time device roster with the object', async () => {
+    const metadata = metadataRepository();
+    const s3 = objectStore('s3');
+    const service = createAttachmentStorageService({
+      metadata,
+      stores: { s3 },
+      primaryBackend: 's3',
+      maxAttachmentBytes: 100,
+    });
+
+    await service.initiateMultipartUpload({
+      organizationId: 'org-1',
+      accountId: 'acc-1',
+      authorizedAccountIds: ['acc-2'],
+      attachmentId: 'mls-att-1',
+      ciphertextBytes: 20,
+      ciphertextSha256: 'a'.repeat(64),
+      encryption: 'mls-client-v1',
+      mlsAuthorization,
+    });
+
+    expect(metadata.reserveUpload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        encryption: 'mls-client-v1',
+        authorizedAccountIds: ['acc-1', 'acc-2'],
+        mlsAuthorization,
+      }),
+    );
+  });
+
+  it('requires both send-time and current MLS device authorization', async () => {
+    const metadata = metadataRepository({
+      getAuthorizedAttachment: vi.fn(async () =>
+        record({
+          ownerAccountId: 'acc-1',
+          state: 'available',
+          encryption: 'mls-client-v1',
+          location: { backend: 's3', key: 'opaque-key' },
+          mlsAuthorization,
+        }),
+      ),
+    });
+    const s3 = objectStore('s3');
+    const service = createAttachmentStorageService({
+      metadata,
+      stores: { s3 },
+      primaryBackend: 's3',
+      maxAttachmentBytes: 100,
+    });
+    const currentSession = {
+      conversationId: mlsAuthorization.conversationId,
+      sessionGeneration: 2,
+      groupId: mlsAuthorization.groupId,
+      epoch: 7,
+      participantAccountIds: mlsAuthorization.participantAccountIds,
+      authorizedDevices: [
+        ...mlsAuthorization.authorizedDevices,
+        { accountId: 'acc-2', deviceId: 'device-new' },
+      ],
+    };
+
+    await expect(
+      service.download({
+        organizationId: 'org-1',
+        accountId: 'acc-2',
+        attachmentId: 'mls-att-1',
+      }),
+    ).rejects.toThrow(/access denied/i);
+    await expect(
+      service.download({
+        organizationId: 'org-1',
+        accountId: 'acc-2',
+        attachmentId: 'mls-att-1',
+        mlsAccess: { deviceId: 'device-new', session: currentSession },
+      }),
+    ).rejects.toThrow(/access denied/i);
+    await expect(
+      service.download({
+        organizationId: 'org-1',
+        accountId: 'acc-2',
+        attachmentId: 'mls-att-1',
+        mlsAccess: { deviceId: 'device-2', session: currentSession },
+      }),
+    ).resolves.toMatchObject({
+      kind: 'presigned',
+      encryption: 'mls-client-v1',
+    });
+    await expect(
+      service.download({
+        organizationId: 'org-1',
+        accountId: 'acc-2',
+        attachmentId: 'mls-att-1',
+        mlsAccess: {
+          deviceId: 'device-2',
+          session: {
+            ...currentSession,
+            authorizedDevices: currentSession.authorizedDevices.filter(
+              (device) => device.deviceId !== 'device-2',
+            ),
+          },
+        },
+      }),
+    ).rejects.toThrow(/access denied/i);
   });
 
   it('does not presign a download when object metadata fails integrity checks', async () => {
