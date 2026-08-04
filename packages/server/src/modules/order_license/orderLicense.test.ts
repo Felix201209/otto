@@ -15,10 +15,13 @@ import {
   deterministicLicenseId,
   buildLicensePayload,
   licensePayloadDigest,
+  controlLicenseClaim,
   type OrderProjection,
   type OrderEvent,
+  type ControlLicenseClaimDeps,
 } from './index.js';
 import { verifyEd25519Envelope } from '../commercial_control/signedEnvelope.js';
+import type { DeploymentLicenseView } from '../commercial_control/deploymentTypes.js';
 
 const NOW_MS = 1_700_000_000_000;
 const { publicKey, privateKey } = generateKeyPairSync('ed25519', {
@@ -231,5 +234,71 @@ describe('order license processor (CONTROL-11)', () => {
     expect(upgrade.licenseId).toBeTruthy();
     const ent = p.latestEntitlement('ord-1');
     expect(ent!.seat_limit).toBe(100);
+  });
+});
+
+describe('control license activation (CONTROL-11)', () => {
+  function makeClaimDeps(db: Database, overrides: Partial<ControlLicenseClaimDeps> = {}) {
+    return {
+      db: () => db,
+      deploymentId: 'dep-1',
+      machineFingerprint: 'fp-1',
+      claimFromControl: async () => ({
+        ok: true as const,
+        envelope: { license: { id: 'lic_1' }, signature: 'sig', signingKeyId: 'k' },
+      }),
+      applyAcceptedLicense: (envelope: unknown) => ({
+        id: (envelope as { license: { id: string } }).license.id,
+        deploymentId: 'dep-1',
+      } as DeploymentLicenseView),
+      ...overrides,
+    } as ControlLicenseClaimDeps;
+  }
+
+  it('无既有 License → activated', async () => {
+    const db = new Database(':memory:');
+    const r = await controlLicenseClaim(makeClaimDeps(db));
+    expect(r.kind).toBe('activated');
+    expect(r.license?.id).toBe('lic_1');
+  });
+
+  it('已有 License → already_active（不重复消耗订单）', async () => {
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE deployment_license (id TEXT, updated_at TEXT);
+             INSERT INTO deployment_license VALUES ('lic_exist', '2026-01-01');`);
+    let claims = 0;
+    const r = await controlLicenseClaim(
+      makeClaimDeps(db, {
+        claimFromControl: async () => {
+          claims += 1;
+          return { ok: true as const, envelope: {} };
+        },
+      }),
+    );
+    expect(r.kind).toBe('already_active');
+    expect(claims).toBe(0); // 未向 Control 发起领取
+  });
+
+  it('Control 断网 → claim_failed', async () => {
+    const db = new Database(':memory:');
+    const r = await controlLicenseClaim(
+      makeClaimDeps(db, {
+        claimFromControl: async () => ({ ok: false as const, error: 'network down' }),
+      }),
+    );
+    expect(r.kind).toBe('claim_failed');
+  });
+
+  it('激活校验失败（篡改/签名无效）→ invalid_license', async () => {
+    const db = new Database(':memory:');
+    const r = await controlLicenseClaim(
+      makeClaimDeps(db, {
+        applyAcceptedLicense: () => {
+          throw new Error('license signature invalid');
+        },
+      }),
+    );
+    expect(r.kind).toBe('invalid_license');
+    expect(r.reason).toContain('signature invalid');
   });
 });
