@@ -683,6 +683,11 @@ h6.otto-prose__h {
 .otto-auth-card__pixel-mark { position: relative; width: 28px; height: 28px; display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 5px; background: #142640; box-shadow: inset 0 0 0 1px #345172; }
 .otto-auth-card__pixel-mark i { display: block; background: var(--auth-electric); }
 .otto-auth-card__pixel-mark i:nth-child(2), .otto-auth-card__pixel-mark i:nth-child(3) { opacity: .42; }
+.otto-auth-server { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px 12px; padding: 9px 10px; border: 1px solid #41658d; border-radius: 3px; background: #10243f; }
+.otto-auth-server span { color: #8ba7ca; font: 700 9px/1 var(--otto-font); white-space: nowrap; }
+.otto-auth-server strong { min-width: 0; overflow-wrap: anywhere; color: #c8dcff; font: 750 11px/1.3 var(--otto-font-mono); text-align: right; }
+.otto-auth-server input { grid-column: 1 / -1; width: 100%; min-height: 42px; padding: 0 12px; border: 1px solid #41658d; border-radius: 3px; outline: none; color: #eef6ff; background: #0c1b30; font: 12px/1.2 var(--otto-font-mono); }
+.otto-auth-server input:focus { border-color: #6fa0ff; box-shadow: 0 0 0 3px rgba(70,125,231,.2); }
 .otto-auth-card__topline { width: fit-content; display: flex; align-items: center; gap: 8px; margin-top: 5px; padding: 6px 9px; border: 1px solid #284a42; border-radius: 3px; color: #9bd6b9; background: #102821; font-size: 10px; font-weight: 650; }
 .otto-auth-status-dot { width: 7px; height: 7px; border-radius: 50%; background: #20a866; box-shadow: 0 0 0 4px rgba(32,168,102,.12); }
 .otto-auth-card h2 { margin: 4px 0 -7px; color: #f7f9ff; font-size: clamp(28px, 2.5vw, 34px); line-height: 1.1; letter-spacing: -.043em; }
@@ -955,7 +960,7 @@ h6.otto-prose__h {
   .otto-auth-boot > span,
   .otto-auth-card,
   .otto-account-editor,
-  .otto-pet-stage__login-mascot { animation: none; }
+  .otto-pet-stage--login .otto-pet-stage__sprite { animation: none; }
   .otto-auth-typewriter__cursor { opacity: 1; }
   .otto-auth-submit, .otto-auth-submit svg { transition: none; }
 }
@@ -4397,7 +4402,7 @@ h6.otto-prose__h {
 .otto-pet-widget__light.is-yellow { color: #d89d2b; background: #d89d2b; }
 .otto-pet-widget__light.is-green { color: #4fa877; background: #4fa877; }
 
-/* 登录页使用独立高清四帧动作图集；工作状态挂件保留完整状态动画。 */
+/* 登录页复用同一套 hatch-pet 图集：只放大 sprite，不带右栏标题、地面和位移动画。 */
 .otto-pet-stage.otto-pet-stage--login {
   width: 100%;
   height: 100%;
@@ -4411,21 +4416,20 @@ h6.otto-prose__h {
 .otto-pet-stage--login .otto-pet-stage__scene {
   width: 100%;
   height: 100%;
-  display: grid;
-  place-items: end center;
   overflow: visible;
 }
-.otto-pet-stage__login-mascot {
-  display: block;
-  width: min(340px, 82%);
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background-repeat: no-repeat;
-  background-size: 200% 200%;
-  image-rendering: auto;
-  filter: drop-shadow(0 22px 28px rgba(30, 78, 124, .2));
-  animation: otto-login-pet-bob 3.2s ease-in-out infinite;
-  will-change: background-position, transform;
+.otto-pet-stage--login .otto-pet-stage__motion {
+  left: 50%;
+  bottom: 0;
+  width: 316.8px;
+  height: 343.2px;
+  transform: translateX(-50%);
+  animation: none;
+  filter: drop-shadow(0 22px 28px rgba(0,0,0,.28));
+}
+.otto-pet-stage--login .otto-pet-stage__sprite {
+  transform-origin: bottom center;
+  animation: otto-login-pet-bob 2.8s steps(4,end) infinite;
 }
 @keyframes otto-login-pet-bob {
   50% { transform: translateY(-5px); }
@@ -9583,316 +9587,6 @@ h6.otto-prose__h {
 
   .otto-account-hero {
     flex-direction: column;
-  }
-}
-
-/* Auth pages: one coherent light-blue identity instead of a dark terminal card. */
-.otto-auth-shell {
-  --auth-ink: #172033;
-  --auth-muted: #72809a;
-  --auth-line: #dbe5f1;
-  --auth-night: #eef6ff;
-  --auth-blue: #317fd4;
-  --auth-blue-bright: #76b7f1;
-  --auth-electric: #6eaff0;
-  grid-template-columns: minmax(440px, 1fr) minmax(460px, .9fr);
-  background: #f7faff;
-}
-
-.otto-auth-visual {
-  padding: 34px clamp(34px, 5vw, 78px) 30px;
-  color: var(--auth-ink);
-  background:
-    radial-gradient(circle at 72% 29%, rgba(137, 196, 247, .44), transparent 28%),
-    linear-gradient(145deg, #f1f8ff 0%, #e5f1ff 55%, #d9ebff 100%);
-}
-
-.otto-auth-visual::before {
-  opacity: .42;
-  background-image:
-    linear-gradient(rgba(49, 127, 212, .09) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(49, 127, 212, .09) 1px, transparent 1px);
-}
-
-.otto-auth-visual::after {
-  border-color: rgba(49, 127, 212, .16);
-  box-shadow: inset 0 0 120px rgba(49, 127, 212, .08), 0 0 160px rgba(49, 127, 212, .08);
-}
-
-.otto-auth-visual__aurora {
-  background: radial-gradient(ellipse, rgba(93, 166, 232, .34), rgba(255, 255, 255, .34) 46%, transparent 72%);
-}
-
-.otto-auth-brand {
-  color: #1d4f86;
-}
-
-.otto-auth-brand small {
-  color: #7594b7;
-}
-
-.otto-auth-brand__mark {
-  border-color: rgba(49, 127, 212, .28);
-  background: rgba(255, 255, 255, .58);
-  box-shadow: 0 7px 20px rgba(49, 127, 212, .12);
-}
-
-.otto-auth-brand__mark path {
-  fill: #4e9bdf;
-}
-
-.otto-auth-brand__mark circle {
-  fill: #fff;
-}
-
-.otto-auth-mascot-stage::before {
-  border-color: rgba(49, 127, 212, .15);
-  box-shadow: 0 0 0 36px rgba(49, 127, 212, .035), 0 0 0 74px rgba(49, 127, 212, .025);
-}
-
-.otto-auth-mascot-stage__label {
-  border-color: rgba(49, 127, 212, .18);
-  color: #3d7fb9;
-  background: rgba(255, 255, 255, .64);
-}
-
-.otto-auth-mascot-stage__label::before {
-  background: #6eaff0;
-  box-shadow: 0 0 10px rgba(110, 175, 240, .65);
-}
-
-.otto-auth-kicker {
-  color: #4b8dca;
-}
-
-.otto-auth-visual__copy h1 > span:first-child {
-  color: #183354;
-}
-
-.otto-auth-visual__copy h1 .otto-auth-typewriter {
-  color: #317fd4;
-}
-
-.otto-auth-visual__copy h1 .otto-auth-typewriter__cursor {
-  background: #317fd4;
-  box-shadow: 0 0 14px rgba(49, 127, 212, .28);
-}
-
-.otto-auth-visual__copy p {
-  color: #5f7897;
-}
-
-.otto-auth-trust {
-  color: #6683a3;
-}
-
-.otto-auth-trust svg {
-  stroke: #4f99db;
-}
-
-.otto-auth-panel {
-  padding: 34px clamp(26px, 5vw, 74px);
-  background: #f7faff;
-  background-image: none;
-}
-
-.otto-auth-panel::before {
-  display: none;
-}
-
-.otto-auth-card,
-.otto-auth-card--register {
-  --auth-line: #d8e3ef;
-  width: min(100%, 480px);
-  gap: 14px;
-  padding: 30px 31px 26px;
-  border: 1px solid #dbe5f1;
-  border-radius: 18px;
-  color: var(--auth-ink);
-  background: rgba(255, 255, 255, .94);
-  box-shadow: 0 18px 50px rgba(58, 104, 154, .13), 0 2px 7px rgba(58, 104, 154, .06);
-}
-
-.otto-auth-card__pixel-corner,
-.otto-auth-card__pixel-mark {
-  display: none;
-}
-
-.otto-auth-card__masthead {
-  min-height: 38px;
-  padding-bottom: 15px;
-  border-bottom-color: #e6edf5;
-}
-
-.otto-auth-card__masthead strong {
-  color: #244c78;
-}
-
-.otto-auth-card__masthead small {
-  color: #8195ad;
-}
-
-.otto-auth-card__masthead b {
-  color: #4c91ce;
-}
-
-.otto-auth-card__topline {
-  border: 0;
-  border-radius: 999px;
-  color: #5684ae;
-  background: #edf6ff;
-}
-
-.otto-auth-status-dot {
-  background: #6eaff0;
-  box-shadow: 0 0 0 4px rgba(110, 175, 240, .16);
-}
-
-.otto-auth-card h2 {
-  color: #172033;
-}
-
-.otto-auth-card__intro {
-  color: #718096;
-}
-
-.otto-auth-field {
-  color: #51647c;
-}
-
-.otto-auth-field > input,
-.otto-auth-phone,
-.otto-auth-code {
-  min-height: 48px;
-  border-color: #d8e3ef;
-  border-radius: 10px;
-  background: #fbfdff;
-}
-
-.otto-auth-field > input {
-  color: #172033;
-}
-
-.otto-auth-field > input::placeholder,
-.otto-auth-phone input::placeholder,
-.otto-auth-code input::placeholder {
-  color: #9aabbd;
-}
-
-.otto-auth-phone b {
-  border-right-color: #d8e3ef;
-  color: #5d7691;
-  background: #f1f6fb;
-}
-
-.otto-auth-phone input,
-.otto-auth-code input {
-  color: #172033;
-}
-
-.otto-auth-phone:focus-within,
-.otto-auth-code:focus-within,
-.otto-auth-field > input:focus {
-  border-color: #6eaff0;
-  box-shadow: 0 0 0 3px rgba(110, 175, 240, .16);
-  background: #fff;
-}
-
-.otto-auth-code button {
-  min-height: 38px;
-  border-radius: 8px;
-  color: #22609a;
-  background: #e7f3ff;
-}
-
-.otto-auth-code button:hover:not(:disabled) {
-  color: #185486;
-  background: #d8ecff;
-}
-
-.otto-auth-login-methods {
-  padding: 3px;
-  border-color: #d8e3ef;
-  border-radius: 10px;
-  background: #f3f7fb;
-}
-
-.otto-auth-login-methods button {
-  color: #718096;
-  border-radius: 8px;
-}
-
-.otto-auth-login-methods button[aria-pressed="true"] {
-  color: #225b92;
-  background: #fff;
-  box-shadow: 0 1px 4px rgba(58, 104, 154, .12);
-}
-
-.otto-auth-organization {
-  border-color: #cfe5f8;
-  border-radius: 9px;
-  color: #3c78aa;
-  background: #eff8ff;
-}
-
-.otto-auth-submit {
-  min-height: 48px;
-  border-radius: 10px;
-  color: #fff;
-  background: #4f9bdf;
-  box-shadow: 0 5px 12px rgba(79, 155, 223, .22);
-}
-
-.otto-auth-submit:hover:not(:disabled) {
-  box-shadow: 0 7px 16px rgba(79, 155, 223, .28);
-}
-
-.otto-auth-submit svg {
-  stroke: #fff;
-}
-
-.otto-auth-mode-switch {
-  color: #8291a4;
-}
-
-.otto-auth-mode-switch button,
-.otto-auth-consent button {
-  color: #3f86c6;
-  border-bottom-color: rgba(63, 134, 198, .35);
-}
-
-.otto-auth-legal {
-  color: #9aa8b8;
-}
-
-.otto-auth-legal span {
-  color: #6eaff0;
-}
-
-.otto-auth-consent {
-  color: #718096;
-}
-
-.otto-auth-consent input {
-  accent-color: #4f9bdf;
-}
-
-@media (max-width: 900px) {
-  .otto-auth-shell {
-    grid-template-columns: 1fr;
-  }
-
-  .otto-auth-visual {
-    min-height: 390px;
-  }
-
-  .otto-auth-mascot-stage {
-    min-height: 190px;
-  }
-
-  .otto-auth-panel {
-    min-height: 600px;
-    order: 0;
   }
 }
 
