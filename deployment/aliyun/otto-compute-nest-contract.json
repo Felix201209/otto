@@ -1,0 +1,67 @@
+{
+  "format": "otto-aliyun-compute-nest-contract-v1",
+  "provider": "aliyun-compute-nest",
+  "realDeploymentEnabled": false,
+  "templateVersion": "0.1.0-local-contract",
+  "supportedRegions": ["cn-hangzhou", "cn-shanghai", "cn-beijing", "cn-shenzhen"],
+  "parameters": {
+    "allowed": ["region", "zone", "plan", "enterpriseDisplayName", "domainMode", "domainName"],
+    "forbidden": [
+      "password", "secret", "accessKey", "accessKeySecret", "license", "token",
+      "privateKey", "databaseUrl", "redisUrl", "ossEndpoint"
+    ]
+  },
+  "plans": {
+    "trial": {
+      "availabilityZones": 1,
+      "statelessServers": 1,
+      "postgres": { "public": false, "highAvailability": false, "backupRetentionDays": 7 },
+      "tair": { "public": false, "highAvailability": false },
+      "oss": { "public": false, "versioning": true, "sseKms": true }
+    },
+    "standard": {
+      "availabilityZones": 2,
+      "statelessServers": 2,
+      "postgres": { "public": false, "highAvailability": true, "backupRetentionDays": 14 },
+      "tair": { "public": false, "highAvailability": true },
+      "oss": { "public": false, "versioning": true, "sseKms": true }
+    },
+    "ha": {
+      "availabilityZones": 2,
+      "statelessServers": 2,
+      "postgres": { "public": false, "highAvailability": true, "backupRetentionDays": 30 },
+      "tair": { "public": false, "highAvailability": true },
+      "oss": { "public": false, "versioning": true, "sseKms": true }
+    }
+  },
+  "network": {
+    "publicPorts": [443],
+    "redirectPorts": [80],
+    "privateResources": ["ottoServer", "postgres", "tair", "kms", "secrets"],
+    "tls": { "minimumVersion": "1.2", "httpsRequired": true, "hsts": true },
+    "ssh": { "defaultEnabled": false }
+  },
+  "outputs": {
+    "allowed": ["deploymentId", "orderId", "templateVersion", "postgresSecretRef", "tairSecretRef", "ossBucketRef", "kmsKeyRef", "privateEndpoints", "publicHttpsOrigin"],
+    "forbidden": ["password", "secretValue", "accessKeySecret", "license", "privateKey", "connectionString"]
+  },
+  "secrets": { "delivery": "secrets-manager-kms-reference", "plaintextAllowed": false, "missingDependencyAction": "fail-closed" },
+  "idempotency": { "requiredFields": ["orderId", "deploymentId", "idempotencyKey", "templateVersion"], "replayMustNotCreateResources": true },
+  "states": {
+    "initial": "purchased",
+    "terminal": ["healthy", "failed", "rolled_back"],
+    "transitions": {
+      "purchased": ["provisioning", "failed"],
+      "provisioning": ["infrastructure_ready", "failed", "rolling_back"],
+      "infrastructure_ready": ["installing", "failed", "rolling_back"],
+      "installing": ["activating", "failed", "rolling_back"],
+      "activating": ["initializing", "failed", "rolling_back"],
+      "initializing": ["healthy", "failed", "rolling_back"],
+      "healthy": ["installing", "rolling_back"],
+      "failed": ["rolling_back"],
+      "rolling_back": ["rolled_back", "failed"],
+      "rolled_back": ["provisioning", "failed"]
+    }
+  },
+  "evidence": { "realCloudRunRequiredForCompletion": true, "localContractValidationIsNotStagingEvidence": true }
+}
