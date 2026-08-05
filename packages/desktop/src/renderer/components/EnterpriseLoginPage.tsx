@@ -53,6 +53,10 @@ export function sanitizeOrganizationInviteCode(value: string): string {
   return compact.length > 4 ? `${compact.slice(0, 4)}-${compact.slice(4)}` : compact;
 }
 
+export function isCompleteOrganizationInviteCode(value: string): boolean {
+  return sanitizeOrganizationInviteCode(value).split('-').join('').length === 12;
+}
+
 export function isAcceptableRegistrationPassword(password: string): boolean {
   if (password.length < 8 || password.length > 128) return false;
   if (/[^\x20-\x7E]/.test(password)) return false;
@@ -75,7 +79,7 @@ export function isRegistrationReady(input: {
   legalDocuments: EnterpriseLegalDocumentReference[];
 }): boolean {
   return (!input.inviteRequired
-    || input.inviteCode.replace(/[^A-HJ-NP-Za-km-z2-9]/g, '').length === 12)
+    || isCompleteOrganizationInviteCode(input.inviteCode))
     && Boolean(input.name.trim())
     && isAcceptableRegistrationPassword(input.password)
     && input.password === input.confirmPassword
@@ -562,7 +566,7 @@ export function EnterpriseLoginPage({
                     disabled={formPending || requesting || countdown > 0
                       || phone.replace(/\D/g, '').length !== 11
                       || (mode === 'join'
-                        && inviteCode.replace(/[^A-Z2-9]/g, '').length !== 8)}
+                        && !isCompleteOrganizationInviteCode(inviteCode))}
                   >
                     {requesting ? '发送中…' : countdown > 0 ? `${countdown}s 后重试` : '获取验证码'}
                   </button>

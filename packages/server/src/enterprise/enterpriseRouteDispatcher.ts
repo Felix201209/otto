@@ -167,6 +167,12 @@ export async function dispatchEnterpriseRoute({
       memberPrincipal: memberAccount
         ? { organizationId: memberAccount.organizationId }
         : null,
+      getRuntimeReadiness: () => ({
+        version: deploymentInfo.version,
+        buildCommit: deploymentInfo.buildCommit,
+        database: db.getDatabaseReadiness(),
+        smsConfigured: Boolean(smsSender),
+      }),
       services: db,
       readBody,
       sendJSON,

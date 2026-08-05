@@ -18,6 +18,11 @@ function requiredArgument(name) {
   return value;
 }
 
+function optionalArgument(name) {
+  const index = process.argv.indexOf(name);
+  return index === -1 ? null : process.argv[index + 1]?.trim() || null;
+}
+
 function requiredRevision(name) {
   const value = process.env[name]?.trim();
   if (!/^[0-9a-f]{40}$/.test(value ?? '')) {
@@ -129,6 +134,10 @@ function main() {
   const bindingPath = path.resolve(requiredArgument('--binding'));
   const outputRoot = path.resolve(requiredArgument('--output-root'));
   const target = requiredArgument('--target');
+  const runtime = optionalArgument('--runtime') ?? 'electron';
+  if (!['electron', 'node'].includes(runtime)) {
+    throw new Error('--runtime must be electron or node');
+  }
   const targetMatch = /^(win32|darwin|linux)-(x64|arm64)$/.exec(target);
   if (!targetMatch) throw new Error(`unsupported target ${target}`);
   if (!fs.existsSync(bindingPath))
@@ -151,10 +160,25 @@ function main() {
       'utf8',
     ),
   );
-  const expectedElectronVersion = desktopPackage.build.electronVersion;
-  if (process.versions.electron !== expectedElectronVersion) {
+  const expectedRuntimeVersion =
+    runtime === 'electron'
+      ? desktopPackage.build.electronVersion
+      : requiredArgument('--runtime-version');
+  if (
+    runtime === 'electron' &&
+    process.versions.electron !== expectedRuntimeVersion
+  ) {
     throw new Error(
-      `asset must be finalized by Electron ${expectedElectronVersion}; got ${process.versions.electron ?? 'plain Node.js'}`,
+      `asset must be finalized by Electron ${expectedRuntimeVersion}; got ${process.versions.electron ?? 'plain Node.js'}`,
+    );
+  }
+  if (
+    runtime === 'node' &&
+    (process.versions.electron ||
+      process.versions.node !== expectedRuntimeVersion)
+  ) {
+    throw new Error(
+      `asset must be finalized by Node.js ${expectedRuntimeVersion}; got ${process.versions.electron ? `Electron ${process.versions.electron}` : `Node.js ${process.versions.node}`}`,
     );
   }
   const bindingSha256 = createHash('sha256')
@@ -189,8 +213,9 @@ function main() {
         { name: 'otto:target', value: target },
         { name: 'otto:buildCommit', value: buildCommit },
         { name: 'otto:sourceRevision', value: sourceRevision },
-        { name: 'otto:electronVersion', value: expectedElectronVersion },
-        { name: 'otto:electronModuleAbi', value: process.versions.modules },
+        { name: 'otto:runtime', value: runtime },
+        { name: `otto:${runtime}Version`, value: expectedRuntimeVersion },
+        { name: `otto:${runtime}ModuleAbi`, value: process.versions.modules },
       ],
       component: {
         type: 'file',
@@ -229,8 +254,8 @@ function main() {
     target,
     platform: targetMatch[1],
     arch: targetMatch[2],
-    runtime: 'electron',
-    runtimeVersion: expectedElectronVersion,
+    runtime,
+    runtimeVersion: expectedRuntimeVersion,
     sqlcipherVersion: cipherVersion,
     betterSqlite3Version: serverPackage.dependencies['better-sqlite3'],
     cipherSelfTest: true,
@@ -241,8 +266,12 @@ function main() {
     buildCommit,
     toolchain: {
       nodeVersion: process.versions.node,
-      electronVersion: process.versions.electron,
-      electronModuleAbi: process.versions.modules,
+      ...(runtime === 'electron'
+        ? {
+            electronVersion: process.versions.electron,
+            electronModuleAbi: process.versions.modules,
+          }
+        : { nodeModuleAbi: process.versions.modules }),
       opensslVersion: process.versions.openssl,
     },
     sha256: bindingSha256,

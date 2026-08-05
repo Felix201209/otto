@@ -10,19 +10,50 @@ const expectedVersion = process.argv[3];
 const expectedBuild = process.argv[4];
 const expectedSchema = Number(process.argv[5]);
 const requireSms = process.argv[6] !== 'allow-sms-disabled';
-if (!baseUrl || !expectedVersion || !expectedBuild || !Number.isInteger(expectedSchema)) {
-  fail('用法：health-check.mjs <base-url> <version> <build-id> <schema> [allow-sms-disabled]');
+const adminToken = process.argv[7];
+if (
+  !baseUrl ||
+  !expectedVersion ||
+  !/^[0-9a-f]{40}$/i.test(expectedBuild ?? '') ||
+  !Number.isInteger(expectedSchema) ||
+  !adminToken
+) {
+  fail(
+    '用法：health-check.mjs <base-url> <version> <build-id> <schema> <allow-sms-disabled|require-sms> <admin-token>',
+  );
 }
 
-let body;
+const origin = baseUrl.replace(/\/+$/, '');
+let publicHealth;
+let deploymentStatus;
 try {
-  const response = await fetch(`${baseUrl.replace(/\/+$/, '')}/enterprise/health`, {
+  const response = await fetch(`${origin}/enterprise/health`, {
     signal: AbortSignal.timeout(10_000),
   });
-  body = await response.json();
-  if (!response.ok) fail(`HTTP ${response.status}: ${JSON.stringify(body)}`);
+  publicHealth = await response.json();
+  if (!response.ok) {
+    fail(
+      `公开健康检查 HTTP ${response.status}: ${JSON.stringify(publicHealth)}`,
+    );
+  }
+
+  const protectedResponse = await fetch(
+    `${origin}/enterprise/deployment/status`,
+    {
+      headers: { 'x-otto-admin-token': adminToken },
+      signal: AbortSignal.timeout(10_000),
+    },
+  );
+  deploymentStatus = await protectedResponse.json();
+  if (!protectedResponse.ok) {
+    fail(
+      `受保护健康检查 HTTP ${protectedResponse.status}: ${JSON.stringify(deploymentStatus)}`,
+    );
+  }
 } catch (error) {
-  fail(`健康检查请求失败：${error instanceof Error ? error.message : String(error)}`);
+  fail(
+    `健康检查请求失败：${error instanceof Error ? error.message : String(error)}`,
+  );
 }
 
 const requiredCapabilities = [
@@ -45,22 +76,41 @@ const requiredCapabilities = [
   'privacy_self_service',
 ];
 const missing = requiredCapabilities.filter(
-  (capability) => !body.capabilities?.includes(capability),
+  (capability) => !publicHealth.capabilities?.includes(capability),
 );
 if (
-  body.status !== 'ok'
-  || body.service !== 'otto-enterprise'
-  || body.apiVersion !== 4
-  || body.version !== expectedVersion
-  || body.buildCommit !== expectedBuild
-  || body.schemaVersion !== expectedSchema
-  || body.db !== 'connected'
-  || body.deployment?.license?.enforce !== true
-  || missing.length > 0
+  publicHealth.status !== 'ok' ||
+  publicHealth.service !== 'otto-enterprise' ||
+  publicHealth.apiVersion !== 4 ||
+  publicHealth.version !== expectedVersion ||
+  missing.length > 0
 ) {
-  fail(`健康身份不匹配：${JSON.stringify(body)}`);
+  fail(`公开健康身份不匹配：${JSON.stringify(publicHealth)}`);
 }
-if (requireSms && body.sms?.configured !== true) {
+
+const runtime = deploymentStatus.runtime;
+if (
+  runtime?.version !== expectedVersion ||
+  runtime?.buildCommit !== expectedBuild ||
+  runtime?.database?.ready !== true ||
+  runtime?.database?.schemaVersion !== expectedSchema ||
+  deploymentStatus.license?.enforce !== true
+) {
+  fail('受保护运行身份、数据库 Schema 或 License 强制策略不匹配');
+}
+if (deploymentStatus.operationsSecurity?.sqlCipher?.state !== 'active') {
+  fail('SQLCipher 整库加密未处于 active 状态');
+}
+if (requireSms && runtime.smsConfigured !== true) {
   fail('短信通道未配置，邀请码注册不可用');
 }
-process.stdout.write(`${JSON.stringify({ ok: true, health: body })}\n`);
+process.stdout.write(
+  `${JSON.stringify({
+    ok: true,
+    version: runtime.version,
+    buildCommit: runtime.buildCommit,
+    schemaVersion: runtime.database.schemaVersion,
+    sqlCipher: 'active',
+    smsConfigured: runtime.smsConfigured === true,
+  })}\n`,
+);
