@@ -9,6 +9,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  REQUIRED_SQLCIPHER_NODE_TARGETS,
   REQUIRED_SQLCIPHER_TARGETS,
   verifySqlCipherMatrixManifest,
   verifySqlCipherNativeAssets,
@@ -37,6 +38,9 @@ function fixture(input = {}) {
   fs.writeFileSync(path.join(directory, 'better_sqlite3.node'), binding);
   const buildCommit = input.manifest?.buildCommit ?? 'a'.repeat(40);
   const sourceRevision = input.manifest?.sourceRevision ?? 'b'.repeat(40);
+  const runtime = input.runtime ?? input.manifest?.runtime ?? 'electron';
+  const runtimeVersion = runtime === 'node' ? '22.23.1' : '43.1.0';
+  const moduleAbi = runtime === 'node' ? '127' : '145';
   const sbom = {
     bomFormat: 'CycloneDX',
     specVersion: '1.5',
@@ -46,8 +50,9 @@ function fixture(input = {}) {
         { name: 'otto:target', value: target },
         { name: 'otto:buildCommit', value: buildCommit },
         { name: 'otto:sourceRevision', value: sourceRevision },
-        { name: 'otto:electronVersion', value: '43.1.0' },
-        { name: 'otto:electronModuleAbi', value: '145' },
+        { name: 'otto:runtime', value: runtime },
+        { name: `otto:${runtime}Version`, value: runtimeVersion },
+        { name: `otto:${runtime}ModuleAbi`, value: moduleAbi },
       ],
       component: {
         type: 'file',
@@ -75,8 +80,8 @@ function fixture(input = {}) {
     target,
     platform,
     arch,
-    runtime: 'electron',
-    runtimeVersion: '43.1.0',
+    runtime,
+    runtimeVersion,
     sqlcipherVersion: '4.16.0',
     betterSqlite3Version: '12.11.1',
     cipherSelfTest: true,
@@ -86,9 +91,10 @@ function fixture(input = {}) {
     sourceRevision,
     buildCommit,
     toolchain: {
-      nodeVersion: '24.17.0',
-      electronVersion: '43.1.0',
-      electronModuleAbi: '145',
+      nodeVersion: runtime === 'node' ? runtimeVersion : '24.17.0',
+      ...(runtime === 'node'
+        ? { nodeModuleAbi: moduleAbi }
+        : { electronVersion: runtimeVersion, electronModuleAbi: moduleAbi }),
       opensslVersion: '3.5.2',
     },
     sha256: createHash('sha256').update(binding).digest('hex'),
@@ -131,6 +137,29 @@ describe('SQLCipher native asset gate', () => {
         plainSqliteRejected: true,
       },
     );
+  });
+
+  it('accepts a Node.js ABI asset and locks the exact two-target Linux server matrix', () => {
+    const root = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'otto-node-native-matrix-'),
+    );
+    directories.push(root);
+    for (const target of REQUIRED_SQLCIPHER_NODE_TARGETS) {
+      fixture({ root, target, runtime: 'node' });
+    }
+    const verified = verifySqlCipherNativeAssets(
+      root,
+      REQUIRED_SQLCIPHER_NODE_TARGETS,
+      { runtime: 'node', expectedRuntimeVersion: '22.23.1' },
+    );
+    writeSqlCipherMatrixManifest(root, verified);
+    expect(
+      verifySqlCipherMatrixManifest(root, verified).manifest,
+    ).toMatchObject({
+      runtime: 'node',
+      runtimeVersion: '22.23.1',
+      targets: REQUIRED_SQLCIPHER_NODE_TARGETS,
+    });
   });
 
   it('rejects a binding replaced after its cipher self-test', () => {

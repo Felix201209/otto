@@ -78,6 +78,7 @@ OTTO_BACKUP_RETENTION_DAYS="${OTTO_BACKUP_RETENTION_DAYS:-30}"
 OTTO_BACKUP_MINIMUM_RETAINED="${OTTO_BACKUP_MINIMUM_RETAINED:-3}"
 OTTO_BACKUP_REPLICA_DIR="${OTTO_BACKUP_REPLICA_DIR:-}"
 OTTO_DISK_MIN_FREE_MB="${OTTO_DISK_MIN_FREE_MB:-2048}"
+OTTO_DATABASE_ENCRYPTION_KEY_FILE="${OTTO_DATABASE_ENCRYPTION_KEY_FILE:-}"
 OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE="${OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE:-}"
 OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE="${OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE:-}"
 OTTO_FIELD_ENCRYPTION_KEY_FILE="${OTTO_FIELD_ENCRYPTION_KEY_FILE:-}"
@@ -190,6 +191,16 @@ for key_variable in \
   [ "$(wc -c < "$key_path")" -eq 32 ] \
     || otto_die "${key_variable} 必须包含恰好 32 字节原始密钥"
 done
+if [ -n "$OTTO_DATABASE_ENCRYPTION_KEY_FILE" ]; then
+  [[ "$OTTO_DATABASE_ENCRYPTION_KEY_FILE" = /* ]] \
+    || otto_die "OTTO_DATABASE_ENCRYPTION_KEY_FILE 必须使用绝对路径"
+  [ -f "$OTTO_DATABASE_ENCRYPTION_KEY_FILE" ] \
+    && [ ! -L "$OTTO_DATABASE_ENCRYPTION_KEY_FILE" ] \
+    || otto_die "OTTO_DATABASE_ENCRYPTION_KEY_FILE 必须指向普通文件且不能是符号链接"
+  DATABASE_KEY_BYTES="$(wc -c < "$OTTO_DATABASE_ENCRYPTION_KEY_FILE")"
+  [ "$DATABASE_KEY_BYTES" -ge 32 ] && [ "$DATABASE_KEY_BYTES" -le 65536 ] \
+    || otto_die "OTTO_DATABASE_ENCRYPTION_KEY_FILE 大小不在允许范围内"
+fi
 if [ "$OTTO_ALLOW_SMS_DISABLED" = "0" ]; then
   for key in \
     ALIYUN_SMS_ACCESS_KEY_ID \
@@ -304,6 +315,7 @@ DEPLOY_CREATED=0
 CURRENT_CREATED=0
 DATA_CREATED=0
 CONFIG_CREATED=0
+DATABASE_KEY_CREATED=0
 RUNTIME_LINK_CREATED=0
 RUNTIME_DIR_CREATED=0
 TRANSACTION_MARKER_CREATED=0
@@ -344,6 +356,11 @@ cleanup() {
     fi
     if [ "$CONFIG_CREATED" -eq 1 ] && [ -f "${CONFIG_DIR}/enterprise.env" ]; then
       mv "${CONFIG_DIR}/enterprise.env" "${TXN_DIR}/failed-enterprise.env"
+    fi
+    if [ "$DATABASE_KEY_CREATED" -eq 1 ] \
+      && [ -f "${CONFIG_DIR}/database-sqlcipher.key" ]; then
+      mv "${CONFIG_DIR}/database-sqlcipher.key" \
+        "${TXN_DIR}/failed-database-sqlcipher.key"
     fi
     if [ "$RUNTIME_LINK_CREATED" -eq 1 ] && [ -L "${INSTALL_ROOT}/runtime/current" ]; then
       mv "${INSTALL_ROOT}/runtime/current" "${TXN_DIR}/failed-runtime-link"
@@ -402,6 +419,26 @@ BUILD_ID="$("$NODE_PATH" -e "const x=JSON.parse(process.argv[1]);console.log(x.b
 RELEASE_SCHEMA_TO="$("$NODE_PATH" -e "const x=JSON.parse(process.argv[1]);console.log(x.database.schemaTo)" "$RELEASE_INFO")"
 RELEASE_NAME="${RELEASE_VERSION}-${BUILD_ID:0:12}"
 TARGET_RELEASE="${INSTALL_ROOT}/releases/${RELEASE_NAME}"
+RUNTIME_ARCH="$(otto_arch)"
+SQLCIPHER_RELEASE_BINDING="${SCRIPT_DIR}/release/native/sqlcipher/linux-${RUNTIME_ARCH}/better_sqlite3.node"
+[ -f "$SQLCIPHER_RELEASE_BINDING" ] && [ ! -L "$SQLCIPHER_RELEASE_BINDING" ] \
+  || otto_die "部署包缺少当前架构的 SQLCipher Node.js 原生产物：linux-${RUNTIME_ARCH}" 3
+MANAGED_DATABASE_KEY_PATH="${CONFIG_DIR}/database-sqlcipher.key"
+if [ -z "$OTTO_DATABASE_ENCRYPTION_KEY_FILE" ]; then
+  CANARY_DATABASE_KEY="${TXN_DIR}/database-sqlcipher.key"
+  "$NODE_PATH" --input-type=module -e \
+    "import { randomBytes } from 'node:crypto'; import { writeFileSync } from 'node:fs'; writeFileSync(process.argv[1], randomBytes(32), { flag: 'wx', mode: 0o600 });" \
+    "$CANARY_DATABASE_KEY"
+  OTTO_DATABASE_ENCRYPTION_KEY_FILE="$CANARY_DATABASE_KEY"
+  DATABASE_KEY_MANAGED=1
+else
+  DATABASE_KEY_MANAGED=0
+fi
+export OTTO_DATABASE_ENCRYPTION="required"
+export OTTO_DATABASE_ENCRYPTION_KEY_FILE
+export OTTO_DATABASE_ENCRYPTION_KEY_ID="oneclick-offline-database-key"
+export OTTO_DATABASE_ENCRYPTION_KEY_READONLY="true"
+export OTTO_SQLCIPHER_NATIVE_BINDING="$SQLCIPHER_RELEASE_BINDING"
 
 if [ "$CURRENT_EXISTS" -eq 1 ]; then
   CURRENT_INFO="$("$NODE_PATH" "${SCRIPT_DIR}/tools/verify-release.mjs" "$CURRENT_REAL")"
@@ -491,6 +528,8 @@ if (
 }
 NODE
   IMPORT_INFO="$("$NODE_PATH" "${SCRIPT_DIR}/tools/db-tool.mjs" inspect "$MIGRATION_DB")"
+  IMPORT_INSPECTION="${TXN_DIR}/migration-inspection.json"
+  printf '%s\n' "$IMPORT_INFO" > "$IMPORT_INSPECTION"
   IMPORT_SCHEMA="$("$NODE_PATH" -e \
     "const x=JSON.parse(process.argv[1]);console.log(x.userVersion)" "$IMPORT_INFO")"
   [ "$IMPORT_SCHEMA" -ge 2 ] && [ "$IMPORT_SCHEMA" -le "$RELEASE_SCHEMA_TO" ] \
@@ -519,12 +558,12 @@ export OTTO_APP_VERSION="$RELEASE_VERSION"
 export OTTO_BUILD_COMMIT="$BUILD_ID"
 export ALIYUN_SMS_PROVIDER="${ALIYUN_SMS_PROVIDER:-pnvs}"
 
-"$NODE_PATH" "${SCRIPT_DIR}/tools/migrate-check.mjs" "${SCRIPT_DIR}/release" "$CANARY_DIR"
-MIGRATED_INFO="$("$NODE_PATH" "${SCRIPT_DIR}/tools/db-tool.mjs" inspect "${CANARY_DIR}/data.db")"
+MIGRATION_CHECK_ARGS=("${SCRIPT_DIR}/release" "$CANARY_DIR")
 if [ -n "$MIGRATION_DB" ]; then
-  "$NODE_PATH" "${SCRIPT_DIR}/tools/db-tool.mjs" \
-    compare "$MIGRATION_DB" "${CANARY_DIR}/data.db" >/dev/null
+  MIGRATION_CHECK_ARGS+=("$IMPORT_INSPECTION")
 fi
+MIGRATED_INFO="$("$NODE_PATH" "${SCRIPT_DIR}/tools/migrate-check.mjs" \
+  "${MIGRATION_CHECK_ARGS[@]}")"
 
 ACCOUNT_COUNT="$("$NODE_PATH" -e \
   "const x=JSON.parse(process.argv[1]);console.log(x.rowCounts.accounts||0)" "$MIGRATED_INFO")"
@@ -562,7 +601,6 @@ if ! command -v curl >/dev/null 2>&1 \
     ca-certificates curl
 fi
 
-RUNTIME_ARCH="$(otto_arch)"
 TEMP_RUNTIME_DIR="${TXN_DIR}/runtime/node-v${OTTO_NODE_VERSION}-linux-${RUNTIME_ARCH}"
 mkdir -p "${INSTALL_ROOT}/runtime"
 NODE_RUNTIME_DIR="${INSTALL_ROOT}/runtime/node-v${OTTO_NODE_VERSION}-linux-${RUNTIME_ARCH}"
@@ -634,7 +672,8 @@ if [ "$ACCOUNT_COUNT" -eq 0 ]; then
     || otto_die "OTTO_BOOTSTRAP_PASSWORD 至少 8 个字符"
   export OTTO_BOOTSTRAP_USERNAME OTTO_BOOTSTRAP_PASSWORD OTTO_BOOTSTRAP_NAME
   "$NODE_PATH" "${TARGET_RELEASE}/src/enterprise/bin.js" --bootstrap-admin
-  "$NODE_PATH" "${SCRIPT_DIR}/tools/db-tool.mjs" inspect "${CANARY_DIR}/data.db" >/dev/null
+  "$NODE_PATH" "${SCRIPT_DIR}/tools/migrate-check.mjs" \
+    "$TARGET_RELEASE" "$CANARY_DIR" >/dev/null
 fi
 
 otto_log "启动 127.0.0.1:17777 隔离 canary"
@@ -653,6 +692,7 @@ for _ in $(seq 1 20); do
     http://127.0.0.1:17777 "$RELEASE_VERSION" "$BUILD_ID" \
     "$RELEASE_SCHEMA_TO" \
     "$([ "$OTTO_ALLOW_SMS_DISABLED" = "1" ] && printf 'allow-sms-disabled' || printf 'require-sms')" \
+    "$OTTO_ENTERPRISE_ADMIN_TOKEN" \
     >/dev/null 2>&1; then
     CANARY_OK=1
     break
@@ -680,6 +720,17 @@ done
 mkdir -p "$DATA_DIR" "$CONFIG_DIR"
 chown otto-enterprise:otto-enterprise "$DATA_DIR"
 chmod 0700 "$DATA_DIR"
+chown root:otto-enterprise "$CONFIG_DIR"
+chmod 0750 "$CONFIG_DIR"
+if [ "$DATABASE_KEY_MANAGED" -eq 1 ]; then
+  install -o root -g otto-enterprise -m 0640 \
+    "$OTTO_DATABASE_ENCRYPTION_KEY_FILE" "$MANAGED_DATABASE_KEY_PATH"
+  OTTO_DATABASE_ENCRYPTION_KEY_FILE="$MANAGED_DATABASE_KEY_PATH"
+  DATABASE_KEY_CREATED=1
+else
+  runuser -u otto-enterprise -- test -r "$OTTO_DATABASE_ENCRYPTION_KEY_FILE" \
+    || otto_die "otto-enterprise 服务账号无法读取外部 SQLCipher 密钥"
+fi
 if [ -n "$OTTO_BACKUP_REPLICA_DIR" ]; then
   mkdir -p "$OTTO_BACKUP_REPLICA_DIR"
   chown otto-enterprise:otto-enterprise "$OTTO_BACKUP_REPLICA_DIR"
@@ -720,6 +771,11 @@ write_env "$ENV_TEMP" \
   OTTO_BACKUP_MINIMUM_RETAINED "$OTTO_BACKUP_MINIMUM_RETAINED" \
   OTTO_BACKUP_REPLICA_DIR "$OTTO_BACKUP_REPLICA_DIR" \
   OTTO_DISK_MIN_FREE_MB "$OTTO_DISK_MIN_FREE_MB" \
+  OTTO_DATABASE_ENCRYPTION "required" \
+  OTTO_DATABASE_ENCRYPTION_KEY_FILE "$OTTO_DATABASE_ENCRYPTION_KEY_FILE" \
+  OTTO_DATABASE_ENCRYPTION_KEY_ID "oneclick-offline-database-key" \
+  OTTO_DATABASE_ENCRYPTION_KEY_READONLY "true" \
+  OTTO_SQLCIPHER_NATIVE_BINDING "${INSTALL_ROOT}/current/native/sqlcipher/linux-${RUNTIME_ARCH}/better_sqlite3.node" \
   OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE "$OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE" \
   OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE "$OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE" \
   OTTO_FIELD_ENCRYPTION_KEY_FILE "$OTTO_FIELD_ENCRYPTION_KEY_FILE" \
@@ -818,6 +874,7 @@ if [ "$OTTO_CADDY_MODE" = "managed" ]; then
       "$OTTO_ENTERPRISE_PUBLIC_URL" "$RELEASE_VERSION" "$BUILD_ID" \
       "$RELEASE_SCHEMA_TO" \
       "$([ "$OTTO_ALLOW_SMS_DISABLED" = "1" ] && printf 'allow-sms-disabled' || printf 'require-sms')" \
+      "$OTTO_ENTERPRISE_ADMIN_TOKEN" \
       >/dev/null 2>&1; then
       EDGE_OK=1
       break

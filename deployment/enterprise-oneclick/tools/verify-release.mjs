@@ -29,6 +29,7 @@ async function filesBelow(root, current = root) {
 }
 
 const root = path.resolve(process.argv[2] || '');
+const allowLegacySqlite = process.argv.includes('--allow-legacy-sqlite');
 if (!process.argv[2]) fail('用法：verify-release.mjs <release-dir>');
 let manifest;
 try {
@@ -55,6 +56,13 @@ if (
       (_, index) => index + 2,
     ))
   || manifest.database.futureSchemaPolicy !== 'reject'
+  || (!allowLegacySqlite && (
+    manifest.database.encryption !== 'sqlcipher-required'
+    || manifest.database.nativeRuntime !== 'node'
+    || manifest.database.nativeRuntimeVersion !== '22.23.1'
+    || JSON.stringify(manifest.database.nativeTargets)
+      !== JSON.stringify(['linux-x64', 'linux-arm64'])
+  ))
 ) {
   fail('manifest.json 格式不正确');
 }

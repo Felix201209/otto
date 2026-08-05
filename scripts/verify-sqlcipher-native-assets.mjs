@@ -14,6 +14,7 @@ export const REQUIRED_SQLCIPHER_TARGETS = [
   'linux-x64',
   'linux-arm64',
 ];
+export const REQUIRED_SQLCIPHER_NODE_TARGETS = ['linux-x64', 'linux-arm64'];
 
 export const SQLCIPHER_SOURCE = 'https://github.com/sqlcipher/sqlcipher';
 export const SQLCIPHER_MATRIX_MANIFEST = 'matrix-manifest.json';
@@ -85,6 +86,10 @@ export function verifySqlCipherNativeTarget(
   target,
   options = {},
 ) {
+  const expectedRuntime = options.runtime ?? 'electron';
+  if (!['electron', 'node'].includes(expectedRuntime)) {
+    throw new Error('SQLCipher runtime must be electron or node');
+  }
   const match = TARGET_PATTERN.exec(target);
   if (!match) throw new Error(`unsupported SQLCipher native target: ${target}`);
   const [, platform, arch] = match;
@@ -103,7 +108,7 @@ export function verifySqlCipherNativeTarget(
     ['target', target],
     ['platform', platform],
     ['arch', arch],
-    ['runtime', 'electron'],
+    ['runtime', expectedRuntime],
     ['cipherSelfTest', true],
     ['plainSqliteRejected', true],
     ['license', 'BSD-3-Clause'],
@@ -146,20 +151,31 @@ export function verifySqlCipherNativeTarget(
     `SQLCipher ${target} runtimeVersion`,
   );
 
-  for (const field of [
-    'nodeVersion',
-    'electronVersion',
-    'electronModuleAbi',
-    'opensslVersion',
-  ]) {
+  for (const field of ['nodeVersion', 'opensslVersion']) {
     requireNonEmptyString(
       manifest.toolchain?.[field],
       `SQLCipher ${target} toolchain ${field}`,
     );
   }
-  if (manifest.toolchain.electronVersion !== manifest.runtimeVersion) {
+  const moduleAbiField =
+    expectedRuntime === 'electron' ? 'electronModuleAbi' : 'nodeModuleAbi';
+  requireNonEmptyString(
+    manifest.toolchain?.[moduleAbiField],
+    `SQLCipher ${target} toolchain ${moduleAbiField}`,
+  );
+  if (expectedRuntime === 'electron') {
+    requireNonEmptyString(
+      manifest.toolchain?.electronVersion,
+      `SQLCipher ${target} toolchain electronVersion`,
+    );
+    if (manifest.toolchain.electronVersion !== manifest.runtimeVersion) {
+      throw new Error(
+        `SQLCipher ${target} toolchain Electron version does not match runtimeVersion`,
+      );
+    }
+  } else if (manifest.toolchain.nodeVersion !== manifest.runtimeVersion) {
     throw new Error(
-      `SQLCipher ${target} toolchain Electron version does not match runtimeVersion`,
+      `SQLCipher ${target} toolchain Node.js version does not match runtimeVersion`,
     );
   }
 
@@ -225,8 +241,9 @@ export function verifySqlCipherNativeTarget(
     ['otto:target', target],
     ['otto:buildCommit', manifest.buildCommit],
     ['otto:sourceRevision', manifest.sourceRevision],
-    ['otto:electronVersion', manifest.runtimeVersion],
-    ['otto:electronModuleAbi', manifest.toolchain.electronModuleAbi],
+    ['otto:runtime', expectedRuntime],
+    [`otto:${expectedRuntime}Version`, manifest.runtimeVersion],
+    [`otto:${expectedRuntime}ModuleAbi`, manifest.toolchain[moduleAbiField]],
   ]) {
     if (sbomProperty(sbom, property) !== expected) {
       throw new Error(
@@ -249,6 +266,7 @@ function assertMatrixConsistency(verified) {
   for (const field of [
     'buildCommit',
     'sourceRevision',
+    'runtime',
     'runtimeVersion',
     'sqlcipherVersion',
     'betterSqlite3Version',
@@ -283,23 +301,29 @@ export function createSqlCipherMatrixManifest(verified) {
   assertMatrixConsistency(verified);
   const [first] = verified;
   const actualTargets = verified.map((entry) => entry.target).sort();
-  const requiredTargets = [...REQUIRED_SQLCIPHER_TARGETS].sort();
+  const matrixTargets =
+    first?.runtime === 'node'
+      ? REQUIRED_SQLCIPHER_NODE_TARGETS
+      : REQUIRED_SQLCIPHER_TARGETS;
+  const requiredTargets = [...matrixTargets].sort();
   if (
     !first ||
     JSON.stringify(actualTargets) !== JSON.stringify(requiredTargets)
   ) {
-    throw new Error('SQLCipher matrix manifest requires all five targets');
+    throw new Error(
+      `SQLCipher ${first?.runtime ?? 'unknown'} matrix manifest requires ${matrixTargets.length} targets`,
+    );
   }
   return {
     format: 1,
     buildCommit: first.buildCommit,
     source: SQLCIPHER_SOURCE,
     sourceRevision: first.sourceRevision,
-    runtime: 'electron',
+    runtime: first.runtime,
     runtimeVersion: first.runtimeVersion,
     sqlcipherVersion: first.sqlcipherVersion,
     betterSqlite3Version: first.betterSqlite3Version,
-    targets: [...REQUIRED_SQLCIPHER_TARGETS],
+    targets: [...matrixTargets],
     noticesSha256: first.notices.sha256,
     assets: Object.fromEntries(
       verified.map((entry) => [
@@ -338,7 +362,11 @@ export function verifySqlCipherMatrixManifest(rootDirectory, verified) {
     .filter((entry) => entry.isDirectory() && TARGET_PATTERN.test(entry.name))
     .map((entry) => entry.name)
     .sort();
-  const requiredTargets = [...REQUIRED_SQLCIPHER_TARGETS].sort();
+  const matrixTargets =
+    verified[0]?.runtime === 'node'
+      ? REQUIRED_SQLCIPHER_NODE_TARGETS
+      : REQUIRED_SQLCIPHER_TARGETS;
+  const requiredTargets = [...matrixTargets].sort();
   if (JSON.stringify(discoveredTargets) !== JSON.stringify(requiredTargets)) {
     throw new Error('SQLCipher native asset directory set is not exact');
   }
@@ -354,14 +382,18 @@ function main() {
   const rootDirectory = path.resolve(
     argument('--root') ?? path.join(process.cwd(), 'native', 'sqlcipher'),
   );
+  const runtime = argument('--runtime') ?? 'electron';
   const configuredTargets = process.argv.flatMap((value, index, values) =>
     value === '--target' && values[index + 1] ? [values[index + 1]] : [],
   );
   const targets =
     configuredTargets.length > 0
       ? configuredTargets
-      : REQUIRED_SQLCIPHER_TARGETS;
+      : runtime === 'node'
+        ? REQUIRED_SQLCIPHER_NODE_TARGETS
+        : REQUIRED_SQLCIPHER_TARGETS;
   const verified = verifySqlCipherNativeAssets(rootDirectory, targets, {
+    runtime,
     expectedBuildCommit: argument('--expected-build-commit'),
     expectedSourceRevision: argument('--expected-source-revision'),
     expectedRuntimeVersion: argument('--expected-runtime-version'),
