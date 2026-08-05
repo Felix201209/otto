@@ -14,6 +14,8 @@ const ATLAS_COLUMNS = 8;
 const ATLAS_ROWS = 9;
 const LOGIN_DISPLAY_SCALE = 1.65;
 const WIDGET_DISPLAY_SCALE = 0.37;
+const LOGIN_FRAME_COUNT = 4;
+const LOGIN_FRAME_DURATION_MS = 900;
 
 type PetStateId =
   | 'idle'
@@ -144,6 +146,7 @@ export function OttoPetStage({
   const [stepIndex, setStepIndex] = useState(0);
   const [frameIndex, setFrameIndex] = useState(0);
   const [loopIndex, setLoopIndex] = useState(0);
+  const [loginFrameIndex, setLoginFrameIndex] = useState(0);
 
   const sequence = reducedMotion
     ? REDUCED_MOTION_SEQUENCE
@@ -160,7 +163,7 @@ export function OttoPetStage({
   }, [reducedMotion, running]);
 
   useEffect(() => {
-    if (reducedMotion) return;
+    if (reducedMotion || variant === 'login') return;
     const timeout = window.setTimeout(() => {
       const nextFrame = frameIndex + 1;
       if (nextFrame < animation.durations.length) {
@@ -181,7 +184,19 @@ export function OttoPetStage({
     }, animation.durations[frameIndex]);
 
     return () => window.clearTimeout(timeout);
-  }, [animation, frameIndex, loopIndex, reducedMotion, sequence.length, step.loops]);
+  }, [animation, frameIndex, loopIndex, reducedMotion, sequence.length, step.loops, variant]);
+
+  useEffect(() => {
+    if (variant !== 'login' || reducedMotion) {
+      setLoginFrameIndex(0);
+      return undefined;
+    }
+    const timer = window.setInterval(
+      () => setLoginFrameIndex((current) => (current + 1) % LOGIN_FRAME_COUNT),
+      LOGIN_FRAME_DURATION_MS,
+    );
+    return () => window.clearInterval(timer);
+  }, [reducedMotion, variant]);
 
   const totalStateDuration = useMemo(
     () =>
@@ -209,6 +224,12 @@ export function OttoPetStage({
   const motionStyle = {
     '--otto-pet-state-duration': `${totalStateDuration}ms`,
   } as React.CSSProperties;
+  const loginSpriteStyle: React.CSSProperties = {
+    backgroundImage: `url(${ottoLoginMascotUrl})`,
+    backgroundPosition: `${(loginFrameIndex % 2) * 100}% ${
+      Math.floor(loginFrameIndex / 2) * 100
+    }%`,
+  };
 
   if (variant === 'widget') {
     return (
@@ -250,15 +271,16 @@ export function OttoPetStage({
   return (
     <section
       className="otto-pet-stage otto-pet-stage--login"
-      aria-label="Otto 高清吉祥物"
+      aria-label="Otto 高清动画吉祥物"
       data-testid="otto-pet-stage"
       data-running={running ? 'true' : 'false'}
     >
       <div className="otto-pet-stage__scene">
-        <img
+        <div
           className="otto-pet-stage__login-mascot"
-          src={ottoLoginMascotUrl}
-          alt=""
+          style={loginSpriteStyle}
+          data-frame={loginFrameIndex}
+          data-reduced-motion={reducedMotion ? 'true' : 'false'}
           aria-hidden="true"
         />
       </div>

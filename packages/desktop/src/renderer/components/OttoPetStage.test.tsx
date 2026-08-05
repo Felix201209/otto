@@ -76,15 +76,29 @@ describe('OttoPetStage', () => {
     ).toBeTruthy();
   });
 
-  it('登录页使用独立高清吉祥物，并移除低分辨率图集和地面装饰', () => {
+  it('登录页使用独立高清四帧动画，并移除低分辨率图集和地面装饰', () => {
     const { container } = render(<OttoPetStage running={false} variant="login" />);
     const stage = container.querySelector<HTMLElement>('[data-testid="otto-pet-stage"]');
-    const mascot = container.querySelector<HTMLImageElement>('.otto-pet-stage__login-mascot');
+    const mascot = container.querySelector<HTMLElement>('.otto-pet-stage__login-mascot');
 
     expect(stage?.classList.contains('otto-pet-stage--login')).toBe(true);
     expect(container.querySelector('.otto-pet-stage__head')).toBeNull();
     expect(container.querySelector('.otto-pet-stage__floor')).toBeNull();
     expect(container.querySelector('.otto-pet-stage__sprite')).toBeNull();
-    expect(mascot?.src).toContain('otto-login-mascot-hd.png');
+    expect(mascot?.style.backgroundImage).toContain('otto-login-mascot-hd.png');
+    expect(mascot?.dataset.frame).toBe('0');
+
+    act(() => vi.advanceTimersByTime(900));
+    expect(mascot?.dataset.frame).toBe('1');
+    expect(mascot?.style.backgroundPosition).toBe('100% 0%');
+  });
+
+  it('系统要求减少动效时登录页固定在高清首帧', () => {
+    window.matchMedia = matchMedia(true);
+    const { container } = render(<OttoPetStage running={false} variant="login" />);
+    const mascot = container.querySelector<HTMLElement>('.otto-pet-stage__login-mascot');
+
+    act(() => vi.advanceTimersByTime(5000));
+    expect(mascot?.dataset.frame).toBe('0');
   });
 });
