@@ -185,10 +185,13 @@ export function CodeEditor({
   const [saved, setSaved] = useState(false);
   const [modified, setModified] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const previousContentRef = useRef(content);
   const lineCount = useMemo(() => editedContent.split('\n').length, [editedContent]);
   const language = useMemo(() => (filePath ? detectLanguage(filePath) : 'plaintext'), [filePath]);
 
   useEffect(() => {
+    if (previousContentRef.current === content) return;
+    previousContentRef.current = content;
     setEditedContent(content);
     setModified(false);
     setSaved(false);

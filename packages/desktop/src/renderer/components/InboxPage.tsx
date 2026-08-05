@@ -68,7 +68,7 @@ export function InboxPage({
     if (!hasAuth) return;
     try {
       const data = await window.otto.enterpriseMessagesUnread();
-      setNotifications(data);
+      setNotifications(Array.isArray(data) ? data : []);
     } catch { /* 网络错误不清空已有数据 */ }
   }, [hasAuth]);
 
@@ -174,8 +174,9 @@ export function InboxPage({
     setMessagesLoading(true);
     void window.otto.enterpriseMessagesList(selectedPeer).then((msgs) => {
       if (cancelled) return;
-      setMessages(msgs);
-      const last = msgs[msgs.length - 1];
+      const safeMessages = Array.isArray(msgs) ? msgs : [];
+      setMessages(safeMessages);
+      const last = safeMessages[safeMessages.length - 1];
       if (last) {
         setHistoryPeers((cur) => ({
           ...cur,

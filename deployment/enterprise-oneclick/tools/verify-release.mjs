@@ -39,7 +39,7 @@ try {
 if (
   manifest?.format !== 'otto-enterprise-release-v1'
   || typeof manifest.version !== 'string'
-  || manifest.releaseChannel !== 'lstc'
+  || !['stable', 'transition'].includes(manifest.releaseChannel)
   || !/^[0-9a-f]{40}$/.test(manifest.buildCommit || '')
   || typeof manifest.files !== 'object'
   || Array.isArray(manifest.files)

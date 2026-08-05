@@ -104,7 +104,7 @@ export function claimReadyOutboxRows(
   const database = store.db();
   ensureTable(database, now);
   const rows = database.prepare(
-    `SELECT * FROM control_command_outbox
+     `SELECT * FROM control_command_outbox
      WHERE state = 'pending'
        AND (next_attempt_at_ms IS NULL OR next_attempt_at_ms <= ?)
        AND delivery_attempts < ?

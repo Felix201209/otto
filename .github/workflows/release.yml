@@ -17,6 +17,19 @@ on:
         required: false
         type: boolean
         default: false
+      unsigned_mac_transition:
+        description: 'Build unsigned macOS transition artifacts when Apple signing is unavailable.'
+        required: false
+        type: boolean
+        default: false
+      release_channel:
+        description: 'Enterprise package release channel.'
+        required: false
+        type: choice
+        options:
+          - stable
+          - transition
+        default: stable
   push:
     tags:
       - 'v*.*.*'
@@ -124,16 +137,23 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Require the latest internal source commit
+      - name: Require a release source based on the latest internal commit
         shell: bash
         run: |
           set -euo pipefail
           git fetch --no-tags origin internal
           SOURCE_COMMIT="$(git rev-parse HEAD)"
           INTERNAL_COMMIT="$(git rev-parse origin/internal)"
-          if [ "$SOURCE_COMMIT" != "$INTERNAL_COMMIT" ]; then
-            echo "Release source must equal the latest origin/internal commit." >&2
+          if ! git merge-base --is-ancestor "$INTERNAL_COMMIT" "$SOURCE_COMMIT"; then
+            echo "Release source must contain the latest origin/internal commit." >&2
             echo "source=$SOURCE_COMMIT internal=$INTERNAL_COMMIT" >&2
+            exit 1
+          fi
+          if [ "$SOURCE_COMMIT" != "$INTERNAL_COMMIT" ] \
+            && [[ "$GITHUB_REF" != refs/heads/release/* ]] \
+            && [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+            echo "Commits beyond origin/internal may only be released from release/* branches or version tags." >&2
+            echo "ref=$GITHUB_REF source=$SOURCE_COMMIT internal=$INTERNAL_COMMIT" >&2
             exit 1
           fi
 
@@ -213,8 +233,10 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          OTTO_ALLOW_UNSIGNED_MAC: ${{ inputs.unsigned_mac_transition && '1' || '0' }}
 
       - name: Verify signed macOS disk images
+        if: ${{ inputs.unsigned_mac_transition != true }}
         shell: bash
         run: |
           set -euo pipefail
@@ -232,6 +254,7 @@ jobs:
         env:
           OTTO_LICENSE_PUBLIC_KEYS: ${{ secrets.OTTO_LICENSE_PUBLIC_KEYS }}
           OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY: ${{ secrets.OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY }}
+          OTTO_RELEASE_CHANNEL: ${{ inputs.release_channel || 'stable' }}
 
       - name: Verify release artifacts
         id: artifacts

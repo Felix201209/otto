@@ -156,7 +156,28 @@ describe('desktop packaging contract', () => {
       path.join(packageRoot, 'scripts', 'make-delivery-zip.mjs'),
       'utf8',
     );
-    expect(script).toContain("'--publish', 'never'");
+    expect(script).toMatch(/'--publish',\s*'never'/);
+  });
+
+  it('requires an explicit transition flag before disabling macOS signing', async () => {
+    const script = await readFile(
+      path.join(packageRoot, 'scripts', 'make-delivery-zip.mjs'),
+      'utf8',
+    );
+    const workflow = await readFile(
+      path.join(repoRoot, '.github', 'workflows', 'release.yml'),
+      'utf8',
+    );
+    expect(script).toContain("process.env.OTTO_ALLOW_UNSIGNED_MAC === '1'");
+    expect(script).toContain("'--config.mac.identity=null'");
+    expect(script).toContain("'--config.mac.hardenedRuntime=false'");
+    expect(script).toContain("'--config.mac.notarize=false'");
+    expect(script).toContain("'--config.dmg.sign=false'");
+    expect(script).toContain("CSC_IDENTITY_AUTO_DISCOVERY: 'false'");
+    expect(workflow).toContain('unsigned_mac_transition:');
+    expect(workflow).toContain(
+      "OTTO_ALLOW_UNSIGNED_MAC: ${{ inputs.unsigned_mac_transition && '1' || '0' }}",
+    );
   });
 
   it('publishes releases only after the update mirror and enterprise deploy pass', async () => {
@@ -191,6 +212,10 @@ describe('desktop packaging contract', () => {
     expect(workflow).toContain('sha256sum -c SHA256SUMS');
     expect(workflow).toContain('latest.json.next');
     expect(workflow).toContain('Windows no-proxy download');
+    expect(workflow).toContain(
+      'git merge-base --is-ancestor "$INTERNAL_COMMIT" "$SOURCE_COMMIT"',
+    );
+    expect(workflow).toContain('refs/heads/release/*');
     expect(workflow.indexOf('name: Upload workflow artifacts')).toBeLessThan(
       workflow.indexOf('name: Create draft GitHub release'),
     );

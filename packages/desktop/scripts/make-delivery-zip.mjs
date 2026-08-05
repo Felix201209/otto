@@ -80,10 +80,22 @@ const RELEASE_ASSET_NAMES = [...BUILD_ASSET_NAMES, 'latest.json'];
 const ARGS = process.argv.slice(2);
 const SHOULD_BUILD = ARGS.includes('--build');
 const SHOULD_PUBLISH = ARGS.includes('--publish');
+const ALLOW_UNSIGNED_MAC = process.env.OTTO_ALLOW_UNSIGNED_MAC === '1';
 const GITHUB_TOKEN = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
 const NPM_BIN = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const NPX_BIN = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 const EXEC_FILE_OPTIONS = process.platform === 'win32' ? { shell: true } : {};
+const UNSIGNED_MAC_BUILD_ARGS = ALLOW_UNSIGNED_MAC
+  ? [
+      '--config.mac.identity=null',
+      '--config.mac.hardenedRuntime=false',
+      '--config.mac.notarize=false',
+      '--config.dmg.sign=false',
+    ]
+  : [];
+const MAC_BUILD_ENV = ALLOW_UNSIGNED_MAC
+  ? { ...process.env, CSC_IDENTITY_AUTO_DISCOVERY: 'false' }
+  : process.env;
 
 // ── 辅助函数 ──────────────────────────────────────────────────────────────
 
@@ -356,10 +368,20 @@ async function build(sourceCommit) {
   log('BUILD', '构建 Mac arm64...');
   runBuildStep(
     NPX_BIN,
-    ['electron-builder', '--mac', 'dmg', '--arm64', '--publish', 'never'],
+    [
+      'electron-builder',
+      '--mac',
+      'dmg',
+      '--arm64',
+      ...UNSIGNED_MAC_BUILD_ARGS,
+      '--publish',
+      'never',
+    ],
     'mac-arm64',
-    process.env,
-    () => verifySignedMacApplication('mac-arm64'),
+    MAC_BUILD_ENV,
+    ALLOW_UNSIGNED_MAC
+      ? undefined
+      : () => verifySignedMacApplication('mac-arm64'),
   );
   execFileSync(
     process.execPath,
@@ -377,10 +399,20 @@ async function build(sourceCommit) {
   log('BUILD', '构建 Mac x64...');
   runBuildStep(
     NPX_BIN,
-    ['electron-builder', '--mac', 'dmg', '--x64', '--publish', 'never'],
+    [
+      'electron-builder',
+      '--mac',
+      'dmg',
+      '--x64',
+      ...UNSIGNED_MAC_BUILD_ARGS,
+      '--publish',
+      'never',
+    ],
     'mac',
-    process.env,
-    () => verifySignedMacApplication('mac'),
+    MAC_BUILD_ENV,
+    ALLOW_UNSIGNED_MAC
+      ? undefined
+      : () => verifySignedMacApplication('mac'),
   );
   execFileSync(
     process.execPath,

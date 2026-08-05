@@ -97,15 +97,25 @@ async function getJSON(
   return { status: res.status, body: await res.json() as ParkEndpointResponse };
 }
 
-async function createMemberHeaders(): Promise<Record<string, string>> {
-  const db = await import('./db.js');
-  const account = db.createAccount({
-    username: 'park-requester',
-    password: 'park-requester-password',
-    name: '园区服务申请人',
+async function createEnterpriseSession(
+  slug: string,
+): Promise<{ enterpriseId: string; headers: Record<string, string> }> {
+  const database = await import('./db.js');
+  const organization = database.createOrganization({
+    name: `Park endpoint tenant ${slug}`,
+    slug: `park-endpoint-${slug}`,
   });
-  const session = db.createAuthSession(account.id);
-  return { authorization: `Bearer ${session.token}` };
+  const account = database.createAccount({
+    organizationId: organization.id,
+    username: `park.endpoint.${slug}`,
+    password: `park-endpoint-${slug}-password`,
+    name: `Park endpoint member ${slug}`,
+  });
+  const session = database.createAuthSession(account.id);
+  return {
+    enterpriseId: organization.id,
+    headers: { authorization: `Bearer ${session.token}` },
+  };
 }
 
 // The first isolated import compiles the large enterprise graph under Vitest
@@ -198,6 +208,7 @@ describe('Park endpoints', { timeout: 30_000 }, () => {
   it('POST /enterprise/park/services/request auto-routes to specialist', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
     const adminHeaders = { 'x-otto-admin-token': ADMIN_TOKEN };
+    const tenant = await createEnterpriseSession('specialist');
 
     const { body: parkBody } = await postJSON(
       base, '/enterprise/park', { name: '服务园区' }, adminHeaders,
@@ -211,12 +222,11 @@ describe('Park endpoints', { timeout: 30_000 }, () => {
       adminHeaders,
     );
 
-    // Create service request as an authenticated member.
-    const memberHeaders = await createMemberHeaders();
+    // A signed-in enterprise member creates the request.
     const { status, body } = await postJSON(
       base, '/enterprise/park/services/request',
-      { parkId, enterpriseId: 'ent-1', type: '维修', description: '空调故障' },
-      memberHeaders,
+      { parkId, enterpriseId: tenant.enterpriseId, type: '维修', description: '空调故障' },
+      tenant.headers,
     );
     expect(status).toBe(201);
     expect(body.request.status).toBe('assigned');
@@ -226,6 +236,7 @@ describe('Park endpoints', { timeout: 30_000 }, () => {
   it('POST /enterprise/park/services/request falls back to admin when no specialist', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
     const adminHeaders = { 'x-otto-admin-token': ADMIN_TOKEN };
+    const tenant = await createEnterpriseSession('fallback');
 
     const { body: parkBody } = await postJSON(
       base, '/enterprise/park',
@@ -233,11 +244,15 @@ describe('Park endpoints', { timeout: 30_000 }, () => {
       adminHeaders,
     );
 
-    const memberHeaders = await createMemberHeaders();
     const { status, body } = await postJSON(
       base, '/enterprise/park/services/request',
-      { parkId: parkBody.park.id, enterpriseId: 'ent-1', type: '保洁', description: '打扫' },
-      memberHeaders,
+      {
+        parkId: parkBody.park.id,
+        enterpriseId: tenant.enterpriseId,
+        type: '保洁',
+        description: '打扫',
+      },
+      tenant.headers,
     );
     expect(status).toBe(201);
     expect(body.request.status).toBe('assigned');
@@ -247,6 +262,7 @@ describe('Park endpoints', { timeout: 30_000 }, () => {
   it('GET /enterprise/park/services lists requests and specialists', async () => {
     const { base } = await startIsolated(ADMIN_TOKEN);
     const adminHeaders = { 'x-otto-admin-token': ADMIN_TOKEN };
+    const tenant = await createEnterpriseSession('listing');
 
     const { body: parkBody } = await postJSON(
       base, '/enterprise/park', { name: '查询园区' }, adminHeaders,
@@ -260,11 +276,15 @@ describe('Park endpoints', { timeout: 30_000 }, () => {
     );
 
     // Create request
-    const memberHeaders = await createMemberHeaders();
     await postJSON(
       base, '/enterprise/park/services/request',
-      { parkId: parkBody.park.id, enterpriseId: 'ent-1', type: '维修', description: '修理' },
-      memberHeaders,
+      {
+        parkId: parkBody.park.id,
+        enterpriseId: tenant.enterpriseId,
+        type: '维修',
+        description: '修理',
+      },
+      tenant.headers,
     );
 
     const { status, body } = await getJSON(
@@ -275,6 +295,29 @@ describe('Park endpoints', { timeout: 30_000 }, () => {
     expect(body.requests).toHaveLength(1);
     expect(body.specialists).toHaveLength(1);
     expect(body.specialists[0].userId).toBe('s1');
+  });
+
+  it('POST /enterprise/park/services/request rejects cross-organization spoofing', async () => {
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const adminHeaders = { 'x-otto-admin-token': ADMIN_TOKEN };
+    const tenant = await createEnterpriseSession('spoofing');
+    const { body: parkBody } = await postJSON(
+      base, '/enterprise/park', { name: 'Spoofing test park' }, adminHeaders,
+    );
+
+    const { status } = await postJSON(
+      base,
+      '/enterprise/park/services/request',
+      {
+        parkId: parkBody.park.id,
+        enterpriseId: 'another-enterprise',
+        type: 'repair',
+        description: 'must be rejected',
+      },
+      tenant.headers,
+    );
+
+    expect(status).toBe(403);
   });
 
   it('POST /enterprise/park/services/assign is admin-only', async () => {

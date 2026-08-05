@@ -159,7 +159,7 @@ describe('enterprise one-click service layout', () => {
 });
 
 describe('enterprise one-click schema contract', () => {
-  it('derives one LSTC schema contract from the server source and release manifest', () => {
+  it('derives one enterprise schema contract from the server source and release manifest', () => {
     const bundle = readFileSync(BUNDLE_SCRIPT, 'utf8');
     const serverDatabase = SERVER_DATABASE_SOURCE;
     const databaseTool = readFileSync(DB_TOOL, 'utf8');
@@ -169,7 +169,9 @@ describe('enterprise one-click schema contract', () => {
     const installer = readFileSync(INSTALL_SH, 'utf8');
     const exporter = readFileSync(EXPORT_MIGRATION_SH, 'utf8');
 
-    expect(bundle).toContain("const releaseChannel = 'lstc'");
+    expect(bundle).toContain(
+      "const releaseChannel = process.env.OTTO_RELEASE_CHANNEL?.trim() || 'stable'",
+    );
     expect(serverDatabase).toContain(
       `export const ENTERPRISE_SCHEMA_VERSION = ${ENTERPRISE_SCHEMA_VERSION}`,
     );
@@ -189,7 +191,9 @@ describe('enterprise one-click schema contract', () => {
     expect(healthCheck).toContain('body.apiVersion !== 4');
     expect(healthCheck).toContain('body.schemaVersion !== expectedSchema');
     expect(verifyRelease).toContain('manifest.database.schemaTo - 1');
-    expect(verifyRelease).toContain("manifest.releaseChannel !== 'lstc'");
+    expect(verifyRelease).toContain(
+      "!['stable', 'transition'].includes(manifest.releaseChannel)",
+    );
     expect(installer).toContain('RELEASE_SCHEMA_TO=');
     expect(installer).toContain('"$IMPORT_SCHEMA" -le "$RELEASE_SCHEMA_TO"');
     expect(exporter).toContain('SCHEMA_TO=');
@@ -314,13 +318,13 @@ describe('enterprise one-click schema contract', () => {
     }
   });
 
-  it('rejects a release manifest that omits LSTC or has an inconsistent schema range', () => {
+  it('rejects a release manifest that omits its channel or has an inconsistent schema range', () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-oneclick-manifest-'));
     try {
       const manifest = {
         format: 'otto-enterprise-release-v1',
         version: '1.9.0-test',
-        releaseChannel: 'lstc',
+        releaseChannel: 'transition',
         buildCommit: '0'.repeat(40),
         sourceCommit: '1'.repeat(40),
         database: {
@@ -344,7 +348,7 @@ describe('enterprise one-click schema contract', () => {
       expect(valid.status, valid.stderr).toBe(0);
       expect(JSON.parse(valid.stdout)).toMatchObject({
         ok: true,
-        releaseChannel: 'lstc',
+        releaseChannel: 'transition',
         database: {
           schemaFrom: SUPPORTED_SCHEMA_VERSIONS,
           schemaTo: ENTERPRISE_SCHEMA_VERSION,

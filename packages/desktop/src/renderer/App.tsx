@@ -283,7 +283,8 @@ function OttoWorkspaceApp({
       if (polling || cancelled) return;
       polling = true;
       try {
-        const notifications = await window.otto.enterpriseMessagesUnread();
+        const response = await window.otto.enterpriseMessagesUnread();
+        const notifications = Array.isArray(response) ? response : [];
         if (!cancelled) await tracker.reconcile(notifications);
       } catch {
       } finally {

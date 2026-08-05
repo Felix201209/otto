@@ -136,10 +136,21 @@ export async function handleSimpleParkCompatibilityRoute({
     }
     const body = await readBody(req);
     const parkId = typeof body.parkId === 'string' ? body.parkId : '';
+    const requestedEnterpriseId =
+      typeof body.enterpriseId === 'string' ? body.enterpriseId : '';
     const type = typeof body.type === 'string' ? body.type : '';
     const description = typeof body.description === 'string' ? body.description : '';
     if (!parkId || !type || !description) {
       sendJSON(res, 400, { error: '园区ID、服务类型和描述不能为空' });
+      return true;
+    }
+    if (
+      requestedEnterpriseId &&
+      requestedEnterpriseId !== memberAccount.organizationId
+    ) {
+      sendJSON(res, 403, {
+        error: 'forbidden: service request organization must match the signed-in account',
+      });
       return true;
     }
     const request = simplePark.createServiceRequest({

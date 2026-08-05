@@ -59,6 +59,7 @@ const MEMBER_ROUTES = new Set([
   '/enterprise/presence/heartbeat',
   '/enterprise/organization/sync',
   '/enterprise/park/view',
+  '/enterprise/park/services/request',
   '/enterprise/messages/unread',
   '/enterprise/auth/join-organization',
   '/enterprise/park-resources',
