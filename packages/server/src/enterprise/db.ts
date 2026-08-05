@@ -43,6 +43,11 @@ import {
   MODEL_GATEWAY_SCHEMA_CONTRIBUTOR,
 } from '../modules/model_gateway/index.js';
 import {
+  createControlCommandBoundary,
+  type ControlCommandBoundary,
+  type ControlCommandBoundaryDeps,
+} from '../modules/control_commands/index.js';
+import {
   createPersonalIntelligenceComposition,
   createWorklogSchemaContributor,
   ESTIMATE,
@@ -366,6 +371,21 @@ export function closeEnterpriseDatabase(): void {
 }
 
 export const getDB = dataPlatform.getDatabase;
+
+export type EnterpriseControlCommandBoundaryOptions = Omit<
+  ControlCommandBoundaryDeps,
+  'db'
+>;
+
+/** Keep database wiring inside the enterprise composition root. */
+export function createEnterpriseControlCommandBoundary(
+  options: EnterpriseControlCommandBoundaryOptions,
+): ControlCommandBoundary {
+  return createControlCommandBoundary({
+    ...options,
+    db: getDB,
+  });
+}
 
 /** 执行真实读查询，供 HTTP readiness 判断数据库与 schema 是否可用。 */
 export const getDatabaseReadiness = dataPlatform.getReadiness;

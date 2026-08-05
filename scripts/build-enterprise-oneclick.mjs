@@ -50,7 +50,12 @@ const supportedSchemaFrom = Array.from(
   { length: schemaVersion - 1 },
   (_, index) => index + 2,
 );
-const releaseChannel = 'lstc';
+const releaseChannel = process.env.OTTO_RELEASE_CHANNEL?.trim() || 'stable';
+if (!['stable', 'transition'].includes(releaseChannel)) {
+  throw new Error(
+    'OTTO_RELEASE_CHANNEL must be either stable or transition',
+  );
+}
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const allowUnsignedEnterprisePackage =
   process.env.OTTO_ALLOW_UNSIGNED_ENTERPRISE_PACKAGE === '1';

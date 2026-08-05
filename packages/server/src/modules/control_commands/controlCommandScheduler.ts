@@ -99,17 +99,7 @@ export function createControlCommandScheduler(
       const result = deps.execute(envelope);
       completeControlCommandInRepository(deps.queue, row.command_id, result);
 
-      // 投递完成后，把回执写入 outbox（异步投递意图）。
-      const receipt = buildControlCommandReceipt({
-        commandId: row.command_id,
-        deploymentId: row.deployment_id,
-        executionVersion: 1,
-        status: result.status,
-        resultSummary: result.resultSummary,
-        ...(result.resourceId ? { resourceId: result.resourceId } : {}),
-        ...(result.errorCategory ? { errorCategory: result.errorCategory } : {}),
-        ...(deps.signingPrivateKey ? { signingPrivateKey: deps.signingPrivateKey } : {}),
-      });
+      // 执行结果已持久化；outbox 投递时从队列表重建签名回执。
       enqueueOutboxInRepository(deps.outbox, row.command_id, now());
       return { executed: true };
     } catch (e) {

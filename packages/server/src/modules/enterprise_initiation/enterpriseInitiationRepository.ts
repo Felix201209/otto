@@ -19,7 +19,6 @@
 import type { Database } from '../data_platform/index.js';
 import {
   getSystemRole,
-  SYSTEM_ROLE_REGISTRY_VERSION,
   validateRequestedRoleAssignment,
   type SystemRoleDefinition,
   type SystemRoleKey,
@@ -344,4 +343,3 @@ function insertDepartmentIfSupported(
     // 组织结构表未建（或该表结构不同）——默认部门作为弹性步骤跳过。
   }
 }
-

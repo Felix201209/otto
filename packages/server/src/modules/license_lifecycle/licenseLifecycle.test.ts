@@ -13,7 +13,6 @@ import {
   revocationPolicy,
   licenseCanTransition,
   decideLicenseChange,
-  decideOffline,
   revokeNow,
   licenseAccessPolicy,
   validateSignedLicenseTrust,
@@ -135,7 +134,7 @@ describe('CONTROL-11 License 生命周期', () => {
 });
 
 describe('CONTROL-11 签名密钥轮换 + 回滚防护', () => {
-  function keys(kp: { keyId: string; publicKey: string }[]): TrustedSigningKey[] {
+  function keys(kp: Array<{ keyId: string; publicKey: string }>): TrustedSigningKey[] {
     return kp.map((k, i) => ({
       keyId: k.keyId,
       publicKey: k.publicKey,

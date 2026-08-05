@@ -1,4 +1,4 @@
-# Otto Enterprise LSTC 私有化部署包
+# Otto Enterprise 私有化部署包
 
 这是一套面向 Ubuntu 22.04/24.04 的“上传、填配置、执行一条安装命令”迁移包。它会安装固定并校验过 SHA-256 的 Node.js 22 LTS、最小企业服务、systemd 单元，并可选配置 Caddy HTTPS。
 
@@ -8,7 +8,7 @@
 
 - 只支持 `amd64/x86_64` 与 `arm64/aarch64`。
 - 默认面向全新服务器。完全相同 build 重跑时只验收、不重启；检测到不同的现有 Otto 安装会拒绝覆盖。
-- 这是“当前服务器原样迁入新机器”的 LSTC 包。实际可导入版本及目标版本以同一发布包内 `release/manifest.json` 的 `database.schemaFrom`、`database.schemaTo` 为准，安装器会在隔离副本上迁移并拒绝未声明或未来版本。
+- 这是“当前服务器原样迁入新机器”的过渡发布包。实际可导入版本及目标版本以同一发布包内 `release/manifest.json` 的 `database.schemaFrom`、`database.schemaTo` 为准，安装器会在隔离副本上迁移并拒绝未声明或未来版本。
 - 数据导出使用 SQLite Online Backup API，不直接复制正在写入的 `data.db`。
 - 导入先在隔离目录迁移，再在 `127.0.0.1:17777` 启动 canary；schema、外键、数据行数和 health 全部通过后才安装。
 - 服务只监听 `127.0.0.1:7778`，公网必须经过 HTTPS 反向代理。

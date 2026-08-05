@@ -13,6 +13,7 @@ export interface SimpleParkCompatibilityRouteDeps {
   res: ServerResponse;
   url: URL;
   adminPrincipal: SimpleParkCompatibilityPrincipal | null;
+  memberAccount: db.AccountView | null;
   isPublicSimplePark: boolean;
   readBody(req: IncomingMessage): Promise<Record<string, unknown>>;
   sendJSON(res: ServerResponse, status: number, data: unknown): void;
@@ -26,6 +27,7 @@ export async function handleSimpleParkCompatibilityRoute({
   res,
   url,
   adminPrincipal,
+  memberAccount,
   isPublicSimplePark,
   readBody,
   sendJSON,
@@ -135,6 +137,12 @@ export async function handleSimpleParkCompatibilityRoute({
     const description = typeof body.description === 'string' ? body.description : '';
     if (!parkId || !enterpriseId || !type || !description) {
       sendJSON(res, 400, { error: '园区ID、企业ID、服务类型和描述不能为空' });
+      return true;
+    }
+    if (!memberAccount || memberAccount.organizationId !== enterpriseId) {
+      sendJSON(res, 403, {
+        error: 'forbidden: service request organization must match the signed-in account',
+      });
       return true;
     }
     const request = simplePark.createServiceRequest({ parkId, enterpriseId, type, description });

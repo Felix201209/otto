@@ -5,9 +5,10 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { resolveUpdateAssetBaseUrl } from './update-mirror-config.mjs';
 
-const REQUIRED_ASSETS = [
+const AVAILABLE_ASSETS = [
   {
     key: 'win-x64',
     fileName(version) {
@@ -28,6 +29,17 @@ const REQUIRED_ASSETS = [
   },
 ];
 
+function resolveRequiredAssets(candidate = process.env.OTTO_UPDATE_REQUIRED_ASSETS) {
+  if (!candidate?.trim()) return AVAILABLE_ASSETS;
+  const keys = [...new Set(candidate.split(',').map((key) => key.trim()).filter(Boolean))];
+  if (keys.length === 0) throw new Error('OTTO_UPDATE_REQUIRED_ASSETS must not be empty');
+  return keys.map((key) => {
+    const asset = AVAILABLE_ASSETS.find((candidateAsset) => candidateAsset.key === key);
+    if (!asset) throw new Error(`unknown required update asset: ${key}`);
+    return asset;
+  });
+}
+
 function sha256(file) {
   return createHash('sha256').update(readFileSync(file)).digest('hex');
 }
@@ -44,6 +56,7 @@ export function verifyUpdateManifest({
   releaseDir,
   version,
   assetBaseUrl = resolveUpdateAssetBaseUrl(),
+  requiredAssets = resolveRequiredAssets(),
 } = {}) {
   if (!releaseDir) throw new Error('releaseDir is required');
   if (!version) throw new Error('version is required');
@@ -61,7 +74,7 @@ export function verifyUpdateManifest({
     throw new Error('latest.json missing assets object');
   }
 
-  for (const required of REQUIRED_ASSETS) {
+  for (const required of requiredAssets) {
     const expectedName = required.fileName(version);
     const asset = manifest.assets[required.key];
     if (!asset || typeof asset !== 'object') {
@@ -96,11 +109,14 @@ export function verifyUpdateManifest({
 
   return {
     version: manifest.version,
-    assets: REQUIRED_ASSETS.map((asset) => asset.key),
+    assets: requiredAssets.map((asset) => asset.key),
   };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (
+  process.argv[1]
+  && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])
+) {
   const [releaseDir = 'release', version] = process.argv.slice(2);
   try {
     const result = verifyUpdateManifest({ releaseDir, version });

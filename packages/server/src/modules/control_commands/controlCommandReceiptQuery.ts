@@ -17,10 +17,7 @@ import {
   buildControlCommandReceipt,
   type ControlCommandReceipt,
 } from './controlCommandReceipt.js';
-import type {
-  ControlCommandQueueStore,
-  QueuedControlCommandRow,
-} from './controlCommandQueue.js';
+import type { ControlCommandQueueStore } from './controlCommandQueue.js';
 
 /** 队列表中回执所需的列。 */
 export interface StoredControlCommandReceiptRow {
@@ -40,8 +37,6 @@ const TERMINAL_STATUSES = new Set([
   'expired',
   'cancelled',
 ]);
-
-const EXECUTION_VERSION_COLUMN = 'execution_version';
 
 /** 建队列主表（含 execution_version 列）。与 controlCommandQueue 保持同 schema。 */
 const QUEUE_TABLE_CREATE = `

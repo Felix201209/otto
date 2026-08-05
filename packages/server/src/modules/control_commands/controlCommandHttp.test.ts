@@ -13,8 +13,6 @@ import {
   handleControlCommandRoute,
   parseEnvelope,
   enqueueOutboxInRepository,
-  type ControlCommandQueueStore,
-  type ControlCommandOutboxStore,
   type ControlCommandEnvelope,
   type ControlCommandRunResult,
 } from './index.js';
@@ -198,8 +196,6 @@ describe('control command HTTP endpoint (CONTROL-12)', () => {
 
   it('集成：POST → drain → outbox → receipts 200', async () => {
     const db = new Database(':memory:');
-    const queue: ControlCommandQueueStore = { db: () => db, now: () => NOW_MS };
-    const outbox: ControlCommandOutboxStore = { db: () => db };
     const { processor } = makeServices({ db });
     const services = {
       submit: (e: ControlCommandEnvelope) => {

@@ -68,7 +68,8 @@ describe('authorization module boundary', () => {
       '/enterprise/park/services/request',
       'POST',
       new URL('http://localhost/enterprise/park/services/request'),
-    )).toBe(true);
+    )).toBe(false);
+    expect(authorization.isMemberRoute('/enterprise/park/services/request')).toBe(true);
 
     expect(authorization.isPublicSimpleParkRoute(
       '/enterprise/park/join',

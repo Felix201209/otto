@@ -18,7 +18,6 @@ import { createTicketEscalationSchemaContributor } from './ticketEscalationSchem
 import { TicketEscalationFacade } from './ticketEscalationFacade.js';
 import type {
   EscalationChannelSender,
-  EscalationJob,
 } from './ticketEscalationTypes.js';
 
 const DEFAULT_ORG = 'org-default';
@@ -51,7 +50,7 @@ function createHarness(senders: {
 
   const sent: Array<{ channel: string; recipient: string; title: string; body: string; time: Date }> =
     [];
-  let clock = new Date('2026-08-04T00:00:00Z');
+  const clock = new Date('2026-08-04T00:00:00Z');
   const now = () => clock;
 
   const facade = new TicketEscalationFacade(store, {

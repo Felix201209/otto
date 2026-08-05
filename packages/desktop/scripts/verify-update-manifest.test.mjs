@@ -1,12 +1,17 @@
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DEFAULT_UPDATE_ASSET_BASE_URL } from './update-mirror-config.mjs';
 import { verifyUpdateManifest } from './verify-update-manifest.mjs';
 
 const tempDirs = [];
+const scriptPath = fileURLToPath(
+  new URL('./verify-update-manifest.mjs', import.meta.url),
+);
 
 afterEach(async () => {
   await Promise.all(
@@ -57,6 +62,30 @@ describe('verify-update-manifest', () => {
       version,
       assets: ['win-x64', 'mac-arm64', 'mac-x64'],
     });
+  });
+
+  it('verifies an explicitly selected Windows-only transition asset', async () => {
+    const { dir, version } = await writeFixtureRelease();
+    await rewriteManifest(dir, (manifest) => {
+      manifest.assets = { 'win-x64': manifest.assets['win-x64'] };
+    });
+
+    expect(verifyUpdateManifest({
+      releaseDir: dir,
+      version,
+      requiredAssets: [{
+        key: 'win-x64',
+        fileName: (targetVersion) => `Otto-Setup-${targetVersion}-win-x64.exe`,
+      }],
+    })).toEqual({ version, assets: ['win-x64'] });
+  });
+
+  it('runs the verifier when invoked directly on Windows', async () => {
+    const { dir, version } = await writeFixtureRelease();
+    const output = execFileSync(process.execPath, [scriptPath, dir, version], {
+      encoding: 'utf8',
+    });
+    expect(output).toContain(`[verify-update-manifest] ok version=${version}`);
   });
 
   it('rejects manifest key drift before release upload', async () => {

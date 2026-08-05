@@ -18,6 +18,20 @@ import * as path from 'node:path';
 import { resolveUpdateAssetBaseUrl } from './update-mirror-config.mjs';
 
 const UPDATE_ASSET_BASE_URL = resolveUpdateAssetBaseUrl();
+const ASSET_DEFINITIONS = {
+  'win-x64': (targetVersion) => `Otto-Setup-${targetVersion}-win-x64.exe`,
+  'mac-arm64': (targetVersion) => `Otto-${targetVersion}-arm64.dmg`,
+  'mac-x64': (targetVersion) => `Otto-${targetVersion}-x64.dmg`,
+};
+
+function selectedAssetKeys(candidate = process.env.OTTO_UPDATE_REQUIRED_ASSETS) {
+  if (!candidate?.trim()) return Object.keys(ASSET_DEFINITIONS);
+  const keys = [...new Set(candidate.split(',').map((key) => key.trim()).filter(Boolean))];
+  if (keys.length === 0 || keys.some((key) => !(key in ASSET_DEFINITIONS))) {
+    throw new Error(`Invalid OTTO_UPDATE_REQUIRED_ASSETS: ${candidate}`);
+  }
+  return keys;
+}
 
 const [version, notesFile, outDir = 'release'] = process.argv.slice(2);
 if (!version || !notesFile) {
@@ -46,21 +60,22 @@ async function assetEntry(fileName) {
 
 const { readFile } = await import('node:fs/promises');
 const notes = await readFile(notesFile, 'utf8');
+const assetKeys = selectedAssetKeys();
+const assets = {};
+for (const key of assetKeys) {
+  assets[key] = await assetEntry(ASSET_DEFINITIONS[key](version));
+}
 
 const manifest = {
   version,
   notes,
   publishedAt: new Date().toISOString(),
-  assets: {
-    'win-x64': await assetEntry(`Otto-Setup-${version}-win-x64.exe`),
-    'mac-arm64': await assetEntry(`Otto-${version}-arm64.dmg`),
-    'mac-x64': await assetEntry(`Otto-${version}-x64.dmg`),
-  },
+  assets,
 };
 
 const out = path.join(outDir, 'latest.json');
 await writeFile(out, `${JSON.stringify(manifest, null, 2)}\n`);
 console.log(`已生成 ${out}`);
-console.log(`  win-x64:   ${manifest.assets['win-x64'].size} bytes  sha256=${manifest.assets['win-x64'].sha256}`);
-console.log(`  mac-arm64: ${manifest.assets['mac-arm64'].size} bytes  sha256=${manifest.assets['mac-arm64'].sha256}`);
-console.log(`  mac-x64:   ${manifest.assets['mac-x64'].size} bytes  sha256=${manifest.assets['mac-x64'].sha256}`);
+for (const key of assetKeys) {
+  console.log(`  ${key}: ${manifest.assets[key].size} bytes  sha256=${manifest.assets[key].sha256}`);
+}
