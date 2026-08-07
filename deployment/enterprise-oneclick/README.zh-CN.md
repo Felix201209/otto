@@ -123,6 +123,16 @@ chmod 600 ./enterprise.env
 
 这些可选项留空不会阻止报修记录写入，但对应的外部通知通道不会发送。安装器会把它们写入 `/etc/otto-enterprise/enterprise.env`，不会放进迁移包或日志。
 
+跨私有服务器联邦为可选配置：
+
+- `OTTO_FEDERATION_ENABLED`：仅在已完成 Control 联邦网关注册和验签配置后设为 `1`；
+- `OTTO_FEDERATION_GATEWAY_URL`：Control 联邦网关的 HTTPS 地址；
+- `OTTO_FEDERATION_DISPLAY_NAME`：该私有部署在联邦目录中展示的名称；
+- `OTTO_FEDERATION_POLL_INTERVAL_MS`：离线消息领取间隔，留空使用服务端安全默认值；
+- `OTTO_FEDERATION_SIGNING_KEY_FILE`：部署签名私钥的绝对路径，文件不得是符号链接且只能由服务账号读取。
+
+未启用联邦时应保留 `OTTO_FEDERATION_ENABLED=0`。安装和升级会原样保存上述配置，但不会自动生成签名私钥，也不会绕过 Control 的部署注册与吊销检查。
+
 `OTTO_ENTERPRISE_ADMIN_TOKEN=auto` 会生成不输出到日志的随机平台令牌。迁移库已有管理员账号时不会重建账号；空库会生成一次性管理员密码，安装结束后只写到 `/root/otto-enterprise-bootstrap-*.txt`。
 
 `external` 表示你自行管理 Nginx/Caddy/负载均衡器。安装器不会验证外置证书、公网 health 或 404 屏蔽规则，完成提示也会明确标为“待外置代理验收”。
