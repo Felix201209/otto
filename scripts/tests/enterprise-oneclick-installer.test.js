@@ -54,7 +54,9 @@ const ENTERPRISE_SCHEMA_VERSION = Number(
   )?.[1],
 );
 if (!Number.isInteger(ENTERPRISE_SCHEMA_VERSION)) {
-  throw new Error('unable to resolve ENTERPRISE_SCHEMA_VERSION for release tests');
+  throw new Error(
+    'unable to resolve ENTERPRISE_SCHEMA_VERSION for release tests',
+  );
 }
 const SUPPORTED_SCHEMA_VERSIONS = Array.from(
   { length: ENTERPRISE_SCHEMA_VERSION - 1 },
@@ -471,6 +473,11 @@ describe('enterprise one-click runtime configuration contract', () => {
       'OTTO_FIELD_ENCRYPTION_KEY_FILE',
       'OTTO_TELEMETRY_ENDPOINT',
       'OTTO_TELEMETRY_RETENTION_DAYS',
+      'OTTO_FEDERATION_ENABLED',
+      'OTTO_FEDERATION_GATEWAY_URL',
+      'OTTO_FEDERATION_DISPLAY_NAME',
+      'OTTO_FEDERATION_POLL_INTERVAL_MS',
+      'OTTO_FEDERATION_SIGNING_KEY_FILE',
       'OTTO_DATA_CONTROLLER_NAME',
       'OTTO_PRIVACY_CONTACT',
       'OTTO_LEGAL_DOCUMENTS_APPROVED',
@@ -536,6 +543,17 @@ describe('enterprise one-click health contract', () => {
 });
 
 describe('enterprise one-click provenance contract', () => {
+  it('normalizes executable modes inside archives built on Windows', () => {
+    const bundle = readFileSync(BUNDLE_SCRIPT, 'utf8');
+
+    expect(bundle).toContain('function normalizeArchiveExecutableModes(');
+    expect(bundle).toContain('writeTarMode(tar, entry.offset, mode)');
+    expect(bundle).toContain("'release/run.mjs'");
+    expect(bundle).toMatch(
+      /normalizeArchiveExecutableModes\(\s*archive,\s*finalPackageName,\s*executableFiles\s*\);/,
+    );
+  });
+
   it('tracks every root build input in both dirty scope and source hashes', () => {
     const bundle = readFileSync(BUNDLE_SCRIPT, 'utf8');
     const sourceScope =

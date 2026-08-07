@@ -21,7 +21,7 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { gunzipSync } from 'node:zlib';
+import { gunzipSync, gzipSync } from 'node:zlib';
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -52,9 +52,7 @@ const supportedSchemaFrom = Array.from(
 );
 const releaseChannel = process.env.OTTO_RELEASE_CHANNEL?.trim() || 'stable';
 if (!['stable', 'transition'].includes(releaseChannel)) {
-  throw new Error(
-    'OTTO_RELEASE_CHANNEL must be either stable or transition',
-  );
+  throw new Error('OTTO_RELEASE_CHANNEL must be either stable or transition');
 }
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const allowUnsignedEnterprisePackage =
@@ -135,6 +133,78 @@ function sha(bufferOrString, algorithm = 'sha256') {
 
 function shaFile(file, algorithm = 'sha256') {
   return sha(readFileSync(file), algorithm);
+}
+
+function tarString(buffer, start, length) {
+  const end = buffer.indexOf(0, start);
+  return buffer
+    .subarray(start, end === -1 || end > start + length ? start + length : end)
+    .toString('utf8');
+}
+
+function tarEntries(buffer) {
+  const entries = [];
+  for (let offset = 0; offset + 512 <= buffer.length;) {
+    const header = buffer.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const name = tarString(header, 0, 100);
+    const prefix = tarString(header, 345, 155);
+    const sizeText = tarString(header, 124, 12).trim();
+    const size = sizeText ? Number.parseInt(sizeText, 8) : 0;
+    if (!Number.isSafeInteger(size) || size < 0) {
+      throw new Error(`invalid tar entry size for ${prefix}/${name}`);
+    }
+    entries.push({
+      offset,
+      path: prefix ? `${prefix}/${name}` : name,
+      mode: Number.parseInt(tarString(header, 100, 8).trim() || '0', 8),
+    });
+    offset += 512 + Math.ceil(size / 512) * 512;
+  }
+  return entries;
+}
+
+function writeTarMode(buffer, headerOffset, mode) {
+  const header = buffer.subarray(headerOffset, headerOffset + 512);
+  header.fill(0, 100, 108);
+  header.write(`${mode.toString(8).padStart(7, '0')}\0`, 100, 8, 'ascii');
+  header.fill(0x20, 148, 156);
+  let checksum = 0;
+  for (const byte of header) checksum += byte;
+  header.write(`${checksum.toString(8).padStart(6, '0')}\0 `, 148, 8, 'ascii');
+}
+
+function normalizeArchiveExecutableModes(archive, packageName, executables) {
+  const tar = Buffer.from(gunzipSync(readFileSync(archive)));
+  const expected = new Map(
+    executables.map((relative) => [`${packageName}/${relative}`, 0o755]),
+  );
+  for (const entry of tarEntries(tar)) {
+    const mode = expected.get(entry.path);
+    if (mode === undefined) continue;
+    writeTarMode(tar, entry.offset, mode);
+    expected.delete(entry.path);
+  }
+  if (expected.size > 0) {
+    throw new Error(
+      `archive is missing executable entries: ${[...expected.keys()].join(', ')}`,
+    );
+  }
+  writeFileSync(archive, gzipSync(tar, { level: 9 }));
+
+  const incorrect = tarEntries(gunzipSync(readFileSync(archive))).filter(
+    (entry) =>
+      executables.some(
+        (relative) => entry.path === `${packageName}/${relative}`,
+      ) && (entry.mode & 0o111) === 0,
+  );
+  if (incorrect.length > 0) {
+    throw new Error(
+      `archive executable modes were not preserved: ${incorrect
+        .map((entry) => entry.path)
+        .join(', ')}`,
+    );
+  }
 }
 
 function filesBelow(root, current = root) {
@@ -488,7 +558,7 @@ export class FeatureFlagManager {
       .join('\n')}\n`,
   );
 
-  for (const script of [
+  const executableFiles = [
     'install.sh',
     'upgrade.sh',
     'export-migration.sh',
@@ -500,7 +570,9 @@ export class FeatureFlagManager {
     'tools/verify-release.mjs',
     'tools/migrate-check.mjs',
     'tools/health-check.mjs',
-  ]) {
+    'release/run.mjs',
+  ];
+  for (const script of executableFiles) {
     chmodSync(path.join(finalPackageRoot, script), 0o755);
   }
 
@@ -540,6 +612,7 @@ export class FeatureFlagManager {
       },
     },
   );
+  normalizeArchiveExecutableModes(archive, finalPackageName, executableFiles);
   const archiveTar = gunzipSync(readFileSync(archive));
   for (const forbiddenMetadataMarker of [
     'LIBARCHIVE.xattr.',
