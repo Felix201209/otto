@@ -615,6 +615,31 @@ describe('enterprise one-click schema contract', () => {
     expect(rowComparison).toBeGreaterThan(migration);
     expect(finalInstall).toBeGreaterThan(rowComparison);
   });
+
+  it('takes a consistent database snapshot before a formal cutover', () => {
+    const upgrader = readFileSync(UPGRADE_SH, 'utf8');
+    const stopBeforeSnapshot = upgrader.indexOf(
+      'systemctl stop otto-enterprise\n  SERVICE_STOPPED=1',
+    );
+    const sqliteSnapshot = upgrader.indexOf(
+      '"${SCRIPT_DIR}/tools/db-tool.mjs" backup',
+    );
+    const migration = upgrader.indexOf(
+      '"${SCRIPT_DIR}/tools/migrate-check.mjs"',
+    );
+    const cutover = upgrader.indexOf(
+      '"${CANARY_DIR}/data.db" "${DATA_DIR}/data.db"',
+    );
+
+    expect(stopBeforeSnapshot).toBeGreaterThan(-1);
+    expect(sqliteSnapshot).toBeGreaterThan(stopBeforeSnapshot);
+    expect(migration).toBeGreaterThan(sqliteSnapshot);
+    expect(cutover).toBeGreaterThan(migration);
+    expect(upgrader).toContain(
+      'if [ "$SERVICE_STOPPED" -eq 1 ]; then\n      systemctl daemon-reload',
+    );
+    expect(upgrader).toContain('UPGRADE_SUCCEEDED=1');
+  });
 });
 
 describe('enterprise one-click runtime configuration contract', () => {
