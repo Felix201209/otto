@@ -174,8 +174,8 @@ function writeTarMode(buffer, headerOffset, mode) {
   header.write(`${checksum.toString(8).padStart(6, '0')}\0 `, 148, 8, 'ascii');
 }
 
-function normalizeArchiveExecutableModes(archive, packageName, executables) {
-  const tar = Buffer.from(gunzipSync(readFileSync(archive)));
+function normalizeTarExecutableModes(tarPath, packageName, executables) {
+  const tar = Buffer.from(readFileSync(tarPath));
   const expected = new Map(
     executables.map((relative) => [`${packageName}/${relative}`, 0o755]),
   );
@@ -190,9 +190,9 @@ function normalizeArchiveExecutableModes(archive, packageName, executables) {
       `archive is missing executable entries: ${[...expected.keys()].join(', ')}`,
     );
   }
-  writeFileSync(archive, gzipSync(tar, { level: 9 }));
+  writeFileSync(tarPath, tar);
 
-  const incorrect = tarEntries(gunzipSync(readFileSync(archive))).filter(
+  const incorrect = tarEntries(readFileSync(tarPath)).filter(
     (entry) =>
       executables.some(
         (relative) => entry.path === `${packageName}/${relative}`,
@@ -602,9 +602,10 @@ export class FeatureFlagManager {
       `deliverable already exists, refusing overwrite: ${archive}`,
     );
   }
+  const temporaryTar = path.join(temporaryRoot, `${finalPackageName}.tar`);
   run(
     'tar',
-    ['--no-xattrs', '-czf', archive, '-C', temporaryRoot, finalPackageName],
+    ['--no-xattrs', '-cf', temporaryTar, '-C', temporaryRoot, finalPackageName],
     {
       env: {
         ...process.env,
@@ -612,7 +613,8 @@ export class FeatureFlagManager {
       },
     },
   );
-  normalizeArchiveExecutableModes(archive, finalPackageName, executableFiles);
+  normalizeTarExecutableModes(temporaryTar, finalPackageName, executableFiles);
+  writeFileSync(archive, gzipSync(readFileSync(temporaryTar), { level: 9 }));
   const archiveTar = gunzipSync(readFileSync(archive));
   for (const forbiddenMetadataMarker of [
     'LIBARCHIVE.xattr.',
