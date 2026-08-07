@@ -479,6 +479,23 @@ describe('enterprise one-click schema contract', () => {
 });
 
 describe('enterprise one-click runtime configuration contract', () => {
+  it('accepts every runtime key emitted by the installer during upgrades', () => {
+    const common = readFileSync(COMMON_SH, 'utf8');
+    const installer = readFileSync(INSTALL_SH, 'utf8');
+    const allowlist =
+      common.match(/case "\$key" in([\s\S]*?)\n\s*\*\)/)?.[1] ?? '';
+    const runtimeEnv =
+      installer.match(
+        /write_env "\$ENV_TEMP" \\\n([\s\S]*?)\ninstall -o root/,
+      )?.[1] ?? '';
+    const emittedKeys = [
+      ...runtimeEnv.matchAll(/^\s{2}([A-Z][A-Z0-9_]+)\s+/gm),
+    ].map((match) => match[1]);
+
+    expect(emittedKeys.length).toBeGreaterThan(30);
+    for (const key of emittedKeys) expect(allowlist).toContain(key);
+  });
+
   it('preserves data governance, telemetry and external encryption key settings', () => {
     const envExample = readFileSync(ENV_EXAMPLE, 'utf8');
     const common = readFileSync(COMMON_SH, 'utf8');
