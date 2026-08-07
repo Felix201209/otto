@@ -21,40 +21,54 @@ async function filesBelow(root, current = root) {
   for (const entry of await readdir(current, { withFileTypes: true })) {
     const absolute = path.join(current, entry.name);
     if (entry.isSymbolicLink()) fail(`release 中不允许符号链接：${absolute}`);
-    if (entry.isDirectory()) output.push(...await filesBelow(root, absolute));
-    else if (entry.isFile()) output.push(path.relative(root, absolute).split(path.sep).join('/'));
+    if (entry.isDirectory()) output.push(...(await filesBelow(root, absolute)));
+    else if (entry.isFile())
+      output.push(path.relative(root, absolute).split(path.sep).join('/'));
     else fail(`release 中只允许普通文件和目录：${absolute}`);
   }
   return output.sort();
 }
 
+const options = new Set(process.argv.slice(3));
+const allowLegacyLstc = options.delete('--allow-legacy-lstc');
+if (options.size > 0) fail(`unsupported option: ${[...options].join(', ')}`);
+const allowedReleaseChannels = allowLegacyLstc
+  ? ['stable', 'transition', 'lstc']
+  : ['stable', 'transition'];
+
 const root = path.resolve(process.argv[2] || '');
 if (!process.argv[2]) fail('用法：verify-release.mjs <release-dir>');
 let manifest;
 try {
-  manifest = JSON.parse(await readFile(path.join(root, 'manifest.json'), 'utf8'));
+  manifest = JSON.parse(
+    await readFile(path.join(root, 'manifest.json'), 'utf8'),
+  );
 } catch (error) {
-  fail(`无法读取 manifest.json：${error instanceof Error ? error.message : String(error)}`);
+  fail(
+    `无法读取 manifest.json：${error instanceof Error ? error.message : String(error)}`,
+  );
 }
 if (
-  manifest?.format !== 'otto-enterprise-release-v1'
-  || typeof manifest.version !== 'string'
-  || !['stable', 'transition'].includes(manifest.releaseChannel)
-  || !/^[0-9a-f]{40}$/.test(manifest.buildCommit || '')
-  || typeof manifest.files !== 'object'
-  || Array.isArray(manifest.files)
-  || typeof manifest.database !== 'object'
-  || manifest.database === null
-  || Array.isArray(manifest.database)
-  || !Array.isArray(manifest.database.schemaFrom)
-  || !Number.isInteger(manifest.database.schemaTo)
-  || manifest.database.schemaTo < 2
-  || JSON.stringify(manifest.database.schemaFrom)
-    !== JSON.stringify(Array.from(
-      { length: manifest.database.schemaTo - 1 },
-      (_, index) => index + 2,
-    ))
-  || manifest.database.futureSchemaPolicy !== 'reject'
+  manifest?.format !== 'otto-enterprise-release-v1' ||
+  typeof manifest.version !== 'string' ||
+  !allowedReleaseChannels.includes(manifest.releaseChannel) ||
+  !/^[0-9a-f]{40}$/.test(manifest.buildCommit || '') ||
+  typeof manifest.files !== 'object' ||
+  Array.isArray(manifest.files) ||
+  typeof manifest.database !== 'object' ||
+  manifest.database === null ||
+  Array.isArray(manifest.database) ||
+  !Array.isArray(manifest.database.schemaFrom) ||
+  !Number.isInteger(manifest.database.schemaTo) ||
+  manifest.database.schemaTo < 2 ||
+  JSON.stringify(manifest.database.schemaFrom) !==
+    JSON.stringify(
+      Array.from(
+        { length: manifest.database.schemaTo - 1 },
+        (_, index) => index + 2,
+      ),
+    ) ||
+  manifest.database.futureSchemaPolicy !== 'reject'
 ) {
   fail('manifest.json 格式不正确');
 }
@@ -65,7 +79,9 @@ try {
     await readFile(path.join(root, 'package.json'), 'utf8'),
   );
 } catch (error) {
-  fail(`无法读取运行时 package.json：${error instanceof Error ? error.message : String(error)}`);
+  fail(
+    `无法读取运行时 package.json：${error instanceof Error ? error.message : String(error)}`,
+  );
 }
 if (runtimePackage?.version !== manifest.version) {
   fail(
@@ -73,7 +89,9 @@ if (runtimePackage?.version !== manifest.version) {
   );
 }
 
-const actualFiles = (await filesBelow(root)).filter((file) => file !== 'manifest.json');
+const actualFiles = (await filesBelow(root)).filter(
+  (file) => file !== 'manifest.json',
+);
 const expectedFiles = Object.keys(manifest.files).sort();
 if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles)) {
   fail(
@@ -87,12 +105,14 @@ for (const relative of expectedFiles) {
   if (actual !== expected) fail(`SHA-256 不匹配：${relative}`);
 }
 
-process.stdout.write(`${JSON.stringify({
-  ok: true,
-  version: manifest.version,
-  releaseChannel: manifest.releaseChannel,
-  buildCommit: manifest.buildCommit,
-  sourceCommit: manifest.sourceCommit,
-  database: manifest.database,
-  fileCount: expectedFiles.length,
-})}\n`);
+process.stdout.write(
+  `${JSON.stringify({
+    ok: true,
+    version: manifest.version,
+    releaseChannel: manifest.releaseChannel,
+    buildCommit: manifest.buildCommit,
+    sourceCommit: manifest.sourceCommit,
+    database: manifest.database,
+    fileCount: expectedFiles.length,
+  })}\n`,
+);

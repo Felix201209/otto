@@ -9,6 +9,7 @@
 - 只支持 `amd64/x86_64` 与 `arm64/aarch64`。
 - 默认面向全新服务器。完全相同 build 重跑时只验收、不重启；检测到不同的现有 Otto 安装会拒绝覆盖。
 - 这是“当前服务器原样迁入新机器”的过渡发布包。实际可导入版本及目标版本以同一发布包内 `release/manifest.json` 的 `database.schemaFrom`、`database.schemaTo` 为准，安装器会在隔离副本上迁移并拒绝未声明或未来版本。
+- `upgrade.sh` 仅在校验现有旧 release 时显式兼容历史 `lstc` 渠道；新包自身仍只能使用 `stable` 或 `transition`，不能借此重新发布旧渠道包。
 - 数据导出使用 SQLite Online Backup API，不直接复制正在写入的 `data.db`。
 - 导入先在隔离目录迁移，再在 `127.0.0.1:17777` 启动 canary；schema、外键、数据行数和 health 全部通过后才安装。
 - 服务只监听 `127.0.0.1:7778`，公网必须经过 HTTPS 反向代理。

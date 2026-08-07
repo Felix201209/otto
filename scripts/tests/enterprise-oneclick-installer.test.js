@@ -35,6 +35,7 @@ const HEALTH_CHECK = path.resolve(
 const VERIFY_RELEASE = path.resolve(
   'deployment/enterprise-oneclick/tools/verify-release.mjs',
 );
+const UPGRADE_SH = path.resolve('deployment/enterprise-oneclick/upgrade.sh');
 const ENV_EXAMPLE = path.resolve(
   'deployment/enterprise-oneclick/config/enterprise.env.example',
 );
@@ -169,6 +170,7 @@ describe('enterprise one-click schema contract', () => {
     const healthCheck = readFileSync(HEALTH_CHECK, 'utf8');
     const verifyRelease = readFileSync(VERIFY_RELEASE, 'utf8');
     const installer = readFileSync(INSTALL_SH, 'utf8');
+    const upgrader = readFileSync(UPGRADE_SH, 'utf8');
     const exporter = readFileSync(EXPORT_MIGRATION_SH, 'utf8');
 
     expect(bundle).toContain(
@@ -193,9 +195,9 @@ describe('enterprise one-click schema contract', () => {
     expect(healthCheck).toContain('body.apiVersion !== 4');
     expect(healthCheck).toContain('body.schemaVersion !== expectedSchema');
     expect(verifyRelease).toContain('manifest.database.schemaTo - 1');
-    expect(verifyRelease).toContain(
-      "!['stable', 'transition'].includes(manifest.releaseChannel)",
-    );
+    expect(verifyRelease).toContain("options.delete('--allow-legacy-lstc')");
+    expect(verifyRelease).toContain("? ['stable', 'transition', 'lstc']");
+    expect(upgrader).toContain('"$CURRENT_REAL" --allow-legacy-lstc');
     expect(installer).toContain('RELEASE_SCHEMA_TO=');
     expect(installer).toContain('"$IMPORT_SCHEMA" -le "$RELEASE_SCHEMA_TO"');
     expect(exporter).toContain('SCHEMA_TO=');
@@ -357,6 +359,27 @@ describe('enterprise one-click schema contract', () => {
           futureSchemaPolicy: 'reject',
         },
       });
+
+      manifest.releaseChannel = 'lstc';
+      writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
+      const legacyByDefault = spawnSync(
+        process.execPath,
+        [VERIFY_RELEASE, sandbox],
+        { encoding: 'utf8' },
+      );
+      expect(legacyByDefault.status).toBe(3);
+      const legacyUpgrade = spawnSync(
+        process.execPath,
+        [VERIFY_RELEASE, sandbox, '--allow-legacy-lstc'],
+        { encoding: 'utf8' },
+      );
+      expect(legacyUpgrade.status, legacyUpgrade.stderr).toBe(0);
+      expect(JSON.parse(legacyUpgrade.stdout)).toMatchObject({
+        ok: true,
+        releaseChannel: 'lstc',
+      });
+
+      manifest.releaseChannel = 'transition';
 
       manifest.database.schemaFrom = [2, 3, 4];
       writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
