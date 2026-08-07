@@ -105,33 +105,46 @@ OLD_DATA_BACKUP="${TXN_DIR}/data.db.before"
 NEW_DATA="${TXN_DIR}/data.db.next"
 ROLLBACK_NEEDED=0
 OLD_DEPLOY_BACKUP="${TXN_DIR}/deploy.before"
+SERVICE_STOPPED=0
+UPGRADE_SUCCEEDED=0
 
 cleanup() {
   if [ -n "$CANARY_PID" ] && kill -0 "$CANARY_PID" >/dev/null 2>&1; then
     kill -TERM "$CANARY_PID" >/dev/null 2>&1 || true
     wait "$CANARY_PID" || true
   fi
-  if [ "$ROLLBACK_NEEDED" -eq 1 ] && [ "$DRY_RUN" -eq 0 ]; then
-    otto_warn "升级失败，开始回滚旧 release"
-    ln -sfn "$CURRENT_REAL" "${INSTALL_ROOT}/current.rollback"
-    mv -Tf "${INSTALL_ROOT}/current.rollback" "${INSTALL_ROOT}/current" || true
-    if [ -f "$OLD_DATA_BACKUP" ]; then
-      install -o otto-enterprise -g otto-enterprise -m 0600 "$OLD_DATA_BACKUP" "${DATA_DIR}/data.db" || true
+  if [ "$DRY_RUN" -eq 0 ] && [ "$UPGRADE_SUCCEEDED" -eq 0 ]; then
+    if [ "$ROLLBACK_NEEDED" -eq 1 ]; then
+      otto_warn "升级失败，开始回滚旧 release"
+      systemctl stop otto-enterprise >/dev/null 2>&1 || true
+      ln -sfn "$CURRENT_REAL" "${INSTALL_ROOT}/current.rollback"
+      mv -Tf "${INSTALL_ROOT}/current.rollback" "${INSTALL_ROOT}/current" || true
+      if [ -f "$OLD_DATA_BACKUP" ]; then
+        install -o otto-enterprise -g otto-enterprise -m 0600 "$OLD_DATA_BACKUP" "${DATA_DIR}/data.db" || true
+      fi
+      if [ -d "$OLD_DEPLOY_BACKUP" ]; then
+        rm -rf "${INSTALL_ROOT}/deploy.rollback"
+        cp -a "$OLD_DEPLOY_BACKUP" "${INSTALL_ROOT}/deploy.rollback" || true
+        rm -rf "${INSTALL_ROOT}/deploy"
+        mv "${INSTALL_ROOT}/deploy.rollback" "${INSTALL_ROOT}/deploy" || true
+      fi
     fi
-    if [ -d "$OLD_DEPLOY_BACKUP" ]; then
-      rm -rf "${INSTALL_ROOT}/deploy.rollback"
-      cp -a "$OLD_DEPLOY_BACKUP" "${INSTALL_ROOT}/deploy.rollback" || true
-      rm -rf "${INSTALL_ROOT}/deploy"
-      mv "${INSTALL_ROOT}/deploy.rollback" "${INSTALL_ROOT}/deploy" || true
+    if [ "$SERVICE_STOPPED" -eq 1 ]; then
+      systemctl daemon-reload >/dev/null 2>&1 || true
+      systemctl start otto-enterprise >/dev/null 2>&1 || true
     fi
-    systemctl restart otto-enterprise >/dev/null 2>&1 || true
   fi
   rm -rf "$TXN_DIR"
 }
 trap cleanup EXIT
 
-cp -p "${DATA_DIR}/data.db" "$OLD_DATA_BACKUP"
-cp -p "${DATA_DIR}/data.db" "$NEW_DATA"
+if [ "$DRY_RUN" -eq 0 ]; then
+  systemctl stop otto-enterprise
+  SERVICE_STOPPED=1
+fi
+"$NODE_PATH" "${SCRIPT_DIR}/tools/db-tool.mjs" backup \
+"${DATA_DIR}/data.db" "$OLD_DATA_BACKUP" >/dev/null
+cp -p "$OLD_DATA_BACKUP" "$NEW_DATA"
 CANARY_DIR="${TXN_DIR}/canary"
 mkdir -p "$CANARY_DIR"
 cp -p "$NEW_DATA" "${CANARY_DIR}/data.db"
@@ -210,4 +223,6 @@ systemctl daemon-reload
 systemctl start otto-enterprise
 OTTO_ALLOW_SMS_DISABLED="$OTTO_ALLOW_SMS_DISABLED" "${INSTALL_ROOT}/deploy/verify.sh"
 ROLLBACK_NEEDED=0
+SERVICE_STOPPED=0
+UPGRADE_SUCCEEDED=1
 otto_log "升级完成：v${RELEASE_VERSION} ${BUILD_ID}"
