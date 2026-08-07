@@ -2,7 +2,7 @@
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import {
@@ -66,6 +66,27 @@ const SUPPORTED_SCHEMA_VERSIONS = Array.from(
 
 function mode(target) {
   return statSync(target).mode & 0o777;
+}
+
+function readFirstLine(stream) {
+  return new Promise((resolve, reject) => {
+    let buffer = '';
+    const timeout = setTimeout(
+      () => reject(new Error('fixture server did not start in time')),
+      5_000,
+    );
+    stream.on('data', (chunk) => {
+      buffer += chunk.toString();
+      const newline = buffer.indexOf('\n');
+      if (newline < 0) return;
+      clearTimeout(timeout);
+      resolve(buffer.slice(0, newline).trim());
+    });
+    stream.on('error', (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
 }
 
 describe('enterprise one-click service layout', () => {
@@ -162,6 +183,117 @@ describe('enterprise one-click service layout', () => {
 });
 
 describe('enterprise one-click schema contract', () => {
+  it('verifies redacted public health through local database and authenticated status', async () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-health-check-'));
+    const database = new DatabaseSync(path.join(sandbox, 'data.db'));
+    database.exec(`PRAGMA user_version = ${ENTERPRISE_SCHEMA_VERSION}`);
+    database.close();
+
+    const capabilities = [
+      'password_auth',
+      'sms_registration',
+      'personal_enterprise_upgrade',
+      'organization_invites',
+      'usage_summary',
+      'admin_console',
+      'direct_messages',
+      'atoa',
+      'position_invites',
+      'park_service_push',
+      'park_repair_v1',
+      'data_protection_v1',
+      'encrypted_attachment_storage_v1',
+      'encrypted_message_storage_v1',
+      'signed_telemetry_transport_v1',
+      'data_governance_v1',
+      'privacy_self_service',
+    ];
+    const adminToken = 'health-check-admin-token-at-least-32-characters';
+    const fixture = spawn(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `
+          import { createServer } from 'node:http';
+          const health = JSON.parse(process.env.HEALTH_FIXTURE);
+          const server = createServer((request, response) => {
+            response.setHeader('content-type', 'application/json');
+            if (request.url === '/enterprise/health') {
+              response.end(JSON.stringify(health));
+              return;
+            }
+            if (
+              request.url === '/enterprise/deployment/status'
+              && request.headers['x-otto-admin-token'] === process.env.ADMIN_TOKEN
+            ) {
+              response.end(JSON.stringify({ license: { enforce: true } }));
+              return;
+            }
+            response.statusCode = 401;
+            response.end(JSON.stringify({ error: 'unauthorized' }));
+          });
+          server.listen(0, '127.0.0.1', () => {
+            console.log(server.address().port);
+          });
+        `,
+      ],
+      {
+        env: {
+          ...process.env,
+          ADMIN_TOKEN: adminToken,
+          HEALTH_FIXTURE: JSON.stringify({
+            status: 'ok',
+            service: 'otto-enterprise',
+            apiVersion: 4,
+            version: '1.9.11',
+            capabilities,
+          }),
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+
+    try {
+      const port = Number(await readFirstLine(fixture.stdout));
+      expect(Number.isInteger(port)).toBe(true);
+      const build = 'a'.repeat(40);
+      const result = spawnSync(
+        process.execPath,
+        [
+          HEALTH_CHECK,
+          `http://127.0.0.1:${port}`,
+          '1.9.11',
+          build,
+          String(ENTERPRISE_SCHEMA_VERSION),
+          'allow-sms-disabled',
+        ],
+        {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            OTTO_BUILD_COMMIT: build,
+            OTTO_ENTERPRISE_ADMIN_TOKEN: adminToken,
+            OTTO_ENTERPRISE_DIR: sandbox,
+          },
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        ok: true,
+        health: { version: '1.9.11' },
+        database: {
+          schemaVersion: ENTERPRISE_SCHEMA_VERSION,
+          quickCheck: 'ok',
+        },
+        licenseEnforced: true,
+      });
+    } finally {
+      fixture.kill('SIGTERM');
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 15_000);
+
   it('derives one enterprise schema contract from the server source and release manifest', () => {
     const bundle = readFileSync(BUNDLE_SCRIPT, 'utf8');
     const serverDatabase = SERVER_DATABASE_SOURCE;
@@ -192,8 +324,15 @@ describe('enterprise one-click schema contract', () => {
     expect(migrationCheck).toContain(
       'readiness.schemaVersion !== expectedSchemaVersion',
     );
-    expect(healthCheck).toContain('body.apiVersion !== 4');
-    expect(healthCheck).toContain('body.schemaVersion !== expectedSchema');
+    expect(healthCheck).toContain('publicHealth.apiVersion !== 4');
+    expect(healthCheck).toContain("database.prepare('PRAGMA user_version')");
+    expect(healthCheck).toContain("database.prepare('PRAGMA quick_check')");
+    expect(healthCheck).toContain(
+      "database.prepare('PRAGMA foreign_key_check')",
+    );
+    expect(healthCheck).toContain('/enterprise/deployment/status');
+    expect(healthCheck).toContain("'x-otto-admin-token': adminToken");
+    expect(healthCheck).toContain('public health leaks private fields');
     expect(verifyRelease).toContain('manifest.database.schemaTo - 1');
     expect(verifyRelease).toContain("options.delete('--allow-legacy-lstc')");
     expect(verifyRelease).toContain("? ['stable', 'transition', 'lstc']");
