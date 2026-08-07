@@ -545,11 +545,17 @@ describe('enterprise one-click provenance contract', () => {
   it('normalizes executable modes inside archives built on Windows', () => {
     const bundle = readFileSync(BUNDLE_SCRIPT, 'utf8');
 
-    expect(bundle).toContain('function normalizeArchiveExecutableModes(');
+    expect(bundle).toContain('function normalizeTarExecutableModes(');
     expect(bundle).toContain('writeTarMode(tar, entry.offset, mode)');
     expect(bundle).toContain("'release/run.mjs'");
     expect(bundle).toMatch(
-      /normalizeArchiveExecutableModes\(\s*archive,\s*finalPackageName,\s*executableFiles\s*\);/,
+      /normalizeTarExecutableModes\(\s*temporaryTar,\s*finalPackageName,\s*executableFiles\s*\);/,
+    );
+    expect(bundle).toContain(
+      "['--no-xattrs', '-cf', temporaryTar, '-C', temporaryRoot, finalPackageName]",
+    );
+    expect(bundle).toContain(
+      'gzipSync(readFileSync(temporaryTar), { level: 9 })',
     );
   });
 
