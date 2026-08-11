@@ -16,54 +16,61 @@ const ledger = JSON.parse(
   ),
 );
 const remoteBranchTips = new Map([
-  ['origin/internal', 'c45c181bfed507d645b17169ec7253c59fbf1d19'],
-  ...ledger.branches.map((branch) => [branch.name, branch.tip]),
+  ['origin/internal', ledger.authority.baselineCommit],
 ]);
 
 describe('server integration baseline', () => {
-  it('keeps the checked-in ledger aligned with product versions, schema and release policy', () => {
+  it('keeps the ledger aligned with versions, schema, capabilities and release policy', () => {
     expect(validateServerIntegrationBaseline({ rootDir })).toEqual([]);
-    expect(supportedEnterpriseSchemaVersions(18)).toEqual([
-      2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+    expect(supportedEnterpriseSchemaVersions(22)).toEqual([
+      2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+      22,
     ]);
   });
 
-  it('fails when the client or server product version drifts from the ledger', () => {
+  it('fails when the client version drifts from the ledger', () => {
     const changed = structuredClone(ledger);
     changed.release.clientVersion = '99.0.0';
 
     expect(
       validateServerIntegrationBaseline({ rootDir, ledger: changed }),
     ).toContain(
-      'release.clientVersion=99.0.0 does not match packages/desktop/package.json=1.10.0',
+      'release.clientVersion=99.0.0 does not match packages/desktop/package.json=1.10.1',
     );
   });
 
-  it('fails when a branch commit has no explicit integrate, rewrite or drop decision', () => {
+  it('fails when an integrated source has no valid disposition or integration evidence', () => {
     const changed = structuredClone(ledger);
-    changed.branches[0].uniqueCommits.push('f'.repeat(40));
+    changed.authority.integratedSources[0].disposition = 'publish-directly';
+    changed.authority.integratedSources[0].integrationCommits = [];
 
-    expect(
-      validateServerIntegrationBaseline({ rootDir, ledger: changed }),
-    ).toContain(
-      `branch ${changed.branches[0].name} references unclassified commit ${'f'.repeat(40)}`,
+    const errors = validateServerIntegrationBaseline({
+      rootDir,
+      ledger: changed,
+    });
+    expect(errors).toContain(
+      `integrated source ${changed.authority.integratedSources[0].name} has invalid disposition publish-directly`,
+    );
+    expect(errors).toContain(
+      `integrated source ${changed.authority.integratedSources[0].name} must name at least one integration commit`,
     );
   });
 
   it('fails when the recorded migration range drifts from the enterprise schema', () => {
     const changed = structuredClone(ledger);
-    changed.release.databaseMigration.schemaTo = 17;
+    changed.release.databaseMigration.schemaTo = 21;
 
     expect(
       validateServerIntegrationBaseline({ rootDir, ledger: changed }),
     ).toContain(
-      'release.databaseMigration.schemaTo=17 does not match enterprise schema=18',
+      'release.databaseMigration.schemaTo=21 does not match enterprise schema=22',
     );
   });
 
-  it('fails when a fetched experimental branch moves beyond the audited ledger', () => {
+  it('allows the catalogued integration point to remain an ancestor as internal advances', () => {
     const changed = structuredClone(ledger);
-    changed.branches[0].tip = 'f'.repeat(40);
+    changed.authority.baselineCommit =
+      'f5ba898a60166bfde9c2cd74d8f3c8ec5f86a65e';
 
     expect(
       validateServerIntegrationBaseline({
@@ -72,42 +79,14 @@ describe('server integration baseline', () => {
         verifyGitRefs: true,
         remoteBranchTips,
       }),
-    ).toContain(
-      `branch ${changed.branches[0].name} tip ${'f'.repeat(40)} does not match fetched ref e9440c14725224eac0209bbcb8238006b50a2a2b`,
-    );
+    ).toEqual([]);
   });
 
-  it('fails when local remote-tracking refs are stale compared with live origin', () => {
-    const changedRemoteTips = new Map(remoteBranchTips);
-    changedRemoteTips.set(ledger.branches[0].name, 'f'.repeat(40));
-
-    expect(
-      validateServerIntegrationBaseline({
-        rootDir,
-        verifyGitRefs: true,
-        remoteBranchTips: changedRemoteTips,
-      }),
-    ).toContain(
-      `fetched ${ledger.branches[0].name} tip ${ledger.branches[0].tip} does not match live origin ${'f'.repeat(40)}`,
-    );
-  });
-
-  it('fails when an audited branch was deleted from live origin', () => {
-    const changedRemoteTips = new Map(remoteBranchTips);
-    changedRemoteTips.delete(ledger.branches[0].name);
-
-    expect(
-      validateServerIntegrationBaseline({
-        rootDir,
-        verifyGitRefs: true,
-        remoteBranchTips: changedRemoteTips,
-      }),
-    ).toContain(`required live branch is missing: ${ledger.branches[0].name}`);
-  });
-
-  it('fails when a catalogued commit subject drifts from git history', () => {
+  it('fails when an integration commit is absent from the release candidate', () => {
     const changed = structuredClone(ledger);
-    changed.commitDecisions[0].subject = 'invented subject';
+    changed.authority.integratedSources[0].integrationCommits = [
+      'f'.repeat(40),
+    ];
 
     expect(
       validateServerIntegrationBaseline({
@@ -115,20 +94,46 @@ describe('server integration baseline', () => {
         ledger: changed,
         verifyGitRefs: true,
         remoteBranchTips,
+        candidateHead: 'HEAD',
       }),
     ).toContain(
-      `commit ${changed.commitDecisions[0].commit} subject "invented subject" does not match git "feat(server): add SQLCipher database encryption"`,
+      `integration commit ${'f'.repeat(40)} for ${changed.authority.integratedSources[0].name} is not an ancestor of candidate HEAD`,
     );
   });
 
-  it('fails when the release workflow no longer requires the latest internal commit', () => {
+  it('fails when the candidate does not contain the authoritative internal baseline', () => {
+    const candidate = ledger.authority.integratedSources[0].tip;
+
+    expect(
+      validateServerIntegrationBaseline({
+        rootDir,
+        verifyGitRefs: true,
+        remoteBranchTips,
+        candidateHead: candidate,
+      }),
+    ).toContain(
+      `candidate ${candidate} does not contain authority baseline ${ledger.authority.baselineCommit}`,
+    );
+    expect(
+      validateServerIntegrationBaseline({
+        rootDir,
+        verifyGitRefs: true,
+        remoteBranchTips,
+        candidateHead: candidate,
+      }),
+    ).toContain(
+      `candidate ${candidate} does not contain latest origin/internal ${ledger.authority.baselineCommit}`,
+    );
+  });
+
+  it('fails when the release workflow no longer enforces reviewed descendants of internal', () => {
     expect(
       validateServerIntegrationBaseline({
         rootDir,
         releaseWorkflow: 'name: unsafe release',
       }),
     ).toContain(
-      'release workflow must compare HEAD with the latest origin/internal commit',
+      'release workflow must require latest origin/internal as an ancestor and restrict additional commits to release refs',
     );
   });
 });

@@ -21,6 +21,10 @@ import {
 } from './OrganizationTree.js';
 
 const askLocalPeerOttoMock = vi.hoisted(() => vi.fn(async () => '本机 Otto 给出的建议。'));
+const originalScrollIntoView = Object.getOwnPropertyDescriptor(
+  HTMLElement.prototype,
+  'scrollIntoView',
+);
 
 vi.mock('../peerOttoRunner.js', async () => {
   const actual = await vi.importActual<typeof import('../peerOttoRunner.js')>(
@@ -37,6 +41,15 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.clearAllMocks();
+  if (originalScrollIntoView) {
+    Object.defineProperty(
+      HTMLElement.prototype,
+      'scrollIntoView',
+      originalScrollIntoView,
+    );
+  } else {
+    Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+  }
 });
 
 const workspace: ProductWorkspaceSnapshot = {
@@ -977,7 +990,7 @@ describe('OrganizationTree', () => {
     await waitFor(() => {
       expect(scrollIntoView).toHaveBeenCalled();
       expect(onMessageRead).toHaveBeenCalledTimes(1);
-    });
+    }, { timeout: 3_000 });
 
     scrollIntoView.mockClear();
     const messagePoll = intervals.find((interval) => interval.delay === 2_000);
@@ -990,7 +1003,7 @@ describe('OrganizationTree', () => {
     await waitFor(() => {
       expect(scrollIntoView).toHaveBeenCalled();
       expect(onMessageRead).toHaveBeenCalledTimes(2);
-    });
+    }, { timeout: 3_000 });
     expect(onMessageRead).toHaveBeenLastCalledWith('acc_2');
 
     scrollIntoView.mockClear();

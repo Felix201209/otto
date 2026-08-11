@@ -1,44 +1,122 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "authority": {
     "repository": "Felix201209/otto",
     "branch": "internal",
-    "baselineCommit": "c45c181bfed507d645b17169ec7253c59fbf1d19",
-    "cataloguedAt": "2026-08-03T04:30:21Z",
-    "releaseRule": "A formal release source commit must equal the latest origin/internal commit.",
-    "recentIntegratedHistory": [
+    "baselineCommit": "1874681db2f108aa6a9b6d47ee62578d4ce37ac2",
+    "cataloguedAt": "2026-08-11T12:00:00Z",
+    "releaseRule": "The latest origin/internal commit must be an ancestor of a release source. Additional commits are allowed only on reviewed release branches or version tags.",
+    "integratedSources": [
       {
-        "commit": "d1e47859b9daca61d6420eac0e987ec468954c37",
-        "integrationCommit": "f73cffd4914c20e1e85f7b313c570a4ba4b0bbb1",
-        "decision": "integrated",
-        "reason": "PR #263 made explicitly unsigned, checksum-verified release artifacts the current internal policy."
+        "name": "origin/codex/sqlcipher",
+        "tip": "c625bc8672875d8b17d2f7b8db131b06c7c34eda",
+        "disposition": "integrated",
+        "integrationCommits": ["3f7ce0e43a464bc39b97128580f7750117228e7f"],
+        "capabilities": [
+          "SQLCipher lifecycle",
+          "PostgreSQL authority and importer",
+          "S3 and Redis topology",
+          "KMS envelope boundary",
+          "MLS transport and device trust"
+        ],
+        "reason": "Merged into the latest internal descendant through the reviewed PR #233 integration commit; the source branch is no longer a release authority."
       },
       {
-        "commit": "9f4bb19c72b2d751f250f019b3f6e8b77d74aa22",
-        "integrationCommit": "b979413fc332d16d9a3fb702b06308dd0d1cbc07",
-        "decision": "integrated",
-        "reason": "PR #264 disabled implicit publishing for tagged desktop builds."
+        "name": "origin/felixypz/mls-attachments-279",
+        "tip": "f17c38dd533194f35545dae7c0c6f6177db79350",
+        "disposition": "rewritten",
+        "integrationCommits": ["05dfc8a4927ee54be066ba4788c5658981ac081e"],
+        "capabilities": [
+          "MLS private-message attachment encryption",
+          "multipart resume",
+          "attachment authorization"
+        ],
+        "reason": "The attachment behavior was replayed on the integrated security baseline without restoring the obsolete login-page patch."
       },
       {
-        "commit": "fac3ed1b656a183316b8e510446fff62080dc816",
-        "integrationCommit": "c45c181bfed507d645b17169ec7253c59fbf1d19",
-        "decision": "integrated",
-        "reason": "PR #265 configured the explicit generic update publisher used by packaged desktop builds."
+        "name": "origin/felixypz/macos-integration-1.10.1",
+        "tip": "d645a78ce72d46e3683549081b895f6bf7d6b253",
+        "disposition": "integrated",
+        "integrationCommits": ["d645a78ce72d46e3683549081b895f6bf7d6b253"],
+        "capabilities": [
+          "SQLCipher packaged runtime custody",
+          "macOS release integration",
+          "enterprise login compatibility"
+        ],
+        "reason": "This internal descendant is the security integration parent of the authoritative candidate, not an independent release line."
+      },
+      {
+        "name": "release/1.9.11-transition",
+        "tip": "9fd820d25552f90d54f3c52899d9a2ac63922ce9",
+        "disposition": "rewritten",
+        "integrationCommits": [
+          "1aaa45950ed06f2dee9c96b12172a3a04e59d450",
+          "1f0b78abaf674878f5ee861cd177fdf209d9ada4",
+          "5c99baed97c2343ad2d0a2990b1cd64d4505990b",
+          "d031e20c2a1066e3a263328076e399836809b098",
+          "dccafb929e8af3dfac28b86fc541ece13d7993aa",
+          "a0cd62f2a2304ed3f38451b0a63e583c333ef0b2",
+          "405e1a54725d66a4d984cf5e3e9da12465762ef7",
+          "6837c0b5e78c860df8e59732898530099b5193a8",
+          "fbdc4e53bf2649ebc2f27fe59a808d4172a68e26"
+        ],
+        "capabilities": [
+          "portable enterprise package",
+          "legacy upgrade compatibility",
+          "redacted health verification",
+          "database cutover write guard",
+          "conversational and work UI modes",
+          "desktop coverage gate"
+        ],
+        "reason": "All nine release commits were replayed individually. Conflicts preserve version 1.10.1, signed artifact verification, security composition roots and tenant-bound park requests."
+      },
+      {
+        "name": "origin/felixypz/server-integration-20260803",
+        "tip": "f722dffaec84cca3a659e9275d1530985847c35b",
+        "disposition": "rewritten",
+        "integrationCommits": [
+          "b4e94e83f8d9717d349fa8cb8c719f1d6a7dc51f",
+          "00553d2272aba46c9c9fc0d56b00a95a1f4638c0",
+          "52cd979cfeab45b7c4b3f2ca07e82fda5ba77181"
+        ],
+        "capabilities": [
+          "machine-readable capability ledger",
+          "version and schema drift gate",
+          "release-source policy gate"
+        ],
+        "reason": "The original ledger tooling was retained and upgraded for the current schema and descendant release policy."
+      },
+      {
+        "name": "origin/codex/e2ee-openmls",
+        "tip": "61f55a61f8d9def1ad983ada00c815ff4a575b11",
+        "disposition": "retired",
+        "integrationCommits": ["3f7ce0e43a464bc39b97128580f7750117228e7f"],
+        "capabilities": ["OpenMLS prototype and trust invariants"],
+        "reason": "Superseded by the integrated MLS authority. It must not be merged again or published independently."
+      },
+      {
+        "name": "origin/agent/e2ee-internal",
+        "tip": "50493b24883f46a0505bb8c6b2a6c6df79e8cd53",
+        "disposition": "retired",
+        "integrationCommits": ["3f7ce0e43a464bc39b97128580f7750117228e7f"],
+        "capabilities": ["legacy device-trust UI and APIs"],
+        "reason": "Superseded by the integrated collaboration and MLS implementation. It must not create a second secure-messaging authority."
       }
     ]
   },
   "release": {
-    "clientVersion": "1.10.0",
-    "serverVersion": "1.10.0",
+    "clientVersion": "1.10.1",
+    "serverVersion": "1.10.1",
     "serverPackageVersion": "0.1.0",
     "apiVersion": 4,
-    "enterpriseSchemaVersion": 18,
+    "enterpriseSchemaVersion": 22,
     "databaseMigration": {
       "source": "scripts/enterprise-release-contract.mjs",
       "supportedSchemaFrom": [
-        2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18
+        2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+        22
       ],
-      "schemaTo": 18
+      "schemaTo": 22
     },
     "capabilities": [
       "password_auth",
@@ -54,6 +132,11 @@
       "privacy_self_service",
       "multi_organization",
       "direct_messages",
+      "e2ee_private_messages_v1",
+      "e2ee_device_trust_v1",
+      "e2ee_mls_transport_v1",
+      "e2ee_mls_resource_governance_v1",
+      "e2ee_mls_transport_session_reset_v1",
       "direct_message_attachments_v1",
       "encrypted_attachment_storage_v1",
       "encrypted_message_storage_v1",
@@ -81,8 +164,10 @@
       "park_meeting_slots_v1",
       "modular_update_push_v1",
       "signed_update_policy_v1",
+      "control_command_queue_v1",
       "account_data_sync_v1",
-      "enterprise_skill_market_v1"
+      "enterprise_skill_market_v1",
+      "federation_gateway_v1"
     ],
     "productModules": [
       "agent_runtime",
@@ -98,414 +183,41 @@
       "park_services",
       "data_platform",
       "commercial_control",
+      "federation_gateway",
       "data_governance",
       "desktop_shell",
       "integration_adapters"
     ]
   },
-  "branches": [
-    {
-      "name": "origin/codex/sqlcipher",
-      "tip": "e9440c14725224eac0209bbcb8238006b50a2a2b",
-      "status": "experimental",
-      "authority": false,
-      "uniqueCommits": [
-        "33714878556c645287d1686032756355835f621c",
-        "3ea9671625ad7f6598d44201fddcf7a86b7e50ef",
-        "ec19b06bb0a73459c1c588961ccb4f157a75387a",
-        "ca9734a4879f8468baf19c0099f68b66565b308d",
-        "f22d1f8f7df131a89efe8aedcbb783b9e4989471",
-        "7d311290991091130ca6ad095bf7ee4f072572fc",
-        "27fb5309660f1329b1ce5f032e5f64504c3f89f2",
-        "a05cd4f86ff79ab9773f8577bdbfe5fbba8e1887",
-        "4f764c049e37fb07b8a8f6e8e51b6ca0e718c023",
-        "76e75702091abe07352bba0aff55b5614568c5d0",
-        "c7423f07da2448ab7865d6ab07ba88d537eeac95",
-        "9ff1c8d10a7b7bd6717936b608c2635a74104c84",
-        "d592bd47dcd2595d1b3c82b0dd671238f04f738a",
-        "d80a19fcd20e53838adbde3b32a1c26350de5d06",
-        "efe4b902ee7648fa0c4caf72034f4e3487b41e1e",
-        "4ee68335cf7ff53bca85edeb2ff5e5b506e777c7",
-        "a2765986fcb84001fe9e4341030ad013e0ef27d3",
-        "738b923d3ee22b89db68df29116222bc54fbe390",
-        "0ed16cdfb198227f19858fe03d9765d71c504d35",
-        "e552514c4f25d58d3b93bc17297739fdf39129f6",
-        "9323ee7ac8f089dece0cd60bc2d4b53c1f81597e",
-        "56d70d8036752a6837b94797ebcfce65a42a179f",
-        "d29437238f9beafdd876be63e0de6b19a796fe2b",
-        "585e25397380eb9e307864140205e189c05697c8",
-        "ca652dfa0f1248d06a9a57c02f654145969ab756",
-        "282100476d4acecb56a089beead7b68ded2dfc8d",
-        "e9440c14725224eac0209bbcb8238006b50a2a2b"
-      ]
-    },
-    {
-      "name": "origin/codex/e2ee-openmls",
-      "tip": "61f55a61f8d9def1ad983ada00c815ff4a575b11",
-      "status": "experimental",
-      "authority": false,
-      "uniqueCommits": [
-        "33714878556c645287d1686032756355835f621c",
-        "3ea9671625ad7f6598d44201fddcf7a86b7e50ef",
-        "ec19b06bb0a73459c1c588961ccb4f157a75387a",
-        "ca9734a4879f8468baf19c0099f68b66565b308d",
-        "f22d1f8f7df131a89efe8aedcbb783b9e4989471",
-        "7d311290991091130ca6ad095bf7ee4f072572fc",
-        "27fb5309660f1329b1ce5f032e5f64504c3f89f2",
-        "a05cd4f86ff79ab9773f8577bdbfe5fbba8e1887",
-        "4f764c049e37fb07b8a8f6e8e51b6ca0e718c023",
-        "76e75702091abe07352bba0aff55b5614568c5d0",
-        "c7423f07da2448ab7865d6ab07ba88d537eeac95",
-        "9ff1c8d10a7b7bd6717936b608c2635a74104c84",
-        "d592bd47dcd2595d1b3c82b0dd671238f04f738a",
-        "d80a19fcd20e53838adbde3b32a1c26350de5d06",
-        "efe4b902ee7648fa0c4caf72034f4e3487b41e1e",
-        "4ee68335cf7ff53bca85edeb2ff5e5b506e777c7",
-        "a2765986fcb84001fe9e4341030ad013e0ef27d3",
-        "738b923d3ee22b89db68df29116222bc54fbe390",
-        "3e18581914c1b8688e1a0c97f428a6532cf89547",
-        "2d87ea2682e206b1e512c5d3767cde204c1e0e66",
-        "61f55a61f8d9def1ad983ada00c815ff4a575b11"
-      ]
-    },
-    {
-      "name": "origin/agent/e2ee-internal",
-      "tip": "50493b24883f46a0505bb8c6b2a6c6df79e8cd53",
-      "status": "experimental",
-      "authority": false,
-      "uniqueCommits": [
-        "225364ba1a9feaf4d24c587fffe7355c99e809b0",
-        "cec60f9204d431d9ed7ad131e15ee460cd433d35",
-        "50493b24883f46a0505bb8c6b2a6c6df79e8cd53"
-      ]
-    },
-    {
-      "name": "origin/codex/mature-agent-safety-controls",
-      "tip": "32819717d6ef36c41d5500a97485672c03772dfc",
-      "status": "integrated",
-      "authority": false,
-      "replacementCommit": "32819717d6ef36c41d5500a97485672c03772dfc",
-      "uniqueCommits": []
-    },
-    {
-      "name": "origin/uiux-preview",
-      "tip": "bd847bc4f8df82fc90d6e214d68673e99257d47f",
-      "status": "integrated",
-      "authority": false,
-      "replacementCommit": "ff7d9cd3157f104850da4fcd352a36362e5a8f1e",
-      "uniqueCommits": []
-    },
-    {
-      "name": "origin/codex/release-1.10.0",
-      "tip": "3b4932f4d0fd6715629f60737b1b988d3ffd628c",
-      "status": "integrated",
-      "authority": false,
-      "replacementCommit": "c45c181bfed507d645b17169ec7253c59fbf1d19",
-      "uniqueCommits": []
-    }
-  ],
-  "commitDecisions": [
-    {
-      "commit": "33714878556c645287d1686032756355835f621c",
-      "subject": "feat(server): add SQLCipher database encryption",
-      "sourceBranches": ["origin/codex/sqlcipher", "origin/codex/e2ee-openmls"],
-      "decision": "rewrite",
-      "followUpIssue": 240,
-      "reason": "Rebase the SQLCipher lifecycle and native boundary onto schema 18 without importing the old database owner."
-    },
-    {
-      "commit": "3ea9671625ad7f6598d44201fddcf7a86b7e50ef",
-      "subject": "feat(enterprise): add E2EE private chat",
-      "sourceBranches": ["origin/codex/sqlcipher", "origin/codex/e2ee-openmls"],
-      "decision": "rewrite",
-      "followUpIssue": 235,
-      "reason": "The device-envelope implementation is not the final MLS authority and must not coexist as a second production protocol."
-    },
-    {
-      "commit": "ec19b06bb0a73459c1c588961ccb4f157a75387a",
-      "subject": "feat(server): lay PostgreSQL enterprise storage foundation",
-      "sourceBranches": ["origin/codex/sqlcipher", "origin/codex/e2ee-openmls"],
-      "decision": "rewrite",
-      "followUpIssue": 239,
-      "reason": "Reuse the lifecycle and pool contracts while regenerating migrations from the current enterprise schema."
-    },
-    {
-      "commit": "ca9734a4879f8468baf19c0099f68b66565b308d",
-      "subject": "feat(server): add S3 attachment object storage",
-      "sourceBranches": ["origin/codex/sqlcipher", "origin/codex/e2ee-openmls"],
-      "decision": "rewrite",
-      "followUpIssue": 248,
-      "reason": "S3 storage follows the PostgreSQL authority and must retain the current attachment ACL and compensation contracts."
-    },
-    {
-      "commit": "f22d1f8f7df131a89efe8aedcbb783b9e4989471",
-      "subject": "feat(server): enforce clustered enterprise storage topology",
-      "sourceBranches": ["origin/codex/sqlcipher", "origin/codex/e2ee-openmls"],
-      "decision": "rewrite",
-      "followUpIssue": 248,
-      "reason": "The old topology couples PostgreSQL, Redis and S3 and must be split after SERVER-02 establishes database authority."
-    },
-    {
-      "commit": "7d311290991091130ca6ad095bf7ee4f072572fc",
-      "subject": "feat(security): gate E2EE release and approve devices",
-      "sourceBranches": ["origin/codex/sqlcipher", "origin/codex/e2ee-openmls"],
-      "decision": "rewrite",
-      "followUpIssue": 235,
-      "reason": "Preserve fail-closed approval and release gates while binding them to the final MLS protocol and current routes."
-    },
-    {
-      "commit": "27fb5309660f1329b1ce5f032e5f64504c3f89f2",
-      "subject": "ci(sqlcipher): attest five-platform native assets",
-      "sourceBranches": ["origin/codex/sqlcipher", "origin/codex/e2ee-openmls"],
-      "decision": "rewrite",
-      "followUpIssue": 240,
-      "reason": "The workflow currently fails both Linux targets and has no complete five-platform release attestation."
-    },
-    {
-      "commit": "a05cd4f86ff79ab9773f8577bdbfe5fbba8e1887",
-      "subject": "feat(ui): complete security and message management surfaces",
-      "sourceBranches": ["origin/codex/sqlcipher", "origin/codex/e2ee-openmls"],
-      "decision": "drop",
-      "replacementCommit": "ff7d9cd3157f104850da4fcd352a36362e5a8f1e",
-      "reason": "This is an obsolete UI merge topology; the current internal UI is authoritative and security surfaces must be re-applied behaviorally."
-    },
-    {
-      "commit": "4f764c049e37fb07b8a8f6e8e51b6ca0e718c023",
-      "subject": "feat(server): add verified SQLite PostgreSQL importer",
-      "sourceBranches": ["origin/codex/sqlcipher", "origin/codex/e2ee-openmls"],
-      "decision": "rewrite",
-      "followUpIssue": 239,
-      "reason": "Keep read-only scanning, hashes and resumability but replace the split v3 migration and SQLCipher-coupled reader."
-    },
-    {
-      "commit": "76e75702091abe07352bba0aff55b5614568c5d0",
-      "subject": "feat(security): add unified envelope key management",
-      "sourceBranches": ["origin/codex/sqlcipher", "origin/codex/e2ee-openmls"],
-      "decision": "rewrite",
-      "followUpIssue": 240,
-      "reason": "Key custody must be integrated after the final SQLCipher/native packaging boundary is fixed."
-    },
-    {
-      "commit": "c7423f07da2448ab7865d6ab07ba88d537eeac95",
-      "subject": "feat(security): pin e2ee transparency checkpoints",
-      "sourceBranches": ["origin/codex/sqlcipher", "origin/codex/e2ee-openmls"],
-      "decision": "rewrite",
-      "followUpIssue": 235,
-      "reason": "Transparency checkpoints must cover the final device directory and MLS epochs before audit."
-    },
-    {
-      "commit": "9ff1c8d10a7b7bd6717936b608c2635a74104c84",
-      "subject": "feat: move enterprise core authority to PostgreSQL",
-      "sourceBranches": ["origin/codex/sqlcipher", "origin/codex/e2ee-openmls"],
-      "decision": "rewrite",
-      "followUpIssue": 239,
-      "reason": "The old promotion maps only a small core subset and omits current park, commercial, knowledge and governance tables."
-    },
-    {
-      "commit": "d592bd47dcd2595d1b3c82b0dd671238f04f738a",
-      "subject": "feat: wire shared S3 and Redis infrastructure",
-      "sourceBranches": ["origin/codex/sqlcipher", "origin/codex/e2ee-openmls"],
-      "decision": "rewrite",
-      "followUpIssue": 248,
-      "reason": "Shared coordination must fail closed and follow the completed PostgreSQL authority."
-    },
-    {
-      "commit": "d80a19fcd20e53838adbde3b32a1c26350de5d06",
-      "subject": "feat: migrate verified SQLite attachments to S3",
-      "sourceBranches": ["origin/codex/sqlcipher", "origin/codex/e2ee-openmls"],
-      "decision": "rewrite",
-      "followUpIssue": 248,
-      "reason": "Attachment migration requires the current ACL, compensation and retention model."
-    },
-    {
-      "commit": "efe4b902ee7648fa0c4caf72034f4e3487b41e1e",
-      "subject": "feat: move enterprise registration authority to PostgreSQL",
-      "sourceBranches": ["origin/codex/sqlcipher", "origin/codex/e2ee-openmls"],
-      "decision": "rewrite",
-      "followUpIssue": 239,
-      "reason": "Registration can move only after the current identity and organization schema has a complete PostgreSQL mapper."
-    },
-    {
-      "commit": "4ee68335cf7ff53bca85edeb2ff5e5b506e777c7",
-      "subject": "feat: add OpenMLS key package foundation",
-      "sourceBranches": ["origin/codex/sqlcipher", "origin/codex/e2ee-openmls"],
-      "decision": "rewrite",
-      "followUpIssue": 235,
-      "reason": "Retain official OpenMLS primitives while integrating them into the current approved-device and server authority."
-    },
-    {
-      "commit": "a2765986fcb84001fe9e4341030ad013e0ef27d3",
-      "subject": "feat: add OpenMLS two-device message interop",
-      "sourceBranches": ["origin/codex/sqlcipher", "origin/codex/e2ee-openmls"],
-      "decision": "rewrite",
-      "followUpIssue": 235,
-      "reason": "In-memory two-device tests are a foundation, not the production multi-device transport."
-    },
-    {
-      "commit": "738b923d3ee22b89db68df29116222bc54fbe390",
-      "subject": "feat: persist encrypted OpenMLS state",
-      "sourceBranches": ["origin/codex/sqlcipher", "origin/codex/e2ee-openmls"],
-      "decision": "rewrite",
-      "followUpIssue": 235,
-      "reason": "State persistence must be replayed after the production server schema and recovery policy are fixed."
-    },
-    {
-      "commit": "0ed16cdfb198227f19858fe03d9765d71c504d35",
-      "subject": "feat: connect OpenMLS to desktop secure storage",
-      "sourceBranches": ["origin/codex/sqlcipher"],
-      "decision": "rewrite",
-      "followUpIssue": 235,
-      "reason": "Desktop secure storage must bind to the final server capability and cannot enable a silent protocol downgrade."
-    },
-    {
-      "commit": "e552514c4f25d58d3b93bc17297739fdf39129f6",
-      "subject": "fix: snapshot authorized directory attachments",
-      "sourceBranches": ["origin/codex/sqlcipher"],
-      "decision": "rewrite",
-      "followUpIssue": 248,
-      "reason": "The attachment snapshot belongs with the final S3 ACL and compensation implementation."
-    },
-    {
-      "commit": "9323ee7ac8f089dece0cd60bc2d4b53c1f81597e",
-      "subject": "feat: add governed MLS ciphertext transport",
-      "sourceBranches": ["origin/codex/sqlcipher"],
-      "decision": "rewrite",
-      "followUpIssue": 235,
-      "reason": "The transport must use the completed PostgreSQL authority and final MLS group lifecycle."
-    },
-    {
-      "commit": "56d70d8036752a6837b94797ebcfce65a42a179f",
-      "subject": "feat: wire desktop MLS transport foundation",
-      "sourceBranches": ["origin/codex/sqlcipher"],
-      "decision": "rewrite",
-      "followUpIssue": 235,
-      "reason": "The foundation is not connected to the production composer or history writer and must be integrated behaviorally."
-    },
-    {
-      "commit": "d29437238f9beafdd876be63e0de6b19a796fe2b",
-      "subject": "feat: add resumable MLS session orchestration",
-      "sourceBranches": ["origin/codex/sqlcipher"],
-      "decision": "rewrite",
-      "followUpIssue": 235,
-      "reason": "Session orchestration still lacks remote member commits and final multi-device semantics."
-    },
-    {
-      "commit": "585e25397380eb9e307864140205e189c05697c8",
-      "subject": "feat: add crash-safe MLS application outbox",
-      "sourceBranches": ["origin/codex/sqlcipher"],
-      "decision": "rewrite",
-      "followUpIssue": 235,
-      "reason": "The outbox must be mapped to the final authoritative database and tested under real restart recovery."
-    },
-    {
-      "commit": "ca652dfa0f1248d06a9a57c02f654145969ab756",
-      "subject": "feat: retry durable MLS outbox in background",
-      "sourceBranches": ["origin/codex/sqlcipher"],
-      "decision": "rewrite",
-      "followUpIssue": 235,
-      "reason": "Retry behavior must share leases, idempotency and shutdown semantics with the final server runtime."
-    },
-    {
-      "commit": "282100476d4acecb56a089beead7b68ded2dfc8d",
-      "subject": "feat: add crash-safe MLS receive polling",
-      "sourceBranches": ["origin/codex/sqlcipher"],
-      "decision": "rewrite",
-      "followUpIssue": 235,
-      "reason": "Receive polling still lacks complete remote commit, revocation and malicious-server acceptance coverage."
-    },
-    {
-      "commit": "e9440c14725224eac0209bbcb8238006b50a2a2b",
-      "subject": "merge: sync latest internal",
-      "sourceBranches": ["origin/codex/sqlcipher"],
-      "decision": "drop",
-      "replacementCommit": "c45c181bfed507d645b17169ec7253c59fbf1d19",
-      "reason": "This merge synchronized only an older internal head; all integration must restart from the current baseline."
-    },
-    {
-      "commit": "3e18581914c1b8688e1a0c97f428a6532cf89547",
-      "subject": "feat(security): harden E2EE trust and prototype OpenMLS",
-      "sourceBranches": ["origin/codex/e2ee-openmls"],
-      "decision": "rewrite",
-      "followUpIssue": 235,
-      "reason": "Threat-model and trust invariants are valuable, but the implementation overlaps the newer MLS transport files."
-    },
-    {
-      "commit": "2d87ea2682e206b1e512c5d3767cde204c1e0e66",
-      "subject": "feat(security): enforce E2EE v2 in clustered authority",
-      "sourceBranches": ["origin/codex/e2ee-openmls"],
-      "decision": "rewrite",
-      "followUpIssue": 235,
-      "reason": "Clustered enforcement must follow the final PostgreSQL and MLS authority instead of introducing a parallel v2 owner."
-    },
-    {
-      "commit": "61f55a61f8d9def1ad983ada00c815ff4a575b11",
-      "subject": "fix(desktop): clear tool copy timers on unmount",
-      "sourceBranches": ["origin/codex/e2ee-openmls"],
-      "decision": "integrate",
-      "followUpIssue": 256,
-      "reason": "This independent one-file lifecycle fix is absent from internal and should be manually reapplied without merging the branch."
-    },
-    {
-      "commit": "225364ba1a9feaf4d24c587fffe7355c99e809b0",
-      "subject": "feat(security): establish E2EE v2 device trust foundation",
-      "sourceBranches": ["origin/agent/e2ee-internal"],
-      "decision": "rewrite",
-      "followUpIssue": 235,
-      "reason": "The alternate secure_messaging owner would duplicate collaboration storage and an obsolete schema 19."
-    },
-    {
-      "commit": "cec60f9204d431d9ed7ad131e15ee460cd433d35",
-      "subject": "feat(security): expose E2EE device trust APIs",
-      "sourceBranches": ["origin/agent/e2ee-internal"],
-      "decision": "rewrite",
-      "followUpIssue": 235,
-      "reason": "API behavior should be retained only through the final collaboration and MLS authority."
-    },
-    {
-      "commit": "50493b24883f46a0505bb8c6b2a6c6df79e8cd53",
-      "subject": "feat(security): protect E2EE device trust on desktop",
-      "sourceBranches": ["origin/agent/e2ee-internal"],
-      "decision": "rewrite",
-      "followUpIssue": 253,
-      "reason": "Desktop trust UX belongs to the formal E2EE API and must not ship against the alternate server implementation."
-    }
-  ],
   "acceptance": [
     {
-      "id": "authoritative_internal_snapshot",
+      "id": "latest_internal_parent",
       "status": "verified",
       "evidence": [
-        "origin/internal and the default branch resolved to c45c181bfed507d645b17169ec7253c59fbf1d19 during the 2026-08-03 audit."
+        "The candidate contains internal commit 1874681db2f108aa6a9b6d47ee62578d4ce37ac2 as an ancestor."
+      ]
+    },
+    {
+      "id": "security_and_release_sources_integrated",
+      "status": "verified",
+      "evidence": [
+        "PR #233 security integration, MLS attachments and all nine 1.9.11 transition commits are ancestors of the candidate through the integration commits recorded above."
       ]
     },
     {
       "id": "version_schema_capability_mapping",
       "status": "verified",
       "evidence": [
-        "Root and desktop product versions are 1.10.0; public Enterprise API is 4; schema is 18; the health contract declares 42 capabilities and 16 product modules."
+        "The validator binds product version 1.10.1, Enterprise API 4, schema 22, capabilities and product modules to source constants."
       ]
     },
     {
-      "id": "integrated_mature_agent_and_ui_branches",
-      "status": "verified",
-      "evidence": [
-        "Both origin/codex/mature-agent-safety-controls and origin/uiux-preview have zero commits ahead of origin/internal."
-      ]
-    },
-    {
-      "id": "current_unsigned_release_policy",
-      "status": "verified",
-      "evidence": [
-        "PR #263 configured the current release workflow to produce and disclose unsigned artifacts while verifying checksums, the desktop update manifest, and the enterprise License trust anchor; PR #264 disabled implicit tagged publishing and PR #265 configured the explicit generic publisher."
-      ]
-    },
-    {
-      "id": "real_release_artifact_acceptance",
+      "id": "automated_candidate_verification",
       "status": "planned",
       "evidence": []
     },
     {
-      "id": "experimental_server_delivery",
+      "id": "real_release_artifact_acceptance",
       "status": "planned",
       "evidence": []
     },

@@ -8,6 +8,7 @@ import { supportedEnterpriseSchemaVersions } from './enterprise-release-contract
 
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
 const DECISIONS = new Set(['integrate', 'rewrite', 'drop']);
+const SOURCE_DISPOSITIONS = new Set(['integrated', 'rewritten', 'retired']);
 
 function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, 'utf8'));
@@ -122,14 +123,61 @@ export function validateServerIntegrationBaseline({
     ciWorkflow ??
     readFileSync(path.join(rootDir, '.github/workflows/ci.yml'), 'utf8');
 
-  if (actualLedger.schemaVersion !== 1) {
-    errors.push('ledger schemaVersion must be 1');
+  if (actualLedger.schemaVersion !== 2) {
+    errors.push('ledger schemaVersion must be 2');
   }
   if (actualLedger.authority?.branch !== 'internal') {
     errors.push('authority.branch must be internal');
   }
   if (!COMMIT_PATTERN.test(actualLedger.authority?.baselineCommit ?? '')) {
     errors.push('authority.baselineCommit must be a full 40-character commit');
+  }
+  const integratedSourceNames = new Set();
+  for (const source of actualLedger.authority?.integratedSources ?? []) {
+    if (!source.name || integratedSourceNames.has(source.name)) {
+      errors.push(
+        `duplicate or missing integrated source name: ${source.name ?? '<missing>'}`,
+      );
+      continue;
+    }
+    integratedSourceNames.add(source.name);
+    if (!COMMIT_PATTERN.test(source.tip ?? '')) {
+      errors.push(
+        `integrated source ${source.name} must record a full tip commit`,
+      );
+    }
+    if (!SOURCE_DISPOSITIONS.has(source.disposition)) {
+      errors.push(
+        `integrated source ${source.name} has invalid disposition ${source.disposition ?? '<missing>'}`,
+      );
+    }
+    if (!source.reason?.trim()) {
+      errors.push(`integrated source ${source.name} must include a reason`);
+    }
+    if (
+      !Array.isArray(source.capabilities) ||
+      source.capabilities.length === 0
+    ) {
+      errors.push(
+        `integrated source ${source.name} must list its capabilities`,
+      );
+    }
+    if (
+      !Array.isArray(source.integrationCommits) ||
+      source.integrationCommits.length === 0
+    ) {
+      errors.push(
+        `integrated source ${source.name} must name at least one integration commit`,
+      );
+      continue;
+    }
+    for (const commit of source.integrationCommits) {
+      if (!COMMIT_PATTERN.test(commit ?? '')) {
+        errors.push(
+          `integrated source ${source.name} has invalid integration commit ${commit ?? '<missing>'}`,
+        );
+      }
+    }
   }
   for (const entry of actualLedger.authority?.recentIntegratedHistory ?? []) {
     if (!COMMIT_PATTERN.test(entry.commit ?? '')) {
@@ -382,23 +430,67 @@ export function validateServerIntegrationBaseline({
       }
     }
 
-    let candidateHead =
-      candidateHeadOverride ??
-      (remoteBranchTips ? liveBranchTips.get('origin/internal') : null);
+    let candidateHead = candidateHeadOverride;
     if (!candidateHead) {
       try {
-        candidateHead = execFileSync(
-          'git',
-          ['rev-parse', 'HEAD'],
-          {
-            cwd: rootDir,
-            encoding: 'utf8',
-            stdio: ['ignore', 'pipe', 'ignore'],
-          },
-        ).trim();
+        candidateHead = execFileSync('git', ['rev-parse', 'HEAD'], {
+          cwd: rootDir,
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim();
       } catch {
-        errors.push('unable to resolve candidate HEAD for branch delta validation');
+        errors.push(
+          'unable to resolve candidate HEAD for branch delta validation',
+        );
         candidateHead = 'HEAD';
+      }
+    }
+
+    try {
+      execFileSync(
+        'git',
+        [
+          'merge-base',
+          '--is-ancestor',
+          actualLedger.authority.baselineCommit,
+          candidateHead,
+        ],
+        { cwd: rootDir, stdio: 'ignore' },
+      );
+    } catch {
+      errors.push(
+        `candidate ${candidateHead} does not contain authority baseline ${actualLedger.authority.baselineCommit}`,
+      );
+    }
+
+    if (fetchedInternalTip) {
+      try {
+        execFileSync(
+          'git',
+          ['merge-base', '--is-ancestor', fetchedInternalTip, candidateHead],
+          { cwd: rootDir, stdio: 'ignore' },
+        );
+      } catch {
+        errors.push(
+          `candidate ${candidateHead} does not contain latest origin/internal ${fetchedInternalTip}`,
+        );
+      }
+    }
+
+    for (const source of actualLedger.authority?.integratedSources ?? []) {
+      for (const commit of source.integrationCommits ?? []) {
+        if (!COMMIT_PATTERN.test(commit ?? '')) continue;
+        try {
+          execFileSync(
+            'git',
+            ['merge-base', '--is-ancestor', commit, candidateHead],
+            { cwd: rootDir, stdio: 'ignore' },
+          );
+        } catch {
+          errors.push(
+            `integration commit ${commit} for ${source.name} is not an ancestor of candidate ${candidateHead}`,
+          );
+        }
       }
     }
 
@@ -531,16 +623,22 @@ export function validateServerIntegrationBaseline({
   );
   const hasInternalRead =
     /INTERNAL_COMMIT="\$\(git rev-parse origin\/internal\)"/u.test(workflow);
-  const hasComparison =
-    /if \[ "\$SOURCE_COMMIT" != "\$INTERNAL_COMMIT" \]; then/u.test(workflow);
+  const hasAncestorCheck =
+    /git merge-base --is-ancestor "\$INTERNAL_COMMIT" "\$SOURCE_COMMIT"/u.test(
+      workflow,
+    );
+  const restrictsReleaseBranches = workflow.includes('refs/heads/release/*');
+  const restrictsVersionTags = workflow.includes('refs/tags/v*');
   if (!(
     hasInternalFetch &&
     hasSourceRead &&
     hasInternalRead &&
-    hasComparison
+    hasAncestorCheck &&
+    restrictsReleaseBranches &&
+    restrictsVersionTags
   )) {
     errors.push(
-      'release workflow must compare HEAD with the latest origin/internal commit',
+      'release workflow must require latest origin/internal as an ancestor and restrict additional commits to release refs',
     );
   }
   const validationCommand = 'npm run validate:integration-baseline';

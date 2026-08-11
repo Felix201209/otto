@@ -3,11 +3,12 @@
  */
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FirstRunGuide } from './FirstRunGuide.js';
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   localStorage.clear();
 });
 
@@ -29,6 +30,20 @@ describe('FirstRunGuide', () => {
   it('stays hidden after completion', () => {
     localStorage.setItem('otto:first-run-guide:v1', 'completed');
     render(<FirstRunGuide />);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('remains usable when browser storage is unavailable', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('storage blocked');
+    });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('storage blocked');
+    });
+
+    render(<FirstRunGuide />);
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '跳过导览' }));
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 });

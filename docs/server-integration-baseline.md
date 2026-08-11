@@ -1,98 +1,80 @@
-# Otto Server integration baseline
+# Otto authoritative integration baseline
 
-> Status: authoritative integration decision for SERVER-01 / issue #238.
+> Status: release-source contract for SERVER-01 / issue #238.
 > Machine-readable source: [`server-integration-baseline.json`](./server-integration-baseline.json).
 
 ## Authority
 
-Formal Otto releases and subsequent Server work start from `internal`. The
-audited baseline was `c45c181bfed507d645b17169ec7253c59fbf1d19`
-(`v1.10.0`) on 2026-08-03. A later descendant may become the current baseline,
-but an unmerged feature branch never becomes a release source: the release
-workflow fetches `origin/internal` and rejects any source commit that is not
-exactly its latest head.
+`internal` is the only long-lived product branch. A release candidate must
+contain the latest `origin/internal` commit. Additional commits are allowed only
+on a reviewed `release/*` branch or a version tag; feature and experiment
+branches are never direct release sources.
 
-The active product contract at the audited baseline is:
+The current integration candidate is based on internal commit
+`1874681db2f108aa6a9b6d47ee62578d4ce37ac2` and preserves product version
+`1.10.1`. It integrates the reviewed SQLCipher/E2EE work, MLS attachments,
+macOS packaging fixes and the nine 1.9.11 transition release changes without
+downgrading the product version.
 
-| Contract                               | Authoritative value | Source                                                          |
-| -------------------------------------- | ------------------- | --------------------------------------------------------------- |
-| Desktop/client version                 | `1.10.0`            | `packages/desktop/package.json`                                 |
-| Enterprise server product version      | `1.10.0`            | root `package.json`, injected as `OTTO_APP_VERSION`             |
-| Internal `otto-server` package version | `0.1.0`             | `packages/server/package.json`; not the product release version |
-| Enterprise HTTP API                    | `4`                 | `packages/server/src/enterprise/server.ts`                      |
-| Enterprise SQLite schema               | `18`                | `packages/server/src/enterprise/db.ts`                          |
-| Public health capabilities             | 42 exact IDs        | `ENTERPRISE_CAPABILITIES`                                       |
-| Product modules                        | 16 exact IDs        | `packages/server/src/productModules.ts`                         |
+| Contract                          | Authoritative value | Source                                     |
+| --------------------------------- | ------------------- | ------------------------------------------ |
+| Desktop/client version            | `1.10.1`            | `packages/desktop/package.json`            |
+| Enterprise server product version | `1.10.1`            | root `package.json`                        |
+| Internal server package version   | `0.1.0`             | `packages/server/package.json`             |
+| Enterprise HTTP API               | `4`                 | `packages/server/src/enterprise/server.ts` |
+| Enterprise schema                 | `22`                | `packages/server/src/enterprise/db.ts`     |
+| Public capabilities               | 50 exact IDs        | `ENTERPRISE_CAPABILITIES`                  |
+| Product modules                   | 17 exact IDs        | `packages/server/src/productModules.ts`    |
 
-`npm run validate:integration-baseline` compares the ledger with these source
-contracts. CI and Release Build both run it.
+## Integrated sources
 
-## Branch decisions
+The JSON ledger records each former source branch, its audited tip, the commit
+that integrated or rewrote it, the retained capability and why the old branch
+is no longer authoritative. CI verifies every integration commit is an
+ancestor of the release candidate.
 
-`codex/mature-agent-safety-controls` and `uiux-preview` have no commits ahead of
-`internal`; their active behavior already has one authority in `internal` and
-the branches must not be merged again. `codex/release-1.10.0` was likewise
-absorbed by PR #262.
+This means old security and release branches can be deleted without weakening
+the audit trail, and they cannot accidentally become permanent competing
+release lines. They must not be merged again.
 
-The remaining experimental branches are deliberately non-authoritative:
+## Security meaning
 
-| Branch                | Ahead / behind current `internal` at audit | Decision                                                                                                                      |
-| --------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
-| `codex/sqlcipher`     | 27 / 63                                    | Drop two obsolete merge commits; rewrite every functional commit through #239, #235, #240 or #248.                            |
-| `codex/e2ee-openmls`  | 21 / 71                                    | Rewrite overlapping E2EE behavior through #235; manually integrate only the independent ToolCalls timer cleanup through #256. |
-| `agent/e2ee-internal` | 3 / 71                                     | Rewrite through #235/#253; never introduce its parallel `secure_messaging` authority.                                         |
+Code integration is not a claim of production approval. SQLCipher, MLS and
+device-trust code are present in the candidate, while the E2EE production gate
+remains fail-closed until the required external cryptographic audit and signed
+platform artifacts exist. The ledger records those items as external evidence,
+not as completed software checks.
 
-The former `codex/unsigned-release-1.10.0` branch was integrated by PR #263 and
-then deleted; PR #264 disabled implicit tagged publishing, and PR #265
-configured the explicit generic publisher. These changes and
-their merge commits are recorded under `authority.recentIntegratedHistory`.
-The current release workflow is configured to disclose unsigned artifacts and
-verify checksums, the desktop update manifest, and the enterprise License trust
-anchor. This is source policy, not proof that v1.10.0 artifacts have been built
-or published. Authenticode, Developer ID/notarization and enterprise detached
-signatures remain future work tracked by #247, not evidence that current
-artifacts already possess those signatures.
+## Automated gates
 
-The JSON ledger is exhaustive for the 33 commits unique to the active audited
-branches. Every commit has exactly one of the required dispositions:
-`integrate`, `rewrite`, or `drop`, with its reason and replacement commit or
-follow-up issue. Merge commits are not implementation slices and are dropped.
+`npm run validate:integration-baseline` verifies:
 
-## Integration order
+- root, desktop and server package versions;
+- Enterprise API and schema versions, including the supported migration range;
+- exact public capability and product-module registries;
+- complete source integration evidence and valid dispositions;
+- the release workflow's internal-ancestor and reviewed-release-ref policy;
+- CI execution of the same gate.
 
-1. **#238 SERVER-01** — this baseline and release contract.
-2. **#239 SERVER-02** — one PostgreSQL migration manifest, complete current
-   schema mapping, fail-closed import/promotion, and real dual-instance tests.
-3. **#235 SERVER-03** — one approved-device MLS authority using the completed
-   database model; no production claim before multi-device, revocation,
-   forward-secrecy and post-compromise-recovery evidence.
-4. **#240 SERVER-04** — freeze the integrated source commit, then build and
-   verify SQLCipher and Rust MLS assets on all five target platforms.
-5. **#241/#242/#243/#244/#245/#246/#248** — build durable workflow, evaluation,
-   identity, authorization, park concurrency and object coordination on the
-   same authority.
-6. **#247/#249** — formal signing and independent cryptographic audit remain
-   external release gates; internal unit tests cannot substitute for them.
+With `--verify-git-refs`, it additionally verifies that the fetched
+`origin/internal` matches the live remote, the recorded integration point is
+still an ancestor, the candidate contains the latest `origin/internal`, and
+every recorded integration commit is present. The recorded integration point
+does not need to change after every normal commit on `internal`.
 
-## Updating the baseline
+Run before merging or releasing:
 
-When an issue lands in `internal`:
+```bash
+npm run doctor
+npm run validate:integration-baseline -- --verify-git-refs
+npm run validate:boundaries
+npm run lint:ci
+npm run build
+npm run typecheck
+npm run test:ci
+git diff --check
+```
 
-1. Change the affected commit decision from `rewrite`/`integrate` to `drop`
-   only after recording the real replacement commit, or remove the retired
-   branch in a reviewed ledger update.
-2. Update client/server/schema/capability values in the same commit that
-   changes their source contract.
-3. Attach test, migration count/hash, real health, platform, signing or audit
-   evidence to the owning issue. A local build is not release evidence.
-4. Run:
-
-   ```bash
-   npm run doctor
-   npm run validate:integration-baseline
-   git diff --check
-   npm run test:scripts
-   ```
-
-Do not resolve ledger drift by weakening the release-source, schema or security
-gates, or by misrepresenting the current artifact signature policy.
+Real installers, signatures, notarization, database migration, canary upgrade
+and rollback evidence remain release-level acceptance work. Unit tests cannot
+replace those checks.
