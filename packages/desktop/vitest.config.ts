@@ -52,6 +52,21 @@ export default defineConfig({
       'src/preload/**/*.test.ts',
       'scripts/**/*.test.mjs',
     ],
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: [
+        'src/**/*.test.{ts,tsx}',
+        'src/**/*.d.ts',
+        'src/renderer/test-setup.ts',
+      ],
+      thresholds: {
+        lines: 62,
+        statements: 62,
+        functions: 65,
+        branches: 74,
+      },
+    },
     // 把 RTL 强制内联，让上面的 alias 对其内部 `react-dom/client` import 也生效，
     // 否则 RTL（CJS）会绕过 vite 解析、自行命中另一份 react-dom 实例。
     server: {

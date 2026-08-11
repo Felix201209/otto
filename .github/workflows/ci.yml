@@ -120,7 +120,7 @@ jobs:
         run: npm run test --workspace=packages/server
 
       - name: 🧪 Test desktop
-        run: npm run test --workspace=packages/desktop
+        run: npm run test:coverage --workspace=packages/desktop
 
       - name: 🧪 Test durable workflow and RPA runtime
         run: npm run test --workspace=packages/workflow && npm run test --workspace=packages/rpa

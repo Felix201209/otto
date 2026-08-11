@@ -20,9 +20,25 @@ describe('UI mode preference', () => {
     expect(uiModeStorageKey(scope)).toContain('https%3A%2F%2Fexample.com');
   });
 
+  it('uses stable local and anonymous fallbacks for incomplete personal scopes', () => {
+    expect(uiModeStorageKey({
+      serverUrl: '   ',
+      organizationId: '   ',
+      accountId: '   ',
+    })).toBe('otto.ui-mode.v1:local:personal:anonymous');
+
+    expect(uiModeStorageKey({
+      serverUrl: null,
+      organizationId: 'personal-org',
+      accountId: 'account-1',
+    })).toContain(':local:personal-org:account-1');
+  });
+
   it('accepts only supported modes', () => {
+    expect(readUiModePreference(scope, { getItem: () => 'conversational' })).toBe('conversational');
     expect(readUiModePreference(scope, { getItem: () => 'work' })).toBe('work');
     expect(readUiModePreference(scope, { getItem: () => 'legacy' })).toBeNull();
+    expect(readUiModePreference(scope, { getItem: () => null })).toBeNull();
   });
 
   it('does not break startup when local storage is unavailable', () => {

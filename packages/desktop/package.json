@@ -26,6 +26,7 @@
     "pretest": "npm run build:native",
     "test": "vitest run",
     "pretypecheck": "npm run build:native",
+    "test:coverage": "vitest run --coverage",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "dist:all": "npm run build && electron-builder --mac dmg --arm64 --x64 && electron-builder --win --x64",
     "release": "node scripts/make-delivery-zip.mjs --build",
