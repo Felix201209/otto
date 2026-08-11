@@ -15,4 +15,13 @@ describe('UiModeGuide', () => {
     fireEvent.click(screen.getByRole('button', { name: /选择工作式 UI/ }));
     expect(onSelect).toHaveBeenCalledWith('work');
   });
+
+  it('returns conversational mode from the focused layout option', () => {
+    const onSelect = vi.fn();
+    render(<UiModeGuide onSelect={onSelect} />);
+
+    const buttons = screen.getAllByRole('button');
+    fireEvent.click(buttons[0]);
+    expect(onSelect).toHaveBeenCalledWith('conversational');
+  });
 });
