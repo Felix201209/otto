@@ -10,6 +10,8 @@
  */
 
 import React, { useEffect, useState } from 'react';
+import type { UiMode } from '../../uiModePreference.js';
+import { UiModePreview } from '../UiModeGuide.js';
 import type { UseSettingsData } from '../../state/useSettingsData.js';
 import { GeneratedIcon, type GeneratedIconName } from '../GeneratedIcon.js';
 import { IconClose } from '../icons.js';
@@ -41,7 +43,15 @@ const THEME_OPTIONS: Array<{ id: 'system' | 'light' | 'dark'; label: string }> =
   { id: 'dark', label: '深色' },
 ];
 
-export function PrefsPanel({ data }: { data: UseSettingsData }): React.JSX.Element {
+export function PrefsPanel({
+  data,
+  uiMode = 'conversational',
+  onUiModeChange = () => undefined,
+}: {
+  data: UseSettingsData;
+  uiMode?: UiMode;
+  onUiModeChange?: (mode: UiMode) => void;
+}): React.JSX.Element {
   const { state, actions } = data;
   const s = state.settings;
   const [langDraft, setLangDraft] = useState('');
@@ -78,6 +88,36 @@ export function PrefsPanel({ data }: { data: UseSettingsData }): React.JSX.Eleme
           <div className="otto-prefs-simple__intro">
             <span className="otto-prefs-simple__check" aria-hidden>✓</span>
             <div><strong>推荐设置已生效</strong><span>不知道怎么选时保持默认就好，所有选项都会立即生效。</span></div>
+          </div>
+          <div className="otto-hub__setting otto-hub__setting--stack">
+            <div className="otto-hub__setting-text">
+              <div className="otto-hub__field-label">界面模式</div>
+              <div className="otto-hub__field-hint">
+                两种界面的功能和数据完全相同，切换后立即生效。
+              </div>
+            </div>
+            <div className="otto-ui-mode-setting" role="radiogroup" aria-label="界面模式">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={uiMode === 'conversational'}
+                className={uiMode === 'conversational' ? 'is-active' : ''}
+                onClick={() => onUiModeChange('conversational')}
+              >
+                <UiModePreview mode="conversational" />
+                <span><strong>对话式 UI</strong><small>专注当前对话</small></span>
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={uiMode === 'work'}
+                className={uiMode === 'work' ? 'is-active' : ''}
+                onClick={() => onUiModeChange('work')}
+              >
+                <UiModePreview mode="work" />
+                <span><strong>工作式 UI</strong><small>右侧常驻工作区</small></span>
+              </button>
+            </div>
           </div>
           <div className="otto-hub__setting otto-hub__setting--stack">
             <div className="otto-hub__setting-text">
