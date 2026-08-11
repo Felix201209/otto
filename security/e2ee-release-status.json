@@ -1,5 +1,5 @@
 {
-  "format": 1,
+  "format": 2,
   "protocol": {
     "id": "mls10-openmls-0.8-candidate",
     "implementation": "openmls-0.8.1",
@@ -40,11 +40,30 @@
     "localCheckpointPinning": true,
     "externalWitness": false
   },
+  "assurance": {
+    "threatModelPath": "docs/security/e2ee-threat-model.md",
+    "adversarialReportPath": "artifacts/security/e2ee-adversarial-report.json",
+    "trustStorePath": "security/e2ee-release-trust.json",
+    "auditAttestationPath": null,
+    "releaseApprovalPath": null,
+    "generatedPolicyPath": "packages/server/src/enterprise/e2eeProductionReleasePolicy.ts",
+    "requiredMaliciousServerScenarios": [
+      "directory-rollback-and-fork",
+      "directory-key-substitution",
+      "ciphertext-and-attachment-tampering",
+      "revoked-device-exclusion",
+      "transport-acknowledgement-substitution",
+      "epoch-skip-and-commit-tampering",
+      "cross-tenant-device-injection",
+      "replay-and-idempotency",
+      "plaintext-downgrade-refusal"
+    ]
+  },
   "auditReports": [],
   "releaseApproved": false,
   "prohibitedClaims": [
     "Signal-grade security",
     "externally audited production E2EE",
-    "protection from a malicious device-directory server"
+    "protection from a malicious device-directory server without verification"
   ]
 }

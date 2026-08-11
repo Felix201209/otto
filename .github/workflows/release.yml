@@ -72,9 +72,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Enforce audited E2EE production readiness
-        run: node scripts/verify-e2ee-release-readiness.mjs
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -91,6 +88,20 @@ jobs:
         env:
           PYTHON: python3.11
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify hostile-server defenses and E2EE release authorization
+        run: |
+          npm run security:e2ee:adversarial
+          npm run security:e2ee:release:verify
+          npm run security:e2ee:policy:check
+
+      - name: Preserve E2EE adversarial evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2ee-adversarial-release-evidence
+          path: artifacts/security/e2ee-adversarial-report.json
+          if-no-files-found: error
 
       - name: Download verified SQLCipher native matrix
         uses: actions/download-artifact@v7

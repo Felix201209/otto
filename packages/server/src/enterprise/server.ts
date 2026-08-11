@@ -32,6 +32,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createAliyunLoginSmsFromEnv } from 'otto-core';
 import * as db from './db.js';
+import { e2eeProductionCapabilities } from './e2eeProductionReleasePolicy.js';
 
 import { resolveEnterprisePublicBaseUrl } from '../modules/identity_organization/index.js';
 import {
@@ -168,6 +169,7 @@ const ENTERPRISE_CAPABILITIES = [
   'e2ee_mls_transport_v1',
   'e2ee_mls_resource_governance_v1',
   'e2ee_mls_transport_session_reset_v1',
+  ...e2eeProductionCapabilities(),
   'direct_message_attachments_v1',
   'encrypted_attachment_storage_v1',
   'encrypted_message_storage_v1',

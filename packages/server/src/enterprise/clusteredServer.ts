@@ -47,6 +47,7 @@ import {
 import { createClusteredAttachmentMaintenance } from './clusteredAttachmentMaintenance.js';
 import { handleClusteredBusinessRoute } from './clusteredBusinessRoutes.js';
 import { createClusteredMlsMaintenance } from './clusteredMlsMaintenance.js';
+import { e2eeProductionCapabilities } from './e2eeProductionReleasePolicy.js';
 import {
   createClusteredEnterpriseInfrastructure,
   type ClusteredEnterpriseInfrastructure,
@@ -507,6 +508,7 @@ export function createClusteredEnterpriseServer(
             'e2ee_mls_transport_v1',
             'e2ee_mls_resource_governance_v1',
             'e2ee_mls_transport_session_reset_v1',
+            ...e2eeProductionCapabilities(),
             'postgresql_authority_v1',
             'postgresql_registration_v1',
             'organization_invites_v1',

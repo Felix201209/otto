@@ -67,6 +67,7 @@ bundle
 junit.xml
 packages/*/coverage/
 packages/evals/artifacts/
+artifacts/security/
 
 # Generated files
 packages/cli/src/generated/

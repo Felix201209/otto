@@ -146,14 +146,16 @@ do not make the enterprise directory independently trustworthy: a malicious
 server can still create first-use or persistent split views unless clients
 gossip tree heads or verify them through an external witness.
 
-Formal releases run `scripts/verify-e2ee-release-readiness.mjs` and fail closed.
-The checked-in status records the MLS candidate's implemented controls while
-leaving `externalAuditCompleted`, `productionCapabilityAdvertised`, and
-`releaseApproved` false. The gate therefore has three deliberate blockers: an
-independent audit, its checked-in artifact, and explicit security release
-approval. MLS is an alternative audited session protocol, not a Signal Double
-Ratchet implementation, so Otto must not claim Signal-grade or externally
-audited production E2EE while those blockers remain.
+Formal releases run the hostile-server suite and the two-level gate documented
+in [E2EE production release gate](./e2ee-release-gate.md). A normal Otto build
+may ship the inactive candidate transport only while the generated server
+policy omits `e2ee_mls_v1`. Enabling that capability requires a fresh test
+report, an independent Ed25519-signed audit attestation, and separate signed
+security and release approvals for the same source profile. Any security-code
+change invalidates those records. The detailed adversary assumptions and
+remaining first-view directory limitation are in the
+[E2EE threat model](./e2ee-threat-model.md). MLS is not a Signal Double Ratchet
+implementation, so Otto must not claim Signal-grade security.
 
 The release-gated MLS candidate pins OpenMLS 0.8.1 and its official Rust
 crypto provider in `otto-native`. It creates signed, one-time public MLS 1.0

@@ -59,6 +59,20 @@ jobs:
           PYTHON: python3.11
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: E2EE hostile-server and signed release gate
+        run: |
+          npm run security:e2ee:adversarial
+          npm run security:e2ee:release:verify
+          npm run security:e2ee:policy:check
+
+      - name: Preserve E2EE adversarial evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2ee-adversarial-ci-evidence
+          path: artifacts/security/e2ee-adversarial-report.json
+          if-no-files-found: error
+
       - name: 🩺 Cheap anomaly checks
         run: |
           npm run doctor
