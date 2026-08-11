@@ -59,7 +59,7 @@
     "pack:prod": "cross-env ENABLE_CHECKPOINTING=true npm run bundle:cross-platform:prod && cross-env BUILD_ENV=production ENABLE_CHECKPOINTING=true node scripts/newpack.js",
     "pack:prod:ci": "cross-env ENABLE_CHECKPOINTING=true npm run bundle:cross-platform:prod && cross-env BUILD_ENV=production ENABLE_CHECKPOINTING=true node scripts/newpack.js -- --no-version-bump",
     "test": "npm run test --workspace=packages/core && npm run test --workspace=packages/server && npm run test --workspace=packages/desktop",
-    "test:ci": "npm run test:ci --workspace=packages/core --if-present && npm run test:ci --workspace=packages/server --if-present && npm run test --workspace=packages/desktop && npm run test:scripts && npm run eval:deterministic && npm run test --workspace=packages/workflow && npm run test --workspace=packages/rpa",
+    "test:ci": "npm run test:ci --workspace=packages/core --if-present && npm run test:ci --workspace=packages/server --if-present && npm run test:coverage --workspace=packages/desktop && npm run test:scripts && npm run eval:deterministic && npm run test --workspace=packages/workflow && npm run test --workspace=packages/rpa",
     "test:scripts": "vitest run --config ./scripts/tests/vitest.config.ts",
     "test:federation:staging": "node scripts/smoke-federation-staging.mjs",
     "test:e2e": "npm run test:integration:sandbox:none -- --verbose --keep-output",
