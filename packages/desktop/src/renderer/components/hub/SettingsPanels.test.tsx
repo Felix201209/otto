@@ -85,3 +85,22 @@ describe('PrefsPanel 外观与回复', () => {
     expect(setSetting).toHaveBeenCalledWith('agentStyle', 'antigravity');
   });
 });
+
+describe('PrefsPanel UI mode selection', () => {
+  it('shows the two official UI modes and switches without changing business settings', () => {
+    const { value, setSetting } = settingsData();
+    const onUiModeChange = vi.fn();
+    render(
+      <PrefsPanel
+        data={value}
+        uiMode="work"
+        onUiModeChange={onUiModeChange}
+      />,
+    );
+
+    expect(screen.getByRole('radio', { name: /工作式 UI/ }).getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(screen.getByRole('radio', { name: /对话式 UI/ }));
+    expect(onUiModeChange).toHaveBeenCalledWith('conversational');
+    expect(setSetting).not.toHaveBeenCalled();
+  });
+});
