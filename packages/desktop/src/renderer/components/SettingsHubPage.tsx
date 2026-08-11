@@ -42,6 +42,7 @@ import { EnterpriseModelsPanel, OrganizationPanel } from './hub/ProductWorkspace
 import { SearchPanel } from './hub/SearchPanel.js';
 import { PrivacyDataPanel } from './hub/PrivacyDataPanel.js';
 import type { EnterpriseAccount } from '../../preload/index.js';
+import type { UiMode } from '../uiModePreference.js';
 
 export type TabId =
   | 'prefs'
@@ -131,6 +132,8 @@ interface SettingsHubPageProps {
   product: UseProductWorkspace;
   models: ModelInfo[];
   enterpriseAccount: EnterpriseAccount;
+  uiMode?: UiMode;
+  onUiModeChange?: (mode: UiMode) => void;
   onManageAccounts?: () => void;
 }
 
@@ -143,6 +146,8 @@ export function SettingsHubPage({
   product,
   models,
   enterpriseAccount,
+  uiMode = 'conversational',
+  onUiModeChange = () => undefined,
   onManageAccounts,
 }: SettingsHubPageProps): React.JSX.Element {
   const [tab, setTab] = useState<TabId>(() => resolveInitialSettingsTab(initialTab));
@@ -262,7 +267,9 @@ export function SettingsHubPage({
           ) : null}
 
           <div className="otto-hub__scroll">
-            {tab === 'prefs' ? <PrefsPanel data={data} /> : null}
+            {tab === 'prefs' ? (
+              <PrefsPanel data={data} uiMode={uiMode} onUiModeChange={onUiModeChange} />
+            ) : null}
             {tab === 'organization' ? (
               <OrganizationPanel
                 product={product}
