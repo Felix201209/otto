@@ -222,15 +222,30 @@ function mockFederationCrypto(): EnterpriseE2eeCrypto {
     keyFingerprint: 'a'.repeat(64),
   };
   const localCard = {
-    v: 1 as const,
+    v: 2 as const,
     deploymentId: 'deployment-a',
     principalId: 'acc_1',
     displayName: ACCOUNT.name,
     device: localDevice,
+    devices: [
+      localDevice,
+      {
+        ...localDevice,
+        deviceId: 'local-federation-phone',
+        keyFingerprint: 'c'.repeat(64),
+      },
+    ],
+    identityDevice: localDevice,
+    identityKeyFingerprint: localDevice.keyFingerprint,
+    directorySequence: 2,
+    directoryHash: 'd'.repeat(64),
     issuedAt: '2026-08-12T00:00:00.000Z',
     signature: 'local-card-signature',
   };
   return {
+    verifyLocalDeviceRegistration: vi.fn((_, registered) => registered),
+    verifyAndPinKeyTransparency: vi.fn(({ view }) => view),
+    verifyDeviceDirectory: vi.fn(({ devices }) => devices),
     verifyFederationIdentityCard: vi.fn((card) => card),
     createFederationIdentityCard: vi.fn(() => localCard),
     pinFederationContact: vi.fn((input: {
@@ -340,6 +355,47 @@ describe('EnterpriseClient', () => {
           },
         });
       }
+      if (url.endsWith('/enterprise/e2ee/devices') && method === 'POST') {
+        return jsonResponse(201, {
+          device: {
+            ...E2EE_DEVICE,
+            accountId: ACCOUNT.id,
+            approvalState: 'approved',
+            revokedAt: null,
+          },
+        });
+      }
+      if (url.includes('/enterprise/e2ee/key-transparency?')) {
+        return jsonResponse(200, {
+          transparency: {
+            accountId: ACCOUNT.id,
+            headSequence: 1,
+            headHash: 'a'.repeat(64),
+            entries: [{
+              sequence: 1,
+              organizationId: ACCOUNT.organizationId,
+              accountId: ACCOUNT.id,
+              deviceId: E2EE_DEVICE.deviceId,
+              event: 'bootstrap_approved',
+              keyFingerprint: E2EE_DEVICE.keyFingerprint,
+              actorDeviceId: null,
+              previousHash: '0'.repeat(64),
+              entryHash: 'a'.repeat(64),
+              createdAt: '2026-08-12T00:00:00.000Z',
+            }],
+          },
+        });
+      }
+      if (url.includes('/enterprise/e2ee/devices?') && method === 'GET') {
+        return jsonResponse(200, {
+          devices: [{
+            ...E2EE_DEVICE,
+            accountId: ACCOUNT.id,
+            approvalState: 'approved',
+            revokedAt: null,
+          }],
+        });
+      }
       if (url.endsWith('/enterprise/federation/contacts') && method === 'GET') {
         return jsonResponse(200, { contacts });
       }
@@ -401,6 +457,12 @@ describe('EnterpriseClient', () => {
     expect(JSON.parse(messageBodies[0]!) as Record<string, unknown>).toMatchObject({
       messageId: 'federation-message-1',
       inReplyTo: null,
+    });
+    const encryptionInput = vi.mocked(crypto.encryptMessage).mock.calls[0]?.[0];
+    expect(encryptionInput?.devices).toHaveLength(3);
+    expect(encryptionInput?.keyring).toEqual({
+      serverScope: 'https://enterprise.otto.test',
+      accountId: ACCOUNT.id,
     });
   });
 

@@ -13,6 +13,8 @@ import {
   EnterpriseE2eeKeyVault,
   enterpriseE2eeDeviceApprovalSignaturePayload,
   enterpriseE2eeDeviceVerification,
+  enterpriseFederationContactVerification,
+  enterpriseFederationIdentityCardDevices,
   type EnterpriseE2eeDeviceBundle,
   type EnterpriseE2eeKeyTransparencyEvent,
   type EnterpriseE2eeKeyTransparencyView,
@@ -172,6 +174,197 @@ describe('enterprise private-chat E2EE', () => {
 
     alice.crypto.removeFederationContact(scope);
     expect(alice.crypto.federationContactTrust(scope)).toBeNull();
+  });
+
+  it('accepts only monotonic multi-device federation directories signed by a trusted device', () => {
+    const alice = createEndpoint('Alice laptop');
+    const bob = createEndpoint('Bob laptop');
+    const bobPhone = createEndpoint('Bob phone');
+    const bobDevice = bob.crypto.localDevice('https://bob.test', 'bob');
+    const phoneDevice = bobPhone.crypto.localDevice('https://bob.test', 'bob');
+    const scope = {
+      localServerScope: 'https://alice.test',
+      localAccountId: 'alice',
+      contactId: 'bob',
+    };
+    const card = bob.crypto.createFederationIdentityCard({
+      deploymentId: 'deployment-b',
+      principalId: 'bob',
+      displayName: 'Bob',
+      devices: [bobDevice],
+      identityDevice: bobDevice,
+      directorySequence: 1,
+      directoryHash: '1'.repeat(64),
+      keyring: { serverScope: 'https://bob.test', accountId: 'bob' },
+    });
+    alice.crypto.pinFederationContact({ ...scope, card });
+    alice.crypto.verifyFederationContact(scope);
+
+    const expanded = bob.crypto.createFederationIdentityCard({
+      deploymentId: 'deployment-b',
+      principalId: 'bob',
+      displayName: 'Bob',
+      devices: [bobDevice, phoneDevice],
+      identityDevice: bobDevice,
+      directorySequence: 2,
+      directoryHash: '2'.repeat(64),
+      keyring: { serverScope: 'https://bob.test', accountId: 'bob' },
+    });
+    expect(alice.crypto.pinFederationContact({
+      ...scope,
+      card: expanded,
+    }).verifiedAt).toBe('2026-07-31T00:00:00.000Z');
+
+    const rollback = bob.crypto.createFederationIdentityCard({
+      deploymentId: 'deployment-b',
+      principalId: 'bob',
+      displayName: 'Bob',
+      devices: [bobDevice],
+      identityDevice: bobDevice,
+      directorySequence: 1,
+      directoryHash: '1'.repeat(64),
+      keyring: { serverScope: 'https://bob.test', accountId: 'bob' },
+    });
+    expect(() => alice.crypto.pinFederationContact({
+      ...scope,
+      card: rollback,
+    })).toThrow('directory is untrusted');
+
+    const fork = bob.crypto.createFederationIdentityCard({
+      deploymentId: 'deployment-b',
+      principalId: 'bob',
+      displayName: 'Bob',
+      devices: [bobDevice, phoneDevice],
+      identityDevice: bobDevice,
+      directorySequence: 2,
+      directoryHash: 'f'.repeat(64),
+      keyring: { serverScope: 'https://bob.test', accountId: 'bob' },
+    });
+    expect(() => alice.crypto.pinFederationContact({
+      ...scope,
+      card: fork,
+    })).toThrow('directory is untrusted');
+
+    const stranger = createEndpoint('Unknown device');
+    const strangerDevice = stranger.crypto.localDevice(
+      'https://bob.test',
+      'bob',
+    );
+    const substituted = stranger.crypto.createFederationIdentityCard({
+      deploymentId: 'deployment-b',
+      principalId: 'bob',
+      displayName: 'Bob',
+      devices: [strangerDevice],
+      identityDevice: strangerDevice,
+      directorySequence: 3,
+      directoryHash: '3'.repeat(64),
+      keyring: { serverScope: 'https://bob.test', accountId: 'bob' },
+    });
+    expect(() => alice.crypto.pinFederationContact({
+      ...scope,
+      card: substituted,
+    })).toThrow('directory is untrusted');
+  });
+
+  it('keeps a stable federation safety number after root-device revocation', () => {
+    const alice = createEndpoint('Alice laptop');
+    const bob = createEndpoint('Bob laptop');
+    const bobPhone = createEndpoint('Bob phone');
+    const aliceDevice = alice.crypto.localDevice('https://alice.test', 'alice');
+    const bobDevice = bob.crypto.localDevice('https://bob.test', 'bob');
+    const phoneDevice = bobPhone.crypto.localDevice('https://bob.test', 'bob');
+    const aliceCard = alice.crypto.createFederationIdentityCard({
+      deploymentId: 'deployment-a',
+      principalId: 'alice',
+      displayName: 'Alice',
+      devices: [aliceDevice],
+      identityDevice: aliceDevice,
+      directorySequence: 1,
+      directoryHash: 'a'.repeat(64),
+      keyring: { serverScope: 'https://alice.test', accountId: 'alice' },
+    });
+    const before = bob.crypto.createFederationIdentityCard({
+      deploymentId: 'deployment-b',
+      principalId: 'bob',
+      displayName: 'Bob',
+      devices: [bobDevice, phoneDevice],
+      identityDevice: bobDevice,
+      directorySequence: 2,
+      directoryHash: 'b'.repeat(64),
+      keyring: { serverScope: 'https://bob.test', accountId: 'bob' },
+    });
+    const revokedRoot = {
+      ...bobDevice,
+      revokedAt: '2026-07-31T00:30:00.000Z',
+    };
+    const after = bobPhone.crypto.createFederationIdentityCard({
+      deploymentId: 'deployment-b',
+      principalId: 'bob',
+      displayName: 'Bob',
+      devices: [phoneDevice],
+      identityDevice: revokedRoot,
+      directorySequence: 3,
+      directoryHash: 'c'.repeat(64),
+      keyring: { serverScope: 'https://bob.test', accountId: 'bob' },
+    });
+    expect(enterpriseFederationContactVerification(aliceCard, before))
+      .toEqual(enterpriseFederationContactVerification(aliceCard, after));
+    expect(enterpriseFederationIdentityCardDevices(after)).toHaveLength(1);
+    expect(enterpriseFederationIdentityCardDevices(after)[0]?.deviceId)
+      .toBe(phoneDevice.deviceId);
+  });
+
+  it('wraps a federated message key for every approved active device', () => {
+    const alice = createEndpoint('Alice laptop');
+    const alicePhone = createEndpoint('Alice phone');
+    const bob = createEndpoint('Bob laptop');
+    const bobPhone = createEndpoint('Bob phone');
+    const aliceDevice = alice.crypto.localDevice('https://alice.test', 'alice');
+    const alicePhoneDevice = alicePhone.crypto.localDevice(
+      'https://alice.test',
+      'alice',
+    );
+    const bobDevice = bob.crypto.localDevice('https://bob.test', 'bob');
+    const bobPhoneDevice = bobPhone.crypto.localDevice(
+      'https://bob.test',
+      'bob',
+    );
+    const devices = [
+      ...[aliceDevice, alicePhoneDevice].map((device) => ({
+        ...device,
+        accountId: 'deployment-a:alice',
+      })),
+      ...[bobDevice, bobPhoneDevice].map((device) => ({
+        ...device,
+        accountId: 'deployment-b:bob',
+      })),
+    ];
+    const encrypted = alice.crypto.encryptMessage({
+      serverScope: 'federation',
+      organizationId: 'conversation-a-b',
+      senderAccountId: 'deployment-a:alice',
+      recipientAccountId: 'deployment-b:bob',
+      keyring: { serverScope: 'https://alice.test', accountId: 'alice' },
+      content: 'multi-device federation',
+      contentType: 'message',
+      devices,
+    });
+    expect(encrypted.envelopes).toHaveLength(4);
+    expect(new Set(encrypted.envelopes.map((item) => item.deviceId)).size)
+      .toBe(4);
+    const message = wire(
+      encrypted,
+      { ...aliceDevice, accountId: 'deployment-a:alice' },
+      'deployment-a:alice',
+      'deployment-b:bob',
+    );
+    expect(bob.crypto.decryptMessage({
+      serverScope: 'federation',
+      organizationId: 'conversation-a-b',
+      accountId: 'deployment-b:bob',
+      keyring: { serverScope: 'https://bob.test', accountId: 'bob' },
+      message,
+    }).content).toBe('multi-device federation');
   });
 
   it('pins transparency heads and rejects a server rollback or fork', () => {

@@ -14,6 +14,9 @@ import type { MlsKeyPackage } from '@otto/native';
 import {
   ENTERPRISE_FEDERATION_E2EE_SCOPE,
   enterpriseE2eeDeviceVerification,
+  enterpriseFederationContactVerification,
+  enterpriseFederationIdentityCardDevices,
+  enterpriseFederationIdentityKeyFingerprint,
   type EnterpriseE2eeDeviceVerification,
   type EnterpriseE2eeCrypto,
   type EnterpriseE2eeDeviceBundle,
@@ -3222,13 +3225,41 @@ export class EnterpriseClient {
     return identity;
   }
 
-  async exportFederationContactCode(): Promise<string> {
-    const { crypto, account } = this.requireE2eeContext();
+  private async localFederationIdentityCard(): Promise<
+    EnterpriseFederationIdentityCard
+  > {
+    const { crypto, account, serverScope } = this.requireE2eeContext();
     const identity = await this.federationIdentity();
-    const card = crypto.createFederationIdentityCard({
+    const devices = await this.verifiedE2eeDeviceDirectory([account.id], {
+      includePending: false,
+      includeRevoked: true,
+    });
+    const transparency = await this.getAndPinE2eeKeyTransparency(account.id);
+    const identityEntry = transparency.entries.find(
+      (entry) => entry.event === 'bootstrap_approved',
+    );
+    const identityDevice = devices.find(
+      (device) => device.deviceId === identityEntry?.deviceId,
+    );
+    const activeDevices = devices.filter((device) => device.revokedAt === null);
+    if (!identityDevice || activeDevices.length === 0) {
+      throw new Error(
+        'federation E2EE identity directory has no trusted root or active device',
+      );
+    }
+    return crypto.createFederationIdentityCard({
       ...identity,
       displayName: account.name,
+      devices: activeDevices,
+      identityDevice,
+      directorySequence: transparency.headSequence,
+      directoryHash: transparency.headHash,
+      keyring: { serverScope, accountId: account.id },
     });
+  }
+
+  async exportFederationContactCode(): Promise<string> {
+    const card = await this.localFederationIdentityCard();
     return FEDERATION_CONTACT_CODE_PREFIX + Buffer.from(
       JSON.stringify(card),
       'utf8',
@@ -3288,7 +3319,7 @@ export class EnterpriseClient {
     return {
       ...contact,
       trustState: trust.verifiedAt ? 'verified' : 'unverified',
-      keyFingerprint: trust.card.device.keyFingerprint,
+      keyFingerprint: enterpriseFederationIdentityKeyFingerprint(trust.card),
     };
   }
 
@@ -3311,7 +3342,9 @@ export class EnterpriseClient {
         trustState: trust
           ? trust.verifiedAt ? 'verified' : 'unverified'
           : 'missing',
-        keyFingerprint: trust?.card.device.keyFingerprint ?? null,
+        keyFingerprint: trust
+          ? enterpriseFederationIdentityKeyFingerprint(trust.card)
+          : null,
       };
     });
   }
@@ -3335,19 +3368,15 @@ export class EnterpriseClient {
     verifiedAt: string | null;
   }> {
     const { crypto, account, serverScope } = this.requireE2eeContext();
-    const identity = await this.federationIdentity();
     const trust = crypto.federationContactTrust({
       localServerScope: serverScope,
       localAccountId: account.id,
       contactId,
     });
     if (!trust) throw new Error('请先导入对方的联邦联系码');
-    const localDevice = crypto.localDevice(
-      ENTERPRISE_FEDERATION_E2EE_SCOPE,
-      `${identity.deploymentId}:${identity.principalId}`,
-    );
+    const localCard = await this.localFederationIdentityCard();
     return {
-      ...enterpriseE2eeDeviceVerification(localDevice, trust.card.device),
+      ...enterpriseFederationContactVerification(localCard, trust.card),
       verifiedAt: trust.verifiedAt,
     };
   }
@@ -3417,12 +3446,11 @@ export class EnterpriseClient {
           card: senderCard,
         });
       } else {
-        const ownCard = crypto.createFederationIdentityCard({
-          ...identity,
-          displayName: account.name,
-          issuedAt: senderCard.issuedAt,
-        });
-        if (ownCard.device.keyFingerprint !== senderCard.device.keyFingerprint) {
+        const ownCard = await this.localFederationIdentityCard();
+        if (
+          enterpriseFederationIdentityKeyFingerprint(ownCard) !==
+          enterpriseFederationIdentityKeyFingerprint(senderCard)
+        ) {
           throw new Error('本机联邦发送身份已变化，请重置安全会话');
         }
         const pinnedTrust = crypto.federationContactTrust({
@@ -3439,6 +3467,7 @@ export class EnterpriseClient {
         serverScope: ENTERPRISE_FEDERATION_E2EE_SCOPE,
         organizationId: conversationId,
         accountId: localGlobalId,
+        keyring: { serverScope, accountId: account.id },
         message: payload.message,
       });
       decrypted.push({
@@ -3493,10 +3522,7 @@ export class EnterpriseClient {
       remoteDeploymentId: contact.remoteDeploymentId,
       remotePrincipalId: contact.remotePrincipalId,
     });
-    const senderCard = crypto.createFederationIdentityCard({
-      ...identity,
-      displayName: account.name,
-    });
+    const senderCard = await this.localFederationIdentityCard();
     const protocol = e2eeProtocolMetadata(content);
     const encrypted = crypto.encryptMessage({
       serverScope: ENTERPRISE_FEDERATION_E2EE_SCOPE,
@@ -3506,7 +3532,11 @@ export class EnterpriseClient {
       content,
       contentType: protocol.contentType,
       inReplyToMessageId: protocol.inReplyToMessageId,
-      devices: [senderCard.device, trust.card.device],
+      devices: [
+        ...enterpriseFederationIdentityCardDevices(senderCard),
+        ...enterpriseFederationIdentityCardDevices(trust.card),
+      ],
+      keyring: { serverScope, accountId: account.id },
     });
     const createdAt = new Date().toISOString();
     const message: EnterpriseE2eeWireMessage = {
@@ -3546,6 +3576,7 @@ export class EnterpriseClient {
       serverScope: ENTERPRISE_FEDERATION_E2EE_SCOPE,
       organizationId: conversationId,
       accountId: localGlobalId,
+      keyring: { serverScope, accountId: account.id },
       message,
     });
     return {

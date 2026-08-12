@@ -44,11 +44,18 @@ export interface EnterpriseE2eeDeviceBundle {
 }
 
 export interface EnterpriseFederationIdentityCard {
-  v: 1;
+  v: 1 | 2;
   deploymentId: string;
   principalId: string;
   displayName: string;
+  /** Signing device. Kept for v1 compatibility and fast signature lookup. */
   device: EnterpriseE2eeDeviceBundle;
+  /** All approved and active devices at directorySequence (v2). */
+  devices?: EnterpriseE2eeDeviceBundle[];
+  identityDevice?: EnterpriseE2eeDeviceBundle;
+  identityKeyFingerprint?: string;
+  directorySequence?: number;
+  directoryHash?: string;
   issuedAt: string;
   signature: string;
 }
@@ -63,6 +70,22 @@ export interface EnterpriseE2eeDeviceVerification {
   safetyNumber: string;
   qrPayload: string;
   deviceFingerprints: [string, string];
+}
+
+export function enterpriseFederationIdentityCardDevices(
+  card: EnterpriseFederationIdentityCard,
+): EnterpriseE2eeDeviceBundle[] {
+  return card.v === 2 && Array.isArray(card.devices)
+    ? card.devices
+    : [card.device];
+}
+
+export function enterpriseFederationIdentityKeyFingerprint(
+  card: EnterpriseFederationIdentityCard,
+): string {
+  return card.v === 2 && card.identityKeyFingerprint
+    ? card.identityKeyFingerprint
+    : card.device.keyFingerprint;
 }
 
 export interface EnterpriseE2eeDeviceApproval {
@@ -283,6 +306,34 @@ export function enterpriseE2eeDeviceVerification(
   return {
     safetyNumber: groups.join(' '),
     qrPayload: `otto-e2ee-verify:v1:${Buffer.from(canonical).toString('base64url')}`,
+    deviceFingerprints: [
+      identities[0]!.keyFingerprint,
+      identities[1]!.keyFingerprint,
+    ],
+  };
+}
+
+export function enterpriseFederationContactVerification(
+  first: EnterpriseFederationIdentityCard,
+  second: EnterpriseFederationIdentityCard,
+): EnterpriseE2eeDeviceVerification {
+  const identities = [first, second]
+    .map((card) => ({
+      identity: `${card.deploymentId}:${card.principalId}`,
+      keyFingerprint: enterpriseFederationIdentityKeyFingerprint(card),
+    }))
+    .sort((left, right) => left.identity.localeCompare(right.identity));
+  const canonical = JSON.stringify({ v: 2, identities });
+  const digest = createHash('sha512')
+    .update('otto:federation-safety-number:v2\n')
+    .update(canonical)
+    .digest();
+  const groups = Array.from({ length: 12 }, (_, index) =>
+    String(digest.readUInt32BE(index * 4) % 100_000).padStart(5, '0'),
+  );
+  return {
+    safetyNumber: groups.join(' '),
+    qrPayload: `otto-federation-verify:v2:${Buffer.from(canonical).toString('base64url')}`,
     deviceFingerprints: [
       identities[0]!.keyFingerprint,
       identities[1]!.keyFingerprint,
@@ -558,14 +609,43 @@ export class EnterpriseE2eeKeyVault {
     allowDeviceKeyChange?: boolean;
   }): EnterpriseFederationContactTrust {
     const current = this.loadFederationContactTrust(input);
-    if (
-      current &&
-      current.card.device.keyFingerprint !== input.card.device.keyFingerprint &&
-      !input.allowDeviceKeyChange
-    ) {
-      throw new Error(
-        'federation contact device key changed; verify the new safety number before accepting it',
+    let preserveVerification = false;
+    if (current) {
+      const currentIdentity =
+        `${current.card.deploymentId}:${current.card.principalId}`;
+      const nextIdentity = `${input.card.deploymentId}:${input.card.principalId}`;
+      const currentDevices = enterpriseFederationIdentityCardDevices(
+        current.card,
       );
+      const nextSignerWasTrusted = currentDevices.some(
+        (device) =>
+          device.deviceId === input.card.device.deviceId &&
+          device.keyFingerprint === input.card.device.keyFingerprint,
+      );
+      const stableIdentity =
+        enterpriseFederationIdentityKeyFingerprint(current.card) ===
+        enterpriseFederationIdentityKeyFingerprint(input.card);
+      const directoryAdvanced =
+        current.card.v === 1 ||
+        (input.card.v === 2 &&
+          input.card.directorySequence! >= current.card.directorySequence!);
+      const directoryDidNotFork =
+        current.card.v === 1 ||
+        input.card.v === 1 ||
+        input.card.directorySequence !== current.card.directorySequence ||
+        input.card.directoryHash === current.card.directoryHash;
+      const trustedUpdate =
+        currentIdentity === nextIdentity &&
+        nextSignerWasTrusted &&
+        stableIdentity &&
+        directoryAdvanced &&
+        directoryDidNotFork;
+      if (!trustedUpdate && !input.allowDeviceKeyChange) {
+        throw new Error(
+          'federation contact device key changed or its directory is untrusted; verify the new safety number before accepting it',
+        );
+      }
+      preserveVerification = trustedUpdate;
     }
     const now = this.now().toISOString();
     const next: FederationContactTrustFile = {
@@ -575,9 +655,7 @@ export class EnterpriseE2eeKeyVault {
       contactId: input.contactId,
       card: input.card,
       pinnedAt: current?.pinnedAt ?? now,
-      verifiedAt: current?.card.device.keyFingerprint === input.card.device.keyFingerprint
-        ? current.verifiedAt
-        : null,
+      verifiedAt: preserveVerification ? current!.verifiedAt : null,
     };
     atomicWrite(
       this.federationContactPath(
@@ -1026,6 +1104,13 @@ function federationIdentityCardPayload(
     principalId: card.principalId,
     displayName: card.displayName,
     device: card.device,
+    ...(card.v === 2 ? {
+      devices: card.devices,
+      identityDevice: card.identityDevice,
+      identityKeyFingerprint: card.identityKeyFingerprint,
+      directorySequence: card.directorySequence,
+      directoryHash: card.directoryHash,
+    } : {}),
     issuedAt: card.issuedAt,
   }), 'utf8');
 }
@@ -1034,8 +1119,9 @@ function validateFederationIdentityCard(
   value: EnterpriseFederationIdentityCard,
 ): EnterpriseFederationIdentityCard {
   const identity = `${value.deploymentId}:${value.principalId}`;
+  const devices = enterpriseFederationIdentityCardDevices(value);
   if (
-    value.v !== 1 ||
+    (value.v !== 1 && value.v !== 2) ||
     !/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/u.test(value.deploymentId) ||
     !/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/u.test(value.principalId) ||
     typeof value.displayName !== 'string' ||
@@ -1051,6 +1137,51 @@ function validateFederationIdentityCard(
     !value.signature
   ) {
     throw new Error('federation identity card is invalid');
+  }
+  if (value.v === 2) {
+    const uniqueDevices = new Set<string>();
+    if (
+      !Array.isArray(value.devices) ||
+      value.devices.length === 0 ||
+      value.devices.length > 32 ||
+      !/^[a-f0-9]{64}$/u.test(value.identityKeyFingerprint ?? '') ||
+      !Number.isSafeInteger(value.directorySequence) ||
+      (value.directorySequence ?? -1) < 1 ||
+      !/^[a-f0-9]{64}$/u.test(value.directoryHash ?? '')
+    ) {
+      throw new Error('federation multi-device directory is invalid');
+    }
+    if (
+      !value.identityDevice ||
+      value.identityDevice.accountId !== identity ||
+      value.identityDevice.approvalState !== 'approved' ||
+      enterpriseE2eeDeviceKeyFingerprint(value.identityDevice) !==
+        value.identityDevice.keyFingerprint ||
+      value.identityDevice.keyFingerprint !== value.identityKeyFingerprint
+    ) {
+      throw new Error('federation identity root device is invalid');
+    }
+    for (const device of devices) {
+      const key = `${device.accountId}:${device.deviceId}`;
+      if (
+        device.accountId !== identity ||
+        device.approvalState !== 'approved' ||
+        device.revokedAt !== null ||
+        enterpriseE2eeDeviceKeyFingerprint(device) !== device.keyFingerprint ||
+        uniqueDevices.has(key)
+      ) {
+        throw new Error('federation multi-device directory is invalid');
+      }
+      uniqueDevices.add(key);
+    }
+    const signer = devices.find((device) => device.deviceId === value.device.deviceId);
+    if (
+      !signer ||
+      signer.keyFingerprint !== value.device.keyFingerprint ||
+      value.identityDevice.keyFingerprint !== value.identityKeyFingerprint
+    ) {
+      throw new Error('federation identity signer is not in the device directory');
+    }
   }
   const unsigned = { ...value };
   delete (unsigned as Partial<EnterpriseFederationIdentityCard>).signature;
@@ -1083,22 +1214,43 @@ export class EnterpriseE2eeCrypto {
     principalId: string;
     displayName: string;
     issuedAt?: string;
+    devices?: EnterpriseE2eeDeviceBundle[];
+    identityDevice?: EnterpriseE2eeDeviceBundle;
+    directorySequence?: number;
+    directoryHash?: string;
+    keyring?: { serverScope: string; accountId: string };
   }): EnterpriseFederationIdentityCard {
     const accountId = `${input.deploymentId}:${input.principalId}`;
+    const keyringScope = input.keyring?.serverScope ??
+      ENTERPRISE_FEDERATION_E2EE_SCOPE;
+    const keyringAccountId = input.keyring?.accountId ?? accountId;
     const keyring = this.vault.loadOrCreate(
-      ENTERPRISE_FEDERATION_E2EE_SCOPE,
-      accountId,
+      keyringScope,
+      keyringAccountId,
     );
-    const device = this.localDevice(
-      ENTERPRISE_FEDERATION_E2EE_SCOPE,
-      accountId,
-    );
+    const localDevice = this.localDevice(keyringScope, keyringAccountId);
+    const asFederationDevice = (
+      device: EnterpriseE2eeDeviceBundle,
+    ): EnterpriseE2eeDeviceBundle => ({ ...device, accountId });
+    const device = asFederationDevice(localDevice);
+    const multiDevice = input.devices !== undefined;
+    const devices = input.devices?.map(asFederationDevice);
+    const identityDevice = input.identityDevice
+      ? asFederationDevice(input.identityDevice)
+      : undefined;
     const unsigned: Omit<EnterpriseFederationIdentityCard, 'signature'> = {
-      v: 1,
+      v: multiDevice ? 2 : 1,
       deploymentId: input.deploymentId,
       principalId: input.principalId,
       displayName: input.displayName.trim(),
       device,
+      ...(multiDevice ? {
+        devices,
+        identityDevice,
+        identityKeyFingerprint: identityDevice?.keyFingerprint,
+        directorySequence: input.directorySequence,
+        directoryHash: input.directoryHash,
+      } : {}),
       issuedAt: input.issuedAt ?? new Date().toISOString(),
     };
     const card: EnterpriseFederationIdentityCard = {
@@ -1311,6 +1463,7 @@ export class EnterpriseE2eeCrypto {
     organizationId: string;
     senderAccountId: string;
     recipientAccountId: string;
+    keyring?: { serverScope: string; accountId: string };
     content: string;
     contentType: 'message' | 'atoa_request' | 'atoa_response';
     inReplyToMessageId?: string | null;
@@ -1318,9 +1471,11 @@ export class EnterpriseE2eeCrypto {
     attachments?: EnterpriseE2eePlainAttachmentUpload[];
     messageId?: string;
   }): EnterpriseE2eeSendPayload {
+    const keyringScope = input.keyring?.serverScope ?? input.serverScope;
+    const keyringAccountId = input.keyring?.accountId ?? input.senderAccountId;
     const keyring = this.vault.loadOrCreate(
-      input.serverScope,
-      input.senderAccountId,
+      keyringScope,
+      keyringAccountId,
     );
     const activeDevices = input.devices.filter(
       (device) => device.revokedAt === null,
@@ -1333,8 +1488,11 @@ export class EnterpriseE2eeCrypto {
       participantIds.has(device.accountId),
     );
     if (
-      !envelopeDevices.some(
-        (device) => device.accountId === input.senderAccountId,
+      !envelopeDevices.some((device) =>
+        device.accountId === input.senderAccountId &&
+        device.deviceId === keyring.active.deviceId &&
+        device.identitySigningPublicKey ===
+          keyring.active.identitySigningPublicKey,
       )
     ) {
       throw new Error('current account has no active E2EE device');
@@ -1462,9 +1620,13 @@ export class EnterpriseE2eeCrypto {
   private messageKey(input: {
     serverScope: string;
     accountId: string;
+    keyring?: { serverScope: string; accountId: string };
     message: EnterpriseE2eeWireMessage;
   }): Buffer {
-    const keyring = this.vault.loadOrCreate(input.serverScope, input.accountId);
+    const keyring = this.vault.loadOrCreate(
+      input.keyring?.serverScope ?? input.serverScope,
+      input.keyring?.accountId ?? input.accountId,
+    );
     for (const keySet of [keyring.active, ...keyring.historical]) {
       const envelope = input.message.envelopes.find(
         (candidate) =>
@@ -1497,6 +1659,7 @@ export class EnterpriseE2eeCrypto {
     serverScope: string;
     organizationId: string;
     accountId: string;
+    keyring?: { serverScope: string; accountId: string };
     message: EnterpriseE2eeWireMessage;
   }): EnterpriseE2eePlainMessage {
     const message = input.message;
@@ -1536,6 +1699,7 @@ export class EnterpriseE2eeCrypto {
     const key = this.messageKey({
       serverScope: input.serverScope,
       accountId: input.accountId,
+      keyring: input.keyring,
       message,
     });
     let payload: PlaintextPayload;
@@ -1591,6 +1755,7 @@ export class EnterpriseE2eeCrypto {
     serverScope: string;
     organizationId: string;
     accountId: string;
+    keyring?: { serverScope: string; accountId: string };
     message: EnterpriseE2eeWireMessage;
     attachment: EnterpriseE2eeAttachmentCiphertext;
   }): {
@@ -1603,6 +1768,7 @@ export class EnterpriseE2eeCrypto {
     const key = this.messageKey({
       serverScope: input.serverScope,
       accountId: input.accountId,
+      keyring: input.keyring,
       message: input.message,
     });
     const payload = parsePlaintextPayload(
