@@ -256,6 +256,60 @@ describe('park ticket schema contributor', () => {
         )
         .get() as { sql: string };
       expect(eventTable.sql).toContain("'transfer'");
+      expect(eventTable.sql).toContain("'release'");
+      const ticketColumns = new Set(
+        (
+          database
+            .prepare('PRAGMA table_info(it_tickets)')
+            .all() as Array<{ name: string }>
+        ).map((column) => column.name),
+      );
+      expect(ticketColumns).toEqual(
+        expect.objectContaining(
+          new Set([
+            'accepted_by_account_id',
+            'released_at',
+            'release_reason',
+            'released_by_account_id',
+          ]),
+        ),
+      );
+    } finally {
+      database.close();
+    }
+  });
+
+  it('upgrades a ticket_events table that already has transfer but not release', () => {
+    const database = new Database(':memory:');
+    try {
+      createPrerequisites(database);
+      database.exec(`
+        CREATE TABLE ticket_events (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          ticket_id TEXT NOT NULL,
+          actor_account_id TEXT,
+          action TEXT NOT NULL CHECK(action IN (
+            'created', 'accept', 'respond', 'complete', 'confirm', 'transfer'
+          )),
+          status_before TEXT,
+          status_after TEXT NOT NULL,
+          response_type TEXT,
+          response_text TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+
+      migrateLegacyParkTicketEvents(database);
+      applyDatabaseSchemaContributors(database, [contributor]);
+
+      const eventTable = database
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ticket_events'",
+        )
+        .get() as { sql: string };
+      expect(eventTable.sql).toContain("'transfer'");
+      expect(eventTable.sql).toContain("'release'");
     } finally {
       database.close();
     }

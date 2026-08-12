@@ -16,7 +16,7 @@ const TICKET_EVENTS_TABLE_SQL = `
     ticket_id TEXT NOT NULL,
     actor_account_id TEXT,
     action TEXT NOT NULL CHECK(action IN (
-      'created', 'accept', 'respond', 'complete', 'confirm', 'transfer'
+      'created', 'accept', 'release', 'respond', 'complete', 'confirm', 'transfer'
     )),
     status_before TEXT,
     status_after TEXT NOT NULL,
@@ -64,6 +64,10 @@ function ensureTicketColumns(database: DatabaseHandle): void {
     'response_text',
     'response_at',
     'accepted_at',
+    'accepted_by_account_id',
+    'released_at',
+    'release_reason',
+    'released_by_account_id',
     'completed_at',
     'closed_at',
     'application_number',
@@ -168,7 +172,10 @@ export function migrateLegacyParkTicketEvents(database: DatabaseHandle): void {
       "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ticket_events'",
     )
     .get() as { sql?: string } | undefined;
-  if (!table?.sql || table.sql.includes("'transfer'")) return;
+  if (
+    !table?.sql ||
+    (table.sql.includes("'transfer'") && table.sql.includes("'release'"))
+  ) return;
 
   const columns = new Set(
     (
@@ -254,6 +261,10 @@ export function createParkTicketSchemaContributor(input: {
           response_text TEXT,
           response_at TEXT,
           accepted_at TEXT,
+          accepted_by_account_id TEXT,
+          released_at TEXT,
+          release_reason TEXT,
+          released_by_account_id TEXT,
           completed_at TEXT,
           closed_at TEXT,
           creator_update_at TEXT,

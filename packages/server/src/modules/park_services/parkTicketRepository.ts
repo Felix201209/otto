@@ -69,6 +69,10 @@ interface TicketRow {
   response_text: string | null;
   response_at: string | null;
   accepted_at: string | null;
+  accepted_by_account_id: string | null;
+  released_at: string | null;
+  release_reason: string | null;
+  released_by_account_id: string | null;
   completed_at: string | null;
   closed_at: string | null;
   creator_update_at: string | null;
@@ -317,6 +321,9 @@ function ticketView<TAccount extends ParkTicketAccount>(
       left.event.createdAt.localeCompare(right.event.createdAt) || left.order - right.order
     ))
     .map((candidate) => candidate.event);
+  const handler = row.accepted_by_account_id
+    ? store.getAccount(row.accepted_by_account_id)
+    : null;
   return {
     id: row.id,
     applicationNumber: row.application_number,
@@ -335,6 +342,11 @@ function ticketView<TAccount extends ParkTicketAccount>(
     responseType: row.response_type,
     responseText: row.response_text,
     responseAt: row.response_at,
+    acceptedBy: handler
+      ? { id: handler.id, name: handler.name }
+      : null,
+    releasedAt: row.released_at,
+    releaseReason: row.release_reason,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     creator: {
@@ -936,13 +948,58 @@ export function updateTicket<TAccount extends ParkTicketAccount>(
         );
       } else if (input.action === 'accept') {
         if (!['待接单', '待派单'].includes(current.status)) {
-          throw new Error('Ticket cannot be accepted');
+          if (current.acceptedBy) {
+            throw new Error(
+              current.acceptedBy.id === account.id
+                ? '工单已由您接单'
+                : '工单已被他人接单',
+            );
+          }
+          throw new Error('工单当前状态不可接单');
         }
         statusAfter = current.serviceId === 'repair' ? '维修中' : '处理中';
-        database.prepare(
-          `UPDATE it_tickets SET status = ?, accepted_at = datetime('now'), updated_at = datetime('now')
-           WHERE id = ? AND organization_id = ?`,
-        ).run(statusAfter, input.ticketId, ticketRow.organization_id);
+        // 原子抢单：条件更新 + 处理人记录，保证并发下只有一名专员获得工单。
+        const claimResult = database.prepare(
+          `UPDATE it_tickets
+           SET status = ?, accepted_at = datetime('now'),
+               accepted_by_account_id = ?, updated_at = datetime('now')
+           WHERE id = ? AND organization_id = ?
+             AND status IN ('待接单', '待派单') AND accepted_at IS NULL`,
+        ).run(statusAfter, account.id, input.ticketId, ticketRow.organization_id);
+        if (claimResult.changes !== 1) {
+          throw new Error('工单已被他人接单');
+        }
+      } else if (input.action === 'release') {
+        if (current.acceptedBy?.id !== account.id) {
+          throw new Error('只有当前处理人可以退回工单');
+        }
+        if (!['维修中', '处理中'].includes(current.status)) {
+          throw new Error('当前状态不能退回工单');
+        }
+        const releaseReason = input.releaseReason?.trim() || '暂时没空';
+        if (releaseReason.length > 200) {
+          throw new Error('退回原因不能超过 200 个字符');
+        }
+        statusAfter = '待接单';
+        const releaseResult = database.prepare(
+          `UPDATE it_tickets
+           SET status = '待接单', accepted_at = NULL, accepted_by_account_id = NULL,
+               released_at = datetime('now'), release_reason = ?,
+               released_by_account_id = ?, updated_at = datetime('now')
+           WHERE id = ? AND organization_id = ?
+             AND accepted_by_account_id = ? AND status IN ('维修中', '处理中')`,
+        ).run(
+          releaseReason,
+          account.id,
+          input.ticketId,
+          ticketRow.organization_id,
+          account.id,
+        );
+        if (releaseResult.changes !== 1) {
+          throw new Error('工单退回失败，请刷新后重试');
+        }
+        responseType = null;
+        responseText = null;
       } else if (input.action === 'complete') {
         if (current.serviceId === 'repair' && current.parkId && current.status === '已转交') {
           statusAfter = '已完成';

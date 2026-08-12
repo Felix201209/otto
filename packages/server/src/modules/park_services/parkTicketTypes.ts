@@ -5,6 +5,7 @@
 export type TicketHistoryAction =
   | 'created'
   | 'accept'
+  | 'release'
   | 'respond'
   | 'transfer'
   | 'complete'
@@ -47,6 +48,12 @@ export interface TicketView {
   responseType: string | null;
   responseText: string | null;
   responseAt: string | null;
+  /** 抢单成功者（实际处理人）。未接单时为 null。 */
+  acceptedBy: { id: string; name: string } | null;
+  /** 抢单后退回公共待办池的时间。 */
+  releasedAt: string | null;
+  /** 退回原因。 */
+  releaseReason: string | null;
   createdAt: string;
   updatedAt: string;
   creator: { id: string; name: string; username: string };
@@ -108,9 +115,12 @@ export interface UpdateTicketInput {
   action:
     | 'respond'
     | 'accept'
+    | 'release'
     | 'complete'
     | 'confirm'
     | 'respond_and_transfer';
+  /** 退回公共待办池时的原因（仅 action 为 release 时使用）。 */
+  releaseReason?: string;
   responseType?: string;
   responseText?: string;
   transferAccountId?: string;

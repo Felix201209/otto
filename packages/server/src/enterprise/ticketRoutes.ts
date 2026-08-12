@@ -378,6 +378,7 @@ export async function handleTicketRoute({
         ![
           'respond',
           'accept',
+          'release',
           'complete',
           'confirm',
           'respond_and_transfer',
@@ -392,6 +393,7 @@ export async function handleTicketRoute({
         action: action as
           | 'respond'
           | 'accept'
+          | 'release'
           | 'complete'
           | 'confirm'
           | 'respond_and_transfer',
@@ -400,6 +402,7 @@ export async function handleTicketRoute({
         transferAccountId: typeof body.transferAccountId === 'string' ? body.transferAccountId : undefined,
         transferDepartment: typeof body.transferDepartment === 'string' ? body.transferDepartment : undefined,
         transferNote: typeof body.transferNote === 'string' ? body.transferNote : undefined,
+        releaseReason: typeof body.releaseReason === 'string' ? body.releaseReason : undefined,
       });
       const creatorRecipients = [db.getTicketCreatorForAccount(ticket.id, account.id)].filter(
         (item): item is db.AccountView => item !== null,

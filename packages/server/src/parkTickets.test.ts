@@ -73,6 +73,10 @@ function createDatabase(): Database {
       response_text TEXT,
       response_at TEXT,
       accepted_at TEXT,
+      accepted_by_account_id TEXT,
+      released_at TEXT,
+      release_reason TEXT,
+      released_by_account_id TEXT,
       completed_at TEXT,
       closed_at TEXT,
       creator_update_at TEXT,
@@ -732,5 +736,171 @@ describe('park ticket module', () => {
     });
 
     expect(ticket.formData.visitTime).toBe('09:30');
+  });
+
+  it('routes a ticket to every matching specialist so the pool can race to claim it', () => {
+    const database = createDatabase();
+    database.prepare(
+      "INSERT INTO park_service_specialists (park_id, service_id, account_id) VALUES ('park-a', 'repair', 'park-worker-2')",
+    ).run();
+    const { store } = createStore(database);
+    const tickets = createParkTicketFacade(store);
+    const ticket = tickets.createTicket(repairInput());
+    expect(ticket.recipients.map((item) => item.id).sort()).toEqual([
+      'park-worker',
+      'park-worker-2',
+    ]);
+  });
+
+  it('only one worker wins the claim and everyone else gets a stable already-claimed error', () => {
+    const database = createDatabase();
+    database.prepare(
+      "INSERT INTO park_service_specialists (park_id, service_id, account_id) VALUES ('park-a', 'repair', 'park-worker-2')",
+    ).run();
+    const { store } = createStore(database);
+    const tickets = createParkTicketFacade(store);
+    const ticket = tickets.createTicket(repairInput());
+
+    let succeeded = 0;
+    const failures: string[] = [];
+    for (let i = 0; i < 100; i += 1) {
+      const accountId = i % 2 === 0 ? 'park-worker' : 'park-worker-2';
+      try {
+        const claimed = tickets.updateTicket({
+          ticketId: ticket.id,
+          accountId,
+          action: 'accept',
+        });
+        succeeded += 1;
+        expect(claimed.acceptedBy).toEqual(
+          accountId === 'park-worker'
+            ? { id: 'park-worker', name: 'Park Worker' }
+            : { id: 'park-worker-2', name: 'Park Worker 2' },
+        );
+      } catch (error) {
+        failures.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+    expect(succeeded).toBe(1);
+    expect(failures).toHaveLength(99);
+    expect(
+      failures.every((message) =>
+        message === '工单已被他人接单' || message === '工单已由您接单',
+      ),
+    ).toBe(true);
+
+    const stored = database.prepare(
+      'SELECT status, accepted_by_account_id FROM it_tickets WHERE id = ?',
+    ).get(ticket.id) as { status: string; accepted_by_account_id: string | null };
+    expect(stored.status).toBe('维修中');
+    expect(stored.accepted_by_account_id).toBeTruthy();
+  });
+
+  it('allows the handler to release the ticket back to the pool and another worker to re-claim', () => {
+    const database = createDatabase();
+    database.prepare(
+      "INSERT INTO park_service_specialists (park_id, service_id, account_id) VALUES ('park-a', 'repair', 'park-worker-2')",
+    ).run();
+    const { store } = createStore(database);
+    const tickets = createParkTicketFacade(store);
+    const ticket = tickets.createTicket(repairInput());
+
+    const claimed = tickets.updateTicket({
+      ticketId: ticket.id,
+      accountId: 'park-worker',
+      action: 'accept',
+    });
+    expect(claimed.status).toBe('维修中');
+    expect(claimed.acceptedBy).toEqual({ id: 'park-worker', name: 'Park Worker' });
+    expect(claimed.history.map((event) => event.action)).toEqual(['created', 'accept']);
+
+    // 只有当前处理人可以退回；非处理人拒绝。
+    expect(() => tickets.updateTicket({
+      ticketId: ticket.id,
+      accountId: 'park-worker-2',
+      action: 'release',
+      releaseReason: '忙不过来',
+    })).toThrow('只有当前处理人可以退回工单');
+
+    const released = tickets.updateTicket({
+      ticketId: ticket.id,
+      accountId: 'park-worker',
+      action: 'release',
+      releaseReason: '暂时没空',
+    });
+    expect(released.status).toBe('待接单');
+    expect(released.acceptedBy).toBeNull();
+    expect(released.releasedAt).toEqual(expect.any(String));
+    expect(released.releaseReason).toBe('暂时没空');
+    expect(released.history.map((event) => event.action)).toEqual([
+      'created',
+      'accept',
+      'release',
+    ]);
+
+    // 退回后可由其他符合条件的人员重新接单。
+    const reClaimed = tickets.updateTicket({
+      ticketId: ticket.id,
+      accountId: 'park-worker-2',
+      action: 'accept',
+    });
+    expect(reClaimed.status).toBe('维修中');
+    expect(reClaimed.acceptedBy).toEqual({ id: 'park-worker-2', name: 'Park Worker 2' });
+    expect(reClaimed.history.map((event) => event.action)).toEqual([
+      'created',
+      'accept',
+      'release',
+      'accept',
+    ]);
+  });
+
+  it('never allows re-claiming a completed ticket, a non-specialist, or a cross-enterprise account', () => {
+    const database = createDatabase();
+    database.prepare(
+      "INSERT INTO park_service_specialists (park_id, service_id, account_id) VALUES ('park-a', 'repair', 'park-worker-2')",
+    ).run();
+    const { store } = createStore(database);
+    const tickets = createParkTicketFacade(store);
+    const ticket = tickets.createTicket(repairInput());
+
+    const claimed = tickets.updateTicket({
+      ticketId: ticket.id,
+      accountId: 'park-worker',
+      action: 'accept',
+    });
+    expect(claimed.status).toBe('维修中');
+    tickets.updateTicket({
+      ticketId: ticket.id,
+      accountId: 'park-worker',
+      action: 'complete',
+    });
+    const confirmed = tickets.updateTicket({
+      ticketId: ticket.id,
+      accountId: 'tenant-user',
+      action: 'confirm',
+    });
+    expect(confirmed.status).toBe('已完成');
+
+    // 已完成工单不可重抢：同为待办池成员的另一名专员也不能再抢。
+    expect(() => tickets.updateTicket({
+      ticketId: ticket.id,
+      accountId: 'park-worker-2',
+      action: 'accept',
+    })).toThrow('工单已被他人接单');
+
+    // 非专员（创建者）不可抢单。
+    expect(() => tickets.updateTicket({
+      ticketId: ticket.id,
+      accountId: 'tenant-user',
+      action: 'accept',
+    })).toThrow('Only the currently assigned worker can update');
+
+    // 跨企业账号不可见工单，更不可抢单。
+    expect(tickets.getTicketForAccount(ticket.id, 'other-worker')).toBeNull();
+    expect(() => tickets.updateTicket({
+      ticketId: ticket.id,
+      accountId: 'other-worker',
+      action: 'accept',
+    })).toThrow('Ticket not found');
   });
 });
