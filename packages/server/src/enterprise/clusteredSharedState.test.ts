@@ -6,9 +6,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { EnterpriseSharedCache } from '../modules/data_platform/index.js';
-import {
-  createClusteredEnterpriseSharedState,
-} from './clusteredSharedState.js';
+import { createClusteredEnterpriseSharedState } from './clusteredSharedState.js';
 import type {
   PostgresEnterpriseAccountView,
   PostgresEnterpriseCoreRepository,
@@ -68,9 +66,9 @@ describe('clustered enterprise shared state', () => {
       15_000,
     );
     expect(JSON.stringify([...deps.values])).not.toContain('raw-session-token');
-    await expect(state.getAccountBySession('raw-session-token')).resolves.toEqual(
-      account,
-    );
+    await expect(
+      state.getAccountBySession('raw-session-token'),
+    ).resolves.toEqual(account);
     expect(deps.repository.getAccountBySession).not.toHaveBeenCalled();
 
     await expect(state.revokeSession('raw-session-token')).resolves.toBe(true);
@@ -98,5 +96,52 @@ describe('clustered enterprise shared state', () => {
       String(now + 120_000),
       120_000,
     );
+  });
+
+  it('shares account presence across replicas without exposing account ids in keys', async () => {
+    const deps = dependencies();
+    let now = Date.parse('2026-08-01T00:00:00.000Z');
+    const state = createClusteredEnterpriseSharedState({
+      ...deps,
+      clock: () => now,
+    });
+
+    await expect(
+      state.touchAccountPresence({
+        organizationId: 'org_default',
+        accountId: 'acc_admin',
+        clientId: 'desktop-main',
+      }),
+    ).resolves.toEqual({
+      accountId: 'acc_admin',
+      online: true,
+      lastSeenAt: '2026-08-01T00:00:00.000Z',
+    });
+    const writtenKey = vi.mocked(deps.cache.set).mock.calls.at(-1)?.[0] ?? '';
+    expect(writtenKey).toMatch(/^presence:v1:[a-f0-9]{64}:[a-f0-9]{64}$/);
+    expect(writtenKey).not.toContain('org_default');
+    expect(writtenKey).not.toContain('acc_admin');
+
+    await expect(
+      state.listAccountPresence('org_default', ['acc_admin', 'acc_peer']),
+    ).resolves.toEqual([
+      {
+        accountId: 'acc_admin',
+        online: true,
+        lastSeenAt: '2026-08-01T00:00:00.000Z',
+      },
+      { accountId: 'acc_peer', online: false, lastSeenAt: null },
+    ]);
+
+    now += 60_001;
+    await expect(
+      state.listAccountPresence('org_default', ['acc_admin']),
+    ).resolves.toEqual([
+      {
+        accountId: 'acc_admin',
+        online: false,
+        lastSeenAt: '2026-08-01T00:00:00.000Z',
+      },
+    ]);
   });
 });

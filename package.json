@@ -53,6 +53,7 @@
     "security:e2ee:policy:check": "node scripts/generate-e2ee-release-policy.mjs --check",
     "validate:integration-baseline": "node scripts/validate-server-integration-baseline.mjs",
     "benchmark:low-resource-agents": "node scripts/low-resource-multi-agent-benchmark.mjs",
+    "benchmark:enterprise-load": "node scripts/enterprise-load-test.mjs",
     "eval:deterministic": "vitest run --config packages/evals/vitest.config.ts",
     "build": "node scripts/build.js",
     "build:packages": "npm run build --workspace=packages/core && npm run build --workspace=packages/server",

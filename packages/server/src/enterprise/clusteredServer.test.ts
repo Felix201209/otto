@@ -13,6 +13,7 @@ import {
   legalDocumentHash,
 } from '../modules/data_governance/index.js';
 import { createClusteredEnterpriseServer } from './clusteredServer.js';
+import type { ClusteredEnterpriseSharedState } from './clusteredSharedState.js';
 import type {
   PostgresEnterpriseAccountView,
   PostgresEnterpriseCoreRepository,
@@ -177,6 +178,7 @@ function repository(): PostgresEnterpriseCoreRepository {
     listAccounts: vi.fn(async (organizationId: string) =>
       organizationId === account.organizationId ? [account, peerAccount] : [],
     ),
+    listOrganizationStructure: vi.fn(async () => []),
   } as unknown as PostgresEnterpriseCoreRepository;
 }
 
@@ -264,6 +266,71 @@ describe('clustered PostgreSQL enterprise server', () => {
       'correct-password',
     );
     expect(repo.clearLoginFailures).toHaveBeenCalledWith('admin');
+  });
+
+  it('stores heartbeats in shared state and exposes presence in the organization tree', async () => {
+    const touchAccountPresence = vi.fn(async () => ({
+      accountId: account.id,
+      online: true,
+      lastSeenAt: '2026-08-01T00:00:00.000Z',
+    }));
+    const listAccountPresence = vi.fn(async () => [
+      {
+        accountId: account.id,
+        online: true,
+        lastSeenAt: '2026-08-01T00:00:00.000Z',
+      },
+      { accountId: peerAccount.id, online: false, lastSeenAt: null },
+    ]);
+    const sharedState = {
+      getAccountBySession: vi.fn(async () => account),
+      touchAccountPresence,
+      listAccountPresence,
+    } as unknown as ClusteredEnterpriseSharedState;
+    const { baseUrl } = await listen(repository(), { sharedState });
+    const authorization = 'Bearer clustered-session-token';
+
+    const heartbeat = await fetch(`${baseUrl}/enterprise/presence/heartbeat`, {
+      method: 'POST',
+      headers: {
+        authorization,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ clientId: 'desktop-main' }),
+    });
+    expect(heartbeat.status).toBe(200);
+    await expect(heartbeat.json()).resolves.toMatchObject({
+      presence: { accountId: 'acc_admin', online: true },
+    });
+    expect(touchAccountPresence).toHaveBeenCalledWith({
+      organizationId: 'org_default',
+      accountId: 'acc_admin',
+      clientId: 'desktop-main',
+    });
+
+    const organization = await fetch(
+      `${baseUrl}/enterprise/organization/view`,
+      { headers: { authorization } },
+    );
+    expect(organization.status).toBe(200);
+    await expect(organization.json()).resolves.toMatchObject({
+      members: [
+        {
+          id: 'acc_admin',
+          ottoOnline: true,
+          ottoLastSeenAt: '2026-08-01T00:00:00.000Z',
+        },
+        {
+          id: 'acc_peer',
+          ottoOnline: false,
+          ottoLastSeenAt: null,
+        },
+      ],
+    });
+    expect(listAccountPresence).toHaveBeenCalledWith('org_default', [
+      'acc_admin',
+      'acc_peer',
+    ]);
   });
 
   it('serves complete versioned legal text and records exact document consent', async () => {

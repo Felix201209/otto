@@ -7,6 +7,12 @@
 
 import { createHash } from 'node:crypto';
 
+import {
+  ACCOUNT_PRESENCE_MAX_CLIENT_ID_LENGTH,
+  ACCOUNT_PRESENCE_MAX_ONLINE_WINDOW_MS,
+  ACCOUNT_PRESENCE_ONLINE_WINDOW_MS,
+  type AccountPresenceView,
+} from '../modules/collaboration/presenceRepository.js';
 import type { EnterpriseSharedCache } from '../modules/data_platform/index.js';
 import type {
   PostgresEnterpriseAccountView,
@@ -14,6 +20,7 @@ import type {
 } from './postgresCoreRepository.js';
 
 const SESSION_CACHE_TTL_MS = 15_000;
+const PRESENCE_CACHE_TTL_MS = 24 * 60 * 60 * 1_000;
 
 function digest(value: string): string {
   return createHash('sha256').update(value).digest('hex');
@@ -27,10 +34,45 @@ function loginBlockKey(identifier: string): string {
   return `login-blocks:v1:${digest(identifier.trim().toLowerCase())}`;
 }
 
+function presenceKey(organizationId: string, accountId: string): string {
+  return `presence:v1:${digest(organizationId)}:${digest(accountId)}`;
+}
+
+function normalizePresenceClientId(clientId?: string | null): string {
+  return (
+    (clientId || 'default')
+      .trim()
+      .slice(0, ACCOUNT_PRESENCE_MAX_CLIENT_ID_LENGTH) || 'default'
+  );
+}
+
+function cachedPresenceTimestamp(value: string, nowMs: number): number | null {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+    const lastSeenAtMs = Number(
+      (parsed as { lastSeenAtMs?: unknown }).lastSeenAtMs,
+    );
+    if (
+      !Number.isSafeInteger(lastSeenAtMs) ||
+      lastSeenAtMs < 0 ||
+      lastSeenAtMs > nowMs
+    ) {
+      return null;
+    }
+    return lastSeenAtMs;
+  } catch {
+    return null;
+  }
+}
+
 function cachedAccount(value: string): PostgresEnterpriseAccountView | null {
   try {
     const parsed = JSON.parse(value) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+      return null;
     const account = parsed as Partial<PostgresEnterpriseAccountView>;
     if (
       typeof account.id !== 'string' ||
@@ -80,11 +122,7 @@ export function createClusteredEnterpriseSharedState(input: {
     }
     const account = await input.repository.getAccountBySession(token);
     if (account) {
-      await input.cache.set(
-        key,
-        JSON.stringify(account),
-        SESSION_CACHE_TTL_MS,
-      );
+      await input.cache.set(key, JSON.stringify(account), SESSION_CACHE_TTL_MS);
     }
     return account;
   }
@@ -127,6 +165,71 @@ export function createClusteredEnterpriseSharedState(input: {
     ]);
   }
 
+  async function touchAccountPresence(presenceInput: {
+    organizationId: string;
+    accountId: string;
+    clientId?: string | null;
+  }): Promise<AccountPresenceView> {
+    const organizationId = presenceInput.organizationId.trim();
+    const accountId = presenceInput.accountId.trim();
+    if (!organizationId || !accountId) {
+      throw new Error('Account not available for presence');
+    }
+    const lastSeenAtMs = Math.max(0, Math.floor(clock()));
+    await input.cache.set(
+      presenceKey(organizationId, accountId),
+      JSON.stringify({
+        clientId: normalizePresenceClientId(presenceInput.clientId),
+        lastSeenAtMs,
+      }),
+      PRESENCE_CACHE_TTL_MS,
+    );
+    return {
+      accountId,
+      online: true,
+      lastSeenAt: new Date(lastSeenAtMs).toISOString(),
+    };
+  }
+
+  async function listAccountPresence(
+    organizationId: string,
+    accountIds: string[],
+    onlineWindowMs = ACCOUNT_PRESENCE_ONLINE_WINDOW_MS,
+  ): Promise<AccountPresenceView[]> {
+    const normalizedOrganizationId = organizationId.trim();
+    if (!normalizedOrganizationId) return [];
+    const normalizedWindowMs = Math.min(
+      ACCOUNT_PRESENCE_MAX_ONLINE_WINDOW_MS,
+      Math.max(1, Math.floor(onlineWindowMs)),
+    );
+    const nowMs = Math.max(0, Math.floor(clock()));
+    const normalizedAccountIds = [
+      ...new Set(accountIds.map((value) => value.trim()).filter(Boolean)),
+    ];
+
+    return Promise.all(
+      normalizedAccountIds.map(
+        async (accountId): Promise<AccountPresenceView> => {
+          const key = presenceKey(normalizedOrganizationId, accountId);
+          const cached = await input.cache.get(key);
+          if (!cached) {
+            return { accountId, online: false, lastSeenAt: null };
+          }
+          const lastSeenAtMs = cachedPresenceTimestamp(cached, nowMs);
+          if (lastSeenAtMs === null) {
+            await input.cache.delete(key);
+            return { accountId, online: false, lastSeenAt: null };
+          }
+          return {
+            accountId,
+            online: nowMs - lastSeenAtMs <= normalizedWindowMs,
+            lastSeenAt: new Date(lastSeenAtMs).toISOString(),
+          };
+        },
+      ),
+    );
+  }
+
   return {
     cacheSession,
     getAccountBySession,
@@ -134,6 +237,8 @@ export function createClusteredEnterpriseSharedState(input: {
     getLoginRetryAfter,
     recordLoginBlock,
     clearLoginFailures,
+    touchAccountPresence,
+    listAccountPresence,
   };
 }
 
