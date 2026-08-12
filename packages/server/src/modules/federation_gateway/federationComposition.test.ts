@@ -291,6 +291,9 @@ describe('federation composition', () => {
     id: string,
     gateway: FakeFederationGateway,
     deploymentSigner: LocalFederationSigner,
+    clock: { now: number } = {
+      now: Date.parse('2026-08-03T00:00:00.000Z'),
+    },
   ) {
     const db = database();
     databases.push(db);
@@ -309,7 +312,7 @@ describe('federation composition', () => {
         fetch: gateway.fetch as typeof fetch,
         signer: deploymentSigner,
         allowInsecureLoopback: true,
-        now: () => Date.parse('2026-08-03T00:00:00.000Z'),
+        now: () => clock.now,
       }),
     };
   }
@@ -371,6 +374,48 @@ describe('federation composition', () => {
         identity: 'deployment_alice:account_alice',
         unreadCount: 1,
       }),
+    ]);
+  });
+
+  it('keeps ciphertext durable while offline and delivers it once after reconnect', async () => {
+    const gateway = new FakeFederationGateway();
+    const clock = { now: Date.parse('2026-08-03T00:00:00.000Z') };
+    const alice = deployment('deployment_alice', gateway, signer(), clock);
+    const bob = deployment('deployment_bob', gateway, signer(), clock);
+    account(alice.db, 'account_alice');
+    account(bob.db, 'account_bob');
+    await alice.service.queueFederationMessage({
+      messageId: 'fmsg_offline_recovery',
+      recipientDeploymentId: 'deployment_bob',
+      type: 'chat.message',
+      ciphertext: 'ZW5jcnlwdGVkLW9mZmxpbmU',
+      routing: {
+        conversationId: 'conversation_offline_recovery',
+        senderPrincipalId: 'account_alice',
+        recipientPrincipalId: 'account_bob',
+      },
+    });
+
+    gateway.offline = true;
+    await expect(alice.service.runFederationCycle()).resolves.toMatchObject({
+      sendFailed: 1,
+    });
+    expect(alice.service.getFederationStatus()).toMatchObject({
+      queue: { outboxQueued: 1, outboxFailed: 0 },
+    });
+    expect(bob.service.listFederationInbox({
+      recipientPrincipalId: 'account_bob',
+    })).toEqual([]);
+
+    gateway.offline = false;
+    clock.now += 60_000;
+    await expect(alice.service.runFederationCycle()).resolves.toMatchObject({ sent: 1 });
+    await expect(bob.service.runFederationCycle()).resolves.toMatchObject({ received: 1 });
+    await expect(bob.service.runFederationCycle()).resolves.toMatchObject({ received: 0 });
+    expect(bob.service.listFederationInbox({
+      recipientPrincipalId: 'account_bob',
+    })).toEqual([
+      expect.objectContaining({ messageId: 'fmsg_offline_recovery' }),
     ]);
   });
 

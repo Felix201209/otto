@@ -84,6 +84,7 @@ export OTTO_FEDERATION_SMOKE_SERVER_A_MEMBER_TOKEN='<server-a-member-session>'
 export OTTO_FEDERATION_SMOKE_SERVER_B_URL=https://otto-b-staging.example.com
 export OTTO_FEDERATION_SMOKE_SERVER_B_ADMIN_TOKEN='<server-b-admin-session>'
 export OTTO_FEDERATION_SMOKE_SERVER_B_MEMBER_TOKEN='<server-b-member-session>'
+export OTTO_FEDERATION_SMOKE_ATTACHMENT_BYTES=12582912
 export OTTO_FEDERATION_SMOKE_SOURCE_COMMIT="$(git rev-parse HEAD)"
 npm run test:federation:staging > federation-staging-evidence.json
 ```
@@ -92,3 +93,9 @@ npm run test:federation:staging > federation-staging-evidence.json
 A2A grant 和部署停用 fail-closed。它会短暂把部署 A 设置为 `disabled` 后恢复为 `active`，因此
 必须使用隔离 staging 部署；需要设置 `STAGING_ONLY` 确认值，避免误操作生产环境。输出证据只包含
 部署 ID、公钥 ID、时间和测试结论，不包含 Token、密文、claim token 或用户内容。
+
+脚本默认通过对象存储中继上传并下载校验 12 MiB 随机密文附件，报告只记录字节数和 SHA-256，
+不会保存随机密文本身。可用 `OTTO_FEDERATION_SMOKE_ATTACHMENT_BYTES` 调整为 1 至 64 MiB；正式验收
+不应低于 12 MiB，以覆盖旧版 10 MiB 附件限制。网络中断和恢复语义由
+`federationComposition.test.ts` 的故障注入用例验证：网关离线时消息留在持久队列，恢复后只投递一次。
+真实 staging 报告与故障注入测试结果必须同时归档，任何一项都不能替代另一项。
