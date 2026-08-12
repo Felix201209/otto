@@ -26,6 +26,7 @@ interface FederationAdminPrincipal {
 export interface FederationRouteServices {
   getFederationStatus(): unknown;
   getFederationProvisioningManifest(): unknown;
+  getFederationMemberIdentity(principalId: string): unknown;
   runFederationCycle(): Promise<unknown>;
   listFederationBlocks(): unknown;
   blockFederationDeployment(input: {
@@ -34,6 +35,36 @@ export interface FederationRouteServices {
   }): void;
   unblockFederationDeployment(deploymentId: string): boolean;
   lookupFederationDeployment(deploymentId: string): Promise<unknown>;
+  saveFederationChatContact(input: {
+    ownerAccountId: string;
+    remoteDeploymentId: string;
+    remotePrincipalId: string;
+    displayName: string;
+  }): Promise<unknown>;
+  listFederationChatContacts(ownerAccountId: string): unknown;
+  removeFederationChatContact(input: {
+    ownerAccountId: string;
+    contactId: string;
+  }): boolean;
+  queueFederationChatMessage(input: {
+    ownerAccountId: string;
+    contactId: string;
+    ciphertext: string;
+    messageId?: string;
+    inReplyTo?: string;
+    expiresInMs?: number;
+  }): Promise<unknown>;
+  listFederationChatMessages(input: {
+    ownerAccountId: string;
+    contactId: string;
+    afterSequence?: number;
+    limit?: number;
+  }): unknown;
+  markFederationChatMessageRead(input: {
+    ownerAccountId: string;
+    contactId: string;
+    messageId: string;
+  }): boolean;
   queueFederationMessage(input: FederationQueueInput): Promise<unknown>;
   listFederationInbox(input: {
     recipientPrincipalId: string;
@@ -233,6 +264,20 @@ export async function handleFederationRoute(
     return true;
   }
 
+  if (path === '/enterprise/federation/identity' && method === 'GET') {
+    if (!requireFeature(deps, 'direct_messages')) return true;
+    try {
+      sendJSON(res, 200, {
+        identity: services.getFederationMemberIdentity(deps.memberAccount.id),
+      });
+    } catch (error) {
+      sendJSON(res, 503, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return true;
+  }
+
   if (
     path.startsWith('/enterprise/federation/directory/') &&
     method === 'GET'
@@ -248,6 +293,134 @@ export async function handleFederationRoute(
       });
     } catch (error) {
       sendJSON(res, 404, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return true;
+  }
+
+  if (path === '/enterprise/federation/contacts') {
+    if (!requireFeature(deps, 'direct_messages')) return true;
+    if (method === 'GET') {
+      sendJSON(res, 200, {
+        contacts: services.listFederationChatContacts(deps.memberAccount.id),
+      });
+      return true;
+    }
+    if (method === 'POST') {
+      try {
+        const body = await readBody(req);
+        const contact = await services.saveFederationChatContact({
+          ownerAccountId: deps.memberAccount.id,
+          remoteDeploymentId: requiredIdentifier(
+            body.remoteDeploymentId,
+            'remote deployment id',
+          ),
+          remotePrincipalId: requiredIdentifier(
+            body.remotePrincipalId,
+            'remote principal id',
+          ),
+          displayName: requiredText(body.displayName, 'display name', 120).trim(),
+        });
+        sendJSON(res, 201, { contact });
+      } catch (error) {
+        sendJSON(res, 400, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return true;
+    }
+  }
+
+  if (
+    path.startsWith('/enterprise/federation/contacts/') &&
+    method === 'DELETE'
+  ) {
+    if (!requireFeature(deps, 'direct_messages')) return true;
+    try {
+      const contactId = requiredIdentifier(
+        decodeURIComponent(path.slice('/enterprise/federation/contacts/'.length)),
+        'contact id',
+      );
+      const removed = services.removeFederationChatContact({
+        ownerAccountId: deps.memberAccount.id,
+        contactId,
+      });
+      sendJSON(res, removed ? 200 : 404, { removed });
+    } catch (error) {
+      sendJSON(res, 400, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return true;
+  }
+
+  const conversationMessages = /^\/enterprise\/federation\/conversations\/([^/]+)\/messages$/u
+    .exec(path);
+  if (conversationMessages) {
+    if (!requireFeature(deps, 'direct_messages')) return true;
+    try {
+      const contactId = requiredIdentifier(
+        decodeURIComponent(conversationMessages[1]!),
+        'contact id',
+      );
+      if (method === 'GET') {
+        sendJSON(res, 200, {
+          messages: services.listFederationChatMessages({
+            ownerAccountId: deps.memberAccount.id,
+            contactId,
+            afterSequence: integer(
+              url.searchParams.get('after'),
+              0,
+              Number.MAX_SAFE_INTEGER,
+            ),
+            limit: integer(url.searchParams.get('limit'), 100, 200),
+          }),
+        });
+        return true;
+      }
+      if (method === 'POST') {
+        const body = await readBody(req, 2 * 1024 * 1024);
+        const queued = await services.queueFederationChatMessage({
+          ownerAccountId: deps.memberAccount.id,
+          contactId,
+          ciphertext: requiredText(body.ciphertext, 'ciphertext', 1024 * 1024),
+          messageId: optionalIdentifier(body.messageId, 'message id'),
+          inReplyTo: optionalIdentifier(body.inReplyTo, 'reply message id'),
+          expiresInMs: body.expiresInMs === undefined
+            ? undefined
+            : integer(body.expiresInMs, 0, 7 * 24 * 60 * 60_000),
+        });
+        sendJSON(res, 202, { queued });
+        return true;
+      }
+    } catch (error) {
+      sendJSON(res, 400, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return true;
+    }
+  }
+
+  const readMessage = /^\/enterprise\/federation\/conversations\/([^/]+)\/messages\/([^/]+)\/read$/u
+    .exec(path);
+  if (readMessage && method === 'POST') {
+    if (!requireFeature(deps, 'direct_messages')) return true;
+    try {
+      const read = services.markFederationChatMessageRead({
+        ownerAccountId: deps.memberAccount.id,
+        contactId: requiredIdentifier(
+          decodeURIComponent(readMessage[1]!),
+          'contact id',
+        ),
+        messageId: requiredIdentifier(
+          decodeURIComponent(readMessage[2]!),
+          'message id',
+        ),
+      });
+      sendJSON(res, read ? 200 : 404, { read });
+    } catch (error) {
+      sendJSON(res, 400, {
         error: error instanceof Error ? error.message : String(error),
       });
     }

@@ -10772,6 +10772,72 @@ h6.otto-prose__h {
   border-right: 1px solid var(--otto-border);
   padding: 8px;
 }
+.otto-inbox-page__federation-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 0 0 8px;
+}
+.otto-inbox-page__federation-actions button,
+.otto-inbox-page__federation-setup button {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--otto-border);
+  border-radius: 6px;
+  background: var(--otto-surface);
+  color: var(--otto-text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.otto-inbox-page__federation-actions button:hover,
+.otto-inbox-page__federation-setup button:hover {
+  border-color: var(--otto-accent);
+  color: var(--otto-accent);
+}
+.otto-inbox-page__federation-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-bottom: 8px;
+  padding: 10px;
+  border: 1px solid var(--otto-border);
+  border-radius: 6px;
+  background: var(--otto-surface);
+}
+.otto-inbox-page__federation-setup label {
+  color: var(--otto-text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+}
+.otto-inbox-page__federation-setup textarea {
+  width: 100%;
+  min-height: 68px;
+  box-sizing: border-box;
+  border: 1px solid var(--otto-border);
+  border-radius: 6px;
+  background: var(--otto-bg);
+  color: var(--otto-text);
+  padding: 8px;
+  font: 10px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+  resize: vertical;
+}
+.otto-inbox-page__federation-setup textarea:focus {
+  border-color: var(--otto-accent);
+  outline: none;
+}
+.otto-inbox-page__federation-setup button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.otto-inbox-page__section-label {
+  padding: 9px 8px 5px;
+  color: var(--otto-text-tertiary);
+  font-size: 10px;
+  font-weight: 700;
+}
 .otto-inbox-page__conv {
   width: 100%;
   display: flex;
@@ -10800,6 +10866,10 @@ h6.otto-prose__h {
   font-size: 14px;
   font-weight: 700;
 }
+.otto-inbox-page__conv-avatar--federated {
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--otto-accent) 12%, var(--otto-surface));
+}
 .otto-inbox-page__conv-body {
   flex: 1;
   min-width: 0;
@@ -10816,6 +10886,12 @@ h6.otto-prose__h {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.otto-inbox-page__trust {
+  width: fit-content;
+  color: var(--otto-warning, #b7791f);
+  font-size: 9px;
+}
+.otto-inbox-page__trust.is-verified { color: var(--otto-success, #16803a); }
 .otto-inbox-page__conv-side {
   flex: 0 0 auto;
   display: flex;
@@ -10857,10 +10933,103 @@ h6.otto-prose__h {
 }
 .otto-inbox-page__detail-header strong { font-size: 14px; }
 .otto-inbox-page__detail-header span { color: var(--otto-text-tertiary); font-size: 11px; }
+.otto-inbox-page__security-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--otto-warning, #b7791f) !important;
+  font-weight: 650;
+}
+.otto-inbox-page__security-state.is-verified {
+  color: var(--otto-success, #16803a) !important;
+}
+.otto-inbox-page__remove-contact {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--otto-text-tertiary);
+  cursor: pointer;
+}
+.otto-inbox-page__remove-contact:hover {
+  background: var(--otto-accent-soft);
+  color: var(--otto-danger, #c53030);
+}
 .otto-inbox-page__presence {
   margin-left: auto;
   color: var(--otto-success, #22c55e);
   font-size: 11px;
+}
+.otto-inbox-page__security {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 12px 18px 0;
+  padding: 12px;
+  border: 1px solid var(--otto-border);
+  border-radius: 6px;
+  background: var(--otto-surface);
+}
+.otto-inbox-page__security-qr {
+  width: 92px;
+  height: 92px;
+  flex: 0 0 92px;
+  border-radius: 4px;
+  background: #fff;
+}
+.otto-inbox-page__security > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.otto-inbox-page__security strong { font-size: 12px; }
+.otto-inbox-page__security p {
+  margin: 0;
+  color: var(--otto-text-tertiary);
+  font-size: 10px;
+}
+.otto-inbox-page__security code {
+  max-width: 100%;
+  color: var(--otto-text);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.otto-inbox-page__security button {
+  border: 0;
+  border-radius: 6px;
+  background: var(--otto-accent);
+  color: #fff;
+  padding: 7px 10px;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.otto-inbox-page__verified-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--otto-success, #16803a);
+  font-size: 11px;
+  font-weight: 650;
+}
+.otto-inbox-page__error {
+  flex: 0 0 auto;
+  margin: 8px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--otto-danger, #c53030) 45%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--otto-danger, #c53030) 9%, transparent);
+  color: var(--otto-danger, #c53030);
+  font-size: 11px;
+  overflow-wrap: anywhere;
 }
 .otto-inbox-page__messages {
   flex: 1;
@@ -10889,7 +11058,14 @@ h6.otto-prose__h {
   border-color: var(--otto-accent);
   color: #fff;
 }
-.otto-inbox-page__msg time { color: var(--otto-text-tertiary); font-size: 9px; }
+.otto-inbox-page__msg-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--otto-text-tertiary);
+  font-size: 9px;
+}
+.otto-inbox-page__msg-meta time { color: inherit; font-size: inherit; }
 .otto-inbox-page__reply {
   display: flex;
   gap: 8px;

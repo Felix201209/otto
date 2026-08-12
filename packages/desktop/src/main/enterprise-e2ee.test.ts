@@ -3,7 +3,7 @@
  */
 
 import { createHash, verify } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -112,6 +112,68 @@ function transparencyView(
 }
 
 describe('enterprise private-chat E2EE', () => {
+  it('pins, verifies and isolates signed federation contact identities', () => {
+    const alice = createEndpoint('Alice laptop');
+    const bob = createEndpoint('Bob laptop');
+    const rotatedBob = createEndpoint('Bob replacement laptop');
+    const bobCard = bob.crypto.createFederationIdentityCard({
+      deploymentId: 'deployment-b',
+      principalId: 'bob-account',
+      displayName: 'Bob',
+      issuedAt: '2026-07-31T00:00:00.000Z',
+    });
+    const scope = {
+      localServerScope: 'https://alice.example.test',
+      localAccountId: 'alice-account',
+      contactId: 'contact-bob',
+    };
+
+    expect(alice.crypto.verifyFederationIdentityCard(bobCard)).toEqual(bobCard);
+    expect(alice.crypto.pinFederationContact({ ...scope, card: bobCard })).toMatchObject({
+      card: bobCard,
+      verifiedAt: null,
+    });
+    expect(alice.crypto.federationContactTrust({
+      ...scope,
+      localAccountId: 'other-alice-account',
+    })).toBeNull();
+    expect(alice.crypto.verifyFederationContact(scope).verifiedAt).toBe(
+      '2026-07-31T00:00:00.000Z',
+    );
+
+    const trustFile = readdirSync(alice.root).find((name) =>
+      name.endsWith('.federation-contact'),
+    );
+    expect(trustFile).toBeTruthy();
+    const stored = readFileSync(join(alice.root, trustFile!), 'utf8');
+    expect(stored).toMatch(/^protected:/);
+    expect(stored).not.toContain('Bob');
+
+    expect(() => alice.crypto.verifyFederationIdentityCard({
+      ...bobCard,
+      displayName: 'Mallory',
+    })).toThrow('signature is invalid');
+
+    const replacementCard = rotatedBob.crypto.createFederationIdentityCard({
+      deploymentId: 'deployment-b',
+      principalId: 'bob-account',
+      displayName: 'Bob',
+      issuedAt: '2026-07-31T00:10:00.000Z',
+    });
+    expect(() => alice.crypto.pinFederationContact({
+      ...scope,
+      card: replacementCard,
+    })).toThrow('device key changed');
+    expect(alice.crypto.pinFederationContact({
+      ...scope,
+      card: replacementCard,
+      allowDeviceKeyChange: true,
+    }).verifiedAt).toBeNull();
+
+    alice.crypto.removeFederationContact(scope);
+    expect(alice.crypto.federationContactTrust(scope)).toBeNull();
+  });
+
   it('pins transparency heads and rejects a server rollback or fork', () => {
     const alice = createEndpoint('Alice laptop');
     const aliceDevice = alice.crypto.localDevice('https://otto.test', 'alice');

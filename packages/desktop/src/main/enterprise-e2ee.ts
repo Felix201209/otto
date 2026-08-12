@@ -25,6 +25,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 export const ENTERPRISE_E2EE_PROTOCOL_VERSION = 1 as const;
+export const ENTERPRISE_FEDERATION_E2EE_SCOPE = 'otto:federation-e2ee:v1';
 
 export interface EnterpriseE2eeDeviceBundle {
   accountId: string;
@@ -40,6 +41,22 @@ export interface EnterpriseE2eeDeviceBundle {
   createdAt: string;
   lastSeenAt: string;
   revokedAt: string | null;
+}
+
+export interface EnterpriseFederationIdentityCard {
+  v: 1;
+  deploymentId: string;
+  principalId: string;
+  displayName: string;
+  device: EnterpriseE2eeDeviceBundle;
+  issuedAt: string;
+  signature: string;
+}
+
+export interface EnterpriseFederationContactTrust {
+  card: EnterpriseFederationIdentityCard;
+  verifiedAt: string | null;
+  pinnedAt: string;
 }
 
 export interface EnterpriseE2eeDeviceVerification {
@@ -198,6 +215,13 @@ interface TransparencyCheckpoint {
   headSequence: number;
   headHash: string;
   updatedAt: string;
+}
+
+interface FederationContactTrustFile extends EnterpriseFederationContactTrust {
+  v: 1;
+  localServerScope: string;
+  localAccountId: string;
+  contactId: string;
 }
 
 export interface EnterpriseE2eeVaultOptions {
@@ -474,6 +498,147 @@ export class EnterpriseE2eeKeyVault {
       .update(`${serverScope}\0${organizationId}\0${accountId}`)
       .digest('hex');
     return path.join(this.options.directory, `${digest}.transparency`);
+  }
+
+  private federationContactPath(
+    localServerScope: string,
+    localAccountId: string,
+    contactId: string,
+  ): string {
+    const digest = createHash('sha256')
+      .update(`federation-contact\0${localServerScope}\0${localAccountId}\0${contactId}`)
+      .digest('hex');
+    return path.join(this.options.directory, `${digest}.federation-contact`);
+  }
+
+  loadFederationContactTrust(input: {
+    localServerScope: string;
+    localAccountId: string;
+    contactId: string;
+  }): EnterpriseFederationContactTrust | null {
+    const filePath = this.federationContactPath(
+      input.localServerScope,
+      input.localAccountId,
+      input.contactId,
+    );
+    try {
+      const stat = fs.lstatSync(filePath);
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        throw new Error('federation contact trust path must be a regular file');
+      }
+      const parsed = JSON.parse(
+        this.options.unprotect(fs.readFileSync(filePath, 'utf8')),
+      ) as FederationContactTrustFile;
+      if (
+        parsed.v !== 1 ||
+        parsed.localServerScope !== input.localServerScope ||
+        parsed.localAccountId !== input.localAccountId ||
+        parsed.contactId !== input.contactId ||
+        typeof parsed.pinnedAt !== 'string' ||
+        (parsed.verifiedAt !== null && typeof parsed.verifiedAt !== 'string')
+      ) {
+        throw new Error('federation contact trust file is invalid');
+      }
+      return {
+        card: parsed.card,
+        verifiedAt: parsed.verifiedAt,
+        pinnedAt: parsed.pinnedAt,
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
+  }
+
+  saveFederationContactTrust(input: {
+    localServerScope: string;
+    localAccountId: string;
+    contactId: string;
+    card: EnterpriseFederationIdentityCard;
+    allowDeviceKeyChange?: boolean;
+  }): EnterpriseFederationContactTrust {
+    const current = this.loadFederationContactTrust(input);
+    if (
+      current &&
+      current.card.device.keyFingerprint !== input.card.device.keyFingerprint &&
+      !input.allowDeviceKeyChange
+    ) {
+      throw new Error(
+        'federation contact device key changed; verify the new safety number before accepting it',
+      );
+    }
+    const now = this.now().toISOString();
+    const next: FederationContactTrustFile = {
+      v: 1,
+      localServerScope: input.localServerScope,
+      localAccountId: input.localAccountId,
+      contactId: input.contactId,
+      card: input.card,
+      pinnedAt: current?.pinnedAt ?? now,
+      verifiedAt: current?.card.device.keyFingerprint === input.card.device.keyFingerprint
+        ? current.verifiedAt
+        : null,
+    };
+    atomicWrite(
+      this.federationContactPath(
+        input.localServerScope,
+        input.localAccountId,
+        input.contactId,
+      ),
+      this.options.protect(JSON.stringify(next)),
+    );
+    return {
+      card: next.card,
+      verifiedAt: next.verifiedAt,
+      pinnedAt: next.pinnedAt,
+    };
+  }
+
+  verifyFederationContact(input: {
+    localServerScope: string;
+    localAccountId: string;
+    contactId: string;
+  }): EnterpriseFederationContactTrust {
+    const current = this.loadFederationContactTrust(input);
+    if (!current) throw new Error('federation contact trust was not found');
+    const verifiedAt = this.now().toISOString();
+    const next: FederationContactTrustFile = {
+      v: 1,
+      ...input,
+      card: current.card,
+      pinnedAt: current.pinnedAt,
+      verifiedAt,
+    };
+    atomicWrite(
+      this.federationContactPath(
+        input.localServerScope,
+        input.localAccountId,
+        input.contactId,
+      ),
+      this.options.protect(JSON.stringify(next)),
+    );
+    return { card: next.card, pinnedAt: next.pinnedAt, verifiedAt };
+  }
+
+  removeFederationContact(input: {
+    localServerScope: string;
+    localAccountId: string;
+    contactId: string;
+  }): void {
+    const filePath = this.federationContactPath(
+      input.localServerScope,
+      input.localAccountId,
+      input.contactId,
+    );
+    try {
+      const stat = fs.lstatSync(filePath);
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        throw new Error('federation contact trust path must be a regular file');
+      }
+      fs.unlinkSync(filePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
   }
 
   verifyAndPinTransparencyCheckpoint(input: {
@@ -852,6 +1017,56 @@ function parsePlaintextPayload(value: Buffer): PlaintextPayload {
   return payload;
 }
 
+function federationIdentityCardPayload(
+  card: Omit<EnterpriseFederationIdentityCard, 'signature'>,
+): Buffer {
+  return Buffer.from(JSON.stringify({
+    v: card.v,
+    deploymentId: card.deploymentId,
+    principalId: card.principalId,
+    displayName: card.displayName,
+    device: card.device,
+    issuedAt: card.issuedAt,
+  }), 'utf8');
+}
+
+function validateFederationIdentityCard(
+  value: EnterpriseFederationIdentityCard,
+): EnterpriseFederationIdentityCard {
+  const identity = `${value.deploymentId}:${value.principalId}`;
+  if (
+    value.v !== 1 ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/u.test(value.deploymentId) ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/u.test(value.principalId) ||
+    typeof value.displayName !== 'string' ||
+    !value.displayName.trim() ||
+    value.displayName.length > 120 ||
+    !value.device ||
+    value.device.accountId !== identity ||
+    value.device.approvalState !== 'approved' ||
+    value.device.revokedAt !== null ||
+    enterpriseE2eeDeviceKeyFingerprint(value.device) !== value.device.keyFingerprint ||
+    !Number.isFinite(Date.parse(value.issuedAt)) ||
+    typeof value.signature !== 'string' ||
+    !value.signature
+  ) {
+    throw new Error('federation identity card is invalid');
+  }
+  const unsigned = { ...value };
+  delete (unsigned as Partial<EnterpriseFederationIdentityCard>).signature;
+  if (!verify(
+    null,
+    federationIdentityCardPayload(
+      unsigned as Omit<EnterpriseFederationIdentityCard, 'signature'>,
+    ),
+    value.device.identitySigningPublicKey,
+    Buffer.from(value.signature, 'base64'),
+  )) {
+    throw new Error('federation identity card signature is invalid');
+  }
+  return value;
+}
+
 export class EnterpriseE2eeCrypto {
   constructor(private readonly vault: EnterpriseE2eeKeyVault) {}
 
@@ -861,6 +1076,85 @@ export class EnterpriseE2eeCrypto {
     view: EnterpriseE2eeKeyTransparencyView;
   }): EnterpriseE2eeKeyTransparencyView {
     return this.vault.verifyAndPinTransparencyCheckpoint(input);
+  }
+
+  createFederationIdentityCard(input: {
+    deploymentId: string;
+    principalId: string;
+    displayName: string;
+    issuedAt?: string;
+  }): EnterpriseFederationIdentityCard {
+    const accountId = `${input.deploymentId}:${input.principalId}`;
+    const keyring = this.vault.loadOrCreate(
+      ENTERPRISE_FEDERATION_E2EE_SCOPE,
+      accountId,
+    );
+    const device = this.localDevice(
+      ENTERPRISE_FEDERATION_E2EE_SCOPE,
+      accountId,
+    );
+    const unsigned: Omit<EnterpriseFederationIdentityCard, 'signature'> = {
+      v: 1,
+      deploymentId: input.deploymentId,
+      principalId: input.principalId,
+      displayName: input.displayName.trim(),
+      device,
+      issuedAt: input.issuedAt ?? new Date().toISOString(),
+    };
+    const card: EnterpriseFederationIdentityCard = {
+      ...unsigned,
+      signature: sign(
+        null,
+        federationIdentityCardPayload(unsigned),
+        keyring.active.identitySigningPrivateKey,
+      ).toString('base64'),
+    };
+    return validateFederationIdentityCard(card);
+  }
+
+  verifyFederationIdentityCard(
+    value: EnterpriseFederationIdentityCard,
+  ): EnterpriseFederationIdentityCard {
+    return validateFederationIdentityCard(value);
+  }
+
+  pinFederationContact(input: {
+    localServerScope: string;
+    localAccountId: string;
+    contactId: string;
+    card: EnterpriseFederationIdentityCard;
+    allowDeviceKeyChange?: boolean;
+  }): EnterpriseFederationContactTrust {
+    return this.vault.saveFederationContactTrust({
+      ...input,
+      card: validateFederationIdentityCard(input.card),
+    });
+  }
+
+  federationContactTrust(input: {
+    localServerScope: string;
+    localAccountId: string;
+    contactId: string;
+  }): EnterpriseFederationContactTrust | null {
+    const trust = this.vault.loadFederationContactTrust(input);
+    if (trust) validateFederationIdentityCard(trust.card);
+    return trust;
+  }
+
+  verifyFederationContact(input: {
+    localServerScope: string;
+    localAccountId: string;
+    contactId: string;
+  }): EnterpriseFederationContactTrust {
+    return this.vault.verifyFederationContact(input);
+  }
+
+  removeFederationContact(input: {
+    localServerScope: string;
+    localAccountId: string;
+    contactId: string;
+  }): void {
+    this.vault.removeFederationContact(input);
   }
 
   verifyLocalDeviceRegistration(

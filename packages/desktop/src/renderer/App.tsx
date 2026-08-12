@@ -66,6 +66,7 @@ import type {
   EnterpriseAccount,
   EnterpriseAtoaInboxMessage,
   EnterpriseDirectMessage,
+  EnterpriseFederationContact,
   EnterpriseOrganizationView,
 } from '../preload/index.js';
 import { askLocalPeerOtto } from './peerOttoRunner.js';
@@ -283,19 +284,52 @@ function OttoWorkspaceApp({
     if (account.accountType === 'personal') return undefined;
     let cancelled = false;
     let polling = false;
+    let localUnreadCounts: EnterpriseUnreadCounts = {};
+    const federationMarkers = new Map<string, string>();
     const tracker = new EnterpriseUnreadNotificationTracker({
       show: (payload) => window.otto.notificationShow(payload),
       markRead: (sessionId) => window.otto.notificationMarkRead(sessionId),
-      onUnreadCountsChange: setEnterpriseUnreadCounts,
+      onUnreadCountsChange: (counts) => { localUnreadCounts = counts; },
     });
 
     const poll = async (): Promise<void> => {
       if (polling || cancelled) return;
       polling = true;
       try {
-        const response = await window.otto.enterpriseMessagesUnread();
+        const [response, federationContacts] = await Promise.all([
+          window.otto.enterpriseMessagesUnread(),
+          window.otto.enterpriseFederationContacts().catch(
+            () => [] as EnterpriseFederationContact[],
+          ),
+        ]);
         const notifications = Array.isArray(response) ? response : [];
-        if (!cancelled) await tracker.reconcile(notifications);
+        if (cancelled) return;
+        await tracker.reconcile(notifications);
+        const federationCounts: EnterpriseUnreadCounts = {};
+        const activeFederationSessions = new Set<string>();
+        for (const contact of federationContacts) {
+          const sessionId = `enterprise:federation:${contact.id}`;
+          if (contact.unreadCount <= 0) continue;
+          activeFederationSessions.add(sessionId);
+          federationCounts[sessionId] = contact.unreadCount;
+          const marker = `${contact.lastMessageAt ?? ''}:${contact.unreadCount}`;
+          if (federationMarkers.get(sessionId) === marker) continue;
+          await window.otto.notificationShow({
+            sessionId,
+            source: 'enterprise',
+            sender: contact.displayName,
+            preview: '收到一条端到端加密的跨服务器消息',
+          });
+          federationMarkers.set(sessionId, marker);
+        }
+        for (const sessionId of [...federationMarkers.keys()]) {
+          if (activeFederationSessions.has(sessionId)) continue;
+          federationMarkers.delete(sessionId);
+          await window.otto.notificationMarkRead(sessionId);
+        }
+        if (!cancelled) {
+          setEnterpriseUnreadCounts({ ...localUnreadCounts, ...federationCounts });
+        }
       } catch {
       } finally {
         polling = false;
@@ -308,6 +342,10 @@ function OttoWorkspaceApp({
       cancelled = true;
       window.clearInterval(timer);
       setEnterpriseUnreadCounts({});
+      for (const sessionId of federationMarkers.keys()) {
+        void window.otto.notificationMarkRead(sessionId).catch(() => undefined);
+      }
+      federationMarkers.clear();
       void tracker.clear();
     };
   }, [account.accountType, account.id, account.organizationId]);
@@ -334,6 +372,17 @@ function OttoWorkspaceApp({
 
   const markEnterpriseDirectMessageRead = useCallback((peerAccountId: string): void => {
     const sessionId = `enterprise:message:${peerAccountId}`;
+    setEnterpriseUnreadCounts((current) => {
+      if (!current[sessionId]) return current;
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+    void window.otto.notificationMarkRead(sessionId).catch(() => undefined);
+  }, []);
+
+  const markEnterpriseFederationMessageRead = useCallback((contactId: string): void => {
+    const sessionId = `enterprise:federation:${contactId}`;
     setEnterpriseUnreadCounts((current) => {
       if (!current[sessionId]) return current;
       const next = { ...current };
@@ -473,7 +522,22 @@ function OttoWorkspaceApp({
     peerAccountId: string;
     requestId: number;
   }>();
+  const [enterpriseFederationChatOpenRequest, setEnterpriseFederationChatOpenRequest] = useState<{
+    contactId: string;
+    requestId: number;
+  }>();
   const openNotificationSession = useCallback((sessionId: string): void => {
+    const federationPrefix = 'enterprise:federation:';
+    if (sessionId.startsWith(federationPrefix)) {
+      const contactId = sessionId.slice(federationPrefix.length);
+      if (!contactId) return;
+      setMainView('inbox');
+      setEnterpriseFederationChatOpenRequest((current) => ({
+        contactId,
+        requestId: (current?.requestId ?? 0) + 1,
+      }));
+      return;
+    }
     const prefix = 'enterprise:message:';
     if (!sessionId.startsWith(prefix)) return;
     const peerAccountId = sessionId.slice(prefix.length);
@@ -841,6 +905,8 @@ function OttoWorkspaceApp({
         <InboxPage
           enterpriseAccount={account}
           enterpriseUnreadCounts={enterpriseUnreadCounts}
+          federationContactOpenRequest={enterpriseFederationChatOpenRequest}
+          onFederationMessageRead={markEnterpriseFederationMessageRead}
           onOpenDirectChat={(peerId) => {
             setMainView('organization');
             setEnterpriseDirectChatOpenRequest((cur) => ({

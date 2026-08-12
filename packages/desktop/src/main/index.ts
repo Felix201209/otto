@@ -558,6 +558,15 @@ const IPC = {
   enterpriseMessagesUnread: 'otto:enterprise-messages-unread',
   enterpriseMessageSend: 'otto:enterprise-message-send',
   enterpriseMessageSecurityReset: 'otto:enterprise-message-security-reset',
+  enterpriseFederationContactCode: 'otto:enterprise-federation-contact-code',
+  enterpriseFederationContactImport: 'otto:enterprise-federation-contact-import',
+  enterpriseFederationContacts: 'otto:enterprise-federation-contacts',
+  enterpriseFederationContactRemove: 'otto:enterprise-federation-contact-remove',
+  enterpriseFederationMessagesList: 'otto:enterprise-federation-messages-list',
+  enterpriseFederationMessageSend: 'otto:enterprise-federation-message-send',
+  enterpriseFederationContactVerification:
+    'otto:enterprise-federation-contact-verification',
+  enterpriseFederationContactVerify: 'otto:enterprise-federation-contact-verify',
   enterpriseMessageAttachmentRead: 'otto:enterprise-message-attachment-read',
   enterpriseE2eeDevicesList: 'otto:enterprise-e2ee-devices-list',
   enterpriseE2eeKeyTransparency: 'otto:enterprise-e2ee-key-transparency',
@@ -1475,7 +1484,7 @@ async function refreshEnterpriseTrayContacts(): Promise<void> {
   }
   try {
     enterpriseTrayContacts = summarizeEnterpriseTrayContacts(
-      await listEnterpriseUnreadMessageNotifications(),
+      await listEnterpriseUnreadMessageNotifications({ includeFederation: true }),
     );
   } catch {
     updateUnreadIndicators(notificationService.getUnreadSessions());
@@ -1485,34 +1494,55 @@ async function refreshEnterpriseTrayContacts(): Promise<void> {
   syncEnterpriseTrayPopover();
 }
 
-async function listEnterpriseUnreadMessageNotifications(): Promise<
-  EnterpriseUnreadMessageNotification[]
+async function listEnterpriseUnreadMessageNotifications(
+  options: { includeFederation?: boolean } = {},
+): Promise<
+  Array<EnterpriseUnreadMessageNotification & { count?: number }>
 > {
-  if (!enterpriseClient.supportsMlsPrivateMessages()) {
-    return enterpriseClient.listUnreadDirectMessageNotifications();
-  }
-  const [messages, organization] = await Promise.all([
-    enterpriseMlsPrivateMessages.listUnread(),
-    enterpriseClient.getOrganizationView(),
-  ]);
-  const names = new Map(
-    organization.members.map((member) => [member.id, member.name]),
-  );
-  return messages.map((message) => ({
-    id: message.id,
-    source: 'enterprise',
-    title: '端到端加密私聊',
-    senderAccountId: message.senderAccountId,
-    senderName: names.get(message.senderAccountId) ?? message.senderAccountId,
-    preview: message.content.slice(0, 160),
-    createdAt: message.createdAt,
-  }));
+  const localMessages = !enterpriseClient.supportsMlsPrivateMessages()
+    ? await enterpriseClient.listUnreadDirectMessageNotifications()
+    : await Promise.all([
+        enterpriseMlsPrivateMessages.listUnread(),
+        enterpriseClient.getOrganizationView(),
+      ]).then(([messages, organization]) => {
+        const names = new Map(
+          organization.members.map((member) => [member.id, member.name]),
+        );
+        return messages.map((message) => ({
+          id: message.id,
+          source: 'enterprise' as const,
+          title: '端到端加密私聊',
+          senderAccountId: message.senderAccountId,
+          senderName: names.get(message.senderAccountId) ?? message.senderAccountId,
+          preview: message.content.slice(0, 160),
+          createdAt: message.createdAt,
+        }));
+      });
+  if (!options.includeFederation) return localMessages;
+  const federationContacts = await enterpriseClient
+    .listFederationContacts()
+    .catch(() => []);
+  const federated = federationContacts
+    .filter((contact) => contact.unreadCount > 0)
+    .map((contact) => ({
+      id: `federation:${contact.id}:${contact.lastMessageAt ?? ''}`,
+      source: 'enterprise' as const,
+      title: '端到端加密跨服务器私聊',
+      senderAccountId: `federation:${contact.id}`,
+      senderName: contact.displayName,
+      preview: '收到一条端到端加密的跨服务器消息',
+      createdAt: contact.lastMessageAt ?? new Date().toISOString(),
+      count: contact.unreadCount,
+    }));
+  return [...localMessages, ...federated];
 }
 
 function totalTrayUnreadCount(unread: readonly string[]): number {
   const enterpriseSessionIds = new Set(
     enterpriseTrayContacts.map(
-      (contact) => `enterprise:message:${contact.accountId}`,
+      (contact) => contact.accountId.startsWith('federation:')
+        ? `enterprise:federation:${contact.accountId.slice('federation:'.length)}`
+        : `enterprise:message:${contact.accountId}`,
     ),
   );
   const otherUnread = unread.filter(
@@ -1643,6 +1673,11 @@ function handleEnterpriseTrayNavigation(targetUrl: string): void {
     if (target.hostname !== 'message') return;
     const accountId = decodeURIComponent(target.pathname.replace(/^\/+/, ''));
     if (!accountId || accountId.length > 256) return;
+    if (accountId.startsWith('federation:')) {
+      const contactId = accountId.slice('federation:'.length);
+      if (contactId) openNotificationSession(`enterprise:federation:${contactId}`);
+      return;
+    }
     openNotificationSession(`enterprise:message:${accountId}`);
   } catch (error) {
     void error;
@@ -2960,6 +2995,80 @@ function registerIpc(): void {
         return enterpriseMlsPrivateMessages.readAttachment(attachmentId);
       }
       return enterpriseClient.getDirectMessageAttachment(attachmentId);
+    },
+  );
+  ipcMain.handle(IPC.enterpriseFederationContactCode, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.exportFederationContactCode();
+  });
+  ipcMain.handle(
+    IPC.enterpriseFederationContactImport,
+    async (_event, code: unknown) => {
+      loadEnterpriseSession();
+      if (typeof code !== 'string' || !code.trim() || code.length > 64_000) {
+        throw new Error('联邦联系码无效');
+      }
+      return enterpriseClient.saveFederationContactCode(code);
+    },
+  );
+  ipcMain.handle(IPC.enterpriseFederationContacts, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.listFederationContacts();
+  });
+  ipcMain.handle(
+    IPC.enterpriseFederationContactRemove,
+    async (_event, contactId: unknown) => {
+      loadEnterpriseSession();
+      if (typeof contactId !== 'string' || !contactId) {
+        throw new Error('联邦联系人无效');
+      }
+      await enterpriseClient.removeFederationContact(contactId);
+      return true;
+    },
+  );
+  ipcMain.handle(
+    IPC.enterpriseFederationMessagesList,
+    async (_event, contactId: unknown) => {
+      loadEnterpriseSession();
+      if (typeof contactId !== 'string' || !contactId) {
+        throw new Error('联邦联系人无效');
+      }
+      return enterpriseClient.listFederationMessages(contactId);
+    },
+  );
+  ipcMain.handle(
+    IPC.enterpriseFederationMessageSend,
+    async (_event, contactId: unknown, content: unknown) => {
+      loadEnterpriseSession();
+      if (
+        typeof contactId !== 'string' ||
+        !contactId ||
+        typeof content !== 'string' ||
+        !content.trim()
+      ) {
+        throw new Error('联邦消息无效');
+      }
+      return enterpriseClient.sendFederationMessage(contactId, content);
+    },
+  );
+  ipcMain.handle(
+    IPC.enterpriseFederationContactVerification,
+    async (_event, contactId: unknown) => {
+      loadEnterpriseSession();
+      if (typeof contactId !== 'string' || !contactId) {
+        throw new Error('联邦联系人无效');
+      }
+      return enterpriseClient.federationContactVerification(contactId);
+    },
+  );
+  ipcMain.handle(
+    IPC.enterpriseFederationContactVerify,
+    async (_event, contactId: unknown) => {
+      loadEnterpriseSession();
+      if (typeof contactId !== 'string' || !contactId) {
+        throw new Error('联邦联系人无效');
+      }
+      return enterpriseClient.verifyFederationContact(contactId);
     },
   );
   ipcMain.handle(

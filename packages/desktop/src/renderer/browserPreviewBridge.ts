@@ -368,6 +368,22 @@ if (!previewWindow.otto) {
     enterpriseLogout: () => Promise.resolve(),
     enterprisePresenceHeartbeat: () => Promise.resolve(),
     enterpriseMessagesUnread: () => Promise.resolve([...previewUnread.values()]),
+    enterpriseFederationContactCode: () => Promise.resolve(''),
+    enterpriseFederationContactImport: () => Promise.reject(
+      new Error('浏览器预览不支持导入跨服务器联系人'),
+    ),
+    enterpriseFederationContacts: () => Promise.resolve([]),
+    enterpriseFederationContactRemove: () => Promise.resolve(false),
+    enterpriseFederationMessagesList: () => Promise.resolve([]),
+    enterpriseFederationMessageSend: () => Promise.reject(
+      new Error('浏览器预览不支持跨服务器私聊'),
+    ),
+    enterpriseFederationContactVerification: () => Promise.reject(
+      new Error('浏览器预览不支持跨服务器身份核验'),
+    ),
+    enterpriseFederationContactVerify: () => Promise.reject(
+      new Error('浏览器预览不支持跨服务器身份核验'),
+    ),
     enterpriseAtoaInbox: () => Promise.resolve([]),
     enterpriseE2eeDevicesList: () =>
       Promise.resolve([

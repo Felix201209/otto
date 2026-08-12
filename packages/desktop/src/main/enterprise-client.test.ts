@@ -207,7 +207,248 @@ const API_V2_HEALTH = {
   ],
 };
 
+function mockFederationCrypto(): EnterpriseE2eeCrypto {
+  const trusts = new Map<string, {
+    card: Record<string, unknown>;
+    verifiedAt: string | null;
+    pinnedAt: string;
+  }>();
+  let lastPlaintext = '';
+  const localDevice = {
+    ...E2EE_DEVICE,
+    accountId: 'deployment-a:acc_1',
+    identitySigningPublicKey: 'local federation signing key',
+    deviceExchangePublicKey: 'local federation exchange key',
+    keyFingerprint: 'a'.repeat(64),
+  };
+  const localCard = {
+    v: 1 as const,
+    deploymentId: 'deployment-a',
+    principalId: 'acc_1',
+    displayName: ACCOUNT.name,
+    device: localDevice,
+    issuedAt: '2026-08-12T00:00:00.000Z',
+    signature: 'local-card-signature',
+  };
+  return {
+    verifyFederationIdentityCard: vi.fn((card) => card),
+    createFederationIdentityCard: vi.fn(() => localCard),
+    pinFederationContact: vi.fn((input: {
+      contactId: string;
+      card: typeof localCard;
+    }) => {
+      const current = trusts.get(input.contactId);
+      if (
+        current &&
+        (current.card as typeof localCard).device.keyFingerprint !==
+          input.card.device.keyFingerprint
+      ) {
+        throw new Error('federation contact device key changed');
+      }
+      const trust = {
+        card: input.card,
+        verifiedAt: current?.verifiedAt ?? null,
+        pinnedAt: current?.pinnedAt ?? '2026-08-12T00:00:00.000Z',
+      };
+      trusts.set(input.contactId, trust);
+      return trust;
+    }),
+    federationContactTrust: vi.fn((input: { contactId: string }) =>
+      trusts.get(input.contactId) ?? null),
+    verifyFederationContact: vi.fn((input: { contactId: string }) => {
+      const trust = trusts.get(input.contactId);
+      if (!trust) throw new Error('federation contact trust was not found');
+      const verified = { ...trust, verifiedAt: '2026-08-12T00:01:00.000Z' };
+      trusts.set(input.contactId, verified);
+      return verified;
+    }),
+    removeFederationContact: vi.fn((input: { contactId: string }) => {
+      trusts.delete(input.contactId);
+    }),
+    localDevice: vi.fn(() => localDevice),
+    encryptMessage: vi.fn((input: { content: string }) => {
+      lastPlaintext = input.content;
+      return {
+        messageId: 'federation-message-1',
+        senderDeviceId: localDevice.deviceId,
+        protocolVersion: 1 as const,
+        contentType: 'message' as const,
+        inReplyToMessageId: null,
+        ciphertext: 'encrypted-federation-content',
+        nonce: 'encrypted-federation-nonce',
+        signature: 'encrypted-federation-signature',
+        envelopes: [],
+        attachments: [],
+      };
+    }),
+    decryptMessage: vi.fn(({ message }: { message: EnterpriseE2eeWireMessage }) => ({
+      id: message.id,
+      senderAccountId: message.senderAccountId,
+      recipientAccountId: message.recipientAccountId,
+      content: lastPlaintext,
+      contentType: message.contentType,
+      inReplyToMessageId: message.inReplyToMessageId,
+      createdAt: message.createdAt,
+      readAt: message.readAt,
+      attachments: [],
+    })),
+  } as unknown as EnterpriseE2eeCrypto;
+}
+
 describe('EnterpriseClient', () => {
+  it('imports a signed federation contact and sends only an opaque E2EE envelope', async () => {
+    const remoteCard = {
+      v: 1 as const,
+      deploymentId: 'deployment-b',
+      principalId: 'remote-account',
+      displayName: '远程同事',
+      device: {
+        ...E2EE_DEVICE,
+        accountId: 'deployment-b:remote-account',
+        deviceId: 'remote-device',
+        identitySigningPublicKey: 'remote federation signing key',
+        deviceExchangePublicKey: 'remote federation exchange key',
+        keyFingerprint: 'b'.repeat(64),
+      },
+      issuedAt: '2026-08-12T00:00:00.000Z',
+      signature: 'remote-card-signature',
+    };
+    const contacts: Array<Record<string, unknown>> = [];
+    const messageBodies: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url.endsWith('/enterprise/health')) {
+        return jsonResponse(200, {
+          ...API_V2_HEALTH,
+          capabilities: [...API_V2_HEALTH.capabilities, 'federation_chat_v1'],
+        });
+      }
+      if (url.endsWith('/enterprise/auth/login')) {
+        return jsonResponse(200, {
+          account: ACCOUNT,
+          token: 'session-token',
+          expiresAt: '2099-01-01',
+        });
+      }
+      if (url.endsWith('/enterprise/federation/identity')) {
+        return jsonResponse(200, {
+          identity: {
+            deploymentId: 'deployment-a',
+            principalId: ACCOUNT.id,
+            capabilities: ['chat.e2ee'],
+          },
+        });
+      }
+      if (url.endsWith('/enterprise/federation/contacts') && method === 'GET') {
+        return jsonResponse(200, { contacts });
+      }
+      if (url.endsWith('/enterprise/federation/contacts') && method === 'POST') {
+        const body = JSON.parse(String(init?.body)) as Record<string, string>;
+        const contact = {
+          id: 'contact-remote',
+          identity: 'deployment-b:remote-account',
+          remoteDeploymentId: body.remoteDeploymentId,
+          remotePrincipalId: body.remotePrincipalId,
+          displayName: body.displayName,
+          deploymentDisplayName: '远程私有部署',
+          createdAt: '2026-08-12T00:00:00.000Z',
+          updatedAt: '2026-08-12T00:00:00.000Z',
+          lastMessageAt: null,
+          unreadCount: 0,
+        };
+        contacts.splice(0, contacts.length, contact);
+        return jsonResponse(201, { contact });
+      }
+      if (url.includes('/enterprise/federation/conversations/') && method === 'POST') {
+        messageBodies.push(String(init?.body));
+        return jsonResponse(202, { queued: true });
+      }
+      throw new Error(`unexpected request: ${method} ${url}`);
+    });
+    const crypto = mockFederationCrypto();
+    const client = new EnterpriseClient(
+      fetchMock as typeof fetch,
+      () => undefined,
+      crypto,
+    );
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+    const contactCode = `OTTO_FEDERATION_CONTACT_V1:${Buffer.from(
+      JSON.stringify(remoteCard),
+      'utf8',
+    ).toString('base64url')}`;
+
+    await expect(client.saveFederationContactCode(contactCode)).resolves.toMatchObject({
+      id: 'contact-remote',
+      trustState: 'unverified',
+      keyFingerprint: 'b'.repeat(64),
+    });
+    await expect(client.sendFederationMessage(
+      'contact-remote',
+      '仅收件人可见的联邦消息',
+    )).resolves.toMatchObject({
+      federated: true,
+      direction: 'outbound',
+      deliveryStatus: 'queued',
+      content: '仅收件人可见的联邦消息',
+    });
+    expect(messageBodies).toHaveLength(1);
+    expect(messageBodies[0]).not.toContain('仅收件人可见的联邦消息');
+    expect(JSON.parse(messageBodies[0]!) as Record<string, unknown>).toMatchObject({
+      messageId: 'federation-message-1',
+      inReplyTo: null,
+    });
+  });
+
+  it('refuses to import the current account as a federation contact', async () => {
+    const ownCard = {
+      v: 1 as const,
+      deploymentId: 'deployment-a',
+      principalId: ACCOUNT.id,
+      displayName: ACCOUNT.name,
+      device: { ...E2EE_DEVICE, accountId: `deployment-a:${ACCOUNT.id}` },
+      issuedAt: '2026-08-12T00:00:00.000Z',
+      signature: 'self-signature',
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, {
+        ...API_V2_HEALTH,
+        capabilities: [...API_V2_HEALTH.capabilities, 'federation_chat_v1'],
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT,
+        token: 'session-token',
+        expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        identity: {
+          deploymentId: 'deployment-a',
+          principalId: ACCOUNT.id,
+          capabilities: ['chat.e2ee'],
+        },
+      }));
+    const client = new EnterpriseClient(
+      fetchMock as typeof fetch,
+      () => undefined,
+      mockFederationCrypto(),
+    );
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+    const code = Buffer.from(JSON.stringify(ownCard), 'utf8').toString('base64url');
+
+    await expect(client.saveFederationContactCode(code)).rejects.toThrow(
+      '不能把自己的联邦联系码添加为联系人',
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it('fails closed instead of downgrading when the server advertises MLS private chat', async () => {
     const fetchMock = vi
       .fn()

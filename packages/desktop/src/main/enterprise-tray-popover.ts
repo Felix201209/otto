@@ -25,6 +25,7 @@ interface EnterpriseUnreadMessageLike {
   senderName: string;
   preview: string;
   createdAt: string;
+  count?: number;
 }
 
 interface RectangleLike {
@@ -106,12 +107,12 @@ export function summarizeEnterpriseTrayContacts(
         accountId: item.senderAccountId,
         name: item.senderName.trim() || '企业联系人',
         preview: normalizePreview(item.preview),
-        count: 1,
+        count: Math.max(1, Math.floor(item.count ?? 1)),
         createdAt: item.createdAt,
       });
       continue;
     }
-    current.count += 1;
+    current.count += Math.max(1, Math.floor(item.count ?? 1));
     if (
       parseEnterpriseMessageTimestamp(item.createdAt) >=
       parseEnterpriseMessageTimestamp(current.createdAt)

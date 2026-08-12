@@ -261,6 +261,13 @@ function signer(): LocalFederationSigner {
 
 function database(): Database {
   const db = new Database(':memory:');
+  db.exec(`
+    CREATE TABLE accounts (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'active',
+      deleted_at TEXT
+    );
+  `);
   FEDERATION_GATEWAY_SCHEMA_CONTRIBUTOR.apply(db);
   return db;
 }
@@ -307,10 +314,16 @@ describe('federation composition', () => {
     };
   }
 
+  function account(db: Database, id: string): void {
+    db.prepare('INSERT INTO accounts (id) VALUES (?)').run(id);
+  }
+
   it('delivers opaque E2EE messages and attachments exactly once after an ack retry', async () => {
     const gateway = new FakeFederationGateway();
     const alice = deployment('deployment_alice', gateway, signer());
     const bob = deployment('deployment_bob', gateway, signer());
+    account(alice.db, 'account_alice');
+    account(bob.db, 'account_bob');
     const ciphertext = Buffer.from(JSON.stringify({
       message: 'encrypted-message-bytes',
       attachments: ['encrypted-word-document', 'encrypted-image'],
@@ -353,6 +366,49 @@ describe('federation composition', () => {
       recipientPrincipalId: 'account_bob',
     })).toHaveLength(1);
     expect(gateway.messages.values().next().value?.delivered).toBe(true);
+    expect(bob.service.listFederationChatContacts('account_bob')).toEqual([
+      expect.objectContaining({
+        identity: 'deployment_alice:account_alice',
+        unreadCount: 1,
+      }),
+    ]);
+  });
+
+  it('projects outbound chat through an account-owned contact without mixing local ids', async () => {
+    const gateway = new FakeFederationGateway();
+    const alice = deployment('deployment_alice', gateway, signer());
+    deployment('deployment_bob', gateway, signer());
+    account(alice.db, 'account_alice');
+    const contact = await alice.service.saveFederationChatContact({
+      ownerAccountId: 'account_alice',
+      remoteDeploymentId: 'deployment_bob',
+      remotePrincipalId: 'account_bob',
+      displayName: 'Bob',
+    });
+    await alice.service.queueFederationChatMessage({
+      ownerAccountId: 'account_alice',
+      contactId: contact.id,
+      ciphertext: 'ZW5jcnlwdGVkLWNoYXQ',
+      messageId: 'fmessage_chat_one',
+    });
+    expect(alice.service.listFederationChatMessages({
+      ownerAccountId: 'account_alice',
+      contactId: contact.id,
+    })).toEqual([
+      expect.objectContaining({
+        messageId: 'fmessage_chat_one',
+        direction: 'outbound',
+        deliveryStatus: 'queued',
+        routing: expect.objectContaining({
+          senderPrincipalId: 'account_alice',
+          recipientPrincipalId: 'account_bob',
+        }),
+      }),
+    ]);
+    expect(() => alice.service.listFederationChatMessages({
+      ownerAccountId: 'account_other',
+      contactId: contact.id,
+    })).toThrow('contact was not found');
   });
 
   it('fails closed after deployment revocation and does not retry permanent denials', async () => {

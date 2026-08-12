@@ -12,12 +12,15 @@ import path from 'node:path';
 import type { MlsKeyPackage } from '@otto/native';
 
 import {
+  ENTERPRISE_FEDERATION_E2EE_SCOPE,
   enterpriseE2eeDeviceVerification,
   type EnterpriseE2eeDeviceVerification,
   type EnterpriseE2eeCrypto,
   type EnterpriseE2eeDeviceBundle,
   type EnterpriseE2eeKeyTransparencyView,
   type EnterpriseE2eeWireMessage,
+  type EnterpriseFederationContactTrust,
+  type EnterpriseFederationIdentityCard,
 } from './enterprise-e2ee.js';
 import {
   ENTERPRISE_MLS_CIPHERSUITE,
@@ -690,6 +693,57 @@ export interface EnterpriseDirectMessage {
   inReplyToMessageId?: string | null;
 }
 
+export interface EnterpriseFederationContact {
+  id: string;
+  identity: string;
+  remoteDeploymentId: string;
+  remotePrincipalId: string;
+  displayName: string;
+  deploymentDisplayName: string;
+  createdAt: string;
+  updatedAt: string;
+  lastMessageAt: string | null;
+  unreadCount: number;
+  trustState: 'missing' | 'unverified' | 'verified';
+  keyFingerprint: string | null;
+}
+
+export interface EnterpriseFederatedDirectMessage extends EnterpriseDirectMessage {
+  federated: true;
+  contactId: string;
+  direction: 'inbound' | 'outbound';
+  deliveryStatus: 'queued' | 'sent' | 'failed' | 'expired' | 'received';
+  trustState: 'unverified' | 'verified';
+}
+
+type EnterpriseFederationWireContact = Omit<
+  EnterpriseFederationContact,
+  'trustState' | 'keyFingerprint'
+>;
+
+interface EnterpriseFederationWireMessage {
+  cursor: number;
+  messageId: string;
+  contactId: string;
+  direction: 'inbound' | 'outbound';
+  ciphertext: string;
+  issuedAt: string;
+  receivedAt: string;
+  deliveryStatus: 'queued' | 'sent' | 'failed' | 'expired' | 'received';
+  readAt: string | null;
+  routing: {
+    conversationId: string;
+    senderPrincipalId: string;
+    recipientPrincipalId: string;
+  };
+}
+
+interface EnterpriseFederationEncryptedPayload {
+  v: 1;
+  senderCard: EnterpriseFederationIdentityCard;
+  message: EnterpriseE2eeWireMessage;
+}
+
 export interface EnterpriseUnreadMessageNotification {
   id: string;
   source: 'enterprise';
@@ -1003,6 +1057,61 @@ function normalizeServerUrl(input: string): string {
   const pathPrefix =
     url.pathname === '/' ? '' : url.pathname.replace(/\/+$/, '');
   return `${url.origin}${pathPrefix}`;
+}
+
+const FEDERATION_CONTACT_CODE_PREFIX = 'OTTO_FEDERATION_CONTACT_V1:';
+
+function federationConversationId(input: {
+  localDeploymentId: string;
+  localPrincipalId: string;
+  remoteDeploymentId: string;
+  remotePrincipalId: string;
+}): string {
+  const participants = [
+    `${input.localDeploymentId}:${input.localPrincipalId}`,
+    `${input.remoteDeploymentId}:${input.remotePrincipalId}`,
+  ].sort();
+  return `fconversation_${createHash('sha256')
+    .update('otto:federation-conversation:v1\0')
+    .update(participants.join('\0'))
+    .digest('hex')
+    .slice(0, 40)}`;
+}
+
+function parseFederationContactCode(value: string): EnterpriseFederationIdentityCard {
+  const encoded = value.trim().startsWith(FEDERATION_CONTACT_CODE_PREFIX)
+    ? value.trim().slice(FEDERATION_CONTACT_CODE_PREFIX.length)
+    : value.trim();
+  try {
+    const card = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as
+      EnterpriseFederationIdentityCard;
+    if (!card || typeof card !== 'object') throw new Error('invalid card');
+    return card;
+  } catch {
+    throw new Error('联邦联系码无效，请让对方重新生成');
+  }
+}
+
+function parseFederationEncryptedPayload(
+  ciphertext: string,
+): EnterpriseFederationEncryptedPayload {
+  try {
+    const payload = JSON.parse(
+      Buffer.from(ciphertext, 'base64url').toString('utf8'),
+    ) as EnterpriseFederationEncryptedPayload;
+    if (
+      payload?.v !== 1 ||
+      !payload.senderCard ||
+      !payload.message ||
+      payload.message.protocolVersion !== 1 ||
+      payload.message.attachments.length !== 0
+    ) {
+      throw new Error('invalid payload');
+    }
+    return payload;
+  } catch {
+    throw new Error('联邦私聊密文格式无效');
+  }
 }
 
 function e2eeProtocolMetadata(content: string): {
@@ -3082,6 +3191,381 @@ export class EnterpriseClient {
       await this.registerLocalE2eeDevice();
     }
     await this.getAndPinE2eeKeyTransparency(account.id);
+  }
+
+  private async federationIdentity(): Promise<{
+    deploymentId: string;
+    principalId: string;
+  }> {
+    await this.assertCompatibleServer(this.serverUrl, [
+      'federation_chat_v1',
+      'e2ee_private_messages_v1',
+    ]);
+    const identity = (
+      await this.request<{
+        identity: {
+          deploymentId: string;
+          principalId: string;
+          capabilities: string[];
+        };
+      }>('/enterprise/federation/identity')
+    ).identity;
+    const account = this.requireE2eeContext().account;
+    if (
+      !identity ||
+      typeof identity.deploymentId !== 'string' ||
+      identity.principalId !== account.id ||
+      !identity.capabilities?.includes('chat.e2ee')
+    ) {
+      throw new Error('联邦身份与当前登录账号不匹配');
+    }
+    return identity;
+  }
+
+  async exportFederationContactCode(): Promise<string> {
+    const { crypto, account } = this.requireE2eeContext();
+    const identity = await this.federationIdentity();
+    const card = crypto.createFederationIdentityCard({
+      ...identity,
+      displayName: account.name,
+    });
+    return FEDERATION_CONTACT_CODE_PREFIX + Buffer.from(
+      JSON.stringify(card),
+      'utf8',
+    ).toString('base64url');
+  }
+
+  async saveFederationContactCode(
+    code: string,
+  ): Promise<EnterpriseFederationContact> {
+    const { crypto, account, serverScope } = this.requireE2eeContext();
+    const card = crypto.verifyFederationIdentityCard(
+      parseFederationContactCode(code),
+    );
+    const localIdentity = await this.federationIdentity();
+    if (
+      card.deploymentId === localIdentity.deploymentId &&
+      card.principalId === localIdentity.principalId
+    ) {
+      throw new Error('不能把自己的联邦联系码添加为联系人');
+    }
+    const existing = (await this.listFederationContacts()).find(
+      (contact) => contact.identity === `${card.deploymentId}:${card.principalId}`,
+    );
+    if (existing) {
+      crypto.pinFederationContact({
+        localServerScope: serverScope,
+        localAccountId: account.id,
+        contactId: existing.id,
+        card,
+      });
+    }
+    const contact = (
+      await this.request<{ contact: EnterpriseFederationWireContact }>(
+        '/enterprise/federation/contacts',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            remoteDeploymentId: card.deploymentId,
+            remotePrincipalId: card.principalId,
+            displayName: card.displayName,
+          }),
+        },
+      )
+    ).contact;
+    const trust = existing
+      ? crypto.federationContactTrust({
+          localServerScope: serverScope,
+          localAccountId: account.id,
+          contactId: contact.id,
+        })!
+      : crypto.pinFederationContact({
+          localServerScope: serverScope,
+          localAccountId: account.id,
+          contactId: contact.id,
+          card,
+        });
+    return {
+      ...contact,
+      trustState: trust.verifiedAt ? 'verified' : 'unverified',
+      keyFingerprint: trust.card.device.keyFingerprint,
+    };
+  }
+
+  async listFederationContacts(): Promise<EnterpriseFederationContact[]> {
+    const { crypto, account, serverScope } = this.requireE2eeContext();
+    await this.federationIdentity();
+    const contacts = (
+      await this.request<{ contacts: EnterpriseFederationWireContact[] }>(
+        '/enterprise/federation/contacts',
+      )
+    ).contacts;
+    return contacts.map((contact) => {
+      const trust = crypto.federationContactTrust({
+        localServerScope: serverScope,
+        localAccountId: account.id,
+        contactId: contact.id,
+      });
+      return {
+        ...contact,
+        trustState: trust
+          ? trust.verifiedAt ? 'verified' : 'unverified'
+          : 'missing',
+        keyFingerprint: trust?.card.device.keyFingerprint ?? null,
+      };
+    });
+  }
+
+  async removeFederationContact(contactId: string): Promise<void> {
+    const { crypto, account, serverScope } = this.requireE2eeContext();
+    await this.request(
+      `/enterprise/federation/contacts/${encodeURIComponent(contactId)}`,
+      { method: 'DELETE' },
+    );
+    crypto.removeFederationContact({
+      localServerScope: serverScope,
+      localAccountId: account.id,
+      contactId,
+    });
+  }
+
+  async federationContactVerification(
+    contactId: string,
+  ): Promise<EnterpriseE2eeDeviceVerification & {
+    verifiedAt: string | null;
+  }> {
+    const { crypto, account, serverScope } = this.requireE2eeContext();
+    const identity = await this.federationIdentity();
+    const trust = crypto.federationContactTrust({
+      localServerScope: serverScope,
+      localAccountId: account.id,
+      contactId,
+    });
+    if (!trust) throw new Error('请先导入对方的联邦联系码');
+    const localDevice = crypto.localDevice(
+      ENTERPRISE_FEDERATION_E2EE_SCOPE,
+      `${identity.deploymentId}:${identity.principalId}`,
+    );
+    return {
+      ...enterpriseE2eeDeviceVerification(localDevice, trust.card.device),
+      verifiedAt: trust.verifiedAt,
+    };
+  }
+
+  async verifyFederationContact(
+    contactId: string,
+  ): Promise<EnterpriseE2eeDeviceVerification & {
+    verifiedAt: string | null;
+  }> {
+    const { crypto, account, serverScope } = this.requireE2eeContext();
+    crypto.verifyFederationContact({
+      localServerScope: serverScope,
+      localAccountId: account.id,
+      contactId,
+    });
+    return this.federationContactVerification(contactId);
+  }
+
+  async listFederationMessages(
+    contactId: string,
+  ): Promise<EnterpriseFederatedDirectMessage[]> {
+    const { crypto, account, serverScope } = this.requireE2eeContext();
+    const identity = await this.federationIdentity();
+    const contact = (await this.listFederationContacts())
+      .find((item) => item.id === contactId);
+    if (!contact) throw new Error('联邦联系人不存在');
+    const localGlobalId = `${identity.deploymentId}:${identity.principalId}`;
+    const remoteGlobalId = contact.identity;
+    const conversationId = federationConversationId({
+      localDeploymentId: identity.deploymentId,
+      localPrincipalId: identity.principalId,
+      remoteDeploymentId: contact.remoteDeploymentId,
+      remotePrincipalId: contact.remotePrincipalId,
+    });
+    const wireMessages = (
+      await this.request<{ messages: EnterpriseFederationWireMessage[] }>(
+        `/enterprise/federation/conversations/${encodeURIComponent(contactId)}/messages`,
+      )
+    ).messages;
+    const decrypted: EnterpriseFederatedDirectMessage[] = [];
+    for (const raw of wireMessages) {
+      const payload = parseFederationEncryptedPayload(raw.ciphertext);
+      const senderCard = crypto.verifyFederationIdentityCard(payload.senderCard);
+      const expectedSender = raw.direction === 'inbound'
+        ? remoteGlobalId
+        : localGlobalId;
+      if (
+        `${senderCard.deploymentId}:${senderCard.principalId}` !== expectedSender ||
+        raw.routing.conversationId !== conversationId ||
+        payload.message.id !== raw.messageId ||
+        payload.message.senderAccountId !== expectedSender ||
+        payload.message.recipientAccountId !== (
+          raw.direction === 'inbound' ? localGlobalId : remoteGlobalId
+        ) ||
+        payload.message.senderDeviceId !== senderCard.device.deviceId ||
+        payload.message.senderIdentitySigningPublicKey !==
+          senderCard.device.identitySigningPublicKey
+      ) {
+        throw new Error('联邦私聊消息的身份或会话绑定无效');
+      }
+      let trust: EnterpriseFederationContactTrust;
+      if (raw.direction === 'inbound') {
+        trust = crypto.pinFederationContact({
+          localServerScope: serverScope,
+          localAccountId: account.id,
+          contactId,
+          card: senderCard,
+        });
+      } else {
+        const ownCard = crypto.createFederationIdentityCard({
+          ...identity,
+          displayName: account.name,
+          issuedAt: senderCard.issuedAt,
+        });
+        if (ownCard.device.keyFingerprint !== senderCard.device.keyFingerprint) {
+          throw new Error('本机联邦发送身份已变化，请重置安全会话');
+        }
+        const pinnedTrust = crypto.federationContactTrust({
+          localServerScope: serverScope,
+          localAccountId: account.id,
+          contactId,
+        });
+        if (!pinnedTrust) {
+          throw new Error('联邦联系人信任记录不存在，请重新导入联系码');
+        }
+        trust = pinnedTrust;
+      }
+      const plain = crypto.decryptMessage({
+        serverScope: ENTERPRISE_FEDERATION_E2EE_SCOPE,
+        organizationId: conversationId,
+        accountId: localGlobalId,
+        message: payload.message,
+      });
+      decrypted.push({
+        id: plain.id,
+        senderAccountId: raw.direction === 'inbound' ? contact.identity : account.id,
+        recipientAccountId: raw.direction === 'inbound' ? account.id : contact.identity,
+        content: plain.content,
+        createdAt: plain.createdAt,
+        readAt: raw.readAt,
+        attachments: plain.attachments,
+        e2ee: true,
+        e2eeProtocol: 'device-envelope-v1',
+        contentType: plain.contentType,
+        inReplyToMessageId: plain.inReplyToMessageId,
+        federated: true,
+        contactId,
+        direction: raw.direction,
+        deliveryStatus: raw.deliveryStatus,
+        trustState: trust.verifiedAt ? 'verified' : 'unverified',
+      });
+      if (raw.direction === 'inbound' && raw.readAt === null) {
+        await this.request(
+          `/enterprise/federation/conversations/${encodeURIComponent(contactId)}` +
+            `/messages/${encodeURIComponent(raw.messageId)}/read`,
+          { method: 'POST' },
+        );
+      }
+    }
+    return decrypted;
+  }
+
+  async sendFederationMessage(
+    contactId: string,
+    content: string,
+  ): Promise<EnterpriseFederatedDirectMessage> {
+    if (!content.trim()) throw new Error('请输入消息');
+    const { crypto, account, serverScope } = this.requireE2eeContext();
+    const identity = await this.federationIdentity();
+    const contact = (await this.listFederationContacts())
+      .find((item) => item.id === contactId);
+    if (!contact) throw new Error('联邦联系人不存在');
+    const trust = crypto.federationContactTrust({
+      localServerScope: serverScope,
+      localAccountId: account.id,
+      contactId,
+    });
+    if (!trust) throw new Error('请先导入对方的联邦联系码');
+    const localGlobalId = `${identity.deploymentId}:${identity.principalId}`;
+    const conversationId = federationConversationId({
+      localDeploymentId: identity.deploymentId,
+      localPrincipalId: identity.principalId,
+      remoteDeploymentId: contact.remoteDeploymentId,
+      remotePrincipalId: contact.remotePrincipalId,
+    });
+    const senderCard = crypto.createFederationIdentityCard({
+      ...identity,
+      displayName: account.name,
+    });
+    const protocol = e2eeProtocolMetadata(content);
+    const encrypted = crypto.encryptMessage({
+      serverScope: ENTERPRISE_FEDERATION_E2EE_SCOPE,
+      organizationId: conversationId,
+      senderAccountId: localGlobalId,
+      recipientAccountId: contact.identity,
+      content,
+      contentType: protocol.contentType,
+      inReplyToMessageId: protocol.inReplyToMessageId,
+      devices: [senderCard.device, trust.card.device],
+    });
+    const createdAt = new Date().toISOString();
+    const message: EnterpriseE2eeWireMessage = {
+      id: encrypted.messageId,
+      senderAccountId: localGlobalId,
+      recipientAccountId: contact.identity,
+      senderDeviceId: encrypted.senderDeviceId,
+      senderIdentitySigningPublicKey: senderCard.device.identitySigningPublicKey,
+      protocolVersion: encrypted.protocolVersion,
+      contentType: encrypted.contentType,
+      inReplyToMessageId: encrypted.inReplyToMessageId,
+      ciphertext: encrypted.ciphertext,
+      nonce: encrypted.nonce,
+      signature: encrypted.signature,
+      envelopes: encrypted.envelopes,
+      createdAt,
+      readAt: null,
+      attachments: [],
+    };
+    const opaque = Buffer.from(JSON.stringify({
+      v: 1,
+      senderCard,
+      message,
+    } satisfies EnterpriseFederationEncryptedPayload), 'utf8').toString('base64url');
+    await this.request(
+      `/enterprise/federation/conversations/${encodeURIComponent(contactId)}/messages`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          messageId: encrypted.messageId,
+          ciphertext: opaque,
+          inReplyTo: encrypted.inReplyToMessageId,
+        }),
+      },
+    );
+    const plain = crypto.decryptMessage({
+      serverScope: ENTERPRISE_FEDERATION_E2EE_SCOPE,
+      organizationId: conversationId,
+      accountId: localGlobalId,
+      message,
+    });
+    return {
+      id: plain.id,
+      senderAccountId: account.id,
+      recipientAccountId: contact.identity,
+      content: plain.content,
+      createdAt: plain.createdAt,
+      readAt: null,
+      attachments: [],
+      e2ee: true,
+      e2eeProtocol: 'device-envelope-v1',
+      contentType: plain.contentType,
+      inReplyToMessageId: plain.inReplyToMessageId,
+      federated: true,
+      contactId,
+      direction: 'outbound',
+      deliveryStatus: 'queued',
+      trustState: trust.verifiedAt ? 'verified' : 'unverified',
+    };
   }
 
   async listDirectMessages(

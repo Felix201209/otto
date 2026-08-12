@@ -792,6 +792,29 @@ export interface EnterpriseDirectMessage {
   inReplyToMessageId?: string | null;
 }
 
+export interface EnterpriseFederationContact {
+  id: string;
+  identity: string;
+  remoteDeploymentId: string;
+  remotePrincipalId: string;
+  displayName: string;
+  deploymentDisplayName: string;
+  createdAt: string;
+  updatedAt: string;
+  lastMessageAt: string | null;
+  unreadCount: number;
+  trustState: 'missing' | 'unverified' | 'verified';
+  keyFingerprint: string | null;
+}
+
+export interface EnterpriseFederatedDirectMessage extends EnterpriseDirectMessage {
+  federated: true;
+  contactId: string;
+  direction: 'inbound' | 'outbound';
+  deliveryStatus: 'queued' | 'sent' | 'failed' | 'expired' | 'received';
+  trustState: 'unverified' | 'verified';
+}
+
 export interface EnterpriseE2eeDevice {
   accountId: string;
   deviceId: string;
@@ -1077,6 +1100,15 @@ const IPC = {
   enterpriseMessagesUnread: 'otto:enterprise-messages-unread',
   enterpriseMessageSend: 'otto:enterprise-message-send',
   enterpriseMessageSecurityReset: 'otto:enterprise-message-security-reset',
+  enterpriseFederationContactCode: 'otto:enterprise-federation-contact-code',
+  enterpriseFederationContactImport: 'otto:enterprise-federation-contact-import',
+  enterpriseFederationContacts: 'otto:enterprise-federation-contacts',
+  enterpriseFederationContactRemove: 'otto:enterprise-federation-contact-remove',
+  enterpriseFederationMessagesList: 'otto:enterprise-federation-messages-list',
+  enterpriseFederationMessageSend: 'otto:enterprise-federation-message-send',
+  enterpriseFederationContactVerification:
+    'otto:enterprise-federation-contact-verification',
+  enterpriseFederationContactVerify: 'otto:enterprise-federation-contact-verify',
   enterpriseMessageAttachmentRead: 'otto:enterprise-message-attachment-read',
   enterpriseE2eeDevicesList: 'otto:enterprise-e2ee-devices-list',
   enterpriseE2eeKeyTransparency: 'otto:enterprise-e2ee-key-transparency',
@@ -1567,6 +1599,23 @@ export interface OttoBridge {
     attachmentId: string,
   ): Promise<EnterpriseDirectMessageAttachmentDownload>;
   enterpriseMessageSecurityReset(peerAccountId: string): Promise<void>;
+  enterpriseFederationContactCode(): Promise<string>;
+  enterpriseFederationContactImport(code: string): Promise<EnterpriseFederationContact>;
+  enterpriseFederationContacts(): Promise<EnterpriseFederationContact[]>;
+  enterpriseFederationContactRemove(contactId: string): Promise<boolean>;
+  enterpriseFederationMessagesList(
+    contactId: string,
+  ): Promise<EnterpriseFederatedDirectMessage[]>;
+  enterpriseFederationMessageSend(
+    contactId: string,
+    content: string,
+  ): Promise<EnterpriseFederatedDirectMessage>;
+  enterpriseFederationContactVerification(contactId: string): Promise<
+    EnterpriseE2eeDeviceVerification & { verifiedAt: string | null }
+  >;
+  enterpriseFederationContactVerify(contactId: string): Promise<
+    EnterpriseE2eeDeviceVerification & { verifiedAt: string | null }
+  >;
   enterpriseE2eeDevicesList(): Promise<EnterpriseE2eeDevice[]>;
   enterpriseE2eeKeyTransparency(): Promise<EnterpriseE2eeKeyTransparencyView>;
   enterpriseE2eeDeviceApprove(deviceId: string): Promise<EnterpriseE2eeDevice>;
@@ -2741,6 +2790,60 @@ const bridge: OttoBridge = {
       IPC.enterpriseMessageSecurityReset,
       peerAccountId,
     ) as Promise<void>;
+  },
+  enterpriseFederationContactCode(): Promise<string> {
+    return ipcRenderer.invoke(IPC.enterpriseFederationContactCode) as Promise<string>;
+  },
+  enterpriseFederationContactImport(code: string): Promise<EnterpriseFederationContact> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationContactImport,
+      code,
+    ) as Promise<EnterpriseFederationContact>;
+  },
+  enterpriseFederationContacts(): Promise<EnterpriseFederationContact[]> {
+    return ipcRenderer.invoke(IPC.enterpriseFederationContacts) as Promise<
+      EnterpriseFederationContact[]
+    >;
+  },
+  enterpriseFederationContactRemove(contactId: string): Promise<boolean> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationContactRemove,
+      contactId,
+    ) as Promise<boolean>;
+  },
+  enterpriseFederationMessagesList(
+    contactId: string,
+  ): Promise<EnterpriseFederatedDirectMessage[]> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationMessagesList,
+      contactId,
+    ) as Promise<EnterpriseFederatedDirectMessage[]>;
+  },
+  enterpriseFederationMessageSend(
+    contactId: string,
+    content: string,
+  ): Promise<EnterpriseFederatedDirectMessage> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationMessageSend,
+      contactId,
+      content,
+    ) as Promise<EnterpriseFederatedDirectMessage>;
+  },
+  enterpriseFederationContactVerification(contactId: string): Promise<
+    EnterpriseE2eeDeviceVerification & { verifiedAt: string | null }
+  > {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationContactVerification,
+      contactId,
+    ) as Promise<EnterpriseE2eeDeviceVerification & { verifiedAt: string | null }>;
+  },
+  enterpriseFederationContactVerify(contactId: string): Promise<
+    EnterpriseE2eeDeviceVerification & { verifiedAt: string | null }
+  > {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationContactVerify,
+      contactId,
+    ) as Promise<EnterpriseE2eeDeviceVerification & { verifiedAt: string | null }>;
   },
   enterpriseE2eeDevicesList(): Promise<EnterpriseE2eeDevice[]> {
     return ipcRenderer.invoke(IPC.enterpriseE2eeDevicesList) as Promise<

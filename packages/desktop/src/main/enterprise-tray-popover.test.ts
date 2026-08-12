@@ -12,6 +12,7 @@ function unread(input: Partial<{
   senderName: string;
   preview: string;
   createdAt: string;
+  count: number;
 }> = {}) {
   return {
     id: 'message-1',
@@ -54,6 +55,22 @@ describe('enterprise tray message popover', () => {
         accountId: 'bob',
         preview: '请看一下附件',
         count: 1,
+      }),
+    ]);
+  });
+
+  it('preserves the backend unread count for an encrypted federation contact', () => {
+    expect(summarizeEnterpriseTrayContacts([
+      unread({
+        senderAccountId: 'federation:contact-remote',
+        senderName: '远程同事',
+        preview: '收到一条端到端加密的跨服务器消息',
+        count: 7,
+      }),
+    ])).toEqual([
+      expect.objectContaining({
+        accountId: 'federation:contact-remote',
+        count: 7,
       }),
     ]);
   });

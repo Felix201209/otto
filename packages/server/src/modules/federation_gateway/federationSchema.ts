@@ -73,6 +73,34 @@ export const FEDERATION_GATEWAY_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor = 
         updated_at_ms INTEGER NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS federation_chat_contacts (
+        contact_id TEXT PRIMARY KEY,
+        owner_account_id TEXT NOT NULL,
+        remote_deployment_id TEXT NOT NULL,
+        remote_principal_id TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        deployment_display_name TEXT NOT NULL,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        UNIQUE(owner_account_id, remote_deployment_id, remote_principal_id),
+        FOREIGN KEY(owner_account_id) REFERENCES accounts(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS federation_chat_messages (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_id TEXT NOT NULL UNIQUE,
+        contact_id TEXT NOT NULL,
+        owner_account_id TEXT NOT NULL,
+        direction TEXT NOT NULL CHECK(direction IN ('inbound', 'outbound')),
+        signed_envelope_json TEXT NOT NULL,
+        received_at_ms INTEGER,
+        read_at_ms INTEGER,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        FOREIGN KEY(contact_id) REFERENCES federation_chat_contacts(contact_id) ON DELETE CASCADE,
+        FOREIGN KEY(owner_account_id) REFERENCES accounts(id) ON DELETE CASCADE
+      );
+
       CREATE INDEX IF NOT EXISTS idx_federation_outbox_delivery
         ON federation_outbox(status, next_attempt_at_ms, created_at_ms);
       CREATE INDEX IF NOT EXISTS idx_federation_inbox_recipient_cursor
@@ -81,6 +109,12 @@ export const FEDERATION_GATEWAY_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor = 
         ON federation_inbox(gateway_acknowledged, discarded, received_at_ms);
       CREATE INDEX IF NOT EXISTS idx_federation_grants_owner_expiry
         ON federation_a2a_grants(owner_deployment_id, expires_at_ms);
+      CREATE INDEX IF NOT EXISTS idx_federation_chat_contacts_owner
+        ON federation_chat_contacts(owner_account_id, updated_at_ms DESC);
+      CREATE INDEX IF NOT EXISTS idx_federation_chat_messages_conversation
+        ON federation_chat_messages(owner_account_id, contact_id, created_at_ms, sequence);
+      CREATE INDEX IF NOT EXISTS idx_federation_chat_messages_unread
+        ON federation_chat_messages(owner_account_id, direction, read_at_ms, created_at_ms);
     `);
   },
 };

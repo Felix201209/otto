@@ -164,6 +164,7 @@ const ENTERPRISE_CAPABILITIES = [
   'privacy_self_service',
   'multi_organization',
   'direct_messages',
+  'federation_chat_v1',
   'e2ee_private_messages_v1',
   'e2ee_device_trust_v1',
   'e2ee_mls_transport_v1',
