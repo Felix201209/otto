@@ -35,6 +35,7 @@ const OTTO_FEDERATION_CAPABILITIES = [
   'federation.v1',
   'chat.e2ee',
   'a2a.e2ee',
+  'attachment.e2ee',
 ] as const;
 
 export class FederationGatewayError extends Error {
@@ -163,6 +164,19 @@ function validateClaimedEnvelope(
     !SCOPE.test(envelope.routing.a2aScope)
   ) {
     throw new Error('gateway returned an invalid A2A scope');
+  }
+  if (envelope.routing.attachmentIds !== undefined) {
+    if (
+      !Array.isArray(envelope.routing.attachmentIds) ||
+      envelope.routing.attachmentIds.length > 6 ||
+      new Set(envelope.routing.attachmentIds).size !==
+        envelope.routing.attachmentIds.length
+    ) {
+      throw new Error('gateway returned invalid federation attachments');
+    }
+    for (const attachmentId of envelope.routing.attachmentIds) {
+      exactIdentifier(attachmentId, 'attachment id');
+    }
   }
   if (
     envelope.type === 'a2a.request' &&
@@ -300,7 +314,15 @@ export class FederationGatewayClient {
       ...(input.routing.a2aScope === undefined ? {} : {
         a2aScope: input.routing.a2aScope,
       }),
+      ...(input.routing.attachmentIds === undefined ? {} : {
+        attachmentIds: [...new Set(input.routing.attachmentIds.map(
+          (attachmentId) => identifier(attachmentId, 'attachment id'),
+        ))],
+      }),
     };
+    if ((routing.attachmentIds?.length ?? 0) > 6) {
+      throw new Error('federation message supports at most 6 attachments');
+    }
     if (routing.a2aScope !== undefined && !SCOPE.test(routing.a2aScope)) {
       throw new Error('A2A scope is invalid');
     }
@@ -467,6 +489,69 @@ export class FederationGatewayClient {
     await this.#request(
       '/v1/federation/a2a/grants/revoke',
       await this.#signedRequest({ grantId: identifier(grantId, 'grant id') }),
+    );
+  }
+
+  async createAttachmentUpload(input: {
+    recipientDeploymentId: string;
+    attachmentId: string;
+    ciphertextBytes: number;
+    ciphertextSha256: string;
+    expiresInMs?: number;
+  }): Promise<{
+    attachment: Record<string, unknown>;
+    duplicate: boolean;
+    upload: {
+      method: 'PUT';
+      url: string;
+      headers: Record<string, string>;
+      expiresAt: string;
+    } | null;
+  }> {
+    const expiresInMs = input.expiresInMs ?? 24 * 60 * 60_000;
+    if (expiresInMs < 60_000 || expiresInMs > MAXIMUM_ENVELOPE_TTL_MS) {
+      throw new Error('federation attachment lifetime must be 1 minute to 7 days');
+    }
+    return this.#request(
+      '/v1/federation/attachments/uploads',
+      await this.#signedRequest({
+        recipientDeploymentId: identifier(
+          input.recipientDeploymentId,
+          'recipient deployment id',
+        ),
+        attachmentId: identifier(input.attachmentId, 'attachment id'),
+        ciphertextBytes: input.ciphertextBytes,
+        ciphertextSha256: input.ciphertextSha256,
+        attachmentExpiresAt: new Date(this.#now() + expiresInMs).toISOString(),
+      }),
+    );
+  }
+
+  async completeAttachmentUpload(
+    attachmentId: string,
+  ): Promise<{ attachment: Record<string, unknown> }> {
+    return this.#request(
+      '/v1/federation/attachments/complete',
+      await this.#signedRequest({
+        attachmentId: identifier(attachmentId, 'attachment id'),
+      }),
+    );
+  }
+
+  async createAttachmentDownload(attachmentId: string): Promise<{
+    attachment: Record<string, unknown>;
+    download: {
+      method: 'GET';
+      url: string;
+      headers: Record<string, string>;
+      expiresAt: string;
+    };
+  }> {
+    return this.#request(
+      '/v1/federation/attachments/download',
+      await this.#signedRequest({
+        attachmentId: identifier(attachmentId, 'attachment id'),
+      }),
     );
   }
 

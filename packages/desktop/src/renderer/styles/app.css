@@ -11052,6 +11052,34 @@ h6.otto-prose__h {
   font-size: 13px;
   line-height: 1.5;
   word-break: break-word;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.otto-inbox-page__attachment {
+  min-width: 220px;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 6px;
+}
+.otto-inbox-page__attachment > span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.otto-inbox-page__attachment strong { overflow-wrap: anywhere; }
+.otto-inbox-page__attachment small { opacity: 0.72; }
+.otto-inbox-page__attachment button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-weight: 650;
 }
 .otto-inbox-page__msg.is-mine .otto-inbox-page__msg-bubble {
   background: var(--otto-accent);
@@ -11072,6 +11100,7 @@ h6.otto-prose__h {
   padding: 12px 18px;
   border-top: 1px solid var(--otto-border);
   background: var(--otto-surface);
+  flex-wrap: wrap;
 }
 .otto-inbox-page__reply textarea {
   flex: 1;
@@ -11097,6 +11126,39 @@ h6.otto-prose__h {
   align-self: flex-end;
 }
 .otto-inbox-page__reply button:disabled { opacity: 0.5; cursor: default; }
+.otto-inbox-page__attach-button {
+  align-self: flex-end;
+  padding: 8px 10px;
+  border: 1px solid var(--otto-border);
+  border-radius: 8px;
+  color: var(--otto-text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+}
+.otto-inbox-page__pending-attachments {
+  order: 4;
+  flex: 0 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.otto-inbox-page__pending-attachments > span {
+  max-width: 260px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: var(--otto-bg);
+  color: var(--otto-text-secondary);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.otto-inbox-page__pending-attachments button {
+  padding: 1px;
+  background: transparent;
+  color: currentColor;
+}
 .otto-inbox-page__empty {
   display: flex;
   align-items: center;

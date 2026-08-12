@@ -46,12 +46,31 @@ export interface FederationRouteServices {
     ownerAccountId: string;
     contactId: string;
   }): boolean;
+  createFederationChatAttachmentUpload(input: {
+    ownerAccountId: string;
+    contactId: string;
+    attachmentId: string;
+    ciphertextBytes: number;
+    ciphertextSha256: string;
+    expiresInMs?: number;
+  }): Promise<unknown>;
+  completeFederationChatAttachmentUpload(input: {
+    ownerAccountId: string;
+    contactId: string;
+    attachmentId: string;
+  }): Promise<unknown>;
+  createFederationChatAttachmentDownload(input: {
+    ownerAccountId: string;
+    contactId: string;
+    attachmentId: string;
+  }): Promise<unknown>;
   queueFederationChatMessage(input: {
     ownerAccountId: string;
     contactId: string;
     ciphertext: string;
     messageId?: string;
     inReplyTo?: string;
+    attachmentIds?: string[];
     expiresInMs?: number;
   }): Promise<unknown>;
   listFederationChatMessages(input: {
@@ -128,6 +147,25 @@ function integer(value: unknown, fallback: number, maximum: number): number {
   return Number.isFinite(parsed)
     ? Math.max(0, Math.min(maximum, Math.floor(parsed)))
     : fallback;
+}
+
+function positiveInteger(value: unknown, label: string, maximum: number): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 1 || Number(value) > maximum) {
+    throw new Error(`${label} is invalid`);
+  }
+  return Number(value);
+}
+
+function attachmentIdentifiers(value: unknown): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value) || value.length > 6) {
+    throw new Error('attachment ids are invalid');
+  }
+  const ids = value.map((item) => requiredIdentifier(item, 'attachment id'));
+  if (new Set(ids).size !== ids.length) {
+    throw new Error('attachment ids must be unique');
+  }
+  return ids;
 }
 
 function requireFeature(
@@ -355,6 +393,78 @@ export async function handleFederationRoute(
     return true;
   }
 
+  const attachmentUploads = /^\/enterprise\/federation\/conversations\/([^/]+)\/attachments\/uploads$/u
+    .exec(path);
+  if (attachmentUploads && method === 'POST') {
+    if (!requireFeature(deps, 'direct_messages')) return true;
+    try {
+      const body = await readBody(req);
+      const sha256 = requiredText(
+        body.ciphertextSha256,
+        'ciphertext SHA-256',
+        64,
+      ).trim().toLowerCase();
+      if (!/^[a-f0-9]{64}$/u.test(sha256)) {
+        throw new Error('ciphertext SHA-256 is invalid');
+      }
+      const result = await services.createFederationChatAttachmentUpload({
+        ownerAccountId: deps.memberAccount.id,
+        contactId: requiredIdentifier(
+          decodeURIComponent(attachmentUploads[1]!),
+          'contact id',
+        ),
+        attachmentId: requiredIdentifier(body.attachmentId, 'attachment id'),
+        ciphertextBytes: positiveInteger(
+          body.ciphertextBytes,
+          'ciphertext bytes',
+          1024 * 1024 * 1024,
+        ),
+        ciphertextSha256: sha256,
+        expiresInMs: body.expiresInMs === undefined
+          ? undefined
+          : positiveInteger(
+              body.expiresInMs,
+              'attachment lifetime',
+              7 * 24 * 60 * 60_000,
+            ),
+      });
+      sendJSON(res, 201, result);
+    } catch (error) {
+      sendJSON(res, 400, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return true;
+  }
+
+  const attachmentAction = /^\/enterprise\/federation\/conversations\/([^/]+)\/attachments\/([^/]+)\/(complete|download)$/u
+    .exec(path);
+  if (attachmentAction && method === 'POST') {
+    if (!requireFeature(deps, 'direct_messages')) return true;
+    try {
+      const input = {
+        ownerAccountId: deps.memberAccount.id,
+        contactId: requiredIdentifier(
+          decodeURIComponent(attachmentAction[1]!),
+          'contact id',
+        ),
+        attachmentId: requiredIdentifier(
+          decodeURIComponent(attachmentAction[2]!),
+          'attachment id',
+        ),
+      };
+      const result = attachmentAction[3] === 'complete'
+        ? await services.completeFederationChatAttachmentUpload(input)
+        : await services.createFederationChatAttachmentDownload(input);
+      sendJSON(res, 200, result);
+    } catch (error) {
+      sendJSON(res, 400, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return true;
+  }
+
   const conversationMessages = /^\/enterprise\/federation\/conversations\/([^/]+)\/messages$/u
     .exec(path);
   if (conversationMessages) {
@@ -387,6 +497,7 @@ export async function handleFederationRoute(
           ciphertext: requiredText(body.ciphertext, 'ciphertext', 1024 * 1024),
           messageId: optionalIdentifier(body.messageId, 'message id'),
           inReplyTo: optionalIdentifier(body.inReplyTo, 'reply message id'),
+          attachmentIds: attachmentIdentifiers(body.attachmentIds),
           expiresInMs: body.expiresInMs === undefined
             ? undefined
             : integer(body.expiresInMs, 0, 7 * 24 * 60 * 60_000),

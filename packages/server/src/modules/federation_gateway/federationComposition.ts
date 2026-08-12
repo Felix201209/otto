@@ -25,6 +25,7 @@ import {
   clearFederationClaimInRepository,
   consumeFederationInboxInRepository,
   federationConversationId,
+  getFederationChatAttachmentInRepository,
   getFederationChatContactInRepository,
   getFederationQueueSummaryInRepository,
   getFederationRuntimeStateInRepository,
@@ -35,6 +36,7 @@ import {
   listFederationBlocksInRepository,
   listFederationInboxInRepository,
   markFederationAcknowledgedInRepository,
+  markFederationChatAttachmentReadyInRepository,
   markFederationChatMessageReadInRepository,
   markFederationOutboxFailedInRepository,
   markFederationOutboxSentInRepository,
@@ -43,6 +45,7 @@ import {
   revokeFederationA2aGrantInRepository,
   removeFederationChatContactInRepository,
   saveFederationChatContactInRepository,
+  saveFederationChatAttachmentInRepository,
   saveFederationA2aGrantInRepository,
   setFederationRuntimeStateInRepository,
   storeClaimedFederationEnvelopeInRepository,
@@ -232,12 +235,77 @@ export function createFederationComposition(
     }) {
       return removeFederationChatContactInRepository(store, input);
     },
+    async createFederationChatAttachmentUpload(input: {
+      ownerAccountId: string;
+      contactId: string;
+      attachmentId: string;
+      ciphertextBytes: number;
+      ciphertextSha256: string;
+      expiresInMs?: number;
+    }) {
+      const contact = getFederationChatContactInRepository(store, input);
+      if (!contact) throw new Error('federation contact was not found');
+      const deployment = await getActive().client.directoryEntry(
+        contact.remoteDeploymentId,
+      );
+      if (!deployment.capabilities.includes('attachment.e2ee')) {
+        throw new Error('remote deployment does not support E2EE attachments');
+      }
+      const result = await getActive().client.createAttachmentUpload({
+        recipientDeploymentId: contact.remoteDeploymentId,
+        attachmentId: input.attachmentId,
+        ciphertextBytes: input.ciphertextBytes,
+        ciphertextSha256: input.ciphertextSha256,
+        expiresInMs: input.expiresInMs,
+      });
+      saveFederationChatAttachmentInRepository(store, {
+        attachmentId: input.attachmentId,
+        ownerAccountId: input.ownerAccountId,
+        contactId: input.contactId,
+        remoteDeploymentId: contact.remoteDeploymentId,
+        direction: 'outbound',
+        ciphertextBytes: input.ciphertextBytes,
+        ciphertextSha256: input.ciphertextSha256,
+        status: result.upload === null ? 'ready' : 'pending',
+      });
+      return result;
+    },
+    async completeFederationChatAttachmentUpload(input: {
+      ownerAccountId: string;
+      contactId: string;
+      attachmentId: string;
+    }) {
+      const attachment = getFederationChatAttachmentInRepository(store, input);
+      if (!attachment || attachment.direction !== 'outbound') {
+        throw new Error('federation attachment upload was not found');
+      }
+      const result = await getActive().client.completeAttachmentUpload(
+        input.attachmentId,
+      );
+      markFederationChatAttachmentReadyInRepository(store, input);
+      return result;
+    },
+    async createFederationChatAttachmentDownload(input: {
+      ownerAccountId: string;
+      contactId: string;
+      attachmentId: string;
+    }) {
+      const attachment = getFederationChatAttachmentInRepository(store, input);
+      if (
+        !attachment || attachment.direction !== 'inbound' ||
+        attachment.status !== 'referenced'
+      ) {
+        throw new Error('federation attachment download was not found');
+      }
+      return getActive().client.createAttachmentDownload(input.attachmentId);
+    },
     async queueFederationChatMessage(input: {
       ownerAccountId: string;
       contactId: string;
       ciphertext: string;
       messageId?: string;
       inReplyTo?: string;
+      attachmentIds?: string[];
       expiresInMs?: number;
     }) {
       const contact = getFederationChatContactInRepository(store, input);
@@ -256,6 +324,7 @@ export function createFederationComposition(
           senderPrincipalId: input.ownerAccountId,
           recipientPrincipalId: contact.remotePrincipalId,
           inReplyTo: input.inReplyTo,
+          attachmentIds: input.attachmentIds,
         },
         messageId: input.messageId,
         expiresInMs: input.expiresInMs,

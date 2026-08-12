@@ -7,6 +7,7 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import type { MlsKeyPackage } from '@otto/native';
@@ -20,6 +21,7 @@ import {
   type EnterpriseE2eeDeviceVerification,
   type EnterpriseE2eeCrypto,
   type EnterpriseE2eeDeviceBundle,
+  type EnterpriseE2eePreparedExternalAttachment,
   type EnterpriseE2eeKeyTransparencyView,
   type EnterpriseE2eeWireMessage,
   type EnterpriseFederationContactTrust,
@@ -738,6 +740,7 @@ interface EnterpriseFederationWireMessage {
     conversationId: string;
     senderPrincipalId: string;
     recipientPrincipalId: string;
+    attachmentIds?: string[];
   };
 }
 
@@ -1107,7 +1110,8 @@ function parseFederationEncryptedPayload(
       !payload.senderCard ||
       !payload.message ||
       payload.message.protocolVersion !== 1 ||
-      payload.message.attachments.length !== 0
+      !Array.isArray(payload.message.attachments) ||
+      payload.message.attachments.length > 6
     ) {
       throw new Error('invalid payload');
     }
@@ -3502,8 +3506,12 @@ export class EnterpriseClient {
   async sendFederationMessage(
     contactId: string,
     content: string,
+    attachments: EnterpriseDirectMessageAttachmentUpload[] = [],
   ): Promise<EnterpriseFederatedDirectMessage> {
-    if (!content.trim()) throw new Error('请输入消息');
+    if (!content.trim() && attachments.length === 0) {
+      throw new Error('请输入消息或添加附件');
+    }
+    if (attachments.length > 6) throw new Error('每条消息最多发送 6 个附件');
     const { crypto, account, serverScope } = this.requireE2eeContext();
     const identity = await this.federationIdentity();
     const contact = (await this.listFederationContacts())
@@ -3524,79 +3532,284 @@ export class EnterpriseClient {
     });
     const senderCard = await this.localFederationIdentityCard();
     const protocol = e2eeProtocolMetadata(content);
-    const encrypted = crypto.encryptMessage({
-      serverScope: ENTERPRISE_FEDERATION_E2EE_SCOPE,
-      organizationId: conversationId,
-      senderAccountId: localGlobalId,
-      recipientAccountId: contact.identity,
-      content,
-      contentType: protocol.contentType,
-      inReplyToMessageId: protocol.inReplyToMessageId,
-      devices: [
-        ...enterpriseFederationIdentityCardDevices(senderCard),
-        ...enterpriseFederationIdentityCardDevices(trust.card),
-      ],
-      keyring: { serverScope, accountId: account.id },
-    });
-    const createdAt = new Date().toISOString();
-    const message: EnterpriseE2eeWireMessage = {
-      id: encrypted.messageId,
-      senderAccountId: localGlobalId,
-      recipientAccountId: contact.identity,
-      senderDeviceId: encrypted.senderDeviceId,
-      senderIdentitySigningPublicKey: senderCard.device.identitySigningPublicKey,
-      protocolVersion: encrypted.protocolVersion,
-      contentType: encrypted.contentType,
-      inReplyToMessageId: encrypted.inReplyToMessageId,
-      ciphertext: encrypted.ciphertext,
-      nonce: encrypted.nonce,
-      signature: encrypted.signature,
-      envelopes: encrypted.envelopes,
-      createdAt,
-      readAt: null,
-      attachments: [],
-    };
-    const opaque = Buffer.from(JSON.stringify({
-      v: 1,
-      senderCard,
-      message,
-    } satisfies EnterpriseFederationEncryptedPayload), 'utf8').toString('base64url');
-    await this.request(
-      `/enterprise/federation/conversations/${encodeURIComponent(contactId)}/messages`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          messageId: encrypted.messageId,
-          ciphertext: opaque,
-          inReplyTo: encrypted.inReplyToMessageId,
-        }),
-      },
+    const messageId = randomUUID();
+    const temporaryDirectory = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), 'otto-federation-attachment-'),
     );
-    const plain = crypto.decryptMessage({
+    try {
+      const prepared: EnterpriseE2eePreparedExternalAttachment[] = [];
+      for (const [index, attachment] of attachments.entries()) {
+        let sourcePath = attachment.sourcePath;
+        if (!sourcePath && attachment.data) {
+          sourcePath = path.join(temporaryDirectory, `plain-${index}`);
+          const body = Buffer.from(attachment.data, 'base64');
+          if (body.length !== attachment.size) {
+            throw new Error('附件内容与声明大小不一致');
+          }
+          await fs.promises.writeFile(sourcePath, body, { flag: 'wx' });
+        }
+        if (!sourcePath) throw new Error('附件源文件不可用');
+        prepared.push(await crypto.encryptExternalAttachmentFile({
+          messageId,
+          sourcePath,
+          ciphertextPath: path.join(temporaryDirectory, `cipher-${index}.bin`),
+          fileName: attachment.fileName,
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+        }));
+      }
+      const encrypted = crypto.encryptMessage({
+        serverScope: ENTERPRISE_FEDERATION_E2EE_SCOPE,
+        organizationId: conversationId,
+        senderAccountId: localGlobalId,
+        recipientAccountId: contact.identity,
+        content,
+        contentType: protocol.contentType,
+        inReplyToMessageId: protocol.inReplyToMessageId,
+        devices: [
+          ...enterpriseFederationIdentityCardDevices(senderCard),
+          ...enterpriseFederationIdentityCardDevices(trust.card),
+        ],
+        keyring: { serverScope, accountId: account.id },
+        externalAttachments: prepared,
+        messageId,
+      });
+      for (const item of prepared) {
+        const response = await this.request<{
+          upload: {
+            method: 'PUT';
+            url: string;
+            headers: Record<string, string>;
+          } | null;
+        }>(
+          `/enterprise/federation/conversations/${encodeURIComponent(contactId)}` +
+            '/attachments/uploads',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              attachmentId: item.metadata.id,
+              ciphertextBytes: item.metadata.ciphertextSize,
+              ciphertextSha256: item.metadata.ciphertextSha256,
+            }),
+          },
+        );
+        if (response.upload) {
+          const uploaded = await this.fetchImpl(response.upload.url, {
+            method: response.upload.method,
+            headers: response.upload.headers,
+            body: fs.createReadStream(item.ciphertextPath) as never,
+            duplex: 'half',
+          } as RequestInit & { duplex: 'half' });
+          if (!uploaded.ok) {
+            throw new Error(`联邦附件上传失败（HTTP ${uploaded.status}）`);
+          }
+        }
+        await this.request(
+          `/enterprise/federation/conversations/${encodeURIComponent(contactId)}` +
+            `/attachments/${encodeURIComponent(item.metadata.id)}/complete`,
+          { method: 'POST' },
+        );
+      }
+      const createdAt = new Date().toISOString();
+      const message: EnterpriseE2eeWireMessage = {
+        id: encrypted.messageId,
+        senderAccountId: localGlobalId,
+        recipientAccountId: contact.identity,
+        senderDeviceId: encrypted.senderDeviceId,
+        senderIdentitySigningPublicKey: senderCard.device.identitySigningPublicKey,
+        protocolVersion: encrypted.protocolVersion,
+        contentType: encrypted.contentType,
+        inReplyToMessageId: encrypted.inReplyToMessageId,
+        ciphertext: encrypted.ciphertext,
+        nonce: encrypted.nonce,
+        signature: encrypted.signature,
+        envelopes: encrypted.envelopes,
+        createdAt,
+        readAt: null,
+        attachments: prepared.map((item) => ({
+          id: item.metadata.id,
+          ciphertextSize: item.metadata.ciphertextSize,
+          nonce: item.metadata.nonce,
+        })),
+      };
+      const opaque = Buffer.from(JSON.stringify({
+        v: 1,
+        senderCard,
+        message,
+      } satisfies EnterpriseFederationEncryptedPayload), 'utf8').toString('base64url');
+      await this.request(
+        `/enterprise/federation/conversations/${encodeURIComponent(contactId)}/messages`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            messageId: encrypted.messageId,
+            ciphertext: opaque,
+            inReplyTo: encrypted.inReplyToMessageId,
+            attachmentIds: prepared.map((item) => item.metadata.id),
+          }),
+        },
+      );
+      const plain = crypto.decryptMessage({
+        serverScope: ENTERPRISE_FEDERATION_E2EE_SCOPE,
+        organizationId: conversationId,
+        accountId: localGlobalId,
+        keyring: { serverScope, accountId: account.id },
+        message,
+      });
+      return {
+        id: plain.id,
+        senderAccountId: account.id,
+        recipientAccountId: contact.identity,
+        content: plain.content,
+        createdAt: plain.createdAt,
+        readAt: null,
+        attachments: plain.attachments,
+        e2ee: true,
+        e2eeProtocol: 'device-envelope-v1',
+        contentType: plain.contentType,
+        inReplyToMessageId: plain.inReplyToMessageId,
+        federated: true,
+        contactId,
+        direction: 'outbound',
+        deliveryStatus: 'queued',
+        trustState: trust.verifiedAt ? 'verified' : 'unverified',
+      };
+    } finally {
+      await fs.promises.rm(temporaryDirectory, {
+        recursive: true,
+        force: true,
+      }).catch(() => undefined);
+    }
+  }
+
+  async saveFederationMessageAttachment(input: {
+    contactId: string;
+    messageId: string;
+    attachmentId: string;
+    destinationPath: string;
+  }): Promise<EnterpriseDirectMessageAttachment & { path: string }> {
+    const { crypto, account, serverScope } = this.requireE2eeContext();
+    const identity = await this.federationIdentity();
+    const contact = (await this.listFederationContacts())
+      .find((item) => item.id === input.contactId);
+    if (!contact) throw new Error('联邦联系人不存在');
+    const trust = crypto.federationContactTrust({
+      localServerScope: serverScope,
+      localAccountId: account.id,
+      contactId: input.contactId,
+    });
+    if (!trust) throw new Error('联邦联系人信任记录不存在');
+    const raw = (
+      await this.request<{ messages: EnterpriseFederationWireMessage[] }>(
+        `/enterprise/federation/conversations/${encodeURIComponent(input.contactId)}/messages`,
+      )
+    ).messages.find((message) => message.messageId === input.messageId);
+    if (
+      !raw || raw.direction !== 'inbound' ||
+      !(raw.routing.attachmentIds ?? []).includes(input.attachmentId)
+    ) {
+      throw new Error('只允许下载当前会话收到的联邦附件');
+    }
+    const payload = parseFederationEncryptedPayload(raw.ciphertext);
+    const senderCard = crypto.verifyFederationIdentityCard(payload.senderCard);
+    if (
+      `${senderCard.deploymentId}:${senderCard.principalId}` !== contact.identity ||
+      enterpriseFederationIdentityKeyFingerprint(senderCard) !==
+        enterpriseFederationIdentityKeyFingerprint(trust.card) ||
+      payload.message.senderIdentitySigningPublicKey !==
+        senderCard.device.identitySigningPublicKey
+    ) {
+      throw new Error('联邦附件发送方身份验证失败');
+    }
+    const conversationId = federationConversationId({
+      localDeploymentId: identity.deploymentId,
+      localPrincipalId: identity.principalId,
+      remoteDeploymentId: contact.remoteDeploymentId,
+      remotePrincipalId: contact.remotePrincipalId,
+    });
+    const metadata = crypto.federationAttachmentMetadata({
       serverScope: ENTERPRISE_FEDERATION_E2EE_SCOPE,
       organizationId: conversationId,
-      accountId: localGlobalId,
+      accountId: `${identity.deploymentId}:${identity.principalId}`,
       keyring: { serverScope, accountId: account.id },
-      message,
+      message: payload.message,
+      attachmentId: input.attachmentId,
     });
-    return {
-      id: plain.id,
-      senderAccountId: account.id,
-      recipientAccountId: contact.identity,
-      content: plain.content,
-      createdAt: plain.createdAt,
-      readAt: null,
-      attachments: [],
-      e2ee: true,
-      e2eeProtocol: 'device-envelope-v1',
-      contentType: plain.contentType,
-      inReplyToMessageId: plain.inReplyToMessageId,
-      federated: true,
-      contactId,
-      direction: 'outbound',
-      deliveryStatus: 'queued',
-      trustState: trust.verifiedAt ? 'verified' : 'unverified',
-    };
+    const authorized = await this.request<{
+      attachment: {
+        id: string;
+        senderDeploymentId: string;
+        recipientDeploymentId: string;
+        ciphertextBytes: number;
+        ciphertextSha256: string;
+      };
+      download: {
+        method: 'GET';
+        url: string;
+        headers: Record<string, string>;
+      };
+    }>(
+      `/enterprise/federation/conversations/${encodeURIComponent(input.contactId)}` +
+        `/attachments/${encodeURIComponent(input.attachmentId)}/download`,
+      { method: 'POST' },
+    );
+    if (
+      authorized.attachment.id !== input.attachmentId ||
+      authorized.attachment.senderDeploymentId !== contact.remoteDeploymentId ||
+      authorized.attachment.recipientDeploymentId !== identity.deploymentId ||
+      authorized.attachment.ciphertextBytes !== metadata.ciphertextSize ||
+      authorized.attachment.ciphertextSha256 !== metadata.ciphertextSha256
+    ) {
+      throw new Error('联邦附件授权元数据与加密消息不一致');
+    }
+    const temporaryDirectory = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), 'otto-federation-download-'),
+    );
+    try {
+      const ciphertextPath = path.join(temporaryDirectory, 'ciphertext.bin');
+      const plaintextPath = path.join(temporaryDirectory, 'plaintext.bin');
+      const response = await this.fetchImpl(authorized.download.url, {
+        method: authorized.download.method,
+        headers: authorized.download.headers,
+      });
+      if (!response.ok || !response.body) {
+        throw new Error(`联邦附件下载失败（HTTP ${response.status}）`);
+      }
+      const output = fs.createWriteStream(ciphertextPath, { flags: 'wx' });
+      try {
+        for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+          if (!output.write(Buffer.from(chunk))) {
+            await new Promise<void>((resolve) => output.once('drain', resolve));
+          }
+        }
+        await new Promise<void>((resolve, reject) => {
+          output.end(resolve);
+          output.once('error', reject);
+        });
+      } catch (error) {
+        output.destroy();
+        throw error;
+      }
+      await crypto.decryptExternalAttachmentFile({
+        messageId: input.messageId,
+        ciphertextPath,
+        destinationPath: plaintextPath,
+        metadata,
+      });
+      await fs.promises.copyFile(plaintextPath, input.destinationPath);
+      return {
+        id: metadata.id,
+        fileName: metadata.fileName,
+        mimeType: metadata.mimeType,
+        size: metadata.size,
+        path: input.destinationPath,
+      };
+    } finally {
+      await fs.promises.rm(temporaryDirectory, {
+        recursive: true,
+        force: true,
+      }).catch(() => undefined);
+    }
   }
 
   async listDirectMessages(

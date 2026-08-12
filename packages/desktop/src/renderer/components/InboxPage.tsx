@@ -14,6 +14,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   EnterpriseAccount,
   EnterpriseDirectMessage,
+  EnterpriseDirectMessageAttachmentUpload,
   EnterpriseFederationContact,
   EnterpriseOrganizationView,
   EnterpriseUnreadMessageNotification,
@@ -104,6 +105,9 @@ export function InboxPage({
   const [messages, setMessages] = useState<EnterpriseDirectMessage[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [replyInput, setReplyInput] = useState('');
+  const [federationAttachments, setFederationAttachments] = useState<
+    EnterpriseDirectMessageAttachmentUpload[]
+  >([]);
   const [sending, setSending] = useState(false);
   // 已读会话也要留在列表里：记录拉取过消息的 peer 及其最后一条消息
   const [historyPeers, setHistoryPeers] = useState<Record<string, { lastMessage: string; lastMessageAt: string }>>({});
@@ -307,6 +311,10 @@ export function InboxPage({
   );
 
   useEffect(() => {
+    setFederationAttachments([]);
+  }, [selectedFederationContactId, selectedPeer]);
+
+  useEffect(() => {
     const contactId = federationContactOpenRequest?.contactId;
     if (!contactId || !federationContacts.some((contact) => contact.id === contactId)) {
       return;
@@ -318,13 +326,17 @@ export function InboxPage({
 
   const handleSendReply = async (): Promise<void> => {
     const text = replyInput.trim();
-    if (!text || (!selectedPeer && !selectedFederationContactId) || sending) return;
+    if (
+      (!text && federationAttachments.length === 0) ||
+      (!selectedPeer && !selectedFederationContactId) || sending
+    ) return;
     setSending(true);
     try {
       const msg = selectedFederationContactId
         ? await window.otto.enterpriseFederationMessageSend(
             selectedFederationContactId,
             text,
+            federationAttachments,
           )
         : await window.otto.enterpriseMessageSend(selectedPeer!, text);
       setMessages((cur) => [...cur, msg]);
@@ -335,6 +347,7 @@ export function InboxPage({
         }));
       }
       setReplyInput('');
+      setFederationAttachments([]);
       setFederationError('');
       if (selectedFederationContactId) void refreshFederationContacts();
     } catch (error) {
@@ -343,6 +356,50 @@ export function InboxPage({
       }
     } finally {
       setSending(false);
+    }
+  };
+
+  const addFederationFiles = async (files: FileList | File[]): Promise<void> => {
+    try {
+      const next = [...federationAttachments];
+      for (const file of Array.from(files)) {
+        if (next.length >= 6) throw new Error('每条消息最多发送 6 个附件');
+        if (file.size < 1 || file.size > 1024 * 1024 * 1024) {
+          throw new Error(`${file.name} 超过 1 GB 或内容为空`);
+        }
+        const sourcePath = await window.otto.authorizeFileForAttachment(file);
+        next.push({
+          fileName: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          size: file.size,
+          sourcePath,
+        });
+      }
+      if (next.reduce((sum, item) => sum + item.size, 0) > 1024 * 1024 * 1024) {
+        throw new Error('每条消息的附件总大小不能超过 1 GB');
+      }
+      setFederationAttachments(next);
+      setFederationError('');
+    } catch (error) {
+      setFederationError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const saveFederationAttachment = async (
+    messageId: string,
+    attachment: NonNullable<EnterpriseDirectMessage['attachments']>[number],
+  ): Promise<void> => {
+    if (!selectedFederationContactId) return;
+    try {
+      await window.otto.enterpriseFederationAttachmentSave(
+        selectedFederationContactId,
+        messageId,
+        attachment.id,
+        attachment.fileName,
+      );
+      setFederationError('');
+    } catch (error) {
+      setFederationError(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -418,7 +475,25 @@ export function InboxPage({
           : null;
         return (
           <div key={msg.id} className={`otto-inbox-page__msg${mine ? ' is-mine' : ''}`}>
-            <span className="otto-inbox-page__msg-bubble">{msg.content}</span>
+            <span className="otto-inbox-page__msg-bubble">
+              {msg.content ? <span>{msg.content}</span> : null}
+              {(msg.attachments ?? []).map((attachment) => (
+                <span key={attachment.id} className="otto-inbox-page__attachment">
+                  <span>
+                    <strong>{attachment.fileName}</strong>
+                    <small>{(attachment.size / 1024 / 1024).toFixed(1)} MB</small>
+                  </span>
+                  {selectedFederationContactId && !mine ? (
+                    <button
+                      type="button"
+                      onClick={() => { void saveFederationAttachment(msg.id, attachment); }}
+                    >
+                      保存
+                    </button>
+                  ) : null}
+                </span>
+              ))}
+            </span>
             <span className="otto-inbox-page__msg-meta">
               <time>{new Date(msg.createdAt).toLocaleString('zh-CN', {
                 month: '2-digit',
@@ -456,7 +531,41 @@ export function InboxPage({
         maxLength={4000}
         aria-label="回复消息"
       />
-      <button type="submit" disabled={!replyInput.trim() || sending}>
+      {selectedFederationContactId ? (
+        <label className="otto-inbox-page__attach-button">
+          <input
+            type="file"
+            multiple
+            hidden
+            onChange={(event) => {
+              if (event.target.files) void addFederationFiles(event.target.files);
+              event.target.value = '';
+            }}
+          />
+          添加文件
+        </label>
+      ) : null}
+      {selectedFederationContactId && federationAttachments.length > 0 ? (
+        <div className="otto-inbox-page__pending-attachments">
+          {federationAttachments.map((attachment, index) => (
+            <span key={`${attachment.fileName}:${index}`}>
+              {attachment.fileName}
+              <button
+                type="button"
+                aria-label={`移除 ${attachment.fileName}`}
+                onClick={() => setFederationAttachments((items) =>
+                  items.filter((_, itemIndex) => itemIndex !== index))}
+              >
+                <IconClose size={12} />
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <button
+        type="submit"
+        disabled={(!replyInput.trim() && federationAttachments.length === 0) || sending}
+      >
         {sending ? '发送中' : '发送'}
       </button>
     </form>

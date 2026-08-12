@@ -101,6 +101,22 @@ export const FEDERATION_GATEWAY_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor = 
         FOREIGN KEY(owner_account_id) REFERENCES accounts(id) ON DELETE CASCADE
       );
 
+      CREATE TABLE IF NOT EXISTS federation_chat_attachments (
+        attachment_id TEXT PRIMARY KEY,
+        owner_account_id TEXT NOT NULL,
+        contact_id TEXT NOT NULL,
+        remote_deployment_id TEXT NOT NULL,
+        direction TEXT NOT NULL CHECK(direction IN ('inbound', 'outbound')),
+        message_id TEXT,
+        ciphertext_bytes INTEGER,
+        ciphertext_sha256 TEXT,
+        status TEXT NOT NULL CHECK(status IN ('pending', 'ready', 'referenced')),
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        FOREIGN KEY(owner_account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+        FOREIGN KEY(contact_id) REFERENCES federation_chat_contacts(contact_id) ON DELETE CASCADE
+      );
+
       CREATE INDEX IF NOT EXISTS idx_federation_outbox_delivery
         ON federation_outbox(status, next_attempt_at_ms, created_at_ms);
       CREATE INDEX IF NOT EXISTS idx_federation_inbox_recipient_cursor
@@ -115,6 +131,10 @@ export const FEDERATION_GATEWAY_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor = 
         ON federation_chat_messages(owner_account_id, contact_id, created_at_ms, sequence);
       CREATE INDEX IF NOT EXISTS idx_federation_chat_messages_unread
         ON federation_chat_messages(owner_account_id, direction, read_at_ms, created_at_ms);
+      CREATE INDEX IF NOT EXISTS idx_federation_chat_attachments_owner
+        ON federation_chat_attachments(owner_account_id, contact_id, created_at_ms);
+      CREATE INDEX IF NOT EXISTS idx_federation_chat_attachments_message
+        ON federation_chat_attachments(message_id);
     `);
   },
 };

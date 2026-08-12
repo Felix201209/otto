@@ -27,6 +27,9 @@ function services(overrides: Partial<FederationRouteServices> = {}): FederationR
     saveFederationChatContact: async (input) => ({ id: 'fcontact_one', ...input }),
     listFederationChatContacts: () => [],
     removeFederationChatContact: () => true,
+    createFederationChatAttachmentUpload: async () => ({ upload: { url: 'https://objects.test/upload' } }),
+    completeFederationChatAttachmentUpload: async () => ({ attachment: { status: 'ready' } }),
+    createFederationChatAttachmentDownload: async () => ({ download: { url: 'https://objects.test/download' } }),
     queueFederationChatMessage: async (input) => ({
       messageId: input.messageId || 'fmessage_one',
     }),
@@ -213,5 +216,66 @@ describe('federation enterprise routes', () => {
     expect(markRead).toHaveBeenCalledWith(expect.objectContaining({
       ownerAccountId: 'account_member',
     }));
+  });
+
+  it('binds attachment upload, completion and download to the authenticated conversation', async () => {
+    const create = vi.fn(async () => ({ upload: { url: 'https://objects.test/upload' } }));
+    const complete = vi.fn(async () => ({ attachment: { status: 'ready' } }));
+    const download = vi.fn(async () => ({ download: { url: 'https://objects.test/download' } }));
+    const routeServices = services({
+      createFederationChatAttachmentUpload: create,
+      completeFederationChatAttachmentUpload: complete,
+      createFederationChatAttachmentDownload: download,
+    });
+    const upload = request({
+      path: '/enterprise/federation/conversations/fcontact_one/attachments/uploads',
+      method: 'POST',
+      services: routeServices,
+      body: {
+        attachmentId: 'fattachment_one',
+        ciphertextBytes: 1040,
+        ciphertextSha256: 'a'.repeat(64),
+      },
+    });
+    await upload.execute();
+    expect(upload.responses[0]?.status).toBe(201);
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      ownerAccountId: 'account_member',
+      contactId: 'fcontact_one',
+    }));
+
+    for (const [action, callback] of [
+      ['complete', complete],
+      ['download', download],
+    ] as const) {
+      const call = request({
+        path: `/enterprise/federation/conversations/fcontact_one/attachments/fattachment_one/${action}`,
+        method: 'POST',
+        services: routeServices,
+      });
+      await call.execute();
+      expect(call.responses[0]?.status).toBe(200);
+      expect(callback).toHaveBeenCalledWith({
+        ownerAccountId: 'account_member',
+        contactId: 'fcontact_one',
+        attachmentId: 'fattachment_one',
+      });
+    }
+  });
+
+  it('rejects duplicate or excessive attachment references before queueing', async () => {
+    const queue = vi.fn();
+    const call = request({
+      path: '/enterprise/federation/conversations/fcontact_one/messages',
+      method: 'POST',
+      services: services({ queueFederationChatMessage: queue }),
+      body: {
+        ciphertext: 'opaque-e2ee-message',
+        attachmentIds: ['fattachment_one', 'fattachment_one'],
+      },
+    });
+    await call.execute();
+    expect(call.responses[0]?.status).toBe(400);
+    expect(queue).not.toHaveBeenCalled();
   });
 });

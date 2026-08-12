@@ -23,6 +23,7 @@ import {
 } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { pipeline } from 'node:stream/promises';
 
 export const ENTERPRISE_E2EE_PROTOCOL_VERSION = 1 as const;
 export const ENTERPRISE_FEDERATION_E2EE_SCOPE = 'otto:federation-e2ee:v1';
@@ -172,6 +173,22 @@ export interface EnterpriseE2eePlainAttachmentUpload {
   data: string;
 }
 
+export interface EnterpriseE2eeExternalAttachment {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  nonce: string;
+  key: string;
+  ciphertextSize: number;
+  ciphertextSha256: string;
+}
+
+export interface EnterpriseE2eePreparedExternalAttachment {
+  metadata: EnterpriseE2eeExternalAttachment;
+  ciphertextPath: string;
+}
+
 export interface EnterpriseE2eePlainMessage {
   id: string;
   senderAccountId: string;
@@ -199,6 +216,10 @@ interface PlaintextPayload {
     mimeType: string;
     size: number;
     nonce: string;
+    relay?: 'federation-object-v1';
+    key?: string;
+    ciphertextSize?: number;
+    ciphertextSha256?: string;
   }>;
 }
 
@@ -1092,7 +1113,46 @@ function parsePlaintextPayload(value: Buffer): PlaintextPayload {
   ) {
     throw new Error('decrypted E2EE payload is invalid');
   }
+  for (const attachment of payload.attachments) {
+    if (
+      !attachment || typeof attachment.id !== 'string' ||
+      typeof attachment.fileName !== 'string' || !attachment.fileName ||
+      attachment.fileName.length > 255 ||
+      typeof attachment.mimeType !== 'string' || attachment.mimeType.length > 200 ||
+      !Number.isSafeInteger(attachment.size) || attachment.size < 0 ||
+      typeof attachment.nonce !== 'string'
+    ) {
+      throw new Error('decrypted E2EE attachment metadata is invalid');
+    }
+    if (attachment.relay === 'federation-object-v1') {
+      if (
+        typeof attachment.key !== 'string' ||
+        Buffer.from(attachment.key, 'base64').length !== 32 ||
+        Buffer.from(attachment.nonce, 'base64').length !== 12 ||
+        !Number.isSafeInteger(attachment.ciphertextSize) ||
+        attachment.ciphertextSize! !== attachment.size + 16 ||
+        typeof attachment.ciphertextSha256 !== 'string' ||
+        !/^[a-f0-9]{64}$/u.test(attachment.ciphertextSha256)
+      ) {
+        throw new Error('decrypted federation attachment metadata is invalid');
+      }
+    } else if (
+      attachment.relay !== undefined || attachment.key !== undefined ||
+      attachment.ciphertextSize !== undefined ||
+      attachment.ciphertextSha256 !== undefined
+    ) {
+      throw new Error('decrypted E2EE attachment relay metadata is invalid');
+    }
+  }
   return payload;
+}
+
+async function sha256File(filePath: string): Promise<string> {
+  const hash = createHash('sha256');
+  for await (const chunk of fs.createReadStream(filePath)) {
+    hash.update(chunk as Buffer);
+  }
+  return hash.digest('hex');
 }
 
 function federationIdentityCardPayload(
@@ -1469,6 +1529,7 @@ export class EnterpriseE2eeCrypto {
     inReplyToMessageId?: string | null;
     devices: EnterpriseE2eeDeviceBundle[];
     attachments?: EnterpriseE2eePlainAttachmentUpload[];
+    externalAttachments?: EnterpriseE2eePreparedExternalAttachment[];
     messageId?: string;
   }): EnterpriseE2eeSendPayload {
     const keyringScope = input.keyring?.serverScope ?? input.serverScope;
@@ -1511,7 +1572,12 @@ export class EnterpriseE2eeCrypto {
       throw new Error('E2EE device directory contains duplicates');
     const messageId = input.messageId ?? randomUUID();
     const messageKey = randomBytes(32);
-    const attachments = (input.attachments ?? []).map((attachment) => {
+    const inlineAttachments = input.attachments ?? [];
+    const externalAttachments = input.externalAttachments ?? [];
+    if (inlineAttachments.length + externalAttachments.length > 6) {
+      throw new Error('E2EE message supports at most 6 attachments');
+    }
+    const attachments = inlineAttachments.map((attachment) => {
       const attachmentId = randomUUID();
       const nonce = randomBytes(12);
       const plaintext = Buffer.from(attachment.data, 'base64');
@@ -1542,11 +1608,28 @@ export class EnterpriseE2eeCrypto {
         },
       };
     });
+    const externalIds = new Set<string>();
+    for (const attachment of externalAttachments) {
+      if (
+        externalIds.has(attachment.metadata.id) ||
+        !fs.existsSync(attachment.ciphertextPath) ||
+        attachment.metadata.ciphertextSize !== attachment.metadata.size + 16
+      ) {
+        throw new Error('federation E2EE attachment is invalid');
+      }
+      externalIds.add(attachment.metadata.id);
+    }
     const plaintext: PlaintextPayload = {
       v: 1,
       contentType: input.contentType,
       content: input.content,
-      attachments: attachments.map((item) => item.metadata),
+      attachments: [
+        ...attachments.map((item) => item.metadata),
+        ...externalAttachments.map((item) => ({
+          ...item.metadata,
+          relay: 'federation-object-v1' as const,
+        })),
+      ],
     };
     const nonce = randomBytes(12);
     const ciphertext = aesEncrypt(
@@ -1597,7 +1680,14 @@ export class EnterpriseE2eeCrypto {
       ciphertext,
       nonce: nonce.toString('base64'),
       envelopes,
-      attachments: attachments.map((item) => item.ciphertext),
+      attachments: [
+        ...attachments.map((item) => item.ciphertext),
+        ...externalAttachments.map((item) => ({
+          id: item.metadata.id,
+          ciphertext: '',
+          nonce: item.metadata.nonce,
+        })),
+      ],
     };
     return {
       messageId,
@@ -1608,13 +1698,146 @@ export class EnterpriseE2eeCrypto {
       ciphertext,
       nonce: nonce.toString('base64'),
       envelopes,
-      attachments: attachments.map((item) => item.ciphertext),
+      attachments: unsigned.attachments,
       signature: sign(
         null,
         signaturePayload(unsigned),
         keyring.active.identitySigningPrivateKey,
       ).toString('base64'),
     };
+  }
+
+  async encryptExternalAttachmentFile(input: {
+    messageId: string;
+    sourcePath: string;
+    ciphertextPath: string;
+    fileName: string;
+    mimeType: string;
+    size: number;
+    attachmentId?: string;
+  }): Promise<EnterpriseE2eePreparedExternalAttachment> {
+    const stat = await fs.promises.stat(input.sourcePath);
+    if (!stat.isFile() || stat.size !== input.size || input.size < 1) {
+      throw new Error('federation attachment source file changed or is invalid');
+    }
+    const attachmentId = input.attachmentId ?? randomUUID();
+    const key = randomBytes(32);
+    const nonce = randomBytes(12);
+    await fs.promises.mkdir(path.dirname(input.ciphertextPath), { recursive: true });
+    const cipher = createCipheriv('aes-256-gcm', key, nonce);
+    cipher.setAAD(attachmentAad(input.messageId, attachmentId));
+    try {
+      await pipeline(
+        fs.createReadStream(input.sourcePath),
+        cipher,
+        fs.createWriteStream(input.ciphertextPath, { flags: 'wx' }),
+      );
+      await fs.promises.appendFile(input.ciphertextPath, cipher.getAuthTag());
+      const ciphertextSize = (await fs.promises.stat(input.ciphertextPath)).size;
+      if (ciphertextSize !== input.size + 16) {
+        throw new Error('federation attachment encryption size mismatch');
+      }
+      return {
+        ciphertextPath: input.ciphertextPath,
+        metadata: {
+          id: attachmentId,
+          fileName: path.basename(input.fileName).slice(0, 255),
+          mimeType: input.mimeType.slice(0, 200),
+          size: input.size,
+          nonce: nonce.toString('base64'),
+          key: key.toString('base64'),
+          ciphertextSize,
+          ciphertextSha256: await sha256File(input.ciphertextPath),
+        },
+      };
+    } catch (error) {
+      await fs.promises.rm(input.ciphertextPath, { force: true }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  federationAttachmentMetadata(input: {
+    serverScope: string;
+    organizationId: string;
+    accountId: string;
+    keyring?: { serverScope: string; accountId: string };
+    message: EnterpriseE2eeWireMessage;
+    attachmentId: string;
+  }): EnterpriseE2eeExternalAttachment {
+    this.decryptMessage(input);
+    const key = this.messageKey(input);
+    const payload = parsePlaintextPayload(
+      aesDecrypt(
+        key,
+        Buffer.from(input.message.ciphertext, 'base64'),
+        Buffer.from(input.message.nonce, 'base64'),
+        messageAad(
+          input.organizationId,
+          input.message.id,
+          input.message.senderAccountId,
+          input.message.recipientAccountId,
+        ),
+      ),
+    );
+    const attachment = payload.attachments.find(
+      (item) => item.id === input.attachmentId,
+    );
+    if (
+      !attachment || attachment.relay !== 'federation-object-v1' ||
+      attachment.key === undefined ||
+      attachment.ciphertextSize === undefined ||
+      attachment.ciphertextSha256 === undefined
+    ) {
+      throw new Error('federation E2EE attachment metadata was not found');
+    }
+    return attachment as EnterpriseE2eeExternalAttachment;
+  }
+
+  async decryptExternalAttachmentFile(input: {
+    messageId: string;
+    ciphertextPath: string;
+    destinationPath: string;
+    metadata: EnterpriseE2eeExternalAttachment;
+  }): Promise<void> {
+    const stat = await fs.promises.stat(input.ciphertextPath);
+    if (
+      !stat.isFile() || stat.size !== input.metadata.ciphertextSize ||
+      await sha256File(input.ciphertextPath) !== input.metadata.ciphertextSha256
+    ) {
+      throw new Error('federation attachment ciphertext verification failed');
+    }
+    const tag = Buffer.alloc(16);
+    const handle = await fs.promises.open(input.ciphertextPath, 'r');
+    try {
+      await handle.read(tag, 0, tag.length, stat.size - tag.length);
+    } finally {
+      await handle.close();
+    }
+    const decipher = createDecipheriv(
+      'aes-256-gcm',
+      Buffer.from(input.metadata.key, 'base64'),
+      Buffer.from(input.metadata.nonce, 'base64'),
+    );
+    decipher.setAAD(attachmentAad(input.messageId, input.metadata.id));
+    decipher.setAuthTag(tag);
+    await fs.promises.mkdir(path.dirname(input.destinationPath), { recursive: true });
+    try {
+      await pipeline(
+        fs.createReadStream(input.ciphertextPath, {
+          start: 0,
+          end: stat.size - tag.length - 1,
+        }),
+        decipher,
+        fs.createWriteStream(input.destinationPath, { flags: 'wx' }),
+      );
+      const plaintext = await fs.promises.stat(input.destinationPath);
+      if (plaintext.size !== input.metadata.size) {
+        throw new Error('federation attachment plaintext size mismatch');
+      }
+    } catch (error) {
+      await fs.promises.rm(input.destinationPath, { force: true }).catch(() => undefined);
+      throw error;
+    }
   }
 
   private messageKey(input: {

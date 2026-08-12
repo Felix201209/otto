@@ -11,6 +11,7 @@ import type {
 } from '../data_platform/index.js';
 import type {
   ClaimedFederationEnvelope,
+  FederationChatAttachmentView,
   FederationChatContactView,
   FederationChatMessageView,
   FederationInboxMessageView,
@@ -86,6 +87,20 @@ interface ChatMessageRow {
   read_at_ms: number | null;
   created_at_ms: number;
   outbox_status: 'queued' | 'sent' | 'failed' | 'expired' | null;
+}
+
+interface ChatAttachmentRow {
+  attachment_id: string;
+  owner_account_id: string;
+  contact_id: string;
+  remote_deployment_id: string;
+  direction: 'inbound' | 'outbound';
+  message_id: string | null;
+  ciphertext_bytes: number | null;
+  ciphertext_sha256: string | null;
+  status: 'pending' | 'ready' | 'referenced';
+  created_at_ms: number;
+  updated_at_ms: number;
 }
 
 function parseSignedEnvelope(value: string): SignedFederationEnvelope {
@@ -181,6 +196,22 @@ function contactView(row: ChatContactRow): FederationChatContactView {
   };
 }
 
+function attachmentView(row: ChatAttachmentRow): FederationChatAttachmentView {
+  return {
+    id: row.attachment_id,
+    ownerAccountId: row.owner_account_id,
+    contactId: row.contact_id,
+    remoteDeploymentId: row.remote_deployment_id,
+    direction: row.direction,
+    messageId: row.message_id,
+    ciphertextBytes: row.ciphertext_bytes,
+    ciphertextSha256: row.ciphertext_sha256,
+    status: row.status,
+    createdAt: new Date(row.created_at_ms).toISOString(),
+    updatedAt: new Date(row.updated_at_ms).toISOString(),
+  };
+}
+
 export function saveFederationChatContactInRepository(
   store: FederationRepositoryStore,
   input: {
@@ -270,6 +301,104 @@ export function getFederationChatContactInRepository(
     .find((contact) => contact.id === input.contactId) ?? null;
 }
 
+export function saveFederationChatAttachmentInRepository(
+  store: FederationRepositoryStore,
+  input: {
+    attachmentId: string;
+    ownerAccountId: string;
+    contactId: string;
+    remoteDeploymentId: string;
+    direction: 'inbound' | 'outbound';
+    ciphertextBytes: number | null;
+    ciphertextSha256: string | null;
+    status: 'pending' | 'ready' | 'referenced';
+    messageId?: string | null;
+  },
+): FederationChatAttachmentView {
+  const contact = getFederationChatContactInRepository(store, {
+    ownerAccountId: input.ownerAccountId,
+    contactId: input.contactId,
+  });
+  if (!contact || contact.remoteDeploymentId !== input.remoteDeploymentId) {
+    throw new Error('federation attachment does not match the contact');
+  }
+  const now = store.now();
+  store.db().prepare(
+    `INSERT INTO federation_chat_attachments
+      (attachment_id, owner_account_id, contact_id, remote_deployment_id,
+       direction, message_id, ciphertext_bytes, ciphertext_sha256, status,
+       created_at_ms, updated_at_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(attachment_id) DO NOTHING`,
+  ).run(
+    input.attachmentId,
+    input.ownerAccountId,
+    input.contactId,
+    input.remoteDeploymentId,
+    input.direction,
+    input.messageId ?? null,
+    input.ciphertextBytes,
+    input.ciphertextSha256,
+    input.status,
+    now,
+    now,
+  );
+  const saved = getFederationChatAttachmentInRepository(store, {
+    ownerAccountId: input.ownerAccountId,
+    contactId: input.contactId,
+    attachmentId: input.attachmentId,
+  });
+  if (
+    !saved || saved.remoteDeploymentId !== input.remoteDeploymentId ||
+    saved.direction !== input.direction ||
+    saved.ciphertextBytes !== input.ciphertextBytes ||
+    saved.ciphertextSha256 !== input.ciphertextSha256
+  ) {
+    throw new Error('federation attachment id is already used by another object');
+  }
+  return saved;
+}
+
+export function getFederationChatAttachmentInRepository(
+  store: FederationRepositoryStore,
+  input: {
+    ownerAccountId: string;
+    contactId: string;
+    attachmentId: string;
+  },
+): FederationChatAttachmentView | null {
+  const row = store.db().prepare(
+    `SELECT * FROM federation_chat_attachments
+     WHERE attachment_id = ? AND owner_account_id = ? AND contact_id = ?`,
+  ).get(input.attachmentId, input.ownerAccountId, input.contactId) as
+    | ChatAttachmentRow
+    | undefined;
+  return row ? attachmentView(row) : null;
+}
+
+export function markFederationChatAttachmentReadyInRepository(
+  store: FederationRepositoryStore,
+  input: {
+    ownerAccountId: string;
+    contactId: string;
+    attachmentId: string;
+  },
+): FederationChatAttachmentView {
+  const now = store.now();
+  const result = store.db().prepare(
+    `UPDATE federation_chat_attachments
+     SET status = 'ready', updated_at_ms = ?
+     WHERE attachment_id = ? AND owner_account_id = ? AND contact_id = ?
+       AND direction = 'outbound' AND status IN ('pending', 'ready')`,
+  ).run(now, input.attachmentId, input.ownerAccountId, input.contactId);
+  const attachment = getFederationChatAttachmentInRepository(store, input);
+  if (Number(result.changes) === 0 && attachment?.status !== 'ready') {
+    throw new Error('federation attachment upload was not found');
+  }
+  if (!attachment) throw new Error('federation attachment upload was not found');
+  return attachment;
+}
+
 export function queueFederationEnvelopeInRepository(
   store: FederationRepositoryStore,
   signed: SignedFederationEnvelope,
@@ -333,22 +462,62 @@ export function queueFederationChatEnvelopeInRepository(
   ) {
     throw new Error('federation chat envelope does not match the contact');
   }
-  const queued = queueFederationEnvelopeInRepository(store, input.signed);
+  const attachmentIds = envelope.routing.attachmentIds ?? [];
+  if (attachmentIds.length > 6 || new Set(attachmentIds).size !== attachmentIds.length) {
+    throw new Error('federation message contains invalid attachment references');
+  }
+  for (const attachmentId of attachmentIds) {
+    const attachment = getFederationChatAttachmentInRepository(store, {
+      ownerAccountId: input.ownerAccountId,
+      contactId: input.contactId,
+      attachmentId,
+    });
+    if (
+      !attachment || attachment.direction !== 'outbound' ||
+      attachment.remoteDeploymentId !== contact.remoteDeploymentId ||
+      (attachment.status !== 'ready' &&
+        !(attachment.status === 'referenced' && attachment.messageId === envelope.messageId))
+    ) {
+      throw new Error('federation attachment is not ready for this conversation');
+    }
+  }
   const now = store.now();
-  store.db().prepare(
-    `INSERT OR IGNORE INTO federation_chat_messages
-      (message_id, contact_id, owner_account_id, direction,
-       signed_envelope_json, created_at_ms, updated_at_ms)
-     VALUES (?, ?, ?, 'outbound', ?, ?, ?)`,
-  ).run(
-    envelope.messageId,
-    input.contactId,
-    input.ownerAccountId,
-    JSON.stringify(input.signed),
-    Date.parse(envelope.issuedAt),
-    now,
-  );
-  return queued;
+  const database = store.db();
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const queued = queueFederationEnvelopeInRepository(store, input.signed);
+    database.prepare(
+      `INSERT OR IGNORE INTO federation_chat_messages
+        (message_id, contact_id, owner_account_id, direction,
+         signed_envelope_json, created_at_ms, updated_at_ms)
+       VALUES (?, ?, ?, 'outbound', ?, ?, ?)`,
+    ).run(
+      envelope.messageId,
+      input.contactId,
+      input.ownerAccountId,
+      JSON.stringify(input.signed),
+      Date.parse(envelope.issuedAt),
+      now,
+    );
+    for (const attachmentId of attachmentIds) {
+      database.prepare(
+        `UPDATE federation_chat_attachments
+         SET status = 'referenced', message_id = ?, updated_at_ms = ?
+         WHERE attachment_id = ? AND owner_account_id = ? AND contact_id = ?`,
+      ).run(
+        envelope.messageId,
+        now,
+        attachmentId,
+        input.ownerAccountId,
+        input.contactId,
+      );
+    }
+    database.exec('COMMIT');
+    return queued;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 export function listDueFederationOutboxInRepository(
@@ -546,6 +715,23 @@ export function storeClaimedFederationEnvelopeInRepository(
           Date.parse(signed.envelope.issuedAt),
           now,
         );
+        for (const attachmentId of signed.envelope.routing.attachmentIds ?? []) {
+          database.prepare(
+            `INSERT OR IGNORE INTO federation_chat_attachments
+              (attachment_id, owner_account_id, contact_id,
+               remote_deployment_id, direction, message_id, status,
+               created_at_ms, updated_at_ms)
+             VALUES (?, ?, ?, ?, 'inbound', ?, 'referenced', ?, ?)`,
+          ).run(
+            attachmentId,
+            recipient.id,
+            contactId,
+            signed.envelope.senderDeploymentId,
+            signed.envelope.messageId,
+            now,
+            now,
+          );
+        }
       }
     }
     database.exec('COMMIT');

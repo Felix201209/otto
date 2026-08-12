@@ -1106,6 +1106,7 @@ const IPC = {
   enterpriseFederationContactRemove: 'otto:enterprise-federation-contact-remove',
   enterpriseFederationMessagesList: 'otto:enterprise-federation-messages-list',
   enterpriseFederationMessageSend: 'otto:enterprise-federation-message-send',
+  enterpriseFederationAttachmentSave: 'otto:enterprise-federation-attachment-save',
   enterpriseFederationContactVerification:
     'otto:enterprise-federation-contact-verification',
   enterpriseFederationContactVerify: 'otto:enterprise-federation-contact-verify',
@@ -1609,7 +1610,14 @@ export interface OttoBridge {
   enterpriseFederationMessageSend(
     contactId: string,
     content: string,
+    attachments?: EnterpriseDirectMessageAttachmentUpload[],
   ): Promise<EnterpriseFederatedDirectMessage>;
+  enterpriseFederationAttachmentSave(
+    contactId: string,
+    messageId: string,
+    attachmentId: string,
+    suggestedFileName: string,
+  ): Promise<(EnterpriseDirectMessageAttachment & { path: string }) | null>;
   enterpriseFederationContactVerification(contactId: string): Promise<
     EnterpriseE2eeDeviceVerification & { verifiedAt: string | null }
   >;
@@ -2822,12 +2830,28 @@ const bridge: OttoBridge = {
   enterpriseFederationMessageSend(
     contactId: string,
     content: string,
+    attachments: EnterpriseDirectMessageAttachmentUpload[] = [],
   ): Promise<EnterpriseFederatedDirectMessage> {
     return ipcRenderer.invoke(
       IPC.enterpriseFederationMessageSend,
       contactId,
       content,
+      attachments,
     ) as Promise<EnterpriseFederatedDirectMessage>;
+  },
+  enterpriseFederationAttachmentSave(
+    contactId: string,
+    messageId: string,
+    attachmentId: string,
+    suggestedFileName: string,
+  ): Promise<(EnterpriseDirectMessageAttachment & { path: string }) | null> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationAttachmentSave,
+      contactId,
+      messageId,
+      attachmentId,
+      suggestedFileName,
+    ) as Promise<(EnterpriseDirectMessageAttachment & { path: string }) | null>;
   },
   enterpriseFederationContactVerification(contactId: string): Promise<
     EnterpriseE2eeDeviceVerification & { verifiedAt: string | null }

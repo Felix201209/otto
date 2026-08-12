@@ -181,7 +181,15 @@ const ENTERPRISE_MESSAGE_ATTACHMENT_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 
 function normalizeEnterpriseMessageAttachments(
   value: unknown,
+  limits: {
+    maxFileBytes?: number;
+    maxTotalBytes?: number;
+  } = {},
 ): EnterpriseDirectMessageAttachmentUpload[] {
+  const maxFileBytes = limits.maxFileBytes ??
+    ENTERPRISE_MESSAGE_ATTACHMENT_MAX_FILE_BYTES;
+  const maxTotalBytes = limits.maxTotalBytes ??
+    ENTERPRISE_MESSAGE_ATTACHMENT_MAX_TOTAL_BYTES;
   if (value == null) return [];
   if (
     !Array.isArray(value) ||
@@ -210,16 +218,18 @@ function normalizeEnterpriseMessageAttachments(
       !mimeType ||
       !Number.isInteger(size) ||
       size < 0 ||
-      size > ENTERPRISE_MESSAGE_ATTACHMENT_MAX_FILE_BYTES ||
+      size > maxFileBytes ||
       (!data && !sourcePath) ||
       (data && sourcePath)
     ) {
-      throw new Error('附件信息不正确或单个附件超过 10 MB');
+      throw new Error(
+        `附件信息不正确或单个附件超过 ${Math.round(maxFileBytes / 1024 / 1024)} MB`,
+      );
     }
     if (sourcePath) {
       const granted = fileAccessGrants.resolve(
         sourcePath,
-        ENTERPRISE_MESSAGE_ATTACHMENT_MAX_FILE_BYTES,
+        maxFileBytes,
       );
       if (granted.size !== size) {
         throw new Error('附件在选择后发生变化，请重新选择');
@@ -231,8 +241,10 @@ function normalizeEnterpriseMessageAttachments(
       }
     }
     totalBytes += size;
-    if (totalBytes > ENTERPRISE_MESSAGE_ATTACHMENT_MAX_TOTAL_BYTES) {
-      throw new Error('每条消息的附件总大小不能超过 20 MB');
+    if (totalBytes > maxTotalBytes) {
+      throw new Error(
+        `每条消息的附件总大小不能超过 ${Math.round(maxTotalBytes / 1024 / 1024)} MB`,
+      );
     }
     return sourcePath
       ? { fileName, mimeType, size, sourcePath }
@@ -564,6 +576,7 @@ const IPC = {
   enterpriseFederationContactRemove: 'otto:enterprise-federation-contact-remove',
   enterpriseFederationMessagesList: 'otto:enterprise-federation-messages-list',
   enterpriseFederationMessageSend: 'otto:enterprise-federation-message-send',
+  enterpriseFederationAttachmentSave: 'otto:enterprise-federation-attachment-save',
   enterpriseFederationContactVerification:
     'otto:enterprise-federation-contact-verification',
   enterpriseFederationContactVerify: 'otto:enterprise-federation-contact-verify',
@@ -3038,17 +3051,65 @@ function registerIpc(): void {
   );
   ipcMain.handle(
     IPC.enterpriseFederationMessageSend,
-    async (_event, contactId: unknown, content: unknown) => {
+    async (_event, contactId: unknown, content: unknown, attachments: unknown) => {
       loadEnterpriseSession();
       if (
         typeof contactId !== 'string' ||
         !contactId ||
-        typeof content !== 'string' ||
-        !content.trim()
+        typeof content !== 'string'
       ) {
         throw new Error('联邦消息无效');
       }
-      return enterpriseClient.sendFederationMessage(contactId, content);
+      const normalizedAttachments = normalizeEnterpriseMessageAttachments(
+        attachments,
+        {
+          maxFileBytes: 1024 * 1024 * 1024,
+          maxTotalBytes: 1024 * 1024 * 1024,
+        },
+      );
+      if (!content.trim() && normalizedAttachments.length === 0) {
+        throw new Error('请输入消息或添加附件');
+      }
+      return enterpriseClient.sendFederationMessage(
+        contactId,
+        content,
+        normalizedAttachments,
+      );
+    },
+  );
+  ipcMain.handle(
+    IPC.enterpriseFederationAttachmentSave,
+    async (
+      _event,
+      contactId: unknown,
+      messageId: unknown,
+      attachmentId: unknown,
+      suggestedFileName: unknown,
+    ) => {
+      loadEnterpriseSession();
+      if (
+        typeof contactId !== 'string' || !contactId ||
+        typeof messageId !== 'string' || !messageId ||
+        typeof attachmentId !== 'string' || !attachmentId ||
+        typeof suggestedFileName !== 'string' || !suggestedFileName
+      ) {
+        throw new Error('联邦附件信息无效');
+      }
+      const safeName = path.basename(suggestedFileName).slice(0, 255);
+      const result = mainWindow
+        ? await dialog.showSaveDialog(mainWindow, {
+            defaultPath: path.join(app.getPath('downloads'), safeName),
+          })
+        : await dialog.showSaveDialog({
+            defaultPath: path.join(app.getPath('downloads'), safeName),
+          });
+      if (result.canceled || !result.filePath) return null;
+      return enterpriseClient.saveFederationMessageAttachment({
+        contactId,
+        messageId,
+        attachmentId,
+        destinationPath: result.filePath,
+      });
     },
   );
   ipcMain.handle(

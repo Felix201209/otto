@@ -3,7 +3,13 @@
  */
 
 import { createHash, verify } from 'node:crypto';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -114,6 +120,72 @@ function transparencyView(
 }
 
 describe('enterprise private-chat E2EE', () => {
+  it('streams federation attachments, verifies ciphertext and decrypts only on the recipient device', async () => {
+    const alice = createEndpoint('Alice laptop');
+    const bob = createEndpoint('Bob laptop');
+    const aliceDevice = alice.crypto.localDevice('federation', 'alice');
+    const bobDevice = bob.crypto.localDevice('federation', 'bob');
+    const source = join(alice.root, 'large-source.bin');
+    const ciphertext = join(alice.root, 'large-ciphertext.bin');
+    const destination = join(bob.root, 'large-destination.bin');
+    const body = Buffer.alloc(2 * 1024 * 1024 + 17, 0x5a);
+    writeFileSync(source, body);
+    const messageId = 'fmessage_streaming_attachment';
+    const prepared = await alice.crypto.encryptExternalAttachmentFile({
+      messageId,
+      sourcePath: source,
+      ciphertextPath: ciphertext,
+      fileName: 'large.bin',
+      mimeType: 'application/octet-stream',
+      size: body.length,
+      attachmentId: 'fattachment_streaming',
+    });
+    expect(prepared.metadata.ciphertextSize).toBe(body.length + 16);
+    expect(prepared.metadata.ciphertextSha256).toMatch(/^[a-f0-9]{64}$/u);
+
+    const encrypted = alice.crypto.encryptMessage({
+      serverScope: 'federation',
+      organizationId: 'conversation',
+      senderAccountId: 'alice',
+      recipientAccountId: 'bob',
+      content: 'See attachment',
+      contentType: 'message',
+      devices: [aliceDevice, bobDevice],
+      externalAttachments: [prepared],
+      messageId,
+    });
+    const message = wire(encrypted, aliceDevice);
+    message.attachments = [{
+      id: prepared.metadata.id,
+      ciphertextSize: prepared.metadata.ciphertextSize,
+      nonce: prepared.metadata.nonce,
+    }];
+    const metadata = bob.crypto.federationAttachmentMetadata({
+      serverScope: 'federation',
+      organizationId: 'conversation',
+      accountId: 'bob',
+      message,
+      attachmentId: prepared.metadata.id,
+    });
+    await bob.crypto.decryptExternalAttachmentFile({
+      messageId,
+      ciphertextPath: ciphertext,
+      destinationPath: destination,
+      metadata,
+    });
+    expect(readFileSync(destination)).toEqual(body);
+
+    const tampered = Buffer.from(readFileSync(ciphertext));
+    tampered[0] ^= 1;
+    writeFileSync(ciphertext, tampered);
+    await expect(bob.crypto.decryptExternalAttachmentFile({
+      messageId,
+      ciphertextPath: ciphertext,
+      destinationPath: join(bob.root, 'tampered.bin'),
+      metadata,
+    })).rejects.toThrow('ciphertext verification failed');
+  }, 15_000);
+
   it('pins, verifies and isolates signed federation contact identities', () => {
     const alice = createEndpoint('Alice laptop');
     const bob = createEndpoint('Bob laptop');

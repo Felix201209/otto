@@ -44,6 +44,13 @@ beforeEach(() => {
       deviceFingerprints: ['a'.repeat(64), 'b'.repeat(64)],
       verifiedAt: null,
     })),
+    enterpriseFederationAttachmentSave: vi.fn(async () => ({
+      id: 'fattachment-one',
+      fileName: 'evidence.pdf',
+      mimeType: 'application/pdf',
+      size: 1024,
+      path: 'D:\\Downloads\\evidence.pdf',
+    })),
   };
 });
 
@@ -91,7 +98,12 @@ describe('InboxPage response hardening', () => {
       content: '跨服务器消息正文',
       createdAt: '2026-08-12T00:01:00.000Z',
       readAt: null,
-      attachments: [],
+      attachments: [{
+        id: 'fattachment-one',
+        fileName: 'evidence.pdf',
+        mimeType: 'application/pdf',
+        size: 1024,
+      }],
       e2ee: true,
       e2eeProtocol: 'device-envelope-v1',
       contentType: 'message',
@@ -119,5 +131,15 @@ describe('InboxPage response hardening', () => {
     expect(screen.getByText('端到端加密安全号码')).toBeTruthy();
     expect(screen.getByText('1234 5678 9012 3456')).toBeTruthy();
     expect(screen.getByText('未核验')).toBeTruthy();
+    expect(screen.getByText('evidence.pdf')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    await waitFor(() => {
+      expect(bridge.enterpriseFederationAttachmentSave).toHaveBeenCalledWith(
+        contact.id,
+        'federation-message-1',
+        'fattachment-one',
+        'evidence.pdf',
+      );
+    });
   });
 });
