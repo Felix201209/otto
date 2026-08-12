@@ -38,6 +38,20 @@ beforeEach(() => {
     enterpriseOrganizationView: vi.fn(async () => ({ members: [] })),
     enterpriseFederationContacts: vi.fn(async () => []),
     enterpriseFederationMessagesList: vi.fn(async () => []),
+    enterpriseFederationMessageSend: vi.fn(async () => ({
+      id: 'federation-a2a-proposal',
+      senderAccountId: account.id,
+      recipientAccountId: 'deployment-b:remote-account',
+      content: 'encrypted proposal placeholder',
+      createdAt: '2026-08-12T00:02:00.000Z',
+      readAt: null,
+      federated: true,
+      contactId: 'contact-remote',
+      federationMessageType: 'chat.message',
+      direction: 'outbound',
+      deliveryStatus: 'queued',
+      trustState: 'verified',
+    })),
     enterpriseFederationContactVerification: vi.fn(async () => ({
       safetyNumber: '1234567890123456',
       qrPayload: 'OTTO_E2EE_VERIFY_V1:test',
@@ -141,5 +155,49 @@ describe('InboxPage response hardening', () => {
         'evidence.pdf',
       );
     });
+  });
+
+  it('only lets a verified contact receive an encrypted A2A proposal', async () => {
+    const contact: EnterpriseFederationContact = {
+      id: 'contact-remote',
+      identity: 'deployment-b:remote-account',
+      remoteDeploymentId: 'deployment-b',
+      remotePrincipalId: 'remote-account',
+      displayName: '远程同事',
+      deploymentDisplayName: '北京私有部署',
+      createdAt: '2026-08-12T00:00:00.000Z',
+      updatedAt: '2026-08-12T00:00:00.000Z',
+      lastMessageAt: null,
+      unreadCount: 0,
+      trustState: 'verified',
+      keyFingerprint: 'b'.repeat(64),
+    };
+    const bridge = window.otto as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    bridge.enterpriseFederationContacts.mockResolvedValue([contact]);
+
+    render(
+      <InboxPage
+        enterpriseAccount={account}
+        onBack={() => undefined}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('listitem', { name: /远程同事/ }));
+    const askButton = await screen.findByRole('button', { name: '询问对方 Otto' });
+    expect((askButton as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(screen.getByRole('textbox', { name: '回复消息' }), {
+      target: { value: '你明天下午是否方便开会？' },
+    });
+    expect((askButton as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(askButton);
+
+    await waitFor(() => {
+      expect(bridge.enterpriseFederationMessageSend).toHaveBeenCalledTimes(1);
+    });
+    const [contactId, content] = bridge.enterpriseFederationMessageSend.mock.calls[0]!;
+    expect(contactId).toBe(contact.id);
+    expect(content).toMatch(/^OTTO_ATOA_REQUEST /u);
+    expect(content).toContain('你明天下午是否方便开会？');
   });
 });

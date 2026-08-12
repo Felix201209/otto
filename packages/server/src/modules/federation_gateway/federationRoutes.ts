@@ -68,9 +68,18 @@ export interface FederationRouteServices {
     ownerAccountId: string;
     contactId: string;
     ciphertext: string;
+    type?: 'chat.message' | 'a2a.request' | 'a2a.response';
     messageId?: string;
     inReplyTo?: string;
+    a2aGrantId?: string;
+    a2aScope?: string;
     attachmentIds?: string[];
+    expiresInMs?: number;
+  }): Promise<unknown>;
+  createFederationContactA2aGrant(input: {
+    ownerAccountId: string;
+    contactId: string;
+    scopes: string[];
     expiresInMs?: number;
   }): Promise<unknown>;
   listFederationChatMessages(input: {
@@ -491,13 +500,38 @@ export async function handleFederationRoute(
       }
       if (method === 'POST') {
         const body = await readBody(req, 2 * 1024 * 1024);
+        const type = normalizedMessageType(body.type);
+        if (type === 'chat.receipt') {
+          throw new Error('chat receipts cannot be queued as conversation messages');
+        }
+        if (
+          (type === 'a2a.request' || type === 'a2a.response') &&
+          !requireFeature(deps, 'atoa')
+        ) return true;
+        const a2aGrantId = optionalIdentifier(body.a2aGrantId, 'A2A grant id');
+        const a2aScope = typeof body.a2aScope === 'string'
+          ? body.a2aScope.trim()
+          : undefined;
+        if (
+          type === 'a2a.request' &&
+          (!a2aGrantId || !a2aScope || !SCOPE.test(a2aScope))
+        ) {
+          throw new Error('A2A request requires a valid grant and scope');
+        }
+        const attachmentIds = attachmentIdentifiers(body.attachmentIds) ?? [];
+        if (type !== 'chat.message' && attachmentIds.length > 0) {
+          throw new Error('A2A messages cannot reference attachments');
+        }
         const queued = await services.queueFederationChatMessage({
           ownerAccountId: deps.memberAccount.id,
           contactId,
           ciphertext: requiredText(body.ciphertext, 'ciphertext', 1024 * 1024),
+          type,
           messageId: optionalIdentifier(body.messageId, 'message id'),
           inReplyTo: optionalIdentifier(body.inReplyTo, 'reply message id'),
-          attachmentIds: attachmentIdentifiers(body.attachmentIds),
+          a2aGrantId,
+          a2aScope,
+          attachmentIds,
           expiresInMs: body.expiresInMs === undefined
             ? undefined
             : integer(body.expiresInMs, 0, 7 * 24 * 60 * 60_000),
@@ -511,6 +545,41 @@ export async function handleFederationRoute(
       });
       return true;
     }
+  }
+
+  const contactA2aGrants = /^\/enterprise\/federation\/conversations\/([^/]+)\/a2a\/grants$/u
+    .exec(path);
+  if (contactA2aGrants && method === 'POST') {
+    if (!requireFeature(deps, 'atoa')) return true;
+    try {
+      const body = await readBody(req);
+      const scopes = Array.isArray(body.scopes)
+        ? [...new Set(body.scopes.map((scope) => String(scope).trim()))]
+        : [];
+      if (
+        scopes.length < 1 || scopes.length > 16 ||
+        scopes.some((scope) => !SCOPE.test(scope))
+      ) {
+        throw new Error('A2A scopes are invalid');
+      }
+      const grant = await services.createFederationContactA2aGrant({
+        ownerAccountId: deps.memberAccount.id,
+        contactId: requiredIdentifier(
+          decodeURIComponent(contactA2aGrants[1]!),
+          'contact id',
+        ),
+        scopes,
+        expiresInMs: body.expiresInMs === undefined
+          ? undefined
+          : integer(body.expiresInMs, 0, 24 * 60 * 60_000),
+      });
+      sendJSON(res, 201, { grant });
+    } catch (error) {
+      sendJSON(res, 400, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return true;
   }
 
   const readMessage = /^\/enterprise\/federation\/conversations\/([^/]+)\/messages\/([^/]+)\/read$/u

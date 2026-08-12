@@ -9,7 +9,6 @@ export {
   ATOA_RESPONSE_PREFIX,
   buildAtoaRequest,
   buildAtoaResponse,
-  displayDirectMessageContent,
   parseAtoaMessage,
   type AtoaContextSource,
   type AtoaMode,
@@ -18,3 +17,27 @@ export {
   type BuildAtoaRequestOptions,
   type ParsedAtoaMessage,
 } from '../../../core/src/a2a/atoaProtocol.js';
+
+import {
+  displayDirectMessageContent as displayAtoaContent,
+} from '../../../core/src/a2a/atoaProtocol.js';
+import {
+  displayFederationAtoaDecision,
+  parseFederationAtoaDecision,
+} from '../../../core/src/a2a/federationAtoaProtocol.js';
+
+export {
+  buildFederationAtoaDecision,
+  FEDERATION_ATOA_DECISION_PREFIX,
+  parseFederationAtoaDecision,
+  type FederationAtoaApprovedDecision,
+  type FederationAtoaDecision,
+  type FederationAtoaDeniedDecision,
+} from '../../../core/src/a2a/federationAtoaProtocol.js';
+
+export function displayDirectMessageContent(content: string): string {
+  const decision = parseFederationAtoaDecision(content);
+  return decision
+    ? displayFederationAtoaDecision(decision)
+    : displayAtoaContent(content);
+}

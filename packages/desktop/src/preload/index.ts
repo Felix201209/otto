@@ -810,10 +810,61 @@ export interface EnterpriseFederationContact {
 export interface EnterpriseFederatedDirectMessage extends EnterpriseDirectMessage {
   federated: true;
   contactId: string;
+  federationMessageType: 'chat.message' | 'a2a.request' | 'a2a.response';
+  federationA2aGrantId?: string;
+  federationA2aScope?: string;
   direction: 'inbound' | 'outbound';
   deliveryStatus: 'queued' | 'sent' | 'failed' | 'expired' | 'received';
   trustState: 'unverified' | 'verified';
 }
+
+export type EnterpriseAtoaContextSource =
+  | 'current_chat'
+  | 'enterprise_knowledge'
+  | 'work_logs'
+  | 'schedules';
+
+export interface EnterpriseFederationAtoaRequestPayload {
+  v: 1;
+  id: string;
+  question: string;
+  createdAt: string;
+  mode: 'answer' | 'consult';
+  requestedSources: EnterpriseAtoaContextSource[];
+  initiatorProposal?: string;
+}
+
+export type EnterpriseFederationAtoaTask =
+  | {
+      kind: 'proposal';
+      contact: EnterpriseFederationContact;
+      message: EnterpriseFederatedDirectMessage;
+      request: EnterpriseFederationAtoaRequestPayload;
+    }
+  | {
+      kind: 'grant';
+      contact: EnterpriseFederationContact;
+      message: EnterpriseFederatedDirectMessage;
+      decision: {
+        v: 1;
+        status: 'approved';
+        requestId: string;
+        requestMessageId: string;
+        grantId: string;
+        scope: string;
+        expiresAt: string;
+        grantedSources: EnterpriseAtoaContextSource[];
+        createdAt: string;
+      };
+    }
+  | {
+      kind: 'request';
+      contact: EnterpriseFederationContact;
+      message: EnterpriseFederatedDirectMessage;
+      request: EnterpriseFederationAtoaRequestPayload;
+      grantedSources: EnterpriseAtoaContextSource[];
+      needsCurrentChatSelection: boolean;
+    };
 
 export interface EnterpriseE2eeDevice {
   accountId: string;
@@ -1107,6 +1158,11 @@ const IPC = {
   enterpriseFederationMessagesList: 'otto:enterprise-federation-messages-list',
   enterpriseFederationMessageSend: 'otto:enterprise-federation-message-send',
   enterpriseFederationAttachmentSave: 'otto:enterprise-federation-attachment-save',
+  enterpriseFederationAtoaTasks: 'otto:enterprise-federation-atoa-tasks',
+  enterpriseFederationAtoaApprove: 'otto:enterprise-federation-atoa-approve',
+  enterpriseFederationAtoaDeny: 'otto:enterprise-federation-atoa-deny',
+  enterpriseFederationAtoaDispatch: 'otto:enterprise-federation-atoa-dispatch',
+  enterpriseFederationAtoaRespond: 'otto:enterprise-federation-atoa-respond',
   enterpriseFederationContactVerification:
     'otto:enterprise-federation-contact-verification',
   enterpriseFederationContactVerify: 'otto:enterprise-federation-contact-verify',
@@ -1606,6 +1662,7 @@ export interface OttoBridge {
   enterpriseFederationContactRemove(contactId: string): Promise<boolean>;
   enterpriseFederationMessagesList(
     contactId: string,
+    options?: { markRead?: boolean },
   ): Promise<EnterpriseFederatedDirectMessage[]>;
   enterpriseFederationMessageSend(
     contactId: string,
@@ -1618,6 +1675,26 @@ export interface OttoBridge {
     attachmentId: string,
     suggestedFileName: string,
   ): Promise<(EnterpriseDirectMessageAttachment & { path: string }) | null>;
+  enterpriseFederationAtoaTasks(): Promise<EnterpriseFederationAtoaTask[]>;
+  enterpriseFederationAtoaApprove(input: {
+    contactId: string;
+    messageId: string;
+    grantedSources: EnterpriseAtoaContextSource[];
+  }): Promise<EnterpriseFederatedDirectMessage>;
+  enterpriseFederationAtoaDeny(input: {
+    contactId: string;
+    messageId: string;
+  }): Promise<EnterpriseFederatedDirectMessage>;
+  enterpriseFederationAtoaDispatch(input: {
+    contactId: string;
+    decisionMessageId: string;
+  }): Promise<EnterpriseFederatedDirectMessage>;
+  enterpriseFederationAtoaRespond(input: {
+    contactId: string;
+    requestMessageId: string;
+    answer: string;
+    grantedSources: EnterpriseAtoaContextSource[];
+  }): Promise<EnterpriseFederatedDirectMessage>;
   enterpriseFederationContactVerification(contactId: string): Promise<
     EnterpriseE2eeDeviceVerification & { verifiedAt: string | null }
   >;
@@ -2821,10 +2898,12 @@ const bridge: OttoBridge = {
   },
   enterpriseFederationMessagesList(
     contactId: string,
+    options?: { markRead?: boolean },
   ): Promise<EnterpriseFederatedDirectMessage[]> {
     return ipcRenderer.invoke(
       IPC.enterpriseFederationMessagesList,
       contactId,
+      options,
     ) as Promise<EnterpriseFederatedDirectMessage[]>;
   },
   enterpriseFederationMessageSend(
@@ -2852,6 +2931,50 @@ const bridge: OttoBridge = {
       attachmentId,
       suggestedFileName,
     ) as Promise<(EnterpriseDirectMessageAttachment & { path: string }) | null>;
+  },
+  enterpriseFederationAtoaTasks(): Promise<EnterpriseFederationAtoaTask[]> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationAtoaTasks,
+    ) as Promise<EnterpriseFederationAtoaTask[]>;
+  },
+  enterpriseFederationAtoaApprove(input: {
+    contactId: string;
+    messageId: string;
+    grantedSources: EnterpriseAtoaContextSource[];
+  }): Promise<EnterpriseFederatedDirectMessage> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationAtoaApprove,
+      input,
+    ) as Promise<EnterpriseFederatedDirectMessage>;
+  },
+  enterpriseFederationAtoaDeny(input: {
+    contactId: string;
+    messageId: string;
+  }): Promise<EnterpriseFederatedDirectMessage> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationAtoaDeny,
+      input,
+    ) as Promise<EnterpriseFederatedDirectMessage>;
+  },
+  enterpriseFederationAtoaDispatch(input: {
+    contactId: string;
+    decisionMessageId: string;
+  }): Promise<EnterpriseFederatedDirectMessage> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationAtoaDispatch,
+      input,
+    ) as Promise<EnterpriseFederatedDirectMessage>;
+  },
+  enterpriseFederationAtoaRespond(input: {
+    contactId: string;
+    requestMessageId: string;
+    answer: string;
+    grantedSources: EnterpriseAtoaContextSource[];
+  }): Promise<EnterpriseFederatedDirectMessage> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationAtoaRespond,
+      input,
+    ) as Promise<EnterpriseFederatedDirectMessage>;
   },
   enterpriseFederationContactVerification(contactId: string): Promise<
     EnterpriseE2eeDeviceVerification & { verifiedAt: string | null }

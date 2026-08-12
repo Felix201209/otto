@@ -13,6 +13,19 @@ import path from 'node:path';
 import type { MlsKeyPackage } from '@otto/native';
 
 import {
+  buildAtoaResponse,
+  buildFederationAtoaDecision,
+  deterministicFederationAtoaMessageId,
+  federationAtoaScope,
+  parseAtoaRequest,
+  parseFederationAtoaDecision,
+  type AtoaContextSource,
+  type AtoaRequestPayload,
+  type FederationAtoaApprovedDecision,
+} from './federation-atoa-protocol.js';
+import { deriveFederationAtoaTasks } from './federation-atoa-tasks.js';
+
+import {
   ENTERPRISE_FEDERATION_E2EE_SCOPE,
   enterpriseE2eeDeviceVerification,
   enterpriseFederationContactVerification,
@@ -716,6 +729,9 @@ export interface EnterpriseFederationContact {
 export interface EnterpriseFederatedDirectMessage extends EnterpriseDirectMessage {
   federated: true;
   contactId: string;
+  federationMessageType: 'chat.message' | 'a2a.request' | 'a2a.response';
+  federationA2aGrantId?: string;
+  federationA2aScope?: string;
   direction: 'inbound' | 'outbound';
   deliveryStatus: 'queued' | 'sent' | 'failed' | 'expired' | 'received';
   trustState: 'unverified' | 'verified';
@@ -731,6 +747,7 @@ interface EnterpriseFederationWireMessage {
   messageId: string;
   contactId: string;
   direction: 'inbound' | 'outbound';
+  type: 'chat.message' | 'a2a.request' | 'a2a.response';
   ciphertext: string;
   issuedAt: string;
   receivedAt: string;
@@ -740,9 +757,34 @@ interface EnterpriseFederationWireMessage {
     conversationId: string;
     senderPrincipalId: string;
     recipientPrincipalId: string;
+    inReplyTo?: string;
+    a2aGrantId?: string;
+    a2aScope?: string;
     attachmentIds?: string[];
   };
 }
+
+export type EnterpriseFederationAtoaTask =
+  | {
+      kind: 'proposal';
+      contact: EnterpriseFederationContact;
+      message: EnterpriseFederatedDirectMessage;
+      request: AtoaRequestPayload;
+    }
+  | {
+      kind: 'grant';
+      contact: EnterpriseFederationContact;
+      message: EnterpriseFederatedDirectMessage;
+      decision: FederationAtoaApprovedDecision;
+    }
+  | {
+      kind: 'request';
+      contact: EnterpriseFederationContact;
+      message: EnterpriseFederatedDirectMessage;
+      request: AtoaRequestPayload;
+      grantedSources: AtoaContextSource[];
+      needsCurrentChatSelection: boolean;
+    };
 
 interface EnterpriseFederationEncryptedPayload {
   v: 1;
@@ -1149,6 +1191,14 @@ function e2eeProtocolMetadata(content: string): {
     }
   }
   return { contentType: 'message', inReplyToMessageId: null };
+}
+
+function parseAtoaMessage(content: string): {
+  kind: 'request';
+  payload: AtoaRequestPayload;
+} | null {
+  const payload = parseAtoaRequest(content);
+  return payload ? { kind: 'request', payload } : null;
 }
 
 export class EnterpriseClient {
@@ -3401,6 +3451,7 @@ export class EnterpriseClient {
 
   async listFederationMessages(
     contactId: string,
+    options: { markRead?: boolean } = {},
   ): Promise<EnterpriseFederatedDirectMessage[]> {
     const { crypto, account, serverScope } = this.requireE2eeContext();
     const identity = await this.federationIdentity();
@@ -3488,11 +3539,17 @@ export class EnterpriseClient {
         inReplyToMessageId: plain.inReplyToMessageId,
         federated: true,
         contactId,
+        federationMessageType: raw.type,
+        federationA2aGrantId: raw.routing.a2aGrantId,
+        federationA2aScope: raw.routing.a2aScope,
         direction: raw.direction,
         deliveryStatus: raw.deliveryStatus,
         trustState: trust.verifiedAt ? 'verified' : 'unverified',
       });
-      if (raw.direction === 'inbound' && raw.readAt === null) {
+      if (
+        options.markRead !== false &&
+        raw.direction === 'inbound' && raw.readAt === null
+      ) {
         await this.request(
           `/enterprise/federation/conversations/${encodeURIComponent(contactId)}` +
             `/messages/${encodeURIComponent(raw.messageId)}/read`,
@@ -3507,11 +3564,28 @@ export class EnterpriseClient {
     contactId: string,
     content: string,
     attachments: EnterpriseDirectMessageAttachmentUpload[] = [],
+    options: {
+      type?: 'chat.message' | 'a2a.request' | 'a2a.response';
+      messageId?: string;
+      inReplyTo?: string;
+      a2aGrantId?: string;
+      a2aScope?: string;
+    } = {},
   ): Promise<EnterpriseFederatedDirectMessage> {
     if (!content.trim() && attachments.length === 0) {
       throw new Error('请输入消息或添加附件');
     }
     if (attachments.length > 6) throw new Error('每条消息最多发送 6 个附件');
+    const federationMessageType = options.type ?? 'chat.message';
+    if (federationMessageType !== 'chat.message' && attachments.length > 0) {
+      throw new Error('A2A 请求和回复不能携带附件');
+    }
+    if (
+      federationMessageType === 'a2a.request' &&
+      (!options.a2aGrantId || !options.a2aScope)
+    ) {
+      throw new Error('A2A 请求缺少一次性授权');
+    }
     const { crypto, account, serverScope } = this.requireE2eeContext();
     const identity = await this.federationIdentity();
     const contact = (await this.listFederationContacts())
@@ -3532,7 +3606,7 @@ export class EnterpriseClient {
     });
     const senderCard = await this.localFederationIdentityCard();
     const protocol = e2eeProtocolMetadata(content);
-    const messageId = randomUUID();
+    const messageId = options.messageId ?? randomUUID();
     const temporaryDirectory = await fs.promises.mkdtemp(
       path.join(os.tmpdir(), 'otto-federation-attachment-'),
     );
@@ -3565,7 +3639,7 @@ export class EnterpriseClient {
         recipientAccountId: contact.identity,
         content,
         contentType: protocol.contentType,
-        inReplyToMessageId: protocol.inReplyToMessageId,
+        inReplyToMessageId: options.inReplyTo ?? protocol.inReplyToMessageId,
         devices: [
           ...enterpriseFederationIdentityCardDevices(senderCard),
           ...enterpriseFederationIdentityCardDevices(trust.card),
@@ -3644,7 +3718,10 @@ export class EnterpriseClient {
           body: JSON.stringify({
             messageId: encrypted.messageId,
             ciphertext: opaque,
-            inReplyTo: encrypted.inReplyToMessageId,
+            type: federationMessageType,
+            inReplyTo: options.inReplyTo ?? encrypted.inReplyToMessageId,
+            a2aGrantId: options.a2aGrantId,
+            a2aScope: options.a2aScope,
             attachmentIds: prepared.map((item) => item.metadata.id),
           }),
         },
@@ -3670,6 +3747,9 @@ export class EnterpriseClient {
         inReplyToMessageId: plain.inReplyToMessageId,
         federated: true,
         contactId,
+        federationMessageType,
+        federationA2aGrantId: options.a2aGrantId,
+        federationA2aScope: options.a2aScope,
         direction: 'outbound',
         deliveryStatus: 'queued',
         trustState: trust.verifiedAt ? 'verified' : 'unverified',
@@ -3680,6 +3760,232 @@ export class EnterpriseClient {
         force: true,
       }).catch(() => undefined);
     }
+  }
+
+  private async markFederationMessageRead(
+    contactId: string,
+    messageId: string,
+  ): Promise<void> {
+    await this.request(
+      `/enterprise/federation/conversations/${encodeURIComponent(contactId)}` +
+        `/messages/${encodeURIComponent(messageId)}/read`,
+      { method: 'POST' },
+    );
+  }
+
+  async listFederationAtoaTasks(): Promise<EnterpriseFederationAtoaTask[]> {
+    const tasks: EnterpriseFederationAtoaTask[] = [];
+    const contacts = await this.listFederationContacts();
+    for (const contact of contacts) {
+      if (contact.trustState !== 'verified') continue;
+      const messages = await this.listFederationMessages(contact.id, {
+        markRead: false,
+      });
+      tasks.push(...deriveFederationAtoaTasks({ contact, messages }));
+    }
+    return tasks;
+  }
+
+  async approveFederationAtoaProposal(input: {
+    contactId: string;
+    messageId: string;
+    grantedSources: AtoaContextSource[];
+  }): Promise<EnterpriseFederatedDirectMessage> {
+    const contact = (await this.listFederationContacts()).find(
+      (item) => item.id === input.contactId,
+    );
+    if (!contact || contact.trustState !== 'verified') {
+      throw new Error('请先核验跨服务器联系人身份');
+    }
+    const messages = await this.listFederationMessages(input.contactId, {
+      markRead: false,
+    });
+    const proposal = messages.find((message) =>
+      message.id === input.messageId &&
+      message.direction === 'inbound' &&
+      message.federationMessageType === 'chat.message');
+    const parsed = proposal ? parseAtoaMessage(proposal.content) : null;
+    if (!proposal || parsed?.kind !== 'request') {
+      throw new Error('跨服务器 A2A 请求不存在或已失效');
+    }
+    const existing = messages.find((message) => {
+      const decision = parseFederationAtoaDecision(message.content);
+      return message.direction === 'outbound' &&
+        decision?.requestMessageId === proposal.id;
+    });
+    if (existing) return existing;
+
+    const grantedSources = [
+      ...new Set(input.grantedSources),
+    ].filter((source): source is AtoaContextSource =>
+      source === 'current_chat' ||
+      source === 'enterprise_knowledge' ||
+      source === 'work_logs' ||
+      source === 'schedules');
+    if (grantedSources.length === 0) {
+      throw new Error('请至少选择一项本次允许读取的资料');
+    }
+    const scope = federationAtoaScope(proposal.id, proposal.content);
+    const response = await this.request<{
+      grant: { id: string; expiresAt: string };
+    }>(
+      `/enterprise/federation/conversations/${encodeURIComponent(input.contactId)}` +
+        '/a2a/grants',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          scopes: [scope],
+          expiresInMs: 10 * 60_000,
+        }),
+      },
+    );
+    const decisionContent = buildFederationAtoaDecision({
+      status: 'approved',
+      requestId: parsed.payload.id,
+      requestMessageId: proposal.id,
+      grantId: response.grant.id,
+      scope,
+      expiresAt: response.grant.expiresAt,
+      grantedSources,
+    });
+    const decision = await this.sendFederationMessage(
+      input.contactId,
+      decisionContent,
+      [],
+      {
+        messageId: `fa2a_decision_${createHash('sha256')
+          .update(proposal.id, 'utf8')
+          .digest('hex')
+          .slice(0, 40)}`,
+        inReplyTo: proposal.id,
+      },
+    );
+    await this.markFederationMessageRead(input.contactId, proposal.id);
+    return decision;
+  }
+
+  async denyFederationAtoaProposal(input: {
+    contactId: string;
+    messageId: string;
+  }): Promise<EnterpriseFederatedDirectMessage> {
+    const messages = await this.listFederationMessages(input.contactId, {
+      markRead: false,
+    });
+    const proposal = messages.find((message) =>
+      message.id === input.messageId &&
+      message.direction === 'inbound' &&
+      message.federationMessageType === 'chat.message');
+    const parsed = proposal ? parseAtoaMessage(proposal.content) : null;
+    if (!proposal || parsed?.kind !== 'request') {
+      throw new Error('跨服务器 A2A 请求不存在或已失效');
+    }
+    const decision = await this.sendFederationMessage(
+      input.contactId,
+      buildFederationAtoaDecision({
+        status: 'denied',
+        requestId: parsed.payload.id,
+        requestMessageId: proposal.id,
+      }),
+      [],
+      {
+        messageId: `fa2a_denied_${createHash('sha256')
+          .update(proposal.id, 'utf8')
+          .digest('hex')
+          .slice(0, 40)}`,
+        inReplyTo: proposal.id,
+      },
+    );
+    await this.markFederationMessageRead(input.contactId, proposal.id);
+    return decision;
+  }
+
+  async dispatchFederationAtoaGrant(input: {
+    contactId: string;
+    decisionMessageId: string;
+  }): Promise<EnterpriseFederatedDirectMessage> {
+    const messages = await this.listFederationMessages(input.contactId, {
+      markRead: false,
+    });
+    const decisionMessage = messages.find((message) =>
+      message.id === input.decisionMessageId &&
+      message.direction === 'inbound');
+    const decision = decisionMessage
+      ? parseFederationAtoaDecision(decisionMessage.content)
+      : null;
+    if (!decisionMessage || decision?.status !== 'approved') {
+      throw new Error('跨服务器 A2A 授权不存在或已失效');
+    }
+    if (Date.parse(decision.expiresAt) <= Date.now()) {
+      throw new Error('跨服务器 A2A 一次性授权已过期');
+    }
+    const proposal = messages.find((message) =>
+      message.id === decision.requestMessageId &&
+      message.direction === 'outbound');
+    const parsed = proposal ? parseAtoaMessage(proposal.content) : null;
+    if (
+      !proposal || parsed?.kind !== 'request' ||
+      parsed.payload.id !== decision.requestId ||
+      decision.scope !== federationAtoaScope(proposal.id, proposal.content)
+    ) {
+      throw new Error('A2A 授权与原始问题不匹配');
+    }
+    const message = await this.sendFederationMessage(
+      input.contactId,
+      proposal.content,
+      [],
+      {
+        type: 'a2a.request',
+        messageId: deterministicFederationAtoaMessageId(
+          'request',
+          `${decision.grantId}:${proposal.id}`,
+        ),
+        inReplyTo: proposal.id,
+        a2aGrantId: decision.grantId,
+        a2aScope: decision.scope,
+      },
+    );
+    await this.markFederationMessageRead(input.contactId, decisionMessage.id);
+    return message;
+  }
+
+  async respondFederationAtoaRequest(input: {
+    contactId: string;
+    requestMessageId: string;
+    answer: string;
+    grantedSources: AtoaContextSource[];
+  }): Promise<EnterpriseFederatedDirectMessage> {
+    const messages = await this.listFederationMessages(input.contactId, {
+      markRead: false,
+    });
+    const request = messages.find((message) =>
+      message.id === input.requestMessageId &&
+      message.direction === 'inbound' &&
+      message.federationMessageType === 'a2a.request');
+    const parsed = request ? parseAtoaMessage(request.content) : null;
+    if (!request || parsed?.kind !== 'request') {
+      throw new Error('跨服务器 A2A 执行请求不存在');
+    }
+    const message = await this.sendFederationMessage(
+      input.contactId,
+      buildAtoaResponse({
+        requestId: request.id,
+        question: parsed.payload.question,
+        answer: input.answer,
+        mode: parsed.payload.mode,
+        grantedSources: input.grantedSources,
+      }),
+      [],
+      {
+        type: 'a2a.response',
+        messageId: deterministicFederationAtoaMessageId(
+          'response',
+          request.id,
+        ),
+        inReplyTo: request.id,
+      },
+    );
+    await this.markFederationMessageRead(input.contactId, request.id);
+    return message;
   }
 
   async saveFederationMessageAttachment(input: {

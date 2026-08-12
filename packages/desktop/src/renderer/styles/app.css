@@ -11126,6 +11126,11 @@ h6.otto-prose__h {
   align-self: flex-end;
 }
 .otto-inbox-page__reply button:disabled { opacity: 0.5; cursor: default; }
+.otto-inbox-page__reply-actions {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 6px;
+}
 .otto-inbox-page__attach-button {
   align-self: flex-end;
   padding: 8px 10px;
@@ -11133,6 +11138,13 @@ h6.otto-prose__h {
   border-radius: 8px;
   color: var(--otto-text-secondary);
   cursor: pointer;
+  font-size: 12px;
+}
+.otto-inbox-page__reply .otto-inbox-page__a2a-button {
+  border: 1px solid color-mix(in srgb, var(--otto-accent) 45%, var(--otto-border));
+  background: color-mix(in srgb, var(--otto-accent) 9%, var(--otto-surface));
+  color: var(--otto-accent);
+  padding: 8px 10px;
   font-size: 12px;
 }
 .otto-inbox-page__pending-attachments {

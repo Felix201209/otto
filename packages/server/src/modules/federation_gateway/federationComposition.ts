@@ -13,6 +13,7 @@ import {
   type FederationClientOptions,
 } from './federationClient.js';
 import type {
+  FederationMessageType,
   FederationProvisioningManifest,
   FederationQueueInput,
 } from './federationContracts.js';
@@ -303,8 +304,11 @@ export function createFederationComposition(
       ownerAccountId: string;
       contactId: string;
       ciphertext: string;
+      type?: Extract<FederationMessageType, 'chat.message' | 'a2a.request' | 'a2a.response'>;
       messageId?: string;
       inReplyTo?: string;
+      a2aGrantId?: string;
+      a2aScope?: string;
       attachmentIds?: string[];
       expiresInMs?: number;
     }) {
@@ -312,7 +316,7 @@ export function createFederationComposition(
       if (!contact) throw new Error('federation contact was not found');
       const signed = await getActive().client.createSignedEnvelope({
         recipientDeploymentId: contact.remoteDeploymentId,
-        type: 'chat.message',
+        type: input.type ?? 'chat.message',
         ciphertext: input.ciphertext,
         routing: {
           conversationId: federationConversationId({
@@ -324,6 +328,8 @@ export function createFederationComposition(
           senderPrincipalId: input.ownerAccountId,
           recipientPrincipalId: contact.remotePrincipalId,
           inReplyTo: input.inReplyTo,
+          a2aGrantId: input.a2aGrantId,
+          a2aScope: input.a2aScope,
           attachmentIds: input.attachmentIds,
         },
         messageId: input.messageId,
@@ -334,6 +340,31 @@ export function createFederationComposition(
         contactId: input.contactId,
         signed,
       });
+    },
+    async createFederationContactA2aGrant(input: {
+      ownerAccountId: string;
+      contactId: string;
+      scopes: string[];
+      expiresInMs?: number;
+    }) {
+      const contact = getFederationChatContactInRepository(store, input);
+      if (!contact) throw new Error('federation contact was not found');
+      const grant = await getActive().client.createA2aGrant({
+        requesterDeploymentId: contact.remoteDeploymentId,
+        ownerPrincipalId: input.ownerAccountId,
+        requesterPrincipalId: contact.remotePrincipalId,
+        scopes: input.scopes,
+        expiresInMs: input.expiresInMs,
+      });
+      saveFederationA2aGrantInRepository(store, {
+        grantId: grant.id,
+        requesterDeploymentId: contact.remoteDeploymentId,
+        ownerPrincipalId: input.ownerAccountId,
+        requesterPrincipalId: contact.remotePrincipalId,
+        scopes: input.scopes,
+        expiresAt: grant.expiresAt,
+      });
+      return grant;
     },
     listFederationChatMessages: (
       input: Parameters<typeof listFederationChatMessagesInRepository>[1],

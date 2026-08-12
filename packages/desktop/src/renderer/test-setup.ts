@@ -51,6 +51,11 @@ beforeEach(() => {
         readAt: null,
       })),
       enterpriseAtoaInbox: vi.fn(async () => []),
+      enterpriseFederationAtoaTasks: vi.fn(async () => []),
+      enterpriseFederationAtoaApprove: vi.fn(),
+      enterpriseFederationAtoaDeny: vi.fn(),
+      enterpriseFederationAtoaDispatch: vi.fn(),
+      enterpriseFederationAtoaRespond: vi.fn(),
       workLogToday: vi.fn(async () => ({
         summary: '',
         date: new Date(0).toISOString().slice(0, 10),

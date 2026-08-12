@@ -66,6 +66,7 @@ import type {
   EnterpriseAccount,
   EnterpriseAtoaInboxMessage,
   EnterpriseDirectMessage,
+  EnterpriseFederationAtoaTask,
   EnterpriseFederationContact,
   EnterpriseOrganizationView,
 } from '../preload/index.js';
@@ -219,11 +220,16 @@ function OttoWorkspaceApp({
   }, [customAgentsKey]);
   const permissionResolver = useRef<((decision: AtoaPermissionDecision) => void) | null>(null);
   const [pendingAtoaPermission, setPendingAtoaPermission] = useState<AtoaPermissionRequest | null>(null);
+  const federationAtoaContextCache = useRef(new Map<string, Awaited<
+    ReturnType<typeof collectAuthorizedAtoaContext>
+  >>());
   const requestAtoaPermission = useCallback(
     async (
       request: Omit<AtoaPermissionRequest, 'messages'>,
+      authorizedMessages?: EnterpriseDirectMessage[],
     ): Promise<AtoaPermissionDecision> => {
-      const messages = await window.otto.enterpriseMessagesList(request.peer.id);
+      const messages = authorizedMessages ??
+        await window.otto.enterpriseMessagesList(request.peer.id);
       return new Promise((resolve) => {
         // 服务器一次只 claim 一条；若界面状态异常叠加，旧请求按拒绝收口。
         permissionResolver.current?.({ kind: 'deny' });
@@ -470,6 +476,203 @@ function OttoWorkspaceApp({
       abortController.abort();
       permissionResolver.current?.({ kind: 'deny' });
       permissionResolver.current = null;
+      window.clearInterval(timer);
+    };
+  }, [
+    account.accountType,
+    account.id,
+    account.name,
+    product.state.schedules,
+    requestAtoaPermission,
+  ]);
+
+  useEffect(() => {
+    if (account.accountType === 'personal') return undefined;
+    const processing = new Set<string>();
+    const abortController = new AbortController();
+    const contextCache = federationAtoaContextCache.current;
+    let cancelled = false;
+    let polling = false;
+
+    const taskKey = (task: EnterpriseFederationAtoaTask): string =>
+      `${task.kind}:${task.contact.id}:${task.message.id}`;
+    const contextKey = (
+      task: Extract<EnterpriseFederationAtoaTask, { kind: 'proposal' | 'request' }>,
+    ): string => `${task.contact.id}:${task.request.id}`;
+    const peerIdentity = (
+      task: EnterpriseFederationAtoaTask,
+    ): AtoaPeerIdentity => ({
+      id: task.contact.identity,
+      name: task.contact.displayName,
+      department: task.contact.deploymentDisplayName,
+      positionTitle: '跨服务器联系人',
+      role: null,
+    });
+    const collectContext = async (
+      task: Extract<EnterpriseFederationAtoaTask, { kind: 'proposal' | 'request' }>,
+      sources: AtoaPermissionDecision & { kind: 'allow' },
+      messages: EnterpriseDirectMessage[],
+    ) => collectAuthorizedAtoaContext({
+      sources: sources.sources,
+      authorizedMessageIds: sources.messageIds ?? [],
+      peerAccountId: task.contact.identity,
+      currentAccountId: account.id,
+      currentAccountName: account.name,
+      peerName: task.contact.displayName,
+      listMessages: async () => messages,
+      listKnowledge: () => window.otto.enterpriseKnowledgeList(),
+      workLogRecent: window.otto.workLogRecent,
+      schedules: product.state.schedules,
+    });
+
+    const processTask = async (
+      task: EnterpriseFederationAtoaTask,
+    ): Promise<void> => {
+      const key = taskKey(task);
+      if (processing.has(key)) return;
+      processing.add(key);
+      try {
+        if (task.kind === 'grant') {
+          await window.otto.enterpriseFederationAtoaDispatch({
+            contactId: task.contact.id,
+            decisionMessageId: task.message.id,
+          });
+          return;
+        }
+
+        const notificationId = `enterprise:federation-atoa:${task.message.id}`;
+        await window.otto.notificationShow({
+          sessionId: notificationId,
+          source: 'atoa',
+          sender: task.contact.displayName,
+          preview: task.kind === 'proposal'
+            ? '对方 Otto 请求一次性读取你明确选择的资料'
+            : '已核验的一次性 A2A 请求正在等待本机处理',
+        }).catch(() => undefined);
+
+        const messages = await window.otto.enterpriseFederationMessagesList(
+          task.contact.id,
+          { markRead: false },
+        );
+        if (task.kind === 'proposal') {
+          const decision = await requestAtoaPermission({
+            peer: peerIdentity(task),
+            payload: task.request,
+          }, messages);
+          if (decision.kind === 'deny') {
+            await window.otto.enterpriseFederationAtoaDeny({
+              contactId: task.contact.id,
+              messageId: task.message.id,
+            });
+            await window.otto.notificationMarkRead(notificationId);
+            return;
+          }
+          const allowedSources = task.request.requestedSources.length > 0
+            ? decision.sources.filter((source) =>
+                task.request.requestedSources.includes(source))
+            : decision.sources;
+          if (allowedSources.length === 0) {
+            await window.otto.enterpriseFederationAtoaDeny({
+              contactId: task.contact.id,
+              messageId: task.message.id,
+            });
+            await window.otto.notificationMarkRead(notificationId);
+            return;
+          }
+          const allowedDecision: AtoaPermissionDecision & { kind: 'allow' } = {
+            ...decision,
+            sources: allowedSources,
+          };
+          const context = await collectContext(task, allowedDecision, messages);
+          await window.otto.enterpriseFederationAtoaApprove({
+            contactId: task.contact.id,
+            messageId: task.message.id,
+            grantedSources: allowedSources,
+          });
+          contextCache.set(contextKey(task), context);
+          await window.otto.notificationMarkRead(notificationId);
+          return;
+        }
+
+        let context = contextCache.get(contextKey(task));
+        if (!context) {
+          let sources = task.grantedSources;
+          let messageIds: string[] = [];
+          if (task.needsCurrentChatSelection) {
+            const repeatedDecision = await requestAtoaPermission({
+              peer: peerIdentity(task),
+              payload: task.request,
+            }, messages);
+            if (repeatedDecision.kind === 'deny') {
+              await window.otto.enterpriseFederationAtoaRespond({
+                contactId: task.contact.id,
+                requestMessageId: task.message.id,
+                answer: '对方取消了本次授权，Otto 未读取任何资料。',
+                grantedSources: [],
+              });
+              await window.otto.notificationMarkRead(notificationId);
+              return;
+            }
+            sources = repeatedDecision.sources.filter((source) =>
+              task.grantedSources.includes(source));
+            messageIds = repeatedDecision.messageIds ?? [];
+          }
+          context = await collectContext(task, {
+            kind: 'allow',
+            sources,
+            messageIds,
+          }, messages);
+        }
+
+        let answer: string;
+        try {
+          answer = await askLocalPeerOtto({
+            question: task.request.question,
+            workContext: context.context,
+            mode: task.request.mode,
+            initiatorProposal: task.request.initiatorProposal,
+            requestId: `federation-a2a-${task.message.id}`,
+            clientMessageId: `federation-a2a-reply-${task.message.id}`,
+            signal: abortController.signal,
+          });
+        } catch {
+          if (abortController.signal.aborted) return;
+          answer = '本机 Otto 本次未能完成回答，请稍后重试或直接联系本人。';
+        }
+        await window.otto.enterpriseFederationAtoaRespond({
+          contactId: task.contact.id,
+          requestMessageId: task.message.id,
+          answer,
+          grantedSources: context.loadedSources,
+        });
+        contextCache.delete(contextKey(task));
+        await window.otto.notificationMarkRead(notificationId);
+      } catch {
+        processing.delete(key);
+      }
+    };
+
+    const poll = async (): Promise<void> => {
+      if (polling || cancelled) return;
+      polling = true;
+      try {
+        const tasks = await window.otto.enterpriseFederationAtoaTasks();
+        for (const task of tasks) {
+          if (cancelled) break;
+          await processTask(task);
+        }
+      } catch {
+      } finally {
+        polling = false;
+      }
+    };
+
+    void poll();
+    const timer = window.setInterval(() => void poll(), 8_000);
+    return () => {
+      cancelled = true;
+      abortController.abort();
+      contextCache.clear();
       window.clearInterval(timer);
     };
   }, [

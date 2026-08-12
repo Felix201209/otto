@@ -454,7 +454,11 @@ export function queueFederationChatEnvelopeInRepository(
   if (!contact) throw new Error('federation contact was not found');
   const envelope = input.signed.envelope;
   if (
-    envelope.type !== 'chat.message' ||
+    !(
+      envelope.type === 'chat.message' ||
+      envelope.type === 'a2a.request' ||
+      envelope.type === 'a2a.response'
+    ) ||
     envelope.senderDeploymentId !== store.deploymentId() ||
     envelope.recipientDeploymentId !== contact.remoteDeploymentId ||
     envelope.routing.senderPrincipalId !== input.ownerAccountId ||
@@ -463,6 +467,9 @@ export function queueFederationChatEnvelopeInRepository(
     throw new Error('federation chat envelope does not match the contact');
   }
   const attachmentIds = envelope.routing.attachmentIds ?? [];
+  if (envelope.type !== 'chat.message' && attachmentIds.length > 0) {
+    throw new Error('federated A2A messages cannot reference attachments');
+  }
   if (attachmentIds.length > 6 || new Set(attachmentIds).size !== attachmentIds.length) {
     throw new Error('federation message contains invalid attachment references');
   }
@@ -670,7 +677,14 @@ export function storeClaimedFederationEnvelopeInRepository(
         signed.envelope.routing.a2aGrantId,
       );
     }
-    if (!duplicate && !discarded && signed.envelope.type === 'chat.message') {
+    if (
+      !duplicate && !discarded &&
+      (
+        signed.envelope.type === 'chat.message' ||
+        signed.envelope.type === 'a2a.request' ||
+        signed.envelope.type === 'a2a.response'
+      )
+    ) {
       const recipient = database.prepare(
         `SELECT id FROM accounts
          WHERE id = ? AND status = 'active' AND deleted_at IS NULL`,

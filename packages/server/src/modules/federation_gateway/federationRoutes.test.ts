@@ -33,6 +33,7 @@ function services(overrides: Partial<FederationRouteServices> = {}): FederationR
     queueFederationChatMessage: async (input) => ({
       messageId: input.messageId || 'fmessage_one',
     }),
+    createFederationContactA2aGrant: async () => ({ id: 'fgrant_contact' }),
     listFederationChatMessages: () => [],
     markFederationChatMessageRead: () => true,
     queueFederationMessage: async (input) => ({ messageId: input.messageId || 'generated' }),
@@ -116,7 +117,7 @@ describe('federation enterprise routes', () => {
       },
     });
     await call.execute();
-    expect(call.responses[0]?.status).toBe(202);
+    expect(call.responses[0]).toMatchObject({ status: 202 });
     expect(queue).toHaveBeenCalledWith(expect.objectContaining({
       routing: expect.objectContaining({ senderPrincipalId: 'account_member' }),
     }));
@@ -189,6 +190,94 @@ describe('federation enterprise routes', () => {
       contactId: 'fcontact_one',
       afterSequence: 0,
     }));
+  });
+
+  it('queues a contact-bound one-time A2A request without trusting caller identity fields', async () => {
+    const queue = vi.fn(async () => ({ messageId: 'fa2a_request_one' }));
+    const call = request({
+      path: '/enterprise/federation/conversations/fcontact_one/messages',
+      method: 'POST',
+      services: services({ queueFederationChatMessage: queue }),
+      body: {
+        type: 'a2a.request',
+        ciphertext: 'ZW5jcnlwdGVk',
+        messageId: 'fa2a_request_one',
+        inReplyTo: 'proposal_one',
+        a2aGrantId: 'grant_one',
+        a2aScope: 'otto.a2a.0123456789abcdef',
+        ownerAccountId: 'account_attacker',
+      },
+    });
+
+    await call.execute();
+
+    expect(call.responses[0]).toMatchObject({ status: 202 });
+    expect(queue).toHaveBeenCalledWith({
+      ownerAccountId: 'account_member',
+      contactId: 'fcontact_one',
+      ciphertext: 'ZW5jcnlwdGVk',
+      type: 'a2a.request',
+      messageId: 'fa2a_request_one',
+      inReplyTo: 'proposal_one',
+      a2aGrantId: 'grant_one',
+      a2aScope: 'otto.a2a.0123456789abcdef',
+      attachmentIds: [],
+      expiresInMs: undefined,
+    });
+  });
+
+  it('creates A2A grants from the authenticated owner and selected contact', async () => {
+    const create = vi.fn(async () => ({
+      id: 'grant_contact_one',
+      expiresAt: '2026-08-12T12:10:00.000Z',
+    }));
+    const call = request({
+      path: '/enterprise/federation/conversations/fcontact_one/a2a/grants',
+      method: 'POST',
+      services: services({ createFederationContactA2aGrant: create }),
+      body: {
+        scopes: ['otto.a2a.0123456789abcdef'],
+        expiresInMs: 600_000,
+        requesterPrincipalId: 'account_attacker',
+      },
+    });
+
+    await call.execute();
+
+    expect(call.responses[0]?.status).toBe(201);
+    expect(create).toHaveBeenCalledWith({
+      ownerAccountId: 'account_member',
+      contactId: 'fcontact_one',
+      scopes: ['otto.a2a.0123456789abcdef'],
+      expiresInMs: 600_000,
+    });
+  });
+
+  it('rejects ungranted A2A requests and A2A attachments before queueing', async () => {
+    const queue = vi.fn();
+    for (const body of [
+      {
+        type: 'a2a.request',
+        ciphertext: 'ZW5jcnlwdGVk',
+      },
+      {
+        type: 'a2a.request',
+        ciphertext: 'ZW5jcnlwdGVk',
+        a2aGrantId: 'grant_one',
+        a2aScope: 'otto.a2a.scope',
+        attachmentIds: ['attachment_not_allowed'],
+      },
+    ]) {
+      const call = request({
+        path: '/enterprise/federation/conversations/fcontact_one/messages',
+        method: 'POST',
+        services: services({ queueFederationChatMessage: queue }),
+        body,
+      });
+      await call.execute();
+      expect(call.responses[0]?.status).toBe(400);
+    }
+    expect(queue).not.toHaveBeenCalled();
   });
 
   it('does not expose another account contact through delete or read state', async () => {

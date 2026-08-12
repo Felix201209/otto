@@ -252,6 +252,25 @@ function normalizeEnterpriseMessageAttachments(
   });
 }
 
+function normalizeEnterpriseAtoaSources(value: unknown): Array<
+  'current_chat' | 'enterprise_knowledge' | 'work_logs' | 'schedules'
+> {
+  if (!Array.isArray(value) || value.length > 4) {
+    throw new Error('A2A 授权范围无效');
+  }
+  const allowed = [
+    'current_chat',
+    'enterprise_knowledge',
+    'work_logs',
+    'schedules',
+  ] as const;
+  const selected = new Set(value);
+  if ([...selected].some((item) => typeof item !== 'string')) {
+    throw new Error('A2A 授权范围无效');
+  }
+  return allowed.filter((source) => selected.has(source));
+}
+
 import { AccountDataSyncService } from './account-data-sync.js';
 import { EnterpriseSkillUsageReporter } from './enterprise-skill-usage-reporter.js';
 import {
@@ -577,6 +596,11 @@ const IPC = {
   enterpriseFederationMessagesList: 'otto:enterprise-federation-messages-list',
   enterpriseFederationMessageSend: 'otto:enterprise-federation-message-send',
   enterpriseFederationAttachmentSave: 'otto:enterprise-federation-attachment-save',
+  enterpriseFederationAtoaTasks: 'otto:enterprise-federation-atoa-tasks',
+  enterpriseFederationAtoaApprove: 'otto:enterprise-federation-atoa-approve',
+  enterpriseFederationAtoaDeny: 'otto:enterprise-federation-atoa-deny',
+  enterpriseFederationAtoaDispatch: 'otto:enterprise-federation-atoa-dispatch',
+  enterpriseFederationAtoaRespond: 'otto:enterprise-federation-atoa-respond',
   enterpriseFederationContactVerification:
     'otto:enterprise-federation-contact-verification',
   enterpriseFederationContactVerify: 'otto:enterprise-federation-contact-verify',
@@ -3041,12 +3065,16 @@ function registerIpc(): void {
   );
   ipcMain.handle(
     IPC.enterpriseFederationMessagesList,
-    async (_event, contactId: unknown) => {
+    async (_event, contactId: unknown, options: unknown) => {
       loadEnterpriseSession();
       if (typeof contactId !== 'string' || !contactId) {
         throw new Error('联邦联系人无效');
       }
-      return enterpriseClient.listFederationMessages(contactId);
+      const markRead = !(
+        options && typeof options === 'object' &&
+        'markRead' in options && options.markRead === false
+      );
+      return enterpriseClient.listFederationMessages(contactId, { markRead });
     },
   );
   ipcMain.handle(
@@ -3109,6 +3137,96 @@ function registerIpc(): void {
         messageId,
         attachmentId,
         destinationPath: result.filePath,
+      });
+    },
+  );
+  ipcMain.handle(IPC.enterpriseFederationAtoaTasks, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.listFederationAtoaTasks();
+  });
+  ipcMain.handle(
+    IPC.enterpriseFederationAtoaApprove,
+    async (_event, input: unknown) => {
+      loadEnterpriseSession();
+      if (!input || typeof input !== 'object') {
+        throw new Error('A2A 授权请求无效');
+      }
+      const candidate = input as Record<string, unknown>;
+      if (
+        typeof candidate.contactId !== 'string' || !candidate.contactId ||
+        typeof candidate.messageId !== 'string' || !candidate.messageId
+      ) {
+        throw new Error('A2A 授权请求无效');
+      }
+      return enterpriseClient.approveFederationAtoaProposal({
+        contactId: candidate.contactId,
+        messageId: candidate.messageId,
+        grantedSources: normalizeEnterpriseAtoaSources(candidate.grantedSources),
+      });
+    },
+  );
+  ipcMain.handle(
+    IPC.enterpriseFederationAtoaDeny,
+    async (_event, input: unknown) => {
+      loadEnterpriseSession();
+      if (!input || typeof input !== 'object') {
+        throw new Error('A2A 拒绝请求无效');
+      }
+      const candidate = input as Record<string, unknown>;
+      if (
+        typeof candidate.contactId !== 'string' || !candidate.contactId ||
+        typeof candidate.messageId !== 'string' || !candidate.messageId
+      ) {
+        throw new Error('A2A 拒绝请求无效');
+      }
+      return enterpriseClient.denyFederationAtoaProposal({
+        contactId: candidate.contactId,
+        messageId: candidate.messageId,
+      });
+    },
+  );
+  ipcMain.handle(
+    IPC.enterpriseFederationAtoaDispatch,
+    async (_event, input: unknown) => {
+      loadEnterpriseSession();
+      if (!input || typeof input !== 'object') {
+        throw new Error('A2A 派发请求无效');
+      }
+      const candidate = input as Record<string, unknown>;
+      if (
+        typeof candidate.contactId !== 'string' || !candidate.contactId ||
+        typeof candidate.decisionMessageId !== 'string' ||
+        !candidate.decisionMessageId
+      ) {
+        throw new Error('A2A 派发请求无效');
+      }
+      return enterpriseClient.dispatchFederationAtoaGrant({
+        contactId: candidate.contactId,
+        decisionMessageId: candidate.decisionMessageId,
+      });
+    },
+  );
+  ipcMain.handle(
+    IPC.enterpriseFederationAtoaRespond,
+    async (_event, input: unknown) => {
+      loadEnterpriseSession();
+      if (!input || typeof input !== 'object') {
+        throw new Error('A2A 回复请求无效');
+      }
+      const candidate = input as Record<string, unknown>;
+      if (
+        typeof candidate.contactId !== 'string' || !candidate.contactId ||
+        typeof candidate.requestMessageId !== 'string' ||
+        !candidate.requestMessageId ||
+        typeof candidate.answer !== 'string' || !candidate.answer.trim()
+      ) {
+        throw new Error('A2A 回复请求无效');
+      }
+      return enterpriseClient.respondFederationAtoaRequest({
+        contactId: candidate.contactId,
+        requestMessageId: candidate.requestMessageId,
+        answer: candidate.answer.trim().slice(0, 2400),
+        grantedSources: normalizeEnterpriseAtoaSources(candidate.grantedSources),
       });
     },
   );

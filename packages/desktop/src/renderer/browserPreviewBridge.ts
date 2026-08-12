@@ -378,6 +378,20 @@ if (!previewWindow.otto) {
     enterpriseFederationMessageSend: () => Promise.reject(
       new Error('浏览器预览不支持跨服务器私聊'),
     ),
+    enterpriseFederationAttachmentSave: () => Promise.resolve(null),
+    enterpriseFederationAtoaTasks: () => Promise.resolve([]),
+    enterpriseFederationAtoaApprove: () => Promise.reject(
+      new Error('浏览器预览不支持跨服务器 A2A'),
+    ),
+    enterpriseFederationAtoaDeny: () => Promise.reject(
+      new Error('浏览器预览不支持跨服务器 A2A'),
+    ),
+    enterpriseFederationAtoaDispatch: () => Promise.reject(
+      new Error('浏览器预览不支持跨服务器 A2A'),
+    ),
+    enterpriseFederationAtoaRespond: () => Promise.reject(
+      new Error('浏览器预览不支持跨服务器 A2A'),
+    ),
     enterpriseFederationContactVerification: () => Promise.reject(
       new Error('浏览器预览不支持跨服务器身份核验'),
     ),

@@ -541,6 +541,7 @@ export const {
   queueFederationMessage,
   listFederationInbox,
   consumeFederationInbox,
+  createFederationContactA2aGrant,
   createFederationA2aGrant,
   revokeFederationA2aGrant,
   blockFederationDeployment,

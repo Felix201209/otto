@@ -22,6 +22,10 @@ import type {
 import { isAuthenticatedEnterpriseAccount } from '../internal-test-access.js';
 import { createQrMatrix } from '../lib/qrMatrix.js';
 import {
+  buildAtoaRequest,
+  displayDirectMessageContent,
+} from '../atoaProtocol.js';
+import {
   IconCheckCheck,
   IconClose,
   IconCopy,
@@ -359,6 +363,33 @@ export function InboxPage({
     }
   };
 
+  const askFederationPeerOtto = async (): Promise<void> => {
+    const question = replyInput.trim();
+    if (
+      !selectedFederationContactId || !selectedFederationContact ||
+      !question || sending || federationAttachments.length > 0
+    ) return;
+    if (selectedFederationContact.trustState !== 'verified') {
+      setFederationError('请先核验联系人安全号码，再向对方 Otto 提问。');
+      return;
+    }
+    setSending(true);
+    try {
+      const message = await window.otto.enterpriseFederationMessageSend(
+        selectedFederationContactId,
+        buildAtoaRequest(question, { mode: 'answer' }),
+      );
+      setMessages((current) => [...current, message]);
+      setReplyInput('');
+      setFederationError('');
+      void refreshFederationContacts();
+    } catch (error) {
+      setFederationError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSending(false);
+    }
+  };
+
   const addFederationFiles = async (files: FileList | File[]): Promise<void> => {
     try {
       const next = [...federationAttachments];
@@ -476,7 +507,9 @@ export function InboxPage({
         return (
           <div key={msg.id} className={`otto-inbox-page__msg${mine ? ' is-mine' : ''}`}>
             <span className="otto-inbox-page__msg-bubble">
-              {msg.content ? <span>{msg.content}</span> : null}
+              {msg.content ? (
+                <span>{displayDirectMessageContent(msg.content)}</span>
+              ) : null}
               {(msg.attachments ?? []).map((attachment) => (
                 <span key={attachment.id} className="otto-inbox-page__attachment">
                   <span>
@@ -532,18 +565,34 @@ export function InboxPage({
         aria-label="回复消息"
       />
       {selectedFederationContactId ? (
-        <label className="otto-inbox-page__attach-button">
-          <input
-            type="file"
-            multiple
-            hidden
-            onChange={(event) => {
-              if (event.target.files) void addFederationFiles(event.target.files);
-              event.target.value = '';
-            }}
-          />
-          添加文件
-        </label>
+        <div className="otto-inbox-page__reply-actions">
+          <label className="otto-inbox-page__attach-button">
+            <input
+              type="file"
+              multiple
+              hidden
+              onChange={(event) => {
+                if (event.target.files) void addFederationFiles(event.target.files);
+                event.target.value = '';
+              }}
+            />
+            添加文件
+          </label>
+          <button
+            type="button"
+            className="otto-inbox-page__a2a-button"
+            disabled={
+              !replyInput.trim() || sending || federationAttachments.length > 0 ||
+              selectedFederationContact?.trustState !== 'verified'
+            }
+            title={selectedFederationContact?.trustState === 'verified'
+              ? '对方必须明确批准资料范围，授权仅使用一次'
+              : '请先核验联系人身份'}
+            onClick={() => { void askFederationPeerOtto(); }}
+          >
+            询问对方 Otto
+          </button>
+        </div>
       ) : null}
       {selectedFederationContactId && federationAttachments.length > 0 ? (
         <div className="otto-inbox-page__pending-attachments">

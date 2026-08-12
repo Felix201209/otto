@@ -289,6 +289,7 @@ export * from './orchestration/index.js';
 export * from './tools/voice-bridge.js';
 export * from './tools/doctor.js';
 export * from './tools/enterprise-collaboration.js';
+export * from './a2a/federationAtoaProtocol.js';
 
 // 多渠道通知服务
 export { NotificationService, getNotificationService } from './services/notificationService.js';
