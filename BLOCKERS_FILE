@@ -29,3 +29,4 @@
 - #243 [SERVER-08][P0] 真实业务 Agent 评测与质量发布门禁 | 原因: 依赖仍开放的 #238/#241，且缺少三模型真实运行环境、版本化业务题库、人工标注校准主体与 nightly 验收历史
 - #241 [SERVER-06][P0] PostgreSQL 耐久工作流队列与多实例 Worker | 原因: 依赖仍开放的 #238/#239/#242，且缺少 PostgreSQL 集群、双 Worker 故障注入与 24 小时长稳验收环境
 - #240 [SERVER-04][P0] 完成 SQLCipher 与 Rust MLS 五平台发行资产 | 原因: 依赖仍开放的 SERVER-03/#235，当前 internal 缺少 Rust MLS/SQLCipher 发行源码，且无 macOS/Linux 双架构真实构建与加载验收环境
+- #239 [SERVER-02][P0] 选择性合入 PostgreSQL 权威数据层与迁移工具 | 原因: 依赖尚未完成的 #238；候选实现仅存在于混合 SQLCipher/E2EE/UI 的开放 PR #233，且缺少真实 PostgreSQL 双实例迁移、并发与回滚验收环境
