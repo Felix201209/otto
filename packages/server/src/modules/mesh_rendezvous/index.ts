@@ -11,3 +11,4 @@ export * from './meshRepository.js';
 export * from './meshRuntime.js';
 export * from './meshRoutes.js';
 export * from './meshComposition.js';
+export * from './meshSync.js';
