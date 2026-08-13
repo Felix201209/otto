@@ -11,3 +11,4 @@ export * from './licenseIssuance.js';
 export * from './orderLicenseRepository.js';
 export * from './orderLicenseComposition.js';
 export * from './controlLicenseActivation.js';
+export * from './usbLicenseActivation.js';

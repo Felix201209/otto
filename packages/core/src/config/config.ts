@@ -1457,6 +1457,7 @@ export class Config {
     await registerLazyCoreTool('RpaRunTool', 'rpa_run', async () => (await import('../tools/rpa-run.js')).RpaRunTool, this);
     await registerLazyCoreTool('DurableWorkflowTool', 'durable_workflow', async () => (await import('../tools/durable-workflow.js')).DurableWorkflowTool, this, registry);
     await registerLazyCoreTool('MultiChannelTool', 'multi_channel', async () => (await import('../tools/multi-channel.js')).MultiChannelTool, this); // 多渠道消息（飞书/企微/钉钉等）
+    await registerLazyCoreTool('MeetingActionsTool', 'meeting_actions', async () => (await import('../tools/meeting-actions.js')).MeetingActionsTool);
     await registerLazyCoreTool('MemoryManagerTool', 'memory_manager', async () => (await import('../tools/memory-manager.js')).MemoryManagerTool, this); // 知识沉淀 + HR 生命周期
     await registerLazyCoreTool('FeishuProjectCollabTool', 'feishu_project_collab', async () => (await import('../tools/feishu-project-collab.js')).FeishuProjectCollabTool, this); // 飞书项目协作：表格/多维表格/验收节点/提醒/进度同步
     await registerLazyCoreTool('EnterpriseCollaborationTool', 'enterprise_collaboration', async () => (await import('../tools/enterprise-collaboration.js')).EnterpriseCollaborationTool); // 企业树成员、私聊与经授权的 Otto-to-Otto 协作

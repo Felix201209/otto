@@ -428,6 +428,10 @@ export class OttoServer {
 
   /** 启动 HTTP + WS，并按需注册飞书网关。 */
   async start(): Promise<void> {
+    const { enforceUsbLicenseFromEnvironment } = await import(
+      './modules/order_license/usbLicenseActivation.js'
+    );
+    await enforceUsbLicenseFromEnvironment();
     this.http = createServer((req, res) => this.handleHttp(req, res));
     this.wss = new WebSocketServer({
       server: this.http,

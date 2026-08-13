@@ -147,6 +147,12 @@ describe('license issuance (CONTROL-11)', () => {
     expect(verify.valid).toBe(true);
   });
 
+  it('USB 签发显式保留待激活的 machineFingerprint', () => {
+    const entitlement = deriveEntitlement(makeEvent(), undefined, 'lic_usb', 1);
+    const payload = buildLicensePayload(entitlement, 1, undefined, 'nonce-1');
+    expect(payload).toMatchObject({ activationNonce: 'nonce-1', machineFingerprint: '' });
+  });
+
   it('digest 稳定且无秘密', () => {
     const entitlement = deriveEntitlement(makeEvent(), undefined, 'lic_x', 1);
     const p1 = buildLicensePayload(entitlement, 1);

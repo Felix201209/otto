@@ -33,6 +33,8 @@ export interface SignLicenseInput {
   machineFingerprint?: string;
   /** 回滚序列（随版本递增；旧版本回滚被拒绝）。 */
   rollbackSequence: number;
+  /** USB 离线首次激活的唯一标识；签名后不可回填负载。 */
+  activationNonce?: string;
 }
 
 export interface IssuedLicenseEnvelope {
@@ -55,6 +57,7 @@ export function buildLicensePayload(
   entitlement: LicenseEntitlement,
   rollbackSequence: number,
   machineFingerprint?: string,
+  activationNonce?: string,
 ): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     id: entitlement.licenseId,
@@ -77,6 +80,10 @@ export function buildLicensePayload(
   if (machineFingerprint) {
     payload.machineFingerprint = machineFingerprint;
   }
+  if (activationNonce) {
+    payload.activationNonce = activationNonce;
+    payload.machineFingerprint ??= '';
+  }
   return payload;
 }
 
@@ -89,6 +96,7 @@ export function issueSignedLicense(input: SignLicenseInput): IssuedLicenseEnvelo
     input.entitlement,
     input.rollbackSequence,
     input.machineFingerprint,
+    input.activationNonce,
   );
   const signature = signEd25519Envelope(payload, input.signingPrivateKey);
   return {
