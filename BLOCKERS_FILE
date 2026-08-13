@@ -10,6 +10,7 @@
 - #281 [CLOUD-01][P0] 建立阿里云计算巢服务与 ROS 套餐模板 | 原因: 仓库无现有 ROS/计算巢资产，且缺少付费阿里云测试账号、三套餐资源配额、RAM 服务角色与真实创建/幂等/删除/回滚/成本验收环境，无法完成模板云端验证
 - #279 [E2EE][P0] 实现 MLS 私聊附件密钥封装、续传恢复与多设备同步 | 原因: 实现仍在草稿 PR #312 且未进入 internal；硬依赖 #249 的独立外部密码学审计与生产发布批准尚未完成，不能用内部测试绕过 E2EE 发布门禁
 - #251 [NSI-03][P0] 完成 macOS 双架构签名与公证 | 原因: 缺少 Apple Developer ID/公证凭据、可用 macOS 双架构真机与 Control 证据上传环境，Windows 主机无法完成 Gatekeeper 和升级验收
+- #250 [NSI-01][P0] 完成桌面安装包运行时依赖封装 | 原因: 等待 Felix 稳定依赖清单，且缺少经审计的跨平台 Python/Node/LibreOffice 载荷和全新设备端到端验收环境
 - #278 feat(e2ee): complete production MLS session orchestration and safety reset | 原因: 独立外部密码学审计、审计报告登记与人工生产发布批准尚未完成，releaseApproved 与生产能力必须继续 fail-closed
 - #275 MLS 已批准设备应维持有界的一次性 KeyPackage 库存 | 原因: 已记录的实现提交 afa02933 不在 internal 且当前无法解析，依赖仍开放的 PR #233 合并及真实环境验收
 - #274 MLS 后台应自动发现当前设备的未打开入站 Welcome | 原因: 已记录的实现提交 71fceb36 不在 internal 且当前无法解析，依赖仍开放的 PR #233 合并
