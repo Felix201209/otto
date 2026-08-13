@@ -2,6 +2,7 @@
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
+import { generateKeyPairSync } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -12,6 +13,10 @@ import {
   dataProcessingInventory,
   legalDocumentHash,
 } from '../modules/data_governance/index.js';
+import {
+  publicKeyId,
+  signEd25519Envelope,
+} from '../modules/commercial_control/index.js';
 import { createClusteredEnterpriseServer } from './clusteredServer.js';
 import type { ClusteredEnterpriseSharedState } from './clusteredSharedState.js';
 import type {
@@ -49,7 +54,64 @@ const peerAccount: PostgresEnterpriseAccountView = {
   isAdmin: false,
 };
 
-function repository(): PostgresEnterpriseCoreRepository {
+const licenseKeyPair = generateKeyPairSync('ed25519');
+const licensePrivateKey = licenseKeyPair.privateKey.export({
+  format: 'pem',
+  type: 'pkcs8',
+}).toString();
+const licensePublicKey = licenseKeyPair.publicKey.export({
+  format: 'pem',
+  type: 'spki',
+}).toString();
+
+function activeLicenseRecord(
+  overrides: Record<string, unknown> = {},
+) {
+  const payload = {
+    id: 'lic_clustered_test',
+    deploymentId: 'clustered-enterprise',
+    organizationId: account.organizationId,
+    plan: 'enterprise',
+    expiresAt: '2099-08-01T00:00:00.000Z',
+    seatLimit: 10,
+    modules: [
+      'enterprise_tree',
+      'direct_messages',
+      'atoa',
+      'knowledge',
+      'skill_market',
+      'park_service',
+    ],
+    offline: true,
+    ...overrides,
+  };
+  return {
+    organizationId: account.organizationId,
+    domain: 'commercial_control' as const,
+    resourceType: 'license',
+    resourceId: 'current',
+    ownerAccountId: account.id,
+    status: 'active',
+    version: 1,
+    payload: {
+      signedEnvelope: {
+        payload,
+        signature: signEd25519Envelope(payload, licensePrivateKey),
+        signingKeyId: publicKeyId(licensePublicKey),
+      },
+      expiresAt: payload.expiresAt,
+      seatLimit: payload.seatLimit,
+      modules: payload.modules,
+    },
+    createdAt: '2026-08-01T00:00:00.000Z',
+    updatedAt: '2026-08-01T00:00:00.000Z',
+  };
+}
+
+function repository(
+  licenseRecord: ReturnType<typeof activeLicenseRecord> | null =
+    activeLicenseRecord(),
+): PostgresEnterpriseCoreRepository {
   const getDataGovernanceProfile = vi.fn(async () => ({
     ...dataGovernanceConfiguration(),
     documents: CURRENT_LEGAL_DOCUMENTS.map((document) => ({
@@ -79,6 +141,7 @@ function repository(): PostgresEnterpriseCoreRepository {
     getLoginRetryAfter: vi.fn(async () => 0),
     recordLoginFailure: vi.fn(async () => 0),
     clearLoginFailures: vi.fn(async () => undefined),
+    logAudit: vi.fn(async () => undefined),
     createAuthSession: vi.fn(async () => ({
       token: 'clustered-session-token',
       expiresAt: '2026-09-01T00:00:00.000Z',
@@ -117,7 +180,16 @@ function repository(): PostgresEnterpriseCoreRepository {
       updatedAtMs: Date.parse('2026-08-01T00:00:00.000Z'),
     })),
     listBusinessRecords: vi.fn(async () => []),
-    getBusinessRecord: vi.fn(async () => null),
+    getBusinessRecord: vi.fn(async (input: {
+      domain: string;
+      resourceType: string;
+      resourceId: string;
+    }) =>
+      input.domain === 'commercial_control' &&
+      input.resourceType === 'license' &&
+      input.resourceId === 'current'
+        ? licenseRecord
+        : null),
     createBusinessRecord: vi.fn(async (input) => ({
       organizationId: input.organizationId,
       domain: input.domain,
@@ -209,6 +281,7 @@ async function listen(
     adminToken: 'system-admin-token',
     appVersion: '1.9.10',
     buildCommit: 'a'.repeat(40),
+    licensePublicKeys: [licensePublicKey],
     ...options,
   });
   servers.push(created.server);
@@ -266,6 +339,71 @@ describe('clustered PostgreSQL enterprise server', () => {
       'correct-password',
     );
     expect(repo.clearLoginFailures).toHaveBeenCalledWith('admin');
+  });
+
+  it('fails closed for missing, expired, unlicensed, and over-seat business execution', async () => {
+    const authorization = 'Bearer clustered-session-token';
+    const cases = [
+      {
+        repository: repository(null),
+        path: '/enterprise/knowledge',
+        code: 'deployment_license_inactive',
+      },
+      {
+        repository: repository(null),
+        path: '/enterprise/accounts',
+        code: 'deployment_license_inactive',
+      },
+      {
+        repository: repository(
+          activeLicenseRecord({ expiresAt: '2020-01-01T00:00:00.000Z' }),
+        ),
+        path: '/enterprise/tickets',
+        code: 'deployment_license_inactive',
+      },
+      {
+        repository: repository(
+          activeLicenseRecord({ modules: ['enterprise_tree'] }),
+        ),
+        path: '/enterprise/skills',
+        code: 'commercial_module_not_entitled',
+      },
+      {
+        repository: repository(activeLicenseRecord({ seatLimit: 1 })),
+        path: '/enterprise/attachments/inline',
+        code: 'deployment_seat_limit_exceeded',
+      },
+    ];
+    for (const testCase of cases) {
+      const { baseUrl } = await listen(testCase.repository);
+      const response = await fetch(`${baseUrl}${testCase.path}`, {
+        headers: { authorization },
+      });
+      expect(response.status, testCase.path).toBe(402);
+      await expect(response.json()).resolves.toMatchObject({
+        code: testCase.code,
+        license: { enforce: true },
+      });
+      expect(testCase.repository.logAudit).toHaveBeenCalledWith(
+        'commercial_license_denied',
+        account.organizationId,
+        account.employeeId,
+        expect.objectContaining({
+          actorAccountId: account.id,
+          code: testCase.code,
+        }),
+      );
+    }
+
+    const { baseUrl } = await listen(repository(null));
+    const me = await fetch(`${baseUrl}/enterprise/auth/me`, {
+      headers: { authorization },
+    });
+    expect(me.status).toBe(200);
+    const exported = await fetch(`${baseUrl}/enterprise/privacy/export`, {
+      headers: { authorization },
+    });
+    expect(exported.status).toBe(200);
   });
 
   it('stores heartbeats in shared state and exposes presence in the organization tree', async () => {
@@ -351,7 +489,7 @@ describe('clustered PostgreSQL enterprise server', () => {
     expect(await privacy.json()).toMatchObject({
       currentConsentComplete: false,
       authorization: {
-        license: { status: 'unavailable', enforce: true },
+        license: { status: 'active', enforce: true },
         dataBoundary: { authority: 'postgresql' },
       },
     });
@@ -600,6 +738,54 @@ describe('clustered PostgreSQL enterprise server', () => {
         accountId: 'acc_admin',
         expectedVersion: 0,
       }),
+    );
+  });
+
+  it('allows sync export but blocks sync writes when the License is inactive', async () => {
+    const repo = repository(null);
+    const { baseUrl } = await listen(repo);
+    const headers = { authorization: 'Bearer clustered-session-token' };
+    const restored = await fetch(`${baseUrl}/enterprise/account-sync`, {
+      headers,
+    });
+    expect(restored.status).toBe(200);
+    const stored = await fetch(`${baseUrl}/enterprise/account-sync`, {
+      method: 'PUT',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        scope: 'worklog',
+        expectedVersion: 0,
+        payload: { schemaVersion: 1, generatedAt: '2026-08-14T00:00:00Z', files: [] },
+      }),
+    });
+    expect(stored.status).toBe(402);
+    expect(repo.putAccountSyncSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('allows an over-seat administrator to disable an account for remediation', async () => {
+    const repo = {
+      ...repository(activeLicenseRecord({ seatLimit: 1 })),
+      getAccount: vi.fn(async () => peerAccount),
+      updateAccount: vi.fn(async () => ({
+        ...peerAccount,
+        status: 'disabled' as const,
+      })),
+    } as unknown as PostgresEnterpriseCoreRepository;
+    const { baseUrl } = await listen(repo);
+    const response = await fetch(
+      `${baseUrl}/enterprise/accounts/${peerAccount.id}`,
+      {
+        method: 'PATCH',
+        headers: {
+          authorization: 'Bearer clustered-session-token',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ status: 'disabled' }),
+      },
+    );
+    expect(response.status).toBe(200);
+    expect(repo.updateAccount).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'disabled' }),
     );
   });
 
@@ -871,6 +1057,10 @@ describe('clustered PostgreSQL enterprise server', () => {
       ...repository(),
       requestSmsRegistration,
       discardSmsRegistrationChallenge: vi.fn(async () => undefined),
+      inspectSmsRegistrationChallenge: vi.fn(async () => ({
+        organizationId: 'org_default',
+        registrationMode: 'personal' as const,
+      })),
       completeSmsRegistration,
     } as unknown as PostgresEnterpriseCoreRepository;
     const smsSender = {
@@ -949,6 +1139,10 @@ describe('clustered PostgreSQL enterprise server', () => {
     const repo = {
       ...repository(),
       getAccountBySession: vi.fn(async () => personal),
+      inspectOrganizationInvite: vi.fn(async () => ({
+        status: 'active' as const,
+        organizationId: 'org_default',
+      })),
       joinOrganizationWithInvite,
     } as unknown as PostgresEnterpriseCoreRepository;
     const { baseUrl } = await listen(repo);

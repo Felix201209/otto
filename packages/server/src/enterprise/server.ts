@@ -437,7 +437,7 @@ function makeHandler(
       };
       if (
         (isAdminRoute(path) || isMemberRoute(path)) &&
-        !isLicenseMaintenanceRoute(path) &&
+        !isLicenseMaintenanceRoute(path, method) &&
         db.isLicenseRestricted()
       ) {
         auditCommercialDecision('commercial_license_denied', {

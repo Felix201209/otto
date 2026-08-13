@@ -23,7 +23,15 @@ import type {
   PostgresClientLike,
   PostgresPoolLike,
 } from '../modules/data_platform/postgresDatabaseLifecycle.js';
-import type { PostgresEnterpriseAccountView } from './postgresCoreRepository.js';
+import {
+  type PostgresEnterpriseAccountView,
+} from './postgresCoreRepository.js';
+import {
+  enforcePostgresEnterpriseSeatAdmission,
+  PostgresEnterpriseLicenseAdmissionError,
+  PostgresEnterpriseSeatLimitError,
+  type PostgresLicenseSeatAdmission,
+} from './postgresLicenseSeatAdmission.js';
 
 const INVITE_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
@@ -121,13 +129,20 @@ export type PostgresSmsRegistrationCompletionResult =
       state: 'invalid' | 'expired' | 'locked' | 'used';
       attemptsRemaining: number;
     }
-  | { state: 'phone-conflict' | 'invite-unavailable' };
+  | {
+      state:
+        | 'phone-conflict'
+        | 'invite-unavailable'
+        | 'license-admission-invalid'
+        | 'seat-limit-exceeded';
+    };
 
 export type PostgresOrganizationJoinResult =
   | { state: 'joined'; account: PostgresEnterpriseAccountView }
   | {
       state: 'invalid-invite' | 'not-personal' | 'security-state-present';
-    };
+    }
+  | { state: 'seat-limit-exceeded' | 'license-admission-invalid' };
 
 function iso(value: Date | string): string {
   return value instanceof Date
@@ -615,6 +630,27 @@ export function createPostgresRegistrationRepository(input: {
     );
   }
 
+  async function inspectSmsRegistrationChallenge(
+    challengeId: string,
+  ): Promise<{
+    organizationId: string;
+    registrationMode: 'personal' | 'enterprise';
+  } | null> {
+    if (!/^smsreg_[A-Za-z0-9-]+$/u.test(challengeId.trim())) return null;
+    const result = await input.pool.query<ChallengeRow>(
+      `SELECT * FROM sms_registration_challenges WHERE id = $1`,
+      [challengeId.trim()],
+    );
+    const challenge = result.rows[0];
+    if (!challenge) return null;
+    return {
+      organizationId: challenge.organization_id,
+      registrationMode: challenge.organization_invite_id
+        ? 'enterprise'
+        : 'personal',
+    };
+  }
+
   async function completeSmsRegistration(raw: {
     challengeId: string;
     code: string;
@@ -622,6 +658,7 @@ export function createPostgresRegistrationRepository(input: {
     password: string;
     legalConsent: true;
     legalDocuments: unknown;
+    licenseSeatAdmission?: PostgresLicenseSeatAdmission;
     now?: Date;
   }): Promise<PostgresSmsRegistrationCompletionResult> {
     if (!/^smsreg_[A-Za-z0-9-]+$/u.test(raw.challengeId.trim())) {
@@ -755,6 +792,27 @@ export function createPostgresRegistrationRepository(input: {
         );
       }
 
+      if (accountType === 'enterprise') {
+        try {
+          if (!raw.licenseSeatAdmission) {
+            throw new Error('enterprise registration requires license admission');
+          }
+          await enforcePostgresEnterpriseSeatAdmission(
+            client,
+            organizationId,
+            raw.licenseSeatAdmission,
+          );
+        } catch (error) {
+          if (error instanceof PostgresEnterpriseSeatLimitError) {
+            return { result: { state: 'seat-limit-exceeded' } as const };
+          }
+          if (error instanceof PostgresEnterpriseLicenseAdmissionError) {
+            return { result: { state: 'license-admission-invalid' } as const };
+          }
+          throw error;
+        }
+      }
+
       const accountId = `acc_${randomUUID()}`;
       const digits = challenge.phone.slice(-4);
       const username = `otto_${digits}_${randomBytes(5).toString('hex')}`;
@@ -846,12 +904,20 @@ export function createPostgresRegistrationRepository(input: {
   async function joinOrganizationWithInvite(raw: {
     accountId: string;
     inviteCode: string;
+    licenseSeatAdmission?: PostgresLicenseSeatAdmission;
     now?: Date;
   }): Promise<PostgresOrganizationJoinResult> {
     const accountId = identifier(raw.accountId, 'account id');
     const now = raw.now ?? new Date();
     const moved = await transaction<
-      | { state: 'invalid-invite' | 'not-personal' | 'security-state-present' }
+      | {
+          state:
+            | 'invalid-invite'
+            | 'not-personal'
+            | 'security-state-present'
+            | 'license-admission-invalid'
+            | 'seat-limit-exceeded';
+        }
       | { state: 'joined'; organizationId: string }
     >(input.pool, async (client) => {
       const accountResult = await client.query<
@@ -883,7 +949,6 @@ export function createPostgresRegistrationRepository(input: {
       ) {
         return { state: 'invalid-invite' };
       }
-
       const bound = await client.query<
         {
           e2ee_devices: number | string;
@@ -918,6 +983,24 @@ export function createPostgresRegistrationRepository(input: {
         Object.values(securityState).some((value) => Number(value) > 0)
       ) {
         return { state: 'security-state-present' };
+      }
+      try {
+        if (!raw.licenseSeatAdmission) {
+          throw new Error('organization join requires license admission');
+        }
+        await enforcePostgresEnterpriseSeatAdmission(
+          client,
+          invite.organization_id,
+          raw.licenseSeatAdmission,
+        );
+      } catch (error) {
+        if (error instanceof PostgresEnterpriseSeatLimitError) {
+          return { state: 'seat-limit-exceeded' };
+        }
+        if (error instanceof PostgresEnterpriseLicenseAdmissionError) {
+          return { state: 'license-admission-invalid' };
+        }
+        throw error;
       }
 
       const assignment = await resolveAssignment(
@@ -1044,6 +1127,7 @@ export function createPostgresRegistrationRepository(input: {
     inspectOrganizationInvite,
     requestSmsRegistration,
     discardSmsRegistrationChallenge,
+    inspectSmsRegistrationChallenge,
     completeSmsRegistration,
     joinOrganizationWithInvite,
   };

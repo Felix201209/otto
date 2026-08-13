@@ -15,11 +15,20 @@ import {
 } from 'node:http';
 import { createAliyunLoginSmsFromEnv } from 'otto-core';
 
+import {
+  commercialFeatureForEnterpriseRoute,
+  isLicenseMaintenanceRoute,
+} from '../modules/authorization/index.js';
 import type {
   E2eeAttachmentCiphertextInput,
   E2eeMessageEnvelope,
 } from '../modules/collaboration/index.js';
 import { E2EE_ATTACHMENT_MAX_CIPHERTEXT_BYTES } from '../modules/collaboration/index.js';
+import {
+  evaluateClusteredLicense,
+  parsePublicKeyList,
+  type ClusteredLicenseDecision,
+} from '../modules/commercial_control/index.js';
 import {
   currentLegalDocumentReferences,
   requireCurrentLegalDocumentReferences,
@@ -54,6 +63,10 @@ import {
 } from './clusteredInfrastructure.js';
 import type { ClusteredEnterpriseSharedState } from './clusteredSharedState.js';
 import {
+  PostgresEnterpriseLicenseAdmissionError,
+  PostgresEnterpriseSeatLimitError,
+} from './postgresLicenseSeatAdmission.js';
+import {
   createPostgresEnterpriseCoreRepository,
   normalizePostgresEnterprisePhone,
   type PostgresEnterpriseAccountView,
@@ -76,6 +89,7 @@ export interface ClusteredEnterpriseServerOptions {
   buildCommit?: string;
   publicUrl?: string;
   smsSender?: ClusteredEnterpriseSmsSender | null;
+  licensePublicKeys?: readonly string[];
   infrastructure?: ClusteredEnterpriseInfrastructure;
   /** @deprecated Inject the complete clustered infrastructure instead. */
   repository?: PostgresEnterpriseCoreRepository;
@@ -425,6 +439,92 @@ function publicAttachmentMetadata(metadata: {
   };
 }
 
+function sendLicenseSeatAdmissionError(
+  res: ServerResponse,
+  error: unknown,
+): boolean {
+  if (error instanceof PostgresEnterpriseSeatLimitError) {
+    sendJson(res, 402, {
+      error: 'deployment seat limit is exceeded',
+      code: 'deployment_seat_limit_exceeded',
+    });
+    return true;
+  }
+  if (error instanceof PostgresEnterpriseLicenseAdmissionError) {
+    sendJson(res, 402, {
+      error: 'deployment license changed; retry authorization',
+      code: 'deployment_license_inactive',
+    });
+    return true;
+  }
+  return false;
+}
+
+async function requireClusteredLicense(input: {
+  repository: PostgresEnterpriseCoreRepository;
+  organizationId: string;
+  actorAccountId: string | null;
+  actorEmployeeId: string | null;
+  res: ServerResponse;
+  deploymentId: string;
+  publicKeys: readonly string[];
+  requiredFeature?: ReturnType<typeof commercialFeatureForEnterpriseRoute>;
+  seatIncrement?: number;
+  allowSeatOverage?: boolean;
+  sendDenial?: boolean;
+}): Promise<ClusteredLicenseDecision | null> {
+  const [stored, accounts] = await Promise.all([
+    input.repository.getBusinessRecord<Record<string, unknown>>({
+      organizationId: input.organizationId,
+      domain: 'commercial_control',
+      resourceType: 'license',
+      resourceId: 'current',
+    }),
+    input.repository.listAccounts(input.organizationId),
+  ]);
+  const decision = evaluateClusteredLicense({
+    stored,
+    organizationId: input.organizationId,
+    deploymentId: input.deploymentId,
+    activeSeatCount:
+      accounts.filter(
+        (account) =>
+          account.accountType === 'enterprise' && account.status === 'active',
+      ).length + Math.max(0, input.seatIncrement ?? 0),
+    requiredFeature: input.requiredFeature,
+    allowSeatOverage: input.allowSeatOverage,
+    publicKeys: input.publicKeys,
+  });
+  if (decision.allowed || input.sendDenial === false) return decision;
+  try {
+    await input.repository.logAudit(
+      'commercial_license_denied',
+      input.organizationId,
+      input.actorEmployeeId,
+      {
+        actorAccountId: input.actorAccountId,
+        code: decision.code,
+        feature: decision.feature ?? null,
+        licenseStatus: decision.summary.status,
+        activeSeatCount: decision.summary.activeSeatCount,
+        seatLimit: decision.summary.seatLimit,
+      },
+    );
+  } catch (error) {
+    console.error('[Otto Enterprise] clustered license audit failed', {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+  sendJson(input.res, decision.statusCode, {
+    error: decision.error,
+    code: decision.code,
+    ...(decision.feature ? { feature: decision.feature } : {}),
+    license: decision.summary,
+    allowed: ['login', 'license update', 'data export', 'diagnostics'],
+  });
+  return null;
+}
+
 export function createClusteredEnterpriseServer(
   repository: PostgresEnterpriseCoreRepository,
   options: {
@@ -440,6 +540,7 @@ export function createClusteredEnterpriseServer(
     attachmentStorage?: AttachmentStorageService;
     publicUrl?: string;
     smsSender?: ClusteredEnterpriseSmsSender | null;
+    licensePublicKeys?: readonly string[];
     startedAt?: string;
   } = {},
 ): {
@@ -456,6 +557,14 @@ export function createClusteredEnterpriseServer(
   const publicBaseUrl = resolveEnterprisePublicBaseUrl({
     configuredUrl: options.publicUrl,
   });
+  const deploymentId =
+    process.env.OTTO_DEPLOYMENT_ID?.trim() || 'clustered-enterprise';
+  const licensePublicKeys =
+    options.licensePublicKeys ??
+    parsePublicKeyList(
+      process.env.OTTO_LICENSE_PUBLIC_KEYS,
+      process.env.OTTO_LICENSE_REVOKED_KEY_IDS,
+    );
   const governanceAuthorization = {
     deploymentId:
       process.env.OTTO_DEPLOYMENT_ID?.trim() || 'clustered-enterprise',
@@ -476,6 +585,25 @@ export function createClusteredEnterpriseServer(
       attachmentContent: 'client_e2ee_ciphertext_only',
       clientIdentityPrivateKeys: 'client_only',
     },
+  };
+  const governanceAuthorizationFor = async (
+    account: PostgresEnterpriseAccountView,
+    res: ServerResponse,
+  ) => {
+    const decision = await requireClusteredLicense({
+      repository,
+      organizationId: account.organizationId,
+      actorAccountId: account.id,
+      actorEmployeeId: account.employeeId,
+      res,
+      deploymentId,
+      publicKeys: licensePublicKeys,
+      sendDenial: false,
+    });
+    return {
+      ...governanceAuthorization,
+      license: decision!.summary,
+    };
   };
 
   const server = createServer(async (req, res) => {
@@ -575,7 +703,7 @@ export function createClusteredEnterpriseServer(
         if (!account) return;
         sendJson(res, 200, {
           ...(await repository.getDataGovernanceProfile(account)),
-          authorization: governanceAuthorization,
+          authorization: await governanceAuthorizationFor(account, res),
         });
         return;
       }
@@ -606,7 +734,7 @@ export function createClusteredEnterpriseServer(
         }
         sendJson(res, 200, {
           ...(await repository.getDataGovernanceProfile(account)),
-          authorization: governanceAuthorization,
+          authorization: await governanceAuthorizationFor(account, res),
         });
         return;
       }
@@ -646,6 +774,32 @@ export function createClusteredEnterpriseServer(
           return;
         }
         const body = await readJsonBody(req);
+        const inviteCode =
+          typeof body.inviteCode === 'string' ? body.inviteCode.trim() : '';
+        if (inviteCode) {
+          const invite = await repository.inspectOrganizationInvite(inviteCode);
+          if (invite.status === 'active' && invite.organizationId) {
+            const admission = await requireClusteredLicense({
+              repository,
+              organizationId: invite.organizationId,
+              actorAccountId: null,
+              actorEmployeeId: null,
+              res,
+              deploymentId,
+              publicKeys: licensePublicKeys,
+              requiredFeature: 'enterprise_tree',
+              seatIncrement: 1,
+              sendDenial: false,
+            });
+            if (!admission?.allowed) {
+              sendJson(res, 402, {
+                error: 'organization registration is unavailable',
+                code: admission?.code ?? 'deployment_license_inactive',
+              });
+              return;
+            }
+          }
+        }
         const phone = typeof body.phone === 'string' ? body.phone : '';
         const localPhone = normalizePostgresEnterprisePhone(phone).slice(3);
         const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
@@ -739,6 +893,31 @@ export function createClusteredEnterpriseServer(
           sendJson(res, 400, { error: 'registration details are invalid' });
           return;
         }
+        const challenge =
+          await repository.inspectSmsRegistrationChallenge(challengeId);
+        let seatAdmission;
+        if (challenge?.registrationMode === 'enterprise') {
+          const license = await requireClusteredLicense({
+            repository,
+            organizationId: challenge.organizationId,
+            actorAccountId: null,
+            actorEmployeeId: null,
+            res,
+            deploymentId,
+            publicKeys: licensePublicKeys,
+            requiredFeature: 'enterprise_tree',
+            seatIncrement: 1,
+            sendDenial: false,
+          });
+          if (!license?.allowed) {
+            sendJson(res, 402, {
+              error: 'organization registration is unavailable',
+              code: license?.code ?? 'deployment_license_inactive',
+            });
+            return;
+          }
+          seatAdmission = license.seatAdmission;
+        }
         const completed = await repository.completeSmsRegistration({
           challengeId,
           code,
@@ -746,6 +925,7 @@ export function createClusteredEnterpriseServer(
           password,
           legalConsent: true,
           legalDocuments,
+          licenseSeatAdmission: seatAdmission,
         });
         if (completed.state === 'phone-conflict') {
           sendJson(res, 409, { error: 'phone is already registered' });
@@ -754,6 +934,20 @@ export function createClusteredEnterpriseServer(
         if (completed.state === 'invite-unavailable') {
           sendJson(res, 409, {
             error: 'organization invitation is unavailable',
+          });
+          return;
+        }
+        if (completed.state === 'seat-limit-exceeded') {
+          sendJson(res, 402, {
+            error: 'deployment seat limit is exceeded',
+            code: 'deployment_seat_limit_exceeded',
+          });
+          return;
+        }
+        if (completed.state === 'license-admission-invalid') {
+          sendJson(res, 402, {
+            error: 'deployment license changed; retry authorization',
+            code: 'deployment_license_inactive',
           });
           return;
         }
@@ -878,6 +1072,19 @@ export function createClusteredEnterpriseServer(
           sharedState: options.sharedState,
         });
         if (!principal) return;
+        const license = await requireClusteredLicense({
+          repository,
+          organizationId: principal.organizationId,
+          actorAccountId:
+            principal.kind === 'account' ? principal.account.id : null,
+          actorEmployeeId:
+            principal.kind === 'account' ? principal.account.employeeId : null,
+          res,
+          deploymentId,
+          publicKeys: licensePublicKeys,
+          requiredFeature: 'enterprise_tree',
+        });
+        if (!license) return;
         sendJson(res, 200, {
           accounts: await repository.listAccounts(principal.organizationId),
         });
@@ -894,30 +1101,54 @@ export function createClusteredEnterpriseServer(
         });
         if (!principal) return;
         const body = await readJsonBody(req);
-        const account = await repository.createAccount({
+        const license = await requireClusteredLicense({
+          repository,
           organizationId: principal.organizationId,
-          username: typeof body.username === 'string' ? body.username : '',
-          password: typeof body.password === 'string' ? body.password : '',
-          name: typeof body.name === 'string' ? body.name : '',
-          phone: typeof body.phone === 'string' ? body.phone : null,
-          feishuOpenId:
-            typeof body.feishuOpenId === 'string' ? body.feishuOpenId : null,
-          role: typeof body.role === 'string' ? body.role : null,
-          department:
-            typeof body.department === 'string' ? body.department : null,
-          departmentId:
-            typeof body.departmentId === 'string' ? body.departmentId : null,
-          positionId:
-            typeof body.positionId === 'string' ? body.positionId : null,
-          positionTitle:
-            typeof body.positionTitle === 'string' ? body.positionTitle : null,
-          avatarUrl: typeof body.avatarUrl === 'string' ? body.avatarUrl : null,
-          tags: Array.isArray(body.tags)
-            ? body.tags.filter((tag): tag is string => typeof tag === 'string')
-            : [],
-          isAdmin: body.isAdmin === true,
-          status: body.status === 'disabled' ? 'disabled' : 'active',
+          actorAccountId:
+            principal.kind === 'account' ? principal.account.id : null,
+          actorEmployeeId:
+            principal.kind === 'account' ? principal.account.employeeId : null,
+          res,
+          deploymentId,
+          publicKeys: licensePublicKeys,
+          requiredFeature: 'enterprise_tree',
+          seatIncrement: body.status === 'disabled' ? 0 : 1,
         });
+        if (!license) return;
+        let account: PostgresEnterpriseAccountView;
+        try {
+          account = await repository.createAccount({
+            organizationId: principal.organizationId,
+            username: typeof body.username === 'string' ? body.username : '',
+            password: typeof body.password === 'string' ? body.password : '',
+            name: typeof body.name === 'string' ? body.name : '',
+            phone: typeof body.phone === 'string' ? body.phone : null,
+            feishuOpenId:
+              typeof body.feishuOpenId === 'string' ? body.feishuOpenId : null,
+            role: typeof body.role === 'string' ? body.role : null,
+            department:
+              typeof body.department === 'string' ? body.department : null,
+            departmentId:
+              typeof body.departmentId === 'string' ? body.departmentId : null,
+            positionId:
+              typeof body.positionId === 'string' ? body.positionId : null,
+            positionTitle:
+              typeof body.positionTitle === 'string' ? body.positionTitle : null,
+            avatarUrl:
+              typeof body.avatarUrl === 'string' ? body.avatarUrl : null,
+            tags: Array.isArray(body.tags)
+              ? body.tags.filter((tag): tag is string => typeof tag === 'string')
+              : [],
+            isAdmin: body.isAdmin === true,
+            status: body.status === 'disabled' ? 'disabled' : 'active',
+            licenseSeatAdmission: license.allowed
+              ? license.seatAdmission
+              : undefined,
+          });
+        } catch (error) {
+          if (sendLicenseSeatAdmissionError(res, error)) return;
+          throw error;
+        }
         sendJson(res, 201, { account });
         return;
       }
@@ -933,6 +1164,35 @@ export function createClusteredEnterpriseServer(
         });
         if (!principal) return;
         const accountId = decodeURIComponent(accountRoute[1]!);
+        const body = method === 'PATCH' ? await readJsonBody(req) : null;
+        const existing = await repository.getAccount(
+          accountId,
+          principal.organizationId,
+        );
+        const activatesSeat =
+          method === 'PATCH' &&
+          existing?.status === 'disabled' &&
+          body?.status === 'active';
+        const reducesSeats =
+          method === 'DELETE' ||
+          (method === 'PATCH' &&
+            existing?.status === 'active' &&
+            body?.status === 'disabled');
+        const license = await requireClusteredLicense({
+          repository,
+          organizationId: principal.organizationId,
+          actorAccountId:
+            principal.kind === 'account' ? principal.account.id : null,
+          actorEmployeeId:
+            principal.kind === 'account' ? principal.account.employeeId : null,
+          res,
+          deploymentId,
+          publicKeys: licensePublicKeys,
+          requiredFeature: 'enterprise_tree',
+          seatIncrement: activatesSeat ? 1 : 0,
+          allowSeatOverage: reducesSeats,
+        });
+        if (!license) return;
         if (method === 'DELETE') {
           const deleted = await repository.deleteAccount(
             principal.organizationId,
@@ -944,10 +1204,18 @@ export function createClusteredEnterpriseServer(
             deleted ? { deleted: true } : { error: 'account not found' },
           );
         } else {
-          const body = await readJsonBody(req);
-          const account = await repository.updateAccount(
-            accountPatch(body, principal.organizationId, accountId),
-          );
+          let account: PostgresEnterpriseAccountView;
+          try {
+            account = await repository.updateAccount({
+              ...accountPatch(body!, principal.organizationId, accountId),
+              ...(activatesSeat && license.allowed
+                ? { licenseSeatAdmission: license.seatAdmission }
+                : {}),
+            });
+          } catch (error) {
+            if (sendLicenseSeatAdmissionError(res, error)) return;
+            throw error;
+          }
           sendJson(res, 200, { account });
         }
         return;
@@ -962,6 +1230,18 @@ export function createClusteredEnterpriseServer(
           sharedState: options.sharedState,
         });
         if (!principal) return;
+        const license = await requireClusteredLicense({
+          repository,
+          organizationId: principal.organizationId,
+          actorAccountId:
+            principal.kind === 'account' ? principal.account.id : null,
+          actorEmployeeId:
+            principal.kind === 'account' ? principal.account.employeeId : null,
+          res,
+          deploymentId,
+          publicKeys: licensePublicKeys,
+        });
+        if (!license) return;
         sendJson(res, 200, {
           logs: await repository.listAuditLogs(
             principal.organizationId,
@@ -983,6 +1263,19 @@ export function createClusteredEnterpriseServer(
           sharedState: options.sharedState,
         });
         if (!principal) return;
+        const license = await requireClusteredLicense({
+          repository,
+          organizationId: principal.organizationId,
+          actorAccountId:
+            principal.kind === 'account' ? principal.account.id : null,
+          actorEmployeeId:
+            principal.kind === 'account' ? principal.account.employeeId : null,
+          res,
+          deploymentId,
+          publicKeys: licensePublicKeys,
+          requiredFeature: 'enterprise_tree',
+        });
+        if (!license) return;
         const invite =
           method === 'POST'
             ? await (async () => {
@@ -1043,9 +1336,31 @@ export function createClusteredEnterpriseServer(
           sendJson(res, 400, { error: 'organization invitation is invalid' });
           return;
         }
+        const inspectedInvite =
+          await repository.inspectOrganizationInvite(inviteCode);
+        let licenseSeatAdmission;
+        if (
+          inspectedInvite.status === 'active' &&
+          inspectedInvite.organizationId
+        ) {
+          const license = await requireClusteredLicense({
+            repository,
+            organizationId: inspectedInvite.organizationId,
+            actorAccountId: account.id,
+            actorEmployeeId: account.employeeId,
+            res,
+            deploymentId,
+            publicKeys: licensePublicKeys,
+            requiredFeature: 'enterprise_tree',
+            seatIncrement: 1,
+          });
+          if (!license?.allowed) return;
+          licenseSeatAdmission = license.seatAdmission;
+        }
         const joined = await repository.joinOrganizationWithInvite({
           accountId: account.id,
           inviteCode,
+          licenseSeatAdmission,
         });
         if (joined.state === 'invalid-invite') {
           sendJson(res, 403, {
@@ -1063,6 +1378,20 @@ export function createClusteredEnterpriseServer(
           sendJson(res, 409, {
             error: 'local E2EE security state must be reset before joining',
             code: 'E2EE_STATE_RESET_REQUIRED',
+          });
+          return;
+        }
+        if (joined.state === 'seat-limit-exceeded') {
+          sendJson(res, 402, {
+            error: 'deployment seat limit is exceeded',
+            code: 'deployment_seat_limit_exceeded',
+          });
+          return;
+        }
+        if (joined.state === 'license-admission-invalid') {
+          sendJson(res, 402, {
+            error: 'deployment license changed; retry authorization',
+            code: 'deployment_license_inactive',
           });
           return;
         }
@@ -1117,6 +1446,20 @@ export function createClusteredEnterpriseServer(
         return;
       }
 
+      if (!isLicenseMaintenanceRoute(path, method)) {
+        const license = await requireClusteredLicense({
+          repository,
+          organizationId: member.organizationId,
+          actorAccountId: member.id,
+          actorEmployeeId: member.employeeId,
+          res,
+          deploymentId,
+          publicKeys: licensePublicKeys,
+          requiredFeature: commercialFeatureForEnterpriseRoute(path),
+        });
+        if (!license) return;
+      }
+
       if (
         await handleClusteredBusinessRoute({
           path,
@@ -1128,6 +1471,46 @@ export function createClusteredEnterpriseServer(
           repository,
           readBody: readJsonBody,
           sendJson,
+          requireCommercialFeature: async (feature) => {
+            const decision = await requireClusteredLicense({
+              repository,
+              organizationId: member.organizationId,
+              actorAccountId: member.id,
+              actorEmployeeId: member.employeeId,
+              res,
+              deploymentId,
+              publicKeys: licensePublicKeys,
+              requiredFeature: feature,
+            });
+            return decision?.allowed === true;
+          },
+          commercialFeatureAvailable: async (feature) => {
+            const decision = await requireClusteredLicense({
+              repository,
+              organizationId: member.organizationId,
+              actorAccountId: member.id,
+              actorEmployeeId: member.employeeId,
+              res,
+              deploymentId,
+              publicKeys: licensePublicKeys,
+              requiredFeature: feature,
+              sendDenial: false,
+            });
+            return decision?.allowed === true;
+          },
+          commercialLicenseSummary: async () => {
+            const decision = await requireClusteredLicense({
+              repository,
+              organizationId: member.organizationId,
+              actorAccountId: member.id,
+              actorEmployeeId: member.employeeId,
+              res,
+              deploymentId,
+              publicKeys: licensePublicKeys,
+              sendDenial: false,
+            });
+            return decision!.summary;
+          },
         })
       ) {
         return;
@@ -1908,6 +2291,24 @@ export function createClusteredEnterpriseServer(
           return;
         }
         const body = await readJsonBody(req, E2EE_BODY_LIMIT);
+        const contentType =
+          body.contentType === 'atoa_request' ||
+          body.contentType === 'atoa_response'
+            ? body.contentType
+            : 'message';
+        if (contentType !== 'message') {
+          const atoaLicense = await requireClusteredLicense({
+            repository,
+            organizationId: member.organizationId,
+            actorAccountId: member.id,
+            actorEmployeeId: member.employeeId,
+            res,
+            deploymentId,
+            publicKeys: licensePublicKeys,
+            requiredFeature: 'atoa',
+          });
+          if (!atoaLicense) return;
+        }
         const message = await repository.sendE2eeDirectMessage({
           organizationId: member.organizationId,
           senderAccountId: member.id,
@@ -1990,6 +2391,7 @@ export async function startClusteredEnterpriseServer(
         password: options.bootstrapAdmin.password,
         name: options.bootstrapAdmin.name,
         isAdmin: true,
+        bootstrapFirstAdministrator: true,
       });
     }
 
@@ -2009,6 +2411,7 @@ export async function startClusteredEnterpriseServer(
       sharedState: infrastructure.sharedState,
       attachmentStorage: infrastructure.attachmentStorage,
       publicUrl: options.publicUrl ?? process.env.OTTO_ENTERPRISE_PUBLIC_URL,
+      licensePublicKeys: options.licensePublicKeys,
       smsSender:
         options.smsSender !== undefined
           ? options.smsSender
@@ -2102,6 +2505,7 @@ export async function bootstrapClusteredEnterpriseAdmin(input: {
       password: input.password,
       name: input.name,
       isAdmin: true,
+      bootstrapFirstAdministrator: true,
     });
   } finally {
     await database.close();

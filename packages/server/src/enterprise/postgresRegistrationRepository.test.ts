@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createPostgresRegistrationRepository } from './postgresRegistrationRepository.js';
+import { canonicalJson } from '../modules/commercial_control/signedEnvelope.js';
 import type {
   PostgresClientLike,
   PostgresPoolLike,
@@ -39,6 +40,40 @@ function poolWithClient(
     end: vi.fn(),
   };
   return { pool, client, statements };
+}
+
+const seatClaims = {
+  organizationId: 'org_default',
+  seatLimit: 5,
+  expiresAt: '2099-08-01T00:00:00.000Z',
+};
+const seatAdmission = {
+  recordVersion: 1,
+  signature: 'ed25519:test-signature',
+  claimsSha256: createHash('sha256')
+    .update(canonicalJson(seatClaims))
+    .digest('hex'),
+  seatLimit: 5,
+};
+
+function licenseAdmissionResult(sql: string): PostgresQueryResult | null {
+  if (sql.includes('FROM enterprise_business_records')) {
+    return result([
+      {
+        version: 1,
+        payload: {
+          signedEnvelope: {
+            payload: seatClaims,
+            signature: seatAdmission.signature,
+          },
+        },
+      },
+    ]);
+  }
+  if (sql.includes("account_type = 'enterprise'")) {
+    return result([{ count: 0 }]);
+  }
+  return null;
 }
 
 describe('PostgreSQL registration authority', () => {
@@ -217,6 +252,8 @@ describe('PostgreSQL registration authority', () => {
 
   it('moves legal consent, consumes the invite and revokes sessions atomically', async () => {
     const { pool, statements } = poolWithClient(async (sql) => {
+      const admission = licenseAdmissionResult(sql);
+      if (admission) return admission;
       if (sql.includes('FROM accounts') && sql.includes('FOR UPDATE')) {
         return result([
           {
@@ -291,6 +328,7 @@ describe('PostgreSQL registration authority', () => {
       repository.joinOrganizationWithInvite({
         accountId: 'acc_personal',
         inviteCode: 'ABCD-EFGH-JKLM',
+        licenseSeatAdmission: seatAdmission,
         now: new Date('2026-08-01T00:01:00.000Z'),
       }),
     ).resolves.toMatchObject({

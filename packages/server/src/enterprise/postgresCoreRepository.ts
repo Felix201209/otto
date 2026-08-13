@@ -74,6 +74,11 @@ import type {
 } from '../modules/data_platform/postgresDatabaseLifecycle.js';
 import type { AccountSyncEncryptionKeyProvider } from '../modules/personal_intelligence/index.js';
 import { createPostgresEnterpriseBusinessRepository } from './postgresBusinessRepository.js';
+import {
+  enforcePostgresEnterpriseSeatAdmission,
+  PostgresEnterpriseLicenseAdmissionError,
+  type PostgresLicenseSeatAdmission,
+} from './postgresLicenseSeatAdmission.js';
 import { createPostgresRegistrationRepository } from './postgresRegistrationRepository.js';
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
@@ -145,6 +150,8 @@ export interface CreatePostgresEnterpriseAccountInput {
   isAdmin?: boolean;
   status?: 'active' | 'disabled';
   tags?: readonly string[];
+  licenseSeatAdmission?: PostgresLicenseSeatAdmission;
+  bootstrapFirstAdministrator?: boolean;
 }
 
 export interface UpdatePostgresEnterpriseAccountInput {
@@ -164,6 +171,7 @@ export interface UpdatePostgresEnterpriseAccountInput {
   isAdmin?: boolean;
   status?: 'active' | 'disabled';
   tags?: readonly string[];
+  licenseSeatAdmission?: PostgresLicenseSeatAdmission;
 }
 
 export interface PostgresOrganizationStructureView {
@@ -895,6 +903,34 @@ export function createPostgresEnterpriseCoreRepository(input: {
         [organizationId],
       );
       if (!organization.rows[0]) throw new Error('organization is unavailable');
+      if (
+        (raw.accountType ?? 'enterprise') === 'enterprise' &&
+        (raw.status ?? 'active') === 'active'
+      ) {
+        if (raw.licenseSeatAdmission) {
+          await enforcePostgresEnterpriseSeatAdmission(
+            client,
+            organizationId,
+            raw.licenseSeatAdmission,
+          );
+        } else if (
+          raw.bootstrapFirstAdministrator === true &&
+          raw.isAdmin === true
+        ) {
+          const accounts = await client.query<
+            { count: number | string } & Record<string, unknown>
+          >(
+            `SELECT count(*)::integer AS count FROM accounts
+             WHERE organization_id = $1 AND deleted_at IS NULL`,
+            [organizationId],
+          );
+          if (Number(accounts.rows[0]?.count ?? 0) !== 0) {
+            throw new PostgresEnterpriseLicenseAdmissionError();
+          }
+        } else {
+          throw new PostgresEnterpriseLicenseAdmissionError();
+        }
+      }
       await client.query(
         `INSERT INTO accounts
           (id, organization_id, account_type, employee_id, username, phone,
@@ -954,8 +990,28 @@ export function createPostgresEnterpriseCoreRepository(input: {
       if (!row) throw new Error('account not found');
       const nextAdmin = raw.isAdmin ?? row.is_admin;
       const nextStatus = raw.status ?? row.status;
-      if (row.is_admin && row.status === 'active' && (!nextAdmin || nextStatus !== 'active')) {
-        const administrators = await client.query<{ count: number | string } & Record<string, unknown>>(
+      if (
+        row.account_type === 'enterprise' &&
+        row.status !== 'active' &&
+        nextStatus === 'active'
+      ) {
+        if (!raw.licenseSeatAdmission) {
+          throw new PostgresEnterpriseLicenseAdmissionError();
+        }
+        await enforcePostgresEnterpriseSeatAdmission(
+          client,
+          organizationId,
+          raw.licenseSeatAdmission,
+        );
+      }
+      if (
+        row.is_admin &&
+        row.status === 'active' &&
+        (!nextAdmin || nextStatus !== 'active')
+      ) {
+        const administrators = await client.query<
+          { count: number | string } & Record<string, unknown>
+        >(
           `SELECT count(*)::integer AS count FROM accounts
            WHERE organization_id = $1 AND is_admin = TRUE AND status = 'active'
              AND deleted_at IS NULL`,

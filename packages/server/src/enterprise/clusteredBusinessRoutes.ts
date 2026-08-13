@@ -12,6 +12,7 @@ import {
   licenseModuleCatalog,
   parsePublicKeyList,
   verifyEd25519Envelope,
+  type ClusteredLicenseSummary,
 } from '../modules/commercial_control/index.js';
 import {
   ACCOUNT_SYNC_SCOPES,
@@ -22,6 +23,7 @@ import type {
   PostgresBusinessRecord,
   PostgresEnterpriseBusinessRepository,
 } from './postgresBusinessRepository.js';
+import type { OrganizationFeatureKey } from '../productModules.js';
 import type {
   PostgresEnterpriseAccountView,
   PostgresEnterpriseCoreRepository,
@@ -63,6 +65,9 @@ export interface ClusteredBusinessRouteInput {
     maxLength?: number,
   ): Promise<Record<string, unknown>>;
   sendJson(res: ServerResponse, status: number, body: unknown): void;
+  requireCommercialFeature(feature: OrganizationFeatureKey): Promise<boolean>;
+  commercialFeatureAvailable(feature: OrganizationFeatureKey): Promise<boolean>;
+  commercialLicenseSummary(): Promise<ClusteredLicenseSummary>;
 }
 
 type KnowledgePayload = {
@@ -1921,6 +1926,12 @@ async function handleTickets(
     const description = text(body.description, 'ticket description', 2_000)!;
     const serviceId = text(body.serviceId ?? 'it', 'service id', 120)!;
     const isParkRequest = serviceId !== 'it';
+    if (
+      isParkRequest &&
+      !(await input.requireCommercialFeature('park_service'))
+    ) {
+      return true;
+    }
     const authority = isParkRequest ? await parkAuthority(input) : null;
     if (isParkRequest && (!authority?.park || !authority.membership)) {
       input.sendJson(input.res, 403, {
@@ -2009,7 +2020,14 @@ async function handleTickets(
         inbox,
         limit: 500,
       });
-    input.sendJson(input.res, 200, { tickets: records.map(ticketView) });
+    const canReadParkTickets = await input.commercialFeatureAvailable(
+      'park_service',
+    );
+    input.sendJson(input.res, 200, {
+      tickets: records
+        .filter((record) => !record.payload.parkId || canReadParkTickets)
+        .map(ticketView),
+    });
     return true;
   }
 
@@ -2026,6 +2044,12 @@ async function handleTickets(
     input.sendJson(input.res, 404, {
       error: 'ticket not found or access denied',
     });
+    return true;
+  }
+  if (
+    current.payload.parkId &&
+    !(await input.requireCommercialFeature('park_service'))
+  ) {
     return true;
   }
   if (actionRoute[2] === 'read') {
@@ -2215,10 +2239,16 @@ function publicLicense(
       enforce: true,
     };
   }
+  const {
+    signedEnvelope: _signedEnvelope,
+    ...publicPayload
+  } = record.payload;
   return {
-    ...record.payload,
+    ...publicPayload,
     status: licenseStatus(record.payload),
     activeSeatCount,
+    seatLimitExceeded:
+      activeSeatCount > Math.max(0, Number(record.payload.seatLimit ?? 0)),
     enforce: true,
     updatedAt: record.updatedAt,
   };
@@ -2227,19 +2257,13 @@ function publicLicense(
 async function commercialStatus(input: ClusteredBusinessRouteInput) {
   const organizationId = input.member.organizationId;
   const [
-    license,
+    verifiedLicense,
     telemetry,
     updatePolicy,
-    accounts,
     telemetryBatches,
     backups,
   ] = await Promise.all([
-    input.repository.getBusinessRecord({
-      organizationId,
-      domain: 'commercial_control',
-      resourceType: 'license',
-      resourceId: 'current',
-    }),
+    input.commercialLicenseSummary(),
     input.repository.getBusinessRecord({
       organizationId,
       domain: 'commercial_control',
@@ -2252,7 +2276,6 @@ async function commercialStatus(input: ClusteredBusinessRouteInput) {
       resourceType: 'update_policy',
       resourceId: 'current',
     }),
-    input.repository.listAccounts(organizationId),
     input.repository.listBusinessRecords({
       organizationId,
       domain: 'commercial_control',
@@ -2278,10 +2301,7 @@ async function commercialStatus(input: ClusteredBusinessRouteInput) {
     deploymentId:
       process.env.OTTO_DEPLOYMENT_ID?.trim() || 'clustered-enterprise',
     authority: 'postgresql',
-    license: publicLicense(
-      license,
-      accounts.filter((account) => account.status === 'active').length,
-    ),
+    license: verifiedLicense,
     telemetry: {
       ...(telemetry?.payload ?? {
         enabled: false,
@@ -2547,16 +2567,25 @@ async function handleCommercialControl(
       plan: text(payload.plan ?? 'enterprise', 'license plan', 120)!,
       expiresAt: expiresAt.toISOString(),
       seatLimit,
+      seatEnforcement: 'enforce',
       modules,
       offline: payload.offline !== false,
       telemetryAllowed: payload.telemetryAllowed === true,
       signatureAlgorithm: 'ed25519',
       signingKeyId: verification.keyId,
+      signedEnvelope: {
+        payload,
+        signature,
+        signingKeyId: verification.keyId,
+      },
     });
     input.sendJson(input.res, 200, {
       license: publicLicense(
         stored,
-        (await input.repository.listAccounts(organizationId)).length,
+        (await input.repository.listAccounts(organizationId)).filter(
+          (account) =>
+            account.accountType === 'enterprise' && account.status === 'active',
+        ).length,
       ),
     });
     return true;

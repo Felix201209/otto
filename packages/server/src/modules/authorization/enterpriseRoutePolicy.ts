@@ -118,7 +118,7 @@ export function isPublicSimpleParkRoute(
   );
 }
 
-export function isLicenseMaintenanceRoute(path: string): boolean {
+export function isLicenseMaintenanceRoute(path: string, method?: string): boolean {
   return (
     path === '/enterprise/health' ||
     path === '/enterprise/export' ||
@@ -130,7 +130,7 @@ export function isLicenseMaintenanceRoute(path: string): boolean {
     path === '/enterprise/deployment/data-protection' ||
     path === '/enterprise/deployment/data-protection/backup' ||
     path === '/enterprise/deployment/diagnostics' ||
-    path === '/enterprise/account-sync' ||
+    (path === '/enterprise/account-sync' && method === 'GET') ||
     path === '/enterprise/privacy' ||
     path === '/enterprise/privacy/accept' ||
     path === '/enterprise/privacy/export' ||

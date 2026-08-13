@@ -1111,12 +1111,100 @@ describe('PostgreSQL enterprise core authority', () => {
         password: 'Secure-password-2026',
         name: 'Administrator',
         isAdmin: true,
+        bootstrapFirstAdministrator: true,
       }),
     ).rejects.toThrow('duplicate account');
 
     expect(statements[0]).toBe('BEGIN');
     expect(statements.at(-1)).toBe('ROLLBACK');
     expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it('fails closed when an active enterprise seat has no verified License admission', async () => {
+    const client: PostgresClientLike = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('SELECT * FROM organizations')) {
+          return result([
+            {
+              id: 'org_default',
+              name: 'Otto',
+              slug: 'otto-default',
+              type: 'enterprise',
+              status: 'active',
+              park_id: null,
+              created_at: new Date(),
+              updated_at: new Date(),
+            },
+          ]);
+        }
+        return result();
+      }),
+      release: vi.fn(),
+    };
+    const repository = createPostgresEnterpriseCoreRepository({
+      pool: {
+        connect: vi.fn(async () => client),
+        query: vi.fn(),
+        end: vi.fn(),
+      },
+    });
+
+    await expect(
+      repository.createAccount({
+        username: 'unlicensed-member',
+        password: 'Secure-password-2026',
+        name: 'Unlicensed member',
+      }),
+    ).rejects.toThrow('deployment license changed during seat admission');
+
+    expect(client.query).not.toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO accounts'),
+      expect.anything(),
+    );
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it('allows the explicit bootstrap bypass only for the first administrator', async () => {
+    const client: PostgresClientLike = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('SELECT * FROM organizations')) {
+          return result([
+            {
+              id: 'org_default',
+              name: 'Otto',
+              slug: 'otto-default',
+              type: 'enterprise',
+              status: 'active',
+              park_id: null,
+              created_at: new Date(),
+              updated_at: new Date(),
+            },
+          ]);
+        }
+        if (sql.includes('SELECT count(*)::integer AS count FROM accounts')) {
+          return result([{ count: 1 }]);
+        }
+        return result();
+      }),
+      release: vi.fn(),
+    };
+    const repository = createPostgresEnterpriseCoreRepository({
+      pool: {
+        connect: vi.fn(async () => client),
+        query: vi.fn(),
+        end: vi.fn(),
+      },
+    });
+
+    await expect(
+      repository.createAccount({
+        username: 'second-bootstrap',
+        password: 'Secure-password-2026',
+        name: 'Second bootstrap',
+        isAdmin: true,
+        bootstrapFirstAdministrator: true,
+      }),
+    ).rejects.toThrow('deployment license changed during seat admission');
   });
 
   it('rejects inline E2EE attachment bodies after the shared S3 route is mounted', async () => {

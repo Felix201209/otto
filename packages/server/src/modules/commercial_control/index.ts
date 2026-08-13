@@ -4,6 +4,7 @@
 
 export * from './deploymentRepository.js';
 export * from './billingUsageRepository.js';
+export * from './clusteredLicensePolicy.js';
 export * from './billingAdmissionRepository.js';
 export * from './commercialBillingRoutePolicy.js';
 export * from './deploymentSettingsRepository.js';
