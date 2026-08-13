@@ -133,12 +133,14 @@
 }
 
 .otto-ui-preview {
+  position: relative;
   display: grid;
-  grid-template-columns: 52px minmax(0, 1fr);
-  gap: 7px;
+  grid-template-columns: 54px minmax(0, 1fr);
+  grid-template-rows: 14px minmax(0, 1fr);
+  gap: 6px;
   width: 100%;
   height: 174px;
-  padding: 8px;
+  padding: 7px;
   overflow: hidden;
   border: 1px solid var(--otto-border);
   border-radius: 6px;
@@ -146,32 +148,209 @@
 }
 
 .otto-ui-preview--work {
-  grid-template-columns: 44px minmax(0, 1fr) minmax(76px, .55fr);
+  grid-template-columns: 42px minmax(0, .9fr) minmax(108px, .72fr);
+}
+
+.otto-ui-preview__chrome {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 0 3px;
+}
+
+.otto-ui-preview__chrome > i {
+  flex: 0 0 5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--otto-border-strong);
+}
+
+.otto-ui-preview__chrome > i:first-child { background: var(--otto-accent); }
+.otto-ui-preview__chrome > b {
+  width: 29%;
+  height: 4px;
+  margin-left: auto;
+  border-radius: 2px;
+  background: var(--otto-border);
 }
 
 .otto-ui-preview__sidebar,
 .otto-ui-preview__chat,
 .otto-ui-preview__workspace {
-  display: flex;
-  flex-direction: column;
   min-width: 0;
-  padding: 8px;
   border: 1px solid var(--otto-border);
   border-radius: 4px;
   background: var(--otto-surface);
 }
 
-.otto-ui-preview__sidebar { gap: 8px; background: var(--otto-sidebar-bg); }
-.otto-ui-preview__chat { justify-content: flex-end; gap: 9px; }
-.otto-ui-preview__workspace { gap: 10px; background: var(--otto-bg); }
-.otto-ui-preview i { display: block; height: 7px; border-radius: 3px; background: var(--otto-border-strong); }
-.otto-ui-preview__sidebar i:first-child { width: 70%; background: var(--otto-accent); }
-.otto-ui-preview__chat i:first-child { width: 54%; margin-right: auto; }
-.otto-ui-preview__chat i:nth-child(2) { width: 45%; margin-left: auto; background: var(--otto-accent); }
-.otto-ui-preview__chat i:last-child { width: 100%; height: 30px; margin-top: auto; border: 1px solid var(--otto-border); background: var(--otto-bg); }
-.otto-ui-preview__workspace i:first-child { width: 62%; background: var(--otto-accent); }
-.otto-ui-preview__workspace i:nth-child(2) { height: 42px; }
-.otto-ui-preview__workspace i:last-child { height: 54px; background: color-mix(in srgb, var(--otto-accent) 18%, var(--otto-surface)); }
+.otto-ui-preview__sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 7px;
+  background: var(--otto-sidebar-bg);
+}
+
+.otto-ui-preview__sidebar > b {
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+  background: var(--otto-accent);
+}
+
+.otto-ui-preview__sidebar > span { display: grid; gap: 6px; }
+.otto-ui-preview__sidebar > span:last-child { margin-top: auto; }
+.otto-ui-preview__sidebar i,
+.otto-ui-preview__chat i,
+.otto-ui-preview__workspace i {
+  display: block;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--otto-border-strong);
+}
+.otto-ui-preview__sidebar i { width: 100%; }
+.otto-ui-preview__sidebar span:first-of-type i:first-child {
+  background: color-mix(in srgb, var(--otto-accent) 75%, var(--otto-border-strong));
+}
+
+.otto-ui-preview__chat {
+  display: grid;
+  grid-template-rows: 22px minmax(0, 1fr) 34px;
+  overflow: hidden;
+}
+
+.otto-ui-preview__chat-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--otto-border);
+}
+.otto-ui-preview__chat-head i { width: 32%; }
+.otto-ui-preview__chat-head b {
+  width: 11px;
+  height: 11px;
+  margin-left: auto;
+  border-radius: 50%;
+  border: 2px solid var(--otto-border-strong);
+}
+
+.otto-ui-preview__messages {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-height: 0;
+  padding: 13px 10px;
+}
+.otto-ui-preview__messages i { height: 16px; }
+.otto-ui-preview__messages i:first-child { width: 55%; }
+.otto-ui-preview__messages i:nth-child(2) {
+  width: 42%;
+  margin-left: auto;
+  background: var(--otto-accent);
+}
+.otto-ui-preview__messages i:last-child { width: 36%; }
+
+.otto-ui-preview__composer {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 8px 7px;
+  padding: 0 7px;
+  border: 1px solid var(--otto-border-strong);
+  border-radius: 4px;
+  background: var(--otto-bg);
+}
+.otto-ui-preview__composer i { width: 52%; height: 4px; }
+.otto-ui-preview__composer b {
+  width: 16px;
+  height: 16px;
+  margin-left: auto;
+  border-radius: 4px;
+  background: var(--otto-accent);
+}
+
+.otto-ui-preview__focus-mark {
+  position: absolute;
+  right: 18px;
+  top: 50px;
+  display: flex;
+  gap: 3px;
+  align-items: end;
+  opacity: .72;
+}
+.otto-ui-preview__focus-mark i {
+  width: 3px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--otto-accent);
+}
+.otto-ui-preview__focus-mark i:nth-child(2) { height: 16px; }
+
+.otto-ui-preview__workspace {
+  display: grid;
+  grid-template-rows: 22px auto auto minmax(0, 1fr);
+  gap: 7px;
+  padding: 0 7px 7px;
+  overflow: hidden;
+  background: var(--otto-bg);
+}
+.otto-ui-preview__tabs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  align-items: center;
+  border-bottom: 1px solid var(--otto-border);
+}
+.otto-ui-preview__tabs i { width: 100%; height: 3px; }
+.otto-ui-preview__tabs i:first-child { background: var(--otto-accent); }
+
+.otto-ui-preview__agent-list { display: grid; gap: 4px; }
+.otto-ui-preview__agent-list > b {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 5px;
+  align-items: center;
+  min-width: 0;
+  padding: 4px;
+  border: 1px solid var(--otto-border);
+  border-radius: 3px;
+  background: var(--otto-surface);
+}
+.otto-ui-preview__agent-list > b > i:first-child {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--otto-accent) 58%, var(--otto-surface));
+}
+.otto-ui-preview__agent-list > b > i:last-child { width: 75%; height: 4px; }
+
+.otto-ui-preview__work-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+.otto-ui-preview__work-grid i {
+  width: 100%;
+  height: 18px;
+  border: 1px solid color-mix(in srgb, var(--otto-accent) 28%, var(--otto-border));
+  background: color-mix(in srgb, var(--otto-accent) 14%, var(--otto-surface));
+}
+.otto-ui-preview__worklog {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  padding: 6px;
+  border: 1px solid var(--otto-border);
+  border-radius: 3px;
+  background: var(--otto-surface);
+}
+.otto-ui-preview__worklog i:first-child { width: 58%; background: var(--otto-accent); }
+.otto-ui-preview__worklog i:nth-child(2) { width: 88%; }
+.otto-ui-preview__worklog i:last-child { width: 70%; }
 
 .otto-ui-mode-setting {
   display: grid;
@@ -201,15 +380,38 @@
 }
 
 .otto-ui-mode-setting > button:focus-visible { outline: 2px solid var(--otto-accent); outline-offset: 2px; }
-.otto-ui-mode-setting .otto-ui-preview { height: 66px; padding: 4px; gap: 3px; grid-template-columns: 18px minmax(0, 1fr); }
-.otto-ui-mode-setting .otto-ui-preview--work { grid-template-columns: 14px minmax(0, 1fr) 24px; }
+.otto-ui-mode-setting .otto-ui-preview { height: 66px; padding: 3px; gap: 2px; grid-template-columns: 18px minmax(0, 1fr); grid-template-rows: 5px minmax(0, 1fr); }
+.otto-ui-mode-setting .otto-ui-preview--work { grid-template-columns: 13px minmax(0, .8fr) 31px; }
+.otto-ui-mode-setting .otto-ui-preview__chrome { gap: 1px; padding: 0 1px; }
+.otto-ui-mode-setting .otto-ui-preview__chrome > i { width: 2px; height: 2px; flex-basis: 2px; }
+.otto-ui-mode-setting .otto-ui-preview__chrome > b { height: 2px; }
 .otto-ui-mode-setting .otto-ui-preview__sidebar,
 .otto-ui-mode-setting .otto-ui-preview__chat,
 .otto-ui-mode-setting .otto-ui-preview__workspace { padding: 3px; gap: 3px; }
-.otto-ui-mode-setting .otto-ui-preview i { height: 3px; }
-.otto-ui-mode-setting .otto-ui-preview__chat i:last-child { height: 12px; }
-.otto-ui-mode-setting .otto-ui-preview__workspace i:nth-child(2),
-.otto-ui-mode-setting .otto-ui-preview__workspace i:last-child { height: 11px; }
+.otto-ui-mode-setting .otto-ui-preview__sidebar > b { width: 6px; height: 6px; }
+.otto-ui-mode-setting .otto-ui-preview__sidebar > span { gap: 2px; }
+.otto-ui-mode-setting .otto-ui-preview__sidebar i { height: 2px; }
+.otto-ui-mode-setting .otto-ui-preview__chat { grid-template-rows: 8px minmax(0, 1fr) 12px; padding: 0; }
+.otto-ui-mode-setting .otto-ui-preview__chat-head { gap: 2px; padding: 0 3px; }
+.otto-ui-mode-setting .otto-ui-preview__chat-head i { height: 2px; }
+.otto-ui-mode-setting .otto-ui-preview__chat-head b { width: 4px; height: 4px; border-width: 1px; }
+.otto-ui-mode-setting .otto-ui-preview__messages { gap: 3px; padding: 4px 3px; }
+.otto-ui-mode-setting .otto-ui-preview__messages i { height: 4px; }
+.otto-ui-mode-setting .otto-ui-preview__composer { gap: 2px; margin: 0 2px 2px; padding: 0 2px; }
+.otto-ui-mode-setting .otto-ui-preview__composer i { height: 2px; }
+.otto-ui-mode-setting .otto-ui-preview__composer b { width: 5px; height: 5px; border-radius: 2px; }
+.otto-ui-mode-setting .otto-ui-preview__focus-mark { display: none; }
+.otto-ui-mode-setting .otto-ui-preview__workspace { grid-template-rows: 7px auto auto minmax(0, 1fr); padding: 0 2px 2px; gap: 2px; }
+.otto-ui-mode-setting .otto-ui-preview__tabs { gap: 1px; }
+.otto-ui-mode-setting .otto-ui-preview__tabs i { height: 1px; }
+.otto-ui-mode-setting .otto-ui-preview__agent-list { gap: 1px; }
+.otto-ui-mode-setting .otto-ui-preview__agent-list > b { grid-template-columns: 4px minmax(0, 1fr); gap: 2px; padding: 1px; }
+.otto-ui-mode-setting .otto-ui-preview__agent-list > b > i:first-child { width: 4px; height: 4px; border-radius: 1px; }
+.otto-ui-mode-setting .otto-ui-preview__agent-list > b > i:last-child { height: 1px; }
+.otto-ui-mode-setting .otto-ui-preview__work-grid { gap: 2px; }
+.otto-ui-mode-setting .otto-ui-preview__work-grid i { height: 6px; }
+.otto-ui-mode-setting .otto-ui-preview__worklog { gap: 1px; padding: 2px; }
+.otto-ui-mode-setting .otto-ui-preview__worklog i { height: 1px; }
 .otto-ui-mode-setting > button > span:last-child { display: grid; min-width: 0; gap: 3px; }
 .otto-ui-mode-setting strong { font-size: 12px; letter-spacing: 0; }
 .otto-ui-mode-setting small { color: var(--otto-text-secondary); font-size: 10px; line-height: 1.4; }

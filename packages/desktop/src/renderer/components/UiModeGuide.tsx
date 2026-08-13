@@ -8,23 +8,69 @@ export interface UiModeGuideProps {
 export function UiModePreview({ mode }: { mode: UiMode }): React.JSX.Element {
   return (
     <span className={`otto-ui-preview otto-ui-preview--${mode}`} aria-hidden="true">
+      <span className="otto-ui-preview__chrome">
+        <i />
+        <i />
+        <i />
+        <b />
+      </span>
       <span className="otto-ui-preview__sidebar">
-        <i />
-        <i />
-        <i />
-      </span>
-      <span className="otto-ui-preview__chat">
-        <i />
-        <i />
-        <i />
-      </span>
-      {mode === 'work' ? (
-        <span className="otto-ui-preview__workspace">
+        <b />
+        <span>
           <i />
           <i />
           <i />
         </span>
-      ) : null}
+        <span>
+          <i />
+          <i />
+        </span>
+      </span>
+      <span className="otto-ui-preview__chat">
+        <span className="otto-ui-preview__chat-head">
+          <i />
+          <b />
+        </span>
+        <span className="otto-ui-preview__messages">
+          <i />
+          <i />
+          <i />
+        </span>
+        <span className="otto-ui-preview__composer">
+          <i />
+          <b />
+        </span>
+      </span>
+      {mode === 'work' ? (
+        <span className="otto-ui-preview__workspace">
+          <span className="otto-ui-preview__tabs">
+            <i />
+            <i />
+            <i />
+            <i />
+          </span>
+          <span className="otto-ui-preview__agent-list">
+            <b><i /><i /></b>
+            <b><i /><i /></b>
+            <b><i /><i /></b>
+          </span>
+          <span className="otto-ui-preview__work-grid">
+            <i />
+            <i />
+          </span>
+          <span className="otto-ui-preview__worklog">
+            <i />
+            <i />
+            <i />
+          </span>
+        </span>
+      ) : (
+        <span className="otto-ui-preview__focus-mark">
+          <i />
+          <i />
+          <i />
+        </span>
+      )}
     </span>
   );
 }
