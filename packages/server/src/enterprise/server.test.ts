@@ -3833,6 +3833,18 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       phone: '13600136000',
       feishuOpenId: 'ou_engineer',
     });
+    const processDueSms = async () => db.processTicketNotificationTasks({
+      smsSender: { channel: 'sms', send: smsSend },
+      feishuSender: null,
+      resolveRecipientChannel: (accountId: string) => {
+        const account = db.getAccount(accountId);
+        return {
+          phone: account?.phone ?? null,
+          feishuOpenId: account?.feishuOpenId ?? null,
+        };
+      },
+      now: () => new Date(Date.now() + 10 * 60_000),
+    });
     const login = async (
       identifier: string,
       password: string,
@@ -3908,6 +3920,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       location: '某某会议室',
       applicationNumber: expect.stringMatching(/^\d{11}$/),
     });
+    await processDueSms();
     expect(smsSend).toHaveBeenCalledWith(
       '+8613900139000',
       expect.stringContaining('新报修'),
@@ -3940,6 +3953,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     expect(
       acceptedTicket.history.map((entry: { action: string }) => entry.action),
     ).toEqual(['created', 'accept']);
+    await processDueSms();
     smsSend.mockRejectedValueOnce(new Error('sms provider unavailable'));
     const replied = await fetch(
       `${base}/enterprise/tickets/${ticket.id}/action`,
@@ -3978,6 +3992,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         actor: { id: worker.id, name: worker.name },
       }),
     ]);
+    await processDueSms();
     expect(
       db
         .getDB()
@@ -4020,6 +4035,18 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     const parkOrganization = db.createOrganization({
       name: '园区运营企业',
       slug: 'receipt-park',
+    });
+    const processDueSms = async () => db.processTicketNotificationTasks({
+      smsSender: { channel: 'sms', send: smsSend },
+      feishuSender: null,
+      resolveRecipientChannel: (accountId: string) => {
+        const account = db.getAccount(accountId);
+        return {
+          phone: account?.phone ?? null,
+          feishuOpenId: account?.feishuOpenId ?? null,
+        };
+      },
+      now: () => new Date(Date.now() + 10 * 60_000),
     });
     const parkAdmin = db.createAccount({
       organizationId: parkOrganization.id,
@@ -4112,6 +4139,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     });
     expect(submitted.status).toBe(201);
     const specialistTicket = (await submitted.json()).ticket;
+    await processDueSms();
     expect(specialistTicket.recipients).toEqual([
       { id: specialist.id, name: '园区维修专员' },
     ]);
@@ -4179,6 +4207,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       'transfer',
       'complete',
     ]);
+    await processDueSms();
     expect(smsSend).toHaveBeenCalledTimes(5);
     expect(feishuSend).toHaveBeenCalledTimes(5);
     expect(smsSend).toHaveBeenCalledWith(
@@ -4245,6 +4274,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
     const transferPayload = await transfer.json();
     expect(transfer.status, JSON.stringify(transferPayload)).toBe(200);
     const oldAssigneeView = transferPayload.ticket;
+    await processDueSms();
     expect(oldAssigneeView).toMatchObject({
       status: '已转交',
       deliveryStatus: 'transferred',
@@ -4311,6 +4341,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         .slice(-3)
         .map((entry: { action: string }) => entry.action),
     ).toEqual(['respond', 'transfer', 'complete']);
+    await processDueSms();
     expect(smsSend).toHaveBeenCalledTimes(2);
     expect(feishuSend).toHaveBeenCalledTimes(2);
     expect(smsSend).toHaveBeenCalledWith(
@@ -4365,6 +4396,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       },
     );
     expect(fallbackAccepted.status).toBe(200);
+    await processDueSms();
     expect(smsSend).toHaveBeenCalledWith(
       '+8613800138000',
       expect.stringContaining('已受理'),

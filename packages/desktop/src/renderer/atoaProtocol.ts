@@ -16,13 +16,13 @@ export {
   type AtoaResponsePayload,
   type BuildAtoaRequestOptions,
   type ParsedAtoaMessage,
-} from 'otto-core';
+} from '../../../core/src/a2a/atoaProtocol.js';
 
-import { displayDirectMessageContent as displayAtoaContent } from 'otto-core';
+import { displayDirectMessageContent as displayAtoaContent } from '../../../core/src/a2a/atoaProtocol.js';
 import {
   displayFederationAtoaDecision,
   parseFederationAtoaDecision,
-} from 'otto-core';
+} from './federationAtoaProtocol.js';
 
 export {
   buildFederationAtoaDecision,
@@ -31,7 +31,7 @@ export {
   type FederationAtoaApprovedDecision,
   type FederationAtoaDecision,
   type FederationAtoaDeniedDecision,
-} from 'otto-core';
+} from './federationAtoaProtocol.js';
 
 export function displayDirectMessageContent(content: string): string {
   const decision = parseFederationAtoaDecision(content);

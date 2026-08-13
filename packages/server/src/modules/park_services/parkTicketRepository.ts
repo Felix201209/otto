@@ -968,7 +968,9 @@ export function updateTicket<TAccount extends ParkTicketAccount>(
         const claimResult = database.prepare(
           `UPDATE it_tickets
            SET status = ?, accepted_at = datetime('now'),
-               accepted_by_account_id = ?, updated_at = datetime('now')
+               accepted_by_account_id = ?,
+               creator_update_at = datetime('now'), creator_update_read_at = NULL,
+               updated_at = datetime('now')
            WHERE id = ? AND organization_id = ?
              AND status IN ('待接单', '待派单') AND accepted_at IS NULL`,
         ).run(statusAfter, account.id, input.ticketId, ticketRow.organization_id);
