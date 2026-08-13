@@ -12,3 +12,4 @@
 - #278 feat(e2ee): complete production MLS session orchestration and safety reset | 原因: 独立外部密码学审计、审计报告登记与人工生产发布批准尚未完成，releaseApproved 与生产能力必须继续 fail-closed
 - #275 MLS 已批准设备应维持有界的一次性 KeyPackage 库存 | 原因: 已记录的实现提交 afa02933 不在 internal 且当前无法解析，依赖仍开放的 PR #233 合并及真实环境验收
 - #274 MLS 后台应自动发现当前设备的未打开入站 Welcome | 原因: 已记录的实现提交 71fceb36 不在 internal 且当前无法解析，依赖仍开放的 PR #233 合并
+- #273 MLS 确定性接收方建立会话时应主动消费待处理握手 | 原因: 实现提交 d297e4cc 仅记录在 codex/sqlcipher，当前 internal 缺少基础 MLS 协调器，依赖仍开放的 PR #233 合并
