@@ -14,8 +14,8 @@ setlocal\r
 set "OTTO_USER_DIR=%~dp0otto-data"\r
 set "OTTO_USER_DATA_DIR=%~dp0otto-data\\electron"\r
 set "USERPROFILE=%~dp0otto-home"\r
-set "OTTO_USB_LICENSE_PATH=%~dp0许可证\\license.bin"\r
-set "OTTO_LICENSE_PUBLIC_KEY_FILE=%~dp0许可证\\public-key.pem"\r
+set "OTTO_USB_LICENSE_PATH=%~dp0license\\license.bin"\r
+set "OTTO_LICENSE_PUBLIC_KEY_FILE=%~dp0license\\public-key.pem"\r
 if not exist "%OTTO_USER_DIR%" mkdir "%OTTO_USER_DIR%"\r
 if not exist "%OTTO_USER_DATA_DIR%" mkdir "%OTTO_USER_DATA_DIR%"\r
 if not exist "%USERPROFILE%" mkdir "%USERPROFILE%"\r
@@ -29,7 +29,7 @@ const DEPLOYMENT_GUIDE = `# Otto U 盘便携版部署说明
 
 1. 在 Windows x64 构建机上运行 \`npm run dist:portable:win --workspace=packages/desktop\`。
 2. 将 \`packages/desktop/release/Otto-portable\` 整个目录复制到 U 盘并可重命名为 \`Otto\`。
-3. 许可证管理员将签名的 \`license.bin\` 放入 \`许可证\\license.bin\`。
+3. 许可证管理员将签名的 \`license.bin\` 放入 \`license\\license.bin\`（许可证目录使用 ASCII 名 \`license\`，避免批处理在非 UTF-8 代码页下读取中文目录名乱码）。
 
 ## 启动与数据
 
@@ -57,7 +57,7 @@ export async function assemblePortableUsb({ unpackedDir, outputDir }) {
   await Promise.all([
     mkdir(path.join(outputDir, 'otto-data'), { recursive: true }),
     mkdir(path.join(outputDir, 'otto-home'), { recursive: true }),
-    mkdir(path.join(outputDir, '许可证'), { recursive: true }),
+    mkdir(path.join(outputDir, 'license'), { recursive: true }),
     writeFile(path.join(outputDir, '启动Otto.bat'), PORTABLE_LAUNCHER, 'utf8'),
     writeFile(path.join(outputDir, '部署说明.md'), DEPLOYMENT_GUIDE, 'utf8'),
   ]);

@@ -13,7 +13,7 @@ const entitlementPath = arg('entitlement');
 const privateKeyPath = arg('private-key');
 const outputPath = arg('output');
 if (!entitlementPath || !privateKeyPath || !outputPath) {
-  throw new Error('usage: --entitlement entitlement.json --private-key signing-key.pem --output X:\\Otto\\许可证\\license.bin');
+  throw new Error('usage: --entitlement entitlement.json --private-key signing-key.pem --output X:\\Otto\\license\\license.bin');
 }
 const entitlement = JSON.parse(await readFile(path.resolve(entitlementPath), 'utf8'));
 const signingPrivateKey = await readFile(path.resolve(privateKeyPath), 'utf8');
