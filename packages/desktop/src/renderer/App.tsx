@@ -1376,7 +1376,7 @@ function OttoWorkspaceApp({
       {savedUiMode ? (
         <>
           <WhatsNewDialog />
-          <FirstRunGuide />
+          <FirstRunGuide mode={uiMode} />
         </>
       ) : null}
       {/* 主动服务提醒：右下角 toast（日程/洞察/日报等） */}
