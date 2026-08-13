@@ -191,7 +191,7 @@ export function validateSignedRendezvousRecord(
     throw new Error('rendezvous record is invalid');
   }
   if (record.version !== 1) throw new Error('rendezvous record version is unsupported');
-  nodeId(record.nodeId, 'node id');
+  const validatedNodeId = nodeId(record.nodeId, 'node id');
   const issuedAt = canonicalTimestamp(record.issuedAt, 'issued at');
   const expiresAt = canonicalTimestamp(record.expiresAt, 'expires at');
   if (issuedAt > now + MESH_MAX_CLOCK_SKEW_MS || expiresAt <= now) {
@@ -216,9 +216,9 @@ export function validateSignedRendezvousRecord(
   return {
     record: {
       version: 1,
-      nodeId: record.nodeId,
-      issuedAt: record.issuedAt,
-      expiresAt: record.expiresAt,
+      nodeId: validatedNodeId,
+      issuedAt: record.issuedAt as string,
+      expiresAt: record.expiresAt as string,
       candidates,
     },
     signingKeyId: signed.signingKeyId,

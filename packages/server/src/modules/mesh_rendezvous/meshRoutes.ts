@@ -167,8 +167,8 @@ export async function handleMeshRoute(deps: MeshRouteDeps): Promise<boolean> {
       const session = await services.createRelaySession({
         nodeA,
         nodeB,
-        tenantA: optionalNodeId(body.tenantA, 'tenant a'),
-        tenantB: optionalNodeId(body.tenantB, 'tenant b'),
+        tenantA: optionalNodeId(body.tenantA, 'tenant a') ?? null,
+        tenantB: optionalNodeId(body.tenantB, 'tenant b') ?? null,
         requester: nodeA,
         source,
         maxBytes: boundedBytes(body.maxBytes, 1024 * 1024),
@@ -284,12 +284,13 @@ export function meshStatusFrom(
     listSessions(): MeshNatSession[];
   },
 ): unknown {
+  const rendezvous = input.listRendezvous();
   return {
     protocolVersion: 1,
     privacy: { payloadStorage: 'ciphertext-only-in-memory', plaintextNeverStored: true },
     ddosDecisions: input.listActiveDdosDecisions(),
     pathReceipts: input.listPathReceipts(10),
-    rendezvousCount: Array.isArray(input.listRendezvous()) ? input.listRendezvous().length : 0,
+    rendezvousCount: Array.isArray(rendezvous) ? rendezvous.length : 0,
     activeSessions: input.listSessions().length,
     serverTime: new Date(input.now()).toISOString(),
   };
