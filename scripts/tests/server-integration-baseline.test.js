@@ -2,6 +2,7 @@
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
 
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -15,9 +16,12 @@ const ledger = JSON.parse(
     'utf8',
   ),
 );
-const remoteBranchTips = new Map([
-  ['origin/internal', ledger.authority.baselineCommit],
-]);
+const fetchedInternalTip = execFileSync(
+  'git',
+  ['rev-parse', '--verify', 'origin/internal'],
+  { cwd: rootDir, encoding: 'utf8' },
+).trim();
+const remoteBranchTips = new Map([['origin/internal', fetchedInternalTip]]);
 
 describe('server integration baseline', () => {
   it('keeps the ledger aligned with versions, schema, capabilities and release policy', () => {
@@ -122,7 +126,7 @@ describe('server integration baseline', () => {
         candidateHead: candidate,
       }),
     ).toContain(
-      `candidate ${candidate} does not contain latest origin/internal ${ledger.authority.baselineCommit}`,
+      `candidate ${candidate} does not contain latest origin/internal ${fetchedInternalTip}`,
     );
   });
 
