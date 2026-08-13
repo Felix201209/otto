@@ -910,6 +910,7 @@ export type SmsChallengeVerifyResult =
 // ============================================================
 
 export const {
+  cancelPendingTicketNotificationTasks,
   createPark,
   createParkAsPlatform,
   createParkMeetingRoom,
@@ -947,6 +948,7 @@ export const {
   markParkPublicationRead,
   markTicketRead,
   normalizeParkServiceFormData,
+  processTicketNotificationTasks,
   recordTicketNotification,
   remindParkDataStatistics,
   removeParkServiceSpecialist,
@@ -954,6 +956,7 @@ export const {
   reserveParkMeetingSlot,
   returnParkDataStatistics,
   reviewParkDataStatistics,
+  scheduleTicketNotificationTask,
   setParkMeetingSlotAvailability,
   setParkServiceSpecialist,
   submitParkDataStatisticsDraft,

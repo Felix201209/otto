@@ -4,6 +4,7 @@
 
 import { normalizeParkServiceFormData } from './parkServiceFormRules.js';
 import {
+  cancelPendingTicketNotificationTasks as cancelPendingTasksInRepository,
   createTicket as createTicketInRepository,
   getTicketCreatorForAccount as getCreatorFromRepository,
   getTicketForAccount as getTicketFromRepository,
@@ -13,14 +14,19 @@ import {
   listTicketInbox as listInboxFromRepository,
   listTicketsForAccount as listTicketsFromRepository,
   markTicketRead as markReadInRepository,
+  processTicketNotificationTasks as processNotificationTasksInRepository,
   recordTicketNotification as recordNotificationInRepository,
+  scheduleTicketNotificationTask as scheduleNotificationTaskInRepository,
   type ParkTicketRepositoryStore,
   updateTicket as updateTicketInRepository,
 } from './parkTicketRepository.js';
 import type {
   CreateTicketInput,
   ParkTicketAccount,
+  ProcessTicketNotificationTaskOptions,
+  ProcessTicketNotificationTaskResult,
   RecordTicketNotificationInput,
+  ScheduleTicketNotificationTaskInput,
   UpdateTicketInput,
 } from './parkTicketTypes.js';
 
@@ -58,6 +64,20 @@ export function createParkTicketFacade<TAccount extends ParkTicketAccount>(
     normalizeParkServiceFormData,
     recordTicketNotification(input: RecordTicketNotificationInput) {
       return recordNotificationInRepository(store, input);
+    },
+    scheduleTicketNotificationTask(
+      input: ScheduleTicketNotificationTaskInput,
+      escalationDelayMs?: number,
+    ) {
+      return scheduleNotificationTaskInRepository(store, input, escalationDelayMs);
+    },
+    processTicketNotificationTasks(
+      options: ProcessTicketNotificationTaskOptions,
+    ): Promise<ProcessTicketNotificationTaskResult> {
+      return processNotificationTasksInRepository(store, options);
+    },
+    cancelPendingTicketNotificationTasks(ticketId: string, accountId: string) {
+      return cancelPendingTasksInRepository(store, ticketId, accountId);
     },
     updateTicket(input: UpdateTicketInput) {
       return updateTicketInRepository(store, input);

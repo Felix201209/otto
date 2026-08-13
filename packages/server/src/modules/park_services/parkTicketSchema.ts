@@ -229,6 +229,113 @@ export function migrateLegacyParkTicketEvents(database: DatabaseHandle): void {
   }
 }
 
+export function migrateLegacyTicketNotifications(
+  database: DatabaseHandle,
+): void {
+  // 队列表始终存在（历史库上也会补建）。
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS ticket_notification_tasks (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      ticket_id TEXT NOT NULL,
+      recipient_account_id TEXT NOT NULL,
+      channel TEXT NOT NULL CHECK(channel IN ('sms', 'feishu')),
+      event TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN (
+        'pending', 'processing', 'sent', 'failed', 'cancelled', 'skipped'
+      )),
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 3,
+      last_error TEXT,
+      due_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (ticket_id) REFERENCES it_tickets(id) ON DELETE CASCADE,
+      FOREIGN KEY (recipient_account_id) REFERENCES accounts(id)
+        ON DELETE CASCADE,
+      FOREIGN KEY (organization_id) REFERENCES organizations(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ticket_notification_tasks_due
+      ON ticket_notification_tasks(status, due_at);
+    CREATE INDEX IF NOT EXISTS idx_ticket_notification_tasks_ticket
+      ON ticket_notification_tasks(ticket_id, recipient_account_id, status);
+  `);
+
+  // 旧表 status CHECK 缺少 pending/cancelled 时重建。
+  const table = database
+    .prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ticket_notifications'",
+    )
+    .get() as { sql?: string } | undefined;
+  if (!table?.sql || table.sql.includes("'pending'")) return;
+  const columns = new Set(
+    (
+      database.prepare('PRAGMA table_info(ticket_notifications)').all() as Array<{
+        name: string;
+      }>
+    ).map((column) => column.name),
+  );
+  const requiredColumns = [
+    'id',
+    'organization_id',
+    'ticket_id',
+    'recipient_account_id',
+    'channel',
+    'event',
+    'status',
+    'detail',
+    'created_at',
+  ];
+  if (!requiredColumns.every((column) => columns.has(column))) return;
+
+  database.exec('PRAGMA foreign_keys = OFF');
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    database.exec(
+      'ALTER TABLE ticket_notifications RENAME TO ticket_notifications_legacy_escalation',
+    );
+    database.exec(`
+      CREATE TABLE ticket_notifications (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        ticket_id TEXT NOT NULL,
+        recipient_account_id TEXT NOT NULL,
+        channel TEXT NOT NULL CHECK(channel IN ('otto', 'sms', 'feishu')),
+        event TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN (
+          'sent', 'failed', 'skipped', 'pending', 'cancelled'
+        )),
+        detail TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (ticket_id) REFERENCES it_tickets(id) ON DELETE CASCADE,
+        FOREIGN KEY (recipient_account_id) REFERENCES accounts(id)
+          ON DELETE CASCADE,
+        FOREIGN KEY (organization_id) REFERENCES organizations(id)
+      );
+      INSERT INTO ticket_notifications (
+        id, organization_id, ticket_id, recipient_account_id, channel,
+        event, status, detail, created_at
+      )
+      SELECT id, organization_id, ticket_id, recipient_account_id, channel,
+             event, status, detail, created_at
+      FROM ticket_notifications_legacy_escalation;
+      DROP TABLE ticket_notifications_legacy_escalation;
+      COMMIT;
+    `);
+  } catch (error) {
+    try {
+      database.exec('ROLLBACK');
+    } catch {
+      // Preserve the migration error.
+    }
+    throw error;
+  } finally {
+    database.exec('PRAGMA foreign_keys = ON');
+  }
+}
+
 export function createParkTicketSchemaContributor(input: {
   defaultOrganizationId: string;
 }): DatabaseSchemaContributor {
@@ -308,9 +415,35 @@ export function createParkTicketSchemaContributor(input: {
           recipient_account_id TEXT NOT NULL,
           channel TEXT NOT NULL CHECK(channel IN ('otto', 'sms', 'feishu')),
           event TEXT NOT NULL,
-          status TEXT NOT NULL CHECK(status IN ('sent', 'failed', 'skipped')),
+          status TEXT NOT NULL CHECK(status IN (
+            'sent', 'failed', 'skipped', 'pending', 'cancelled'
+          )),
           detail TEXT,
           created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY (ticket_id) REFERENCES it_tickets(id) ON DELETE CASCADE,
+          FOREIGN KEY (recipient_account_id) REFERENCES accounts(id)
+            ON DELETE CASCADE,
+          FOREIGN KEY (organization_id) REFERENCES organizations(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS ticket_notification_tasks (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          ticket_id TEXT NOT NULL,
+          recipient_account_id TEXT NOT NULL,
+          channel TEXT NOT NULL CHECK(channel IN ('sms', 'feishu')),
+          event TEXT NOT NULL,
+          title TEXT NOT NULL,
+          body TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN (
+            'pending', 'processing', 'sent', 'failed', 'cancelled', 'skipped'
+          )),
+          attempt_count INTEGER NOT NULL DEFAULT 0,
+          max_attempts INTEGER NOT NULL DEFAULT 3,
+          last_error TEXT,
+          due_at TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
           FOREIGN KEY (ticket_id) REFERENCES it_tickets(id) ON DELETE CASCADE,
           FOREIGN KEY (recipient_account_id) REFERENCES accounts(id)
             ON DELETE CASCADE,
@@ -326,6 +459,7 @@ export function createParkTicketSchemaContributor(input: {
         ensureOrganizationColumn(database, table, defaultOrganizationId);
       }
       ensureTicketColumns(database);
+      migrateLegacyTicketNotifications(database);
       database.exec(
         "UPDATE it_tickets SET service_id = 'repair' WHERE service_id IS NULL OR service_id = ''",
       );
@@ -348,6 +482,10 @@ export function createParkTicketSchemaContributor(input: {
           WHERE park_id IS NOT NULL AND application_number IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_ticket_notifications_recipient
           ON ticket_notifications(recipient_account_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_ticket_notification_tasks_due
+          ON ticket_notification_tasks(status, due_at);
+        CREATE INDEX IF NOT EXISTS idx_ticket_notification_tasks_ticket
+          ON ticket_notification_tasks(ticket_id, recipient_account_id, status);
       `);
     },
   };
