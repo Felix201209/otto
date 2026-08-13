@@ -606,6 +606,33 @@ function makeHandler(
 }
 
 /**
+ * 工单通知升级任务运行时：周期扫描持久化队列，发送到期的短信升级 / 飞书重试。
+ * 任务存于 SQLite，服务器重启后由本运行时继续执行。
+ */
+function startTicketNotificationRuntime(options: {
+  smsSender: RepairNotificationSender | null;
+  feishuSender: RepairNotificationSender | null;
+  intervalMs?: number;
+  onError?: (error: unknown) => void;
+}): () => void {
+  const timer = setInterval(() => {
+    db.processTicketNotificationTasks({
+      smsSender: options.smsSender,
+      feishuSender: options.feishuSender,
+      resolveRecipientChannel: (accountId) => {
+        const account = db.getAccount(accountId);
+        return {
+          phone: account?.phone ?? null,
+          feishuOpenId: account?.feishuOpenId ?? null,
+        };
+      },
+    }).catch((error) => options.onError?.(error));
+  }, options.intervalMs ?? 15_000);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
+/**
  * 组装企业服务端（不 listen）。会算好 host/port/token：
  * 监听非本地又没给 token → 自动生成一枚并回传（调用方负责打印/落盘），绝不裸奔。
  */
@@ -616,6 +643,8 @@ export function createEnterpriseServer(opts: EnterpriseServerOptions = {}): {
   publicBaseUrl: string;
   adminToken: string;
   generatedToken: boolean;
+  repairSmsSender: RepairNotificationSender | null;
+  repairFeishuSender: RepairNotificationSender | null;
 } {
   const host = opts.host || process.env.OTTO_ENTERPRISE_HOST || '127.0.0.1';
   const port =
@@ -717,7 +746,16 @@ export function createEnterpriseServer(opts: EnterpriseServerOptions = {}): {
       controlBoundary.enabled ? controlBoundary.handleRoute : undefined,
     ),
   );
-  return { server, host, port, publicBaseUrl, adminToken, generatedToken };
+  return {
+    server,
+    host,
+    port,
+    publicBaseUrl,
+    adminToken,
+    generatedToken,
+    repairSmsSender,
+    repairFeishuSender,
+  };
 }
 
 function persistGeneratedAdminToken(token: string): string {
@@ -784,8 +822,16 @@ export function startEnterpriseServer(
   db.getDatabaseReadiness();
   db.ensureDirectMessageContentEncrypted();
   db.ensureDeploymentLicenseSecretsEncrypted();
-  const { server, host, port, publicBaseUrl, adminToken, generatedToken } =
-    createEnterpriseServer(validatedOptions);
+  const {
+    server,
+    host,
+    port,
+    publicBaseUrl,
+    adminToken,
+    generatedToken,
+    repairSmsSender,
+    repairFeishuSender,
+  } = createEnterpriseServer(validatedOptions);
   const generatedTokenPath = generatedToken
     ? persistGeneratedAdminToken(adminToken)
     : null;
@@ -863,12 +909,30 @@ export function startEnterpriseServer(
   mlsCleanupTimer.unref();
   const initialMlsCleanup = setImmediate(runMlsCleanup);
   initialMlsCleanup.unref();
+  let stopTicketNotificationRuntime: () => void;
+  try {
+    stopTicketNotificationRuntime = startTicketNotificationRuntime({
+      smsSender: repairSmsSender,
+      feishuSender: repairFeishuSender,
+      onError: (error) =>
+        console.error('[Otto Enterprise] 工单通知升级任务失败', error),
+    });
+  } catch (error) {
+    clearImmediate(initialMlsCleanup);
+    clearInterval(mlsCleanupTimer);
+    stopPrivateDeploymentRuntime();
+    stopFederationRuntime();
+    stopDataProtectionRuntime();
+    server.close();
+    throw error;
+  }
   server.once('close', () => {
     clearImmediate(initialMlsCleanup);
     clearInterval(mlsCleanupTimer);
     stopPrivateDeploymentRuntime();
     stopFederationRuntime();
     stopDataProtectionRuntime();
+    stopTicketNotificationRuntime();
   });
   return server;
 }

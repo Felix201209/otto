@@ -21,6 +21,7 @@
     "dist:dmg": "npm run build && electron-builder --mac dmg --arm64",
     "dist:dmg:x64": "npm run build && electron-builder --mac dmg --x64",
     "dist:win": "node scripts/fetch-win-ripgrep.mjs && npm run build && electron-builder --win --x64 --publish never && node scripts/verify-packaged-runtime.mjs release/win-unpacked/resources/app.asar --platform win32 --arch x64",
+    "dist:portable:win": "npm run dist:win && node scripts/portable-usb.mjs",
     "package": "node scripts/make-delivery-zip.mjs",
     "lint": "eslint . --ext .ts,.tsx",
     "pretest": "npm run build:native",
@@ -36,6 +37,7 @@
   },
   "dependencies": {
     "@otto/native": "0.1.0",
+    "otto-core": "file:../core",
     "otto-server": "file:../server",
     "qrcode-terminal": "^0.12.0",
     "react": "^18.3.1",

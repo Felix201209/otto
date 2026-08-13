@@ -10,9 +10,13 @@ import type {
   ParkTicketPark,
   ParkTicketService,
   ParkTicketSpecialist,
+  ProcessTicketNotificationTaskOptions,
+  ProcessTicketNotificationTaskResult,
   RecordTicketNotificationInput,
+  ScheduleTicketNotificationTaskInput,
   TicketHistoryAction,
   TicketHistoryEntry,
+  TicketNotificationTaskRow,
   TicketView,
   UpdateTicketInput,
 } from './parkTicketTypes.js';
@@ -69,6 +73,10 @@ interface TicketRow {
   response_text: string | null;
   response_at: string | null;
   accepted_at: string | null;
+  accepted_by_account_id: string | null;
+  released_at: string | null;
+  release_reason: string | null;
+  released_by_account_id: string | null;
   completed_at: string | null;
   closed_at: string | null;
   creator_update_at: string | null;
@@ -215,7 +223,7 @@ function ticketView<TAccount extends ParkTicketAccount>(
         .all(id) as Array<{
         channel: 'otto' | 'sms' | 'feishu';
         event: string;
-        status: 'sent' | 'failed' | 'skipped';
+        status: 'sent' | 'failed' | 'skipped' | 'pending' | 'cancelled';
         detail: string | null;
         created_at: string;
       }>)
@@ -317,6 +325,9 @@ function ticketView<TAccount extends ParkTicketAccount>(
       left.event.createdAt.localeCompare(right.event.createdAt) || left.order - right.order
     ))
     .map((candidate) => candidate.event);
+  const handler = row.accepted_by_account_id
+    ? store.getAccount(row.accepted_by_account_id)
+    : null;
   return {
     id: row.id,
     applicationNumber: row.application_number,
@@ -335,6 +346,11 @@ function ticketView<TAccount extends ParkTicketAccount>(
     responseType: row.response_type,
     responseText: row.response_text,
     responseAt: row.response_at,
+    acceptedBy: handler
+      ? { id: handler.id, name: handler.name }
+      : null,
+    releasedAt: row.released_at,
+    releaseReason: row.release_reason,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     creator: {
@@ -757,6 +773,8 @@ export function markTicketRead<TAccount extends ParkTicketAccount>(
   if (Number(creatorChanged.changes) + Number(deliveryChanged.changes) === 0) {
     throw new Error('Ticket delivery not found');
   }
+  // 已读回执：取消该接收人未到期的短信升级任务（5 分钟内已读则不发送短信）。
+  cancelPendingTicketNotificationTasks(store, ticketId, accountId);
   return ticketView(store, ticketId, accountId);
 }
 
@@ -936,13 +954,58 @@ export function updateTicket<TAccount extends ParkTicketAccount>(
         );
       } else if (input.action === 'accept') {
         if (!['待接单', '待派单'].includes(current.status)) {
-          throw new Error('Ticket cannot be accepted');
+          if (current.acceptedBy) {
+            throw new Error(
+              current.acceptedBy.id === account.id
+                ? '工单已由您接单'
+                : '工单已被他人接单',
+            );
+          }
+          throw new Error('工单当前状态不可接单');
         }
         statusAfter = current.serviceId === 'repair' ? '维修中' : '处理中';
-        database.prepare(
-          `UPDATE it_tickets SET status = ?, accepted_at = datetime('now'), updated_at = datetime('now')
-           WHERE id = ? AND organization_id = ?`,
-        ).run(statusAfter, input.ticketId, ticketRow.organization_id);
+        // 原子抢单：条件更新 + 处理人记录，保证并发下只有一名专员获得工单。
+        const claimResult = database.prepare(
+          `UPDATE it_tickets
+           SET status = ?, accepted_at = datetime('now'),
+               accepted_by_account_id = ?, updated_at = datetime('now')
+           WHERE id = ? AND organization_id = ?
+             AND status IN ('待接单', '待派单') AND accepted_at IS NULL`,
+        ).run(statusAfter, account.id, input.ticketId, ticketRow.organization_id);
+        if (claimResult.changes !== 1) {
+          throw new Error('工单已被他人接单');
+        }
+      } else if (input.action === 'release') {
+        if (current.acceptedBy?.id !== account.id) {
+          throw new Error('只有当前处理人可以退回工单');
+        }
+        if (!['维修中', '处理中'].includes(current.status)) {
+          throw new Error('当前状态不能退回工单');
+        }
+        const releaseReason = input.releaseReason?.trim() || '暂时没空';
+        if (releaseReason.length > 200) {
+          throw new Error('退回原因不能超过 200 个字符');
+        }
+        statusAfter = '待接单';
+        const releaseResult = database.prepare(
+          `UPDATE it_tickets
+           SET status = '待接单', accepted_at = NULL, accepted_by_account_id = NULL,
+               released_at = datetime('now'), release_reason = ?,
+               released_by_account_id = ?, updated_at = datetime('now')
+           WHERE id = ? AND organization_id = ?
+             AND accepted_by_account_id = ? AND status IN ('维修中', '处理中')`,
+        ).run(
+          releaseReason,
+          account.id,
+          input.ticketId,
+          ticketRow.organization_id,
+          account.id,
+        );
+        if (releaseResult.changes !== 1) {
+          throw new Error('工单退回失败，请刷新后重试');
+        }
+        responseType = null;
+        responseText = null;
       } else if (input.action === 'complete') {
         if (current.serviceId === 'repair' && current.parkId && current.status === '已转交') {
           statusAfter = '已完成';
@@ -1055,6 +1118,319 @@ export function recordTicketNotification<TAccount extends ParkTicketAccount>(
       input.status,
       input.detail ?? null,
     );
+}
+
+const DEFAULT_ESCALATION_DELAY_MS = 5 * 60_000;
+const DEFAULT_RETRY_DELAY_MS = 60_000;
+const DEFAULT_MAX_ATTEMPTS = 3;
+
+export function cancelPendingTicketNotificationTasks<
+  TAccount extends ParkTicketAccount,
+>(
+  store: ParkTicketRepositoryStore<TAccount>,
+  ticketId: string,
+  accountId: string,
+): number {
+  const database = store.db();
+  const result = database.prepare(
+    `UPDATE ticket_notification_tasks
+     SET status = 'cancelled',
+         last_error = '接收人已读，取消短信升级',
+         updated_at = datetime('now')
+     WHERE ticket_id = ? AND recipient_account_id = ?
+       AND channel = 'sms' AND status IN ('pending', 'processing')`,
+  ).run(ticketId, accountId);
+  database.prepare(
+    `UPDATE ticket_notifications
+     SET status = 'cancelled', detail = '接收人已读，取消短信升级'
+     WHERE ticket_id = ? AND recipient_account_id = ?
+       AND channel = 'sms' AND status = 'pending'`,
+  ).run(ticketId, accountId);
+  return Number(result.changes);
+}
+
+function upsertNotificationState<TAccount extends ParkTicketAccount>(
+  store: ParkTicketRepositoryStore<TAccount>,
+  input: RecordTicketNotificationInput,
+): void {
+  const database = store.db();
+  const existing = database
+    .prepare(
+      `SELECT id FROM ticket_notifications
+       WHERE ticket_id = ? AND recipient_account_id = ? AND channel = ? AND event = ?
+       ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+    )
+    .get(
+      input.ticketId,
+      input.recipientAccountId,
+      input.channel,
+      input.event,
+    ) as { id: string } | undefined;
+  if (existing) {
+    database.prepare(
+      'UPDATE ticket_notifications SET status = ?, detail = ? WHERE id = ?',
+    ).run(input.status, input.detail ?? null, existing.id);
+    return;
+  }
+  recordTicketNotification(store, input);
+}
+
+/** 调度一条可持久化的通知任务（短信升级 / 飞书重试）。重复调度同一事件会被幂等跳过。 */
+export function scheduleTicketNotificationTask<
+  TAccount extends ParkTicketAccount,
+>(
+  store: ParkTicketRepositoryStore<TAccount>,
+  input: ScheduleTicketNotificationTaskInput,
+  escalationDelayMs = DEFAULT_ESCALATION_DELAY_MS,
+): void {
+  const database = store.db();
+  const ticket = database
+    .prepare('SELECT organization_id FROM it_tickets WHERE id = ?')
+    .get(input.ticketId) as { organization_id: string } | undefined;
+  if (!ticket) throw new Error('Ticket not found');
+  const recipient = store.getAccount(input.recipientAccountId);
+  if (!recipient || recipient.status !== 'active') {
+    throw new Error('Notification recipient is inactive');
+  }
+  const duplicate = database
+    .prepare(
+      `SELECT 1 FROM ticket_notification_tasks
+       WHERE ticket_id = ? AND recipient_account_id = ? AND event = ? AND channel = ?
+         AND status IN ('pending', 'processing') LIMIT 1`,
+    )
+    .get(
+      input.ticketId,
+      input.recipientAccountId,
+      input.event,
+      input.channel,
+    );
+  if (duplicate) {
+    upsertNotificationState(store, {
+      ticketId: input.ticketId,
+      recipientAccountId: input.recipientAccountId,
+      channel: input.channel,
+      event: input.event,
+      status: 'pending',
+      detail: '已排入通知队列（去重）',
+    });
+    return;
+  }
+  const now = store.now?.() ?? new Date();
+  const dueAt =
+    input.dueAt ??
+    new Date(
+      now.getTime() + (input.channel === 'sms' ? escalationDelayMs : DEFAULT_RETRY_DELAY_MS),
+    ).toISOString();
+  database.prepare(
+    `INSERT INTO ticket_notification_tasks
+     (id, organization_id, ticket_id, recipient_account_id, channel, event,
+      title, body, status, attempt_count, max_attempts, last_error, due_at,
+      created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, NULL, ?, datetime('now'), datetime('now'))`,
+  ).run(
+    store.createTicketNotificationId(),
+    ticket.organization_id,
+    input.ticketId,
+    input.recipientAccountId,
+    input.channel,
+    input.event,
+    input.title,
+    input.body,
+    DEFAULT_MAX_ATTEMPTS,
+    dueAt,
+  );
+  upsertNotificationState(store, {
+    ticketId: input.ticketId,
+    recipientAccountId: input.recipientAccountId,
+    channel: input.channel,
+    event: input.event,
+    status: 'pending',
+    detail: '已排入通知队列',
+  });
+}
+
+function recipientHasReadTicket<TAccount extends ParkTicketAccount>(
+  store: ParkTicketRepositoryStore<TAccount>,
+  ticketId: string,
+  accountId: string,
+): boolean {
+  const database = store.db();
+  const delivery = database
+    .prepare(
+      'SELECT read_at FROM ticket_deliveries WHERE ticket_id = ? AND account_id = ?',
+    )
+    .get(ticketId, accountId) as { read_at: string | null } | undefined;
+  if (delivery?.read_at) return true;
+  const ticket = database
+    .prepare(
+      'SELECT created_by_account_id, creator_update_read_at FROM it_tickets WHERE id = ?',
+    )
+    .get(ticketId) as
+    | { created_by_account_id: string; creator_update_read_at: string | null }
+    | undefined;
+  return Boolean(
+    ticket && ticket.created_by_account_id === accountId && ticket.creator_update_read_at,
+  );
+}
+
+export async function processTicketNotificationTasks<
+  TAccount extends ParkTicketAccount,
+>(
+  store: ParkTicketRepositoryStore<TAccount>,
+  options: ProcessTicketNotificationTaskOptions,
+): Promise<ProcessTicketNotificationTaskResult> {
+  const database = store.db();
+  const now = options.now?.() ?? new Date();
+  const nowISO = now.toISOString();
+  const maxTasksPerRun = options.maxTasksPerRun ?? 20;
+  const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+  const retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+  const sendTimeoutMs = options.sendTimeoutMs ?? 8_000;
+
+  const result: ProcessTicketNotificationTaskResult = {
+    processed: 0,
+    sent: 0,
+    failed: 0,
+    cancelled: 0,
+    skipped: 0,
+  };
+
+  // 1. 原子领取到期任务，避免重复处理。
+  const ownsTransaction = !database.inTransaction;
+  if (ownsTransaction) database.exec('BEGIN IMMEDIATE');
+  let claimed: TicketNotificationTaskRow[] = [];
+  try {
+    claimed = database
+      .prepare(
+        `SELECT * FROM ticket_notification_tasks
+         WHERE status = 'pending' AND due_at <= ?
+         ORDER BY due_at LIMIT ?`,
+      )
+      .all(nowISO, maxTasksPerRun) as TicketNotificationTaskRow[];
+    for (const task of claimed) {
+      database.prepare(
+        `UPDATE ticket_notification_tasks
+         SET status = 'processing', updated_at = datetime('now')
+         WHERE id = ?`,
+      ).run(task.id);
+    }
+    if (ownsTransaction) database.exec('COMMIT');
+  } catch (error) {
+    if (ownsTransaction && database.inTransaction) database.exec('ROLLBACK');
+    throw error;
+  }
+
+  const withTimeout = async (task: Promise<boolean>): Promise<boolean> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        task,
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), sendTimeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+
+  const finish = (
+    task: TicketNotificationTaskRow,
+    status: 'sent' | 'failed' | 'cancelled' | 'skipped',
+    detail: string,
+    attemptCount?: number,
+  ): void => {
+    database.prepare(
+      `UPDATE ticket_notification_tasks
+       SET status = ?, attempt_count = ?, last_error = ?, updated_at = datetime('now')
+       WHERE id = ?`,
+    ).run(status, attemptCount ?? task.attempt_count, detail, task.id);
+    upsertNotificationState(store, {
+      ticketId: task.ticket_id,
+      recipientAccountId: task.recipient_account_id,
+      channel: task.channel,
+      event: task.event,
+      status,
+      detail,
+    });
+  };
+
+  // 2. 逐个处理已领取任务。
+  for (const task of claimed) {
+    result.processed += 1;
+    try {
+      if (task.channel === 'sms') {
+        if (recipientHasReadTicket(store, task.ticket_id, task.recipient_account_id)) {
+          finish(task, 'cancelled', '接收人已读，取消短信升级');
+          result.cancelled += 1;
+          continue;
+        }
+      }
+      const channelInfo = options.resolveRecipientChannel(task.recipient_account_id);
+      const sender =
+        task.channel === 'sms' ? options.smsSender : options.feishuSender;
+      const recipientId =
+        task.channel === 'sms' ? channelInfo.phone : channelInfo.feishuOpenId;
+      if (!sender || !recipientId) {
+        finish(
+          task,
+          'skipped',
+          sender ? '接收人未配置该通道账号' : '服务器未配置该通知通道',
+        );
+        result.skipped += 1;
+        continue;
+      }
+      let sent = false;
+      try {
+        sent = await withTimeout(sender.send(recipientId, task.title, task.body));
+      } catch {
+        sent = false;
+      }
+      if (sent) {
+        finish(task, 'sent', '供应商已接收');
+        result.sent += 1;
+      } else {
+        const attempt = task.attempt_count + 1;
+        const errorText = '供应商发送失败或超时';
+        if (attempt < maxAttempts) {
+          const nextDue = new Date(
+            now.getTime() + retryDelayMs * attempt,
+          ).toISOString();
+          database.prepare(
+            `UPDATE ticket_notification_tasks
+             SET status = 'pending', attempt_count = ?, last_error = ?,
+                 due_at = ?, updated_at = datetime('now')
+             WHERE id = ?`,
+          ).run(attempt, `${errorText}（第 ${attempt}/${maxAttempts} 次）`, nextDue, task.id);
+          upsertNotificationState(store, {
+            ticketId: task.ticket_id,
+            recipientAccountId: task.recipient_account_id,
+            channel: task.channel,
+            event: task.event,
+            status: 'failed',
+            detail: `${errorText}（第 ${attempt}/${maxAttempts} 次，将重试）`,
+          });
+          result.failed += 1;
+        } else {
+          finish(
+            task,
+            'failed',
+            `${errorText}（已达最大重试次数 ${maxAttempts}）`,
+            attempt,
+          );
+          result.failed += 1;
+        }
+      }
+    } catch (error) {
+      finish(
+        task,
+        'failed',
+        error instanceof Error ? error.message : String(error),
+      );
+      result.failed += 1;
+    }
+  }
+  return result;
 }
 
 interface ParkTicketBackupStore {

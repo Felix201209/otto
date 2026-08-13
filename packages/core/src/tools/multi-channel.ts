@@ -19,6 +19,10 @@ export interface MultiChannelToolParams {
   content?: string;
   app_id?: string;
   app_secret?: string;
+  agent_id?: string;
+  target_users?: string;
+  target_tags?: string;
+  target_parties?: string;
 }
 
 export class MultiChannelTool extends BaseTool<MultiChannelToolParams, ToolResult> {
@@ -57,6 +61,10 @@ export class MultiChannelTool extends BaseTool<MultiChannelToolParams, ToolResul
           content: { type: Type.STRING, description: 'Content/body of the broadcast message' },
           app_id: { type: Type.STRING, description: 'AppId or CorpId of the target platform' },
           app_secret: { type: Type.STRING, description: 'AppSecret or AgentSecret' },
+          agent_id: { type: Type.STRING, description: 'WeCom AgentId or DingTalk robotCode' },
+          target_users: { type: Type.STRING, description: 'Target user IDs' },
+          target_tags: { type: Type.STRING, description: 'WeCom target tag IDs' },
+          target_parties: { type: Type.STRING, description: 'WeCom target department IDs' },
         },
         required: ['action'],
       },
@@ -109,6 +117,10 @@ export class MultiChannelTool extends BaseTool<MultiChannelToolParams, ToolResul
           const res = await this.gateway.connectChannel(p.channel as ChannelType, {
             appId: p.app_id || '',
             appSecret: p.app_secret || '',
+            agentId: p.agent_id,
+            targetUsers: p.target_users,
+            targetTags: p.target_tags,
+            targetParties: p.target_parties,
           });
           // 诚实：连接失败（含「未实现」）不许包装成 OK。
           if (!res.success) {
@@ -131,7 +143,7 @@ export class MultiChannelTool extends BaseTool<MultiChannelToolParams, ToolResul
           // 一个渠道都没真正送达 → 明确报「未发送」，不谎报已群发。
           if (delivered.length === 0) {
             const msg =
-              '消息未发送：微信 / 企业微信 / 钉钉渠道尚未实现真实投递，飞书请走独立飞书网关。' +
+              '消息未发送：没有已配置且成功投递的企业微信/钉钉渠道；个人微信未接入，飞书请走独立飞书网关。' +
               '本工具不会假报送达。';
             return {
               llmContent: `multi_channel FAIL: ${msg}`,

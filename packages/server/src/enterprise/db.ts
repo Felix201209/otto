@@ -45,6 +45,10 @@ import {
   FEDERATION_GATEWAY_SCHEMA_CONTRIBUTOR,
 } from '../modules/federation_gateway/index.js';
 import {
+  createMeshRendezvousComposition,
+  MESH_RENDEZVOUS_SCHEMA_CONTRIBUTOR,
+} from '../modules/mesh_rendezvous/index.js';
+import {
   createModelGatewayComposition,
   MODEL_GATEWAY_SCHEMA_CONTRIBUTOR,
 } from '../modules/model_gateway/index.js';
@@ -291,6 +295,7 @@ function initSchema(d: Database): void {
     DATA_GOVERNANCE_SCHEMA_CONTRIBUTOR,
     PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR,
     FEDERATION_GATEWAY_SCHEMA_CONTRIBUTOR,
+    MESH_RENDEZVOUS_SCHEMA_CONTRIBUTOR,
     createAuditLogSchemaContributor({
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
     }),
@@ -568,6 +573,22 @@ export const {
   allowInsecureLoopback:
     process.env.NODE_ENV === 'test' &&
     process.env.OTTO_FEDERATION_ALLOW_INSECURE_LOOPBACK === 'true',
+});
+
+export const {
+  publishRendezvous,
+  lookupRendezvous,
+  listRendezvous,
+  createRelaySession,
+  putRelayChunk,
+  takeRelayChunks,
+  declareP2P,
+  closeRelaySession,
+  status,
+} = createMeshRendezvousComposition({
+  db: getDB,
+  now: Date.now,
+  signingKey: process.env.OTTO_MESH_SIGNING_KEY?.trim() || undefined,
 });
 
 export type OrganizationView = OrganizationDirectoryView;
@@ -1002,6 +1023,7 @@ export type SmsChallengeVerifyResult =
 // ============================================================
 
 export const {
+  cancelPendingTicketNotificationTasks,
   createPark,
   createParkAsPlatform,
   createParkMeetingRoom,
@@ -1039,6 +1061,7 @@ export const {
   markParkPublicationRead,
   markTicketRead,
   normalizeParkServiceFormData,
+  processTicketNotificationTasks,
   recordTicketNotification,
   remindParkDataStatistics,
   removeParkServiceSpecialist,
@@ -1046,6 +1069,7 @@ export const {
   reserveParkMeetingSlot,
   returnParkDataStatistics,
   reviewParkDataStatistics,
+  scheduleTicketNotificationTask,
   setParkMeetingSlotAvailability,
   setParkServiceSpecialist,
   submitParkDataStatisticsDraft,

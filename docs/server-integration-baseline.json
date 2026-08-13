@@ -4,7 +4,7 @@
     "repository": "Felix201209/otto",
     "branch": "internal",
     "baselineCommit": "1874681db2f108aa6a9b6d47ee62578d4ce37ac2",
-    "cataloguedAt": "2026-08-11T12:00:00Z",
+    "cataloguedAt": "2026-08-13T10:50:00Z",
     "releaseRule": "The latest origin/internal commit must be an ancestor of a release source. Additional commits are allowed only on reviewed release branches or version tags.",
     "integratedSources": [
       {
@@ -132,6 +132,7 @@
       "privacy_self_service",
       "multi_organization",
       "direct_messages",
+      "federation_chat_v1",
       "e2ee_private_messages_v1",
       "e2ee_device_trust_v1",
       "e2ee_mls_transport_v1",
@@ -194,7 +195,7 @@
       "id": "latest_internal_parent",
       "status": "verified",
       "evidence": [
-        "The candidate contains internal commit 1874681db2f108aa6a9b6d47ee62578d4ce37ac2 as an ancestor."
+        "The candidate contains the fetched origin/internal tip ebf4b45b7ba4db059fcf940435b8befc9aac7a85 as an ancestor; authority baseline 1874681db2f108aa6a9b6d47ee62578d4ce37ac2 remains the historical integration anchor."
       ]
     },
     {

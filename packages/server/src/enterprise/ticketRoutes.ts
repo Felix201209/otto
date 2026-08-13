@@ -41,7 +41,11 @@ async function sendRepairNotifications(input: {
     }
   };
 
-  await Promise.all(input.recipients.flatMap((recipient) => {
+  // 通知升级顺序：
+  //  1) Otto 站内提醒立即投递（收件箱已读回执作为短信升级的取消依据）。
+  //  2) 飞书立即发送；失败进入持久化重试队列。
+  //  3) 短信不立即发送：调度 5 分钟后的升级任务，若期间已读则取消，未读才发送。
+  await Promise.all(input.recipients.map(async (recipient) => {
     db.recordTicketNotification({
       ticketId: input.ticket.id,
       recipientAccountId: recipient.id,
@@ -50,43 +54,53 @@ async function sendRepairNotifications(input: {
       status: 'sent',
       detail: '企业工单收件箱已投递',
     });
-    const sendChannel = async (
-      channel: 'sms' | 'feishu',
-      sender: RepairNotificationSender | null,
-      recipientId: string | null,
-    ): Promise<void> => {
-      if (!sender || !recipientId) {
-        db.recordTicketNotification({
-          ticketId: input.ticket.id,
-          recipientAccountId: recipient.id,
-          channel,
-          event: input.event,
-          status: 'skipped',
-          detail: sender ? '接收人未配置该通道账号' : '服务器未配置该通知通道',
-        });
-        return;
-      }
-      let sent = false;
-      try {
-        sent = await withTimeout(
-          sender.send(recipientId, input.title, input.body),
-        );
-      } catch {
-        sent = false;
-      }
+    db.scheduleTicketNotificationTask({
+      ticketId: input.ticket.id,
+      recipientAccountId: recipient.id,
+      channel: 'sms',
+      event: input.event,
+      title: input.title,
+      body: input.body,
+    });
+    if (!input.feishuSender || !recipient.feishuOpenId) {
       db.recordTicketNotification({
         ticketId: input.ticket.id,
         recipientAccountId: recipient.id,
-        channel,
+        channel: 'feishu',
         event: input.event,
-        status: sent ? 'sent' : 'failed',
-        detail: sent ? '供应商已接收' : '供应商发送失败或超时',
+        status: 'skipped',
+        detail: input.feishuSender ? '接收人未配置该通道账号' : '服务器未配置该通知通道',
       });
-    };
-    return [
-      sendChannel('sms', input.smsSender, recipient.phone),
-      sendChannel('feishu', input.feishuSender, recipient.feishuOpenId),
-    ];
+      return;
+    }
+    let sent = false;
+    try {
+      sent = await withTimeout(
+        input.feishuSender.send(recipient.feishuOpenId, input.title, input.body),
+      );
+    } catch {
+      sent = false;
+    }
+    if (sent) {
+      db.recordTicketNotification({
+        ticketId: input.ticket.id,
+        recipientAccountId: recipient.id,
+        channel: 'feishu',
+        event: input.event,
+        status: 'sent',
+        detail: '供应商已接收',
+      });
+      return;
+    }
+    // 飞书失败进入可重试队列（不影响工单创建）。
+    db.scheduleTicketNotificationTask({
+      ticketId: input.ticket.id,
+      recipientAccountId: recipient.id,
+      channel: 'feishu',
+      event: input.event,
+      title: input.title,
+      body: input.body,
+    });
   }));
 }
 
@@ -378,6 +392,7 @@ export async function handleTicketRoute({
         ![
           'respond',
           'accept',
+          'release',
           'complete',
           'confirm',
           'respond_and_transfer',
@@ -392,6 +407,7 @@ export async function handleTicketRoute({
         action: action as
           | 'respond'
           | 'accept'
+          | 'release'
           | 'complete'
           | 'confirm'
           | 'respond_and_transfer',
@@ -400,6 +416,7 @@ export async function handleTicketRoute({
         transferAccountId: typeof body.transferAccountId === 'string' ? body.transferAccountId : undefined,
         transferDepartment: typeof body.transferDepartment === 'string' ? body.transferDepartment : undefined,
         transferNote: typeof body.transferNote === 'string' ? body.transferNote : undefined,
+        releaseReason: typeof body.releaseReason === 'string' ? body.releaseReason : undefined,
       });
       const creatorRecipients = [db.getTicketCreatorForAccount(ticket.id, account.id)].filter(
         (item): item is db.AccountView => item !== null,

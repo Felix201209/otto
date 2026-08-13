@@ -17,6 +17,7 @@ import {
 } from './authRoutes.js';
 import { handleCommunicationRoute } from './communicationRoutes.js';
 import { handleFederationRoute } from '../modules/federation_gateway/index.js';
+import { handleMeshRoute } from '../modules/mesh_rendezvous/index.js';
 import { handleDataGovernanceRoute } from '../modules/data_governance/index.js';
 import { handleCreditsRoute } from './creditsRoutes.js';
 import {
@@ -439,6 +440,21 @@ export async function dispatchEnterpriseRoute({
       res,
       memberAccount,
       adminPrincipal,
+      services: db,
+      readBody,
+      sendJSON,
+    })
+  ) {
+    return true;
+  }
+
+  if (
+    await handleMeshRoute({
+      path,
+      method,
+      url,
+      req,
+      res,
       services: db,
       readBody,
       sendJSON,

@@ -222,6 +222,22 @@ export const PRODUCT_MODULES = [
     updateComponents: ['federation_gateway'],
   },
   {
+    id: 'mesh_rendezvous',
+    nameZh: 'Mesh 根服务器中继',
+    description: 'Owns low-load device discovery (rendezvous), NAT traversal coordination and short-lived ciphertext relay; exits the data path immediately after P2P success.',
+    layer: 'integration',
+    runtimeSurfaces: ['server'],
+    dependencies: ['data_platform'],
+    dataOwnership: [
+      'rendezvous records',
+      'NAT session metadata',
+      'path receipts',
+      'quota and DDoS decisions',
+    ],
+    licenseCapabilities: [],
+    updateComponents: ['mesh_rendezvous'],
+  },
+  {
     id: 'data_governance',
     nameZh: '数据治理与合规中心',
     description: 'Owns legal document versions, consent evidence, processing inventory, data export, deletion and retention controls.',
