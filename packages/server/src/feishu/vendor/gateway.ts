@@ -1240,7 +1240,7 @@ export class FeishuGateway {
     }
     let data: FeishuApiResponse<{ tenant_access_token?: string; expire?: number }>;
     try {
-      data = await res.json();
+      data = (await res.json()) as FeishuApiResponse<{ tenant_access_token?: string; expire?: number }>;
     } catch {
       throw new Error('tenant_access_token: invalid JSON response from Feishu');
     }
