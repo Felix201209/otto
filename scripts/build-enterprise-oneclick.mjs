@@ -22,6 +22,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gunzipSync } from 'node:zlib';
+import { supportedEnterpriseSchemaVersions } from './enterprise-release-contract.mjs';
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -46,10 +47,7 @@ if (!schemaVersionMatch) {
   );
 }
 const schemaVersion = Number(schemaVersionMatch[1]);
-const supportedSchemaFrom = Array.from(
-  { length: schemaVersion - 1 },
-  (_, index) => index + 2,
-);
+const supportedSchemaFrom = supportedEnterpriseSchemaVersions(schemaVersion);
 const releaseChannel = 'lstc';
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const allowUnsignedEnterprisePackage =
