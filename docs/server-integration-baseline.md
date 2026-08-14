@@ -10,9 +10,11 @@ contain the latest `origin/internal` commit. Additional commits are allowed only
 on a reviewed `release/*` branch or a version tag; feature and experiment
 branches are never direct release sources.
 
-The current integration candidate is based on internal commit
-`1874681db2f108aa6a9b6d47ee62578d4ce37ac2` and preserves product version
-`1.10.1`. It integrates the reviewed SQLCipher/E2EE work, MLS attachments,
+The current integration candidate contains the fetched `origin/internal` tip
+`cfc17d3fa434b0265b8803dd6b51436b2cc6d1af`. Historical integration anchor
+`1874681db2f108aa6a9b6d47ee62578d4ce37ac2` remains in the ledger so earlier
+source dispositions stay auditable. The candidate preserves product version
+`1.10.1` and integrates the reviewed SQLCipher/E2EE work, MLS attachments,
 macOS packaging fixes and the nine 1.9.11 transition release changes without
 downgrading the product version.
 

@@ -12,3 +12,4 @@ export * from './meshRuntime.js';
 export * from './meshRoutes.js';
 export * from './meshComposition.js';
 export * from './meshSync.js';
+export * from './meshTransparency.js';
