@@ -77,6 +77,14 @@ npm run test:ci
 git diff --check
 ```
 
+The 2026-08-14 integration candidate was verified from merge commit
+`7fff2c785e08842bdcbac4e6ef0e03acd72edbec` with the commands above, the
+desktop production build and `npm run security:e2ee:candidate:verify`. Full
+Windows test execution produced 2,725 passing Core tests, 1,334 passing Server
+tests and 886 passing Desktop tests (4,945 passing tests total). The Core suite
+was executed outside the filesystem sandbox because it intentionally writes
+per-user state and launches the installed browser for a real screenshot test.
+
 Real installers, signatures, notarization, database migration, canary upgrade
 and rollback evidence remain release-level acceptance work. Unit tests cannot
 replace those checks.

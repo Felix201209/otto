@@ -215,8 +215,11 @@
     },
     {
       "id": "automated_candidate_verification",
-      "status": "planned",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "2026-08-14 candidate merge 7fff2c785e08842bdcbac4e6ef0e03acd72edbec passed live integration-baseline verification, module boundaries, doctor, lint, typecheck, root and desktop production builds, script tests and the E2EE candidate gate.",
+        "Full Windows test execution passed outside the filesystem sandbox: core 2725 passed / 24 skipped, server 1334 passed / 1 skipped, desktop 886 passed, for 4945 passing tests in total."
+      ]
     },
     {
       "id": "real_release_artifact_acceptance",
