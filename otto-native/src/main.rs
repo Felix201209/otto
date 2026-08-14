@@ -209,6 +209,7 @@ mod tests {
             "device_scope": bob_scope,
             "conversation_id": conversation,
             "peer_account_id": "alice",
+            "sender_account_id": "alice",
             "event_id": encrypted["event_id"],
             "ciphertext": encrypted["ciphertext"],
             "sequence": 1,
