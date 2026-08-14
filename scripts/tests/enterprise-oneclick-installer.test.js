@@ -2,7 +2,7 @@
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import {
@@ -35,6 +35,7 @@ const HEALTH_CHECK = path.resolve(
 const VERIFY_RELEASE = path.resolve(
   'deployment/enterprise-oneclick/tools/verify-release.mjs',
 );
+const UPGRADE_SH = path.resolve('deployment/enterprise-oneclick/upgrade.sh');
 const ENV_EXAMPLE = path.resolve(
   'deployment/enterprise-oneclick/config/enterprise.env.example',
 );
@@ -54,7 +55,9 @@ const ENTERPRISE_SCHEMA_VERSION = Number(
   )?.[1],
 );
 if (!Number.isInteger(ENTERPRISE_SCHEMA_VERSION)) {
-  throw new Error('unable to resolve ENTERPRISE_SCHEMA_VERSION for release tests');
+  throw new Error(
+    'unable to resolve ENTERPRISE_SCHEMA_VERSION for release tests',
+  );
 }
 const SUPPORTED_SCHEMA_VERSIONS = Array.from(
   { length: ENTERPRISE_SCHEMA_VERSION - 1 },
@@ -63,6 +66,27 @@ const SUPPORTED_SCHEMA_VERSIONS = Array.from(
 
 function mode(target) {
   return statSync(target).mode & 0o777;
+}
+
+function readFirstLine(stream) {
+  return new Promise((resolve, reject) => {
+    let buffer = '';
+    const timeout = setTimeout(
+      () => reject(new Error('fixture server did not start in time')),
+      5_000,
+    );
+    stream.on('data', (chunk) => {
+      buffer += chunk.toString();
+      const newline = buffer.indexOf('\n');
+      if (newline < 0) return;
+      clearTimeout(timeout);
+      resolve(buffer.slice(0, newline).trim());
+    });
+    stream.on('error', (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
 }
 
 describe('enterprise one-click service layout', () => {
@@ -159,7 +183,118 @@ describe('enterprise one-click service layout', () => {
 });
 
 describe('enterprise one-click schema contract', () => {
-  it('derives one LSTC schema contract from the server source and release manifest', () => {
+  it('verifies redacted public health through local database and authenticated status', async () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-health-check-'));
+    const database = new DatabaseSync(path.join(sandbox, 'data.db'));
+    database.exec(`PRAGMA user_version = ${ENTERPRISE_SCHEMA_VERSION}`);
+    database.close();
+
+    const capabilities = [
+      'password_auth',
+      'sms_registration',
+      'personal_enterprise_upgrade',
+      'organization_invites',
+      'usage_summary',
+      'admin_console',
+      'direct_messages',
+      'atoa',
+      'position_invites',
+      'park_service_push',
+      'park_repair_v1',
+      'data_protection_v1',
+      'encrypted_attachment_storage_v1',
+      'encrypted_message_storage_v1',
+      'signed_telemetry_transport_v1',
+      'data_governance_v1',
+      'privacy_self_service',
+    ];
+    const adminToken = 'health-check-admin-token-at-least-32-characters';
+    const fixture = spawn(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `
+          import { createServer } from 'node:http';
+          const health = JSON.parse(process.env.HEALTH_FIXTURE);
+          const server = createServer((request, response) => {
+            response.setHeader('content-type', 'application/json');
+            if (request.url === '/enterprise/health') {
+              response.end(JSON.stringify(health));
+              return;
+            }
+            if (
+              request.url === '/enterprise/deployment/status'
+              && request.headers['x-otto-admin-token'] === process.env.ADMIN_TOKEN
+            ) {
+              response.end(JSON.stringify({ license: { enforce: true } }));
+              return;
+            }
+            response.statusCode = 401;
+            response.end(JSON.stringify({ error: 'unauthorized' }));
+          });
+          server.listen(0, '127.0.0.1', () => {
+            console.log(server.address().port);
+          });
+        `,
+      ],
+      {
+        env: {
+          ...process.env,
+          ADMIN_TOKEN: adminToken,
+          HEALTH_FIXTURE: JSON.stringify({
+            status: 'ok',
+            service: 'otto-enterprise',
+            apiVersion: 4,
+            version: '1.9.11',
+            capabilities,
+          }),
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+
+    try {
+      const port = Number(await readFirstLine(fixture.stdout));
+      expect(Number.isInteger(port)).toBe(true);
+      const build = 'a'.repeat(40);
+      const result = spawnSync(
+        process.execPath,
+        [
+          HEALTH_CHECK,
+          `http://127.0.0.1:${port}`,
+          '1.9.11',
+          build,
+          String(ENTERPRISE_SCHEMA_VERSION),
+          'allow-sms-disabled',
+        ],
+        {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            OTTO_BUILD_COMMIT: build,
+            OTTO_ENTERPRISE_ADMIN_TOKEN: adminToken,
+            OTTO_ENTERPRISE_DIR: sandbox,
+          },
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        ok: true,
+        health: { version: '1.9.11' },
+        database: {
+          schemaVersion: ENTERPRISE_SCHEMA_VERSION,
+          quickCheck: 'ok',
+        },
+        licenseEnforced: true,
+      });
+    } finally {
+      fixture.kill('SIGTERM');
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  it('derives one enterprise schema contract from the server source and release manifest', () => {
     const bundle = readFileSync(BUNDLE_SCRIPT, 'utf8');
     const serverDatabase = SERVER_DATABASE_SOURCE;
     const databaseTool = readFileSync(DB_TOOL, 'utf8');
@@ -167,9 +302,12 @@ describe('enterprise one-click schema contract', () => {
     const healthCheck = readFileSync(HEALTH_CHECK, 'utf8');
     const verifyRelease = readFileSync(VERIFY_RELEASE, 'utf8');
     const installer = readFileSync(INSTALL_SH, 'utf8');
+    const upgrader = readFileSync(UPGRADE_SH, 'utf8');
     const exporter = readFileSync(EXPORT_MIGRATION_SH, 'utf8');
 
-    expect(bundle).toContain("const releaseChannel = 'lstc'");
+    expect(bundle).toContain(
+      "const releaseChannel = process.env.OTTO_RELEASE_CHANNEL?.trim() || 'stable'",
+    );
     expect(serverDatabase).toContain(
       `export const ENTERPRISE_SCHEMA_VERSION = ${ENTERPRISE_SCHEMA_VERSION}`,
     );
@@ -186,10 +324,19 @@ describe('enterprise one-click schema contract', () => {
     expect(migrationCheck).toContain(
       'readiness.schemaVersion !== expectedSchemaVersion',
     );
-    expect(healthCheck).toContain('body.apiVersion !== 4');
-    expect(healthCheck).toContain('body.schemaVersion !== expectedSchema');
+    expect(healthCheck).toContain('publicHealth.apiVersion !== 4');
+    expect(healthCheck).toContain("database.prepare('PRAGMA user_version')");
+    expect(healthCheck).toContain("database.prepare('PRAGMA quick_check')");
+    expect(healthCheck).toContain(
+      "database.prepare('PRAGMA foreign_key_check')",
+    );
+    expect(healthCheck).toContain('/enterprise/deployment/status');
+    expect(healthCheck).toContain("'x-otto-admin-token': adminToken");
+    expect(healthCheck).toContain('public health leaks private fields');
     expect(verifyRelease).toContain('manifest.database.schemaTo - 1');
-    expect(verifyRelease).toContain("manifest.releaseChannel !== 'lstc'");
+    expect(verifyRelease).toContain("options.delete('--allow-legacy-lstc')");
+    expect(verifyRelease).toContain("? ['stable', 'transition', 'lstc']");
+    expect(upgrader).toContain('"$CURRENT_REAL" --allow-legacy-lstc');
     expect(installer).toContain('RELEASE_SCHEMA_TO=');
     expect(installer).toContain('"$IMPORT_SCHEMA" -le "$RELEASE_SCHEMA_TO"');
     expect(exporter).toContain('SCHEMA_TO=');
@@ -314,13 +461,13 @@ describe('enterprise one-click schema contract', () => {
     }
   });
 
-  it('rejects a release manifest that omits LSTC or has an inconsistent schema range', () => {
+  it('rejects a release manifest that omits its channel or has an inconsistent schema range', () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-oneclick-manifest-'));
     try {
       const manifest = {
         format: 'otto-enterprise-release-v1',
         version: '1.9.0-test',
-        releaseChannel: 'lstc',
+        releaseChannel: 'transition',
         buildCommit: '0'.repeat(40),
         sourceCommit: '1'.repeat(40),
         database: {
@@ -344,13 +491,34 @@ describe('enterprise one-click schema contract', () => {
       expect(valid.status, valid.stderr).toBe(0);
       expect(JSON.parse(valid.stdout)).toMatchObject({
         ok: true,
-        releaseChannel: 'lstc',
+        releaseChannel: 'transition',
         database: {
           schemaFrom: SUPPORTED_SCHEMA_VERSIONS,
           schemaTo: ENTERPRISE_SCHEMA_VERSION,
           futureSchemaPolicy: 'reject',
         },
       });
+
+      manifest.releaseChannel = 'lstc';
+      writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
+      const legacyByDefault = spawnSync(
+        process.execPath,
+        [VERIFY_RELEASE, sandbox],
+        { encoding: 'utf8' },
+      );
+      expect(legacyByDefault.status).toBe(3);
+      const legacyUpgrade = spawnSync(
+        process.execPath,
+        [VERIFY_RELEASE, sandbox, '--allow-legacy-lstc'],
+        { encoding: 'utf8' },
+      );
+      expect(legacyUpgrade.status, legacyUpgrade.stderr).toBe(0);
+      expect(JSON.parse(legacyUpgrade.stdout)).toMatchObject({
+        ok: true,
+        releaseChannel: 'lstc',
+      });
+
+      manifest.releaseChannel = 'transition';
 
       manifest.database.schemaFrom = [2, 3, 4];
       writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
@@ -447,9 +615,51 @@ describe('enterprise one-click schema contract', () => {
     expect(rowComparison).toBeGreaterThan(migration);
     expect(finalInstall).toBeGreaterThan(rowComparison);
   });
+
+  it('takes a consistent database snapshot before a formal cutover', () => {
+    const upgrader = readFileSync(UPGRADE_SH, 'utf8');
+    const stopBeforeSnapshot = upgrader.indexOf(
+      'systemctl stop otto-enterprise\n  SERVICE_STOPPED=1',
+    );
+    const sqliteSnapshot = upgrader.indexOf(
+      '"${SCRIPT_DIR}/tools/db-tool.mjs" backup',
+    );
+    const migration = upgrader.indexOf(
+      '"${SCRIPT_DIR}/tools/migrate-check.mjs"',
+    );
+    const cutover = upgrader.indexOf(
+      '"${CANARY_DIR}/data.db" "${DATA_DIR}/data.db"',
+    );
+
+    expect(stopBeforeSnapshot).toBeGreaterThan(-1);
+    expect(sqliteSnapshot).toBeGreaterThan(stopBeforeSnapshot);
+    expect(migration).toBeGreaterThan(sqliteSnapshot);
+    expect(cutover).toBeGreaterThan(migration);
+    expect(upgrader).toContain(
+      'if [ "$SERVICE_STOPPED" -eq 1 ]; then\n      systemctl daemon-reload',
+    );
+    expect(upgrader).toContain('UPGRADE_SUCCEEDED=1');
+  });
 });
 
 describe('enterprise one-click runtime configuration contract', () => {
+  it('accepts every runtime key emitted by the installer during upgrades', () => {
+    const common = readFileSync(COMMON_SH, 'utf8');
+    const installer = readFileSync(INSTALL_SH, 'utf8');
+    const allowlist =
+      common.match(/case "\$key" in([\s\S]*?)\n\s*\*\)/)?.[1] ?? '';
+    const runtimeEnv =
+      installer.match(
+        /write_env "\$ENV_TEMP" \\\n([\s\S]*?)\ninstall -o root/,
+      )?.[1] ?? '';
+    const emittedKeys = [
+      ...runtimeEnv.matchAll(/^\s{2}([A-Z][A-Z0-9_]+)\s+/gm),
+    ].map((match) => match[1]);
+
+    expect(emittedKeys.length).toBeGreaterThan(30);
+    for (const key of emittedKeys) expect(allowlist).toContain(key);
+  });
+
   it('preserves data governance, telemetry and external encryption key settings', () => {
     const envExample = readFileSync(ENV_EXAMPLE, 'utf8');
     const common = readFileSync(COMMON_SH, 'utf8');
@@ -467,8 +677,14 @@ describe('enterprise one-click runtime configuration contract', () => {
       'OTTO_FIELD_ENCRYPTION_KEY_FILE',
       'OTTO_TELEMETRY_ENDPOINT',
       'OTTO_TELEMETRY_RETENTION_DAYS',
+      'OTTO_FEDERATION_ENABLED',
+      'OTTO_FEDERATION_GATEWAY_URL',
+      'OTTO_FEDERATION_DISPLAY_NAME',
+      'OTTO_FEDERATION_POLL_INTERVAL_MS',
+      'OTTO_FEDERATION_SIGNING_KEY_FILE',
       'OTTO_DATA_CONTROLLER_NAME',
       'OTTO_PRIVACY_CONTACT',
+      'OTTO_LEGAL_DOCUMENTS_APPROVED',
       'OTTO_DATA_REGION',
       'OTTO_DATA_RESIDENCY',
       'OTTO_STORAGE_VOLUME_ENCRYPTED',
@@ -531,6 +747,23 @@ describe('enterprise one-click health contract', () => {
 });
 
 describe('enterprise one-click provenance contract', () => {
+  it('normalizes executable modes inside archives built on Windows', () => {
+    const bundle = readFileSync(BUNDLE_SCRIPT, 'utf8');
+
+    expect(bundle).toContain('function normalizeTarExecutableModes(');
+    expect(bundle).toContain('writeTarMode(tar, entry.offset, mode)');
+    expect(bundle).toContain("'release/run.mjs'");
+    expect(bundle).toMatch(
+      /normalizeTarExecutableModes\(\s*temporaryTar,\s*finalPackageName,\s*executableFiles\s*\);/,
+    );
+    expect(bundle).toContain(
+      "['--no-xattrs', '-cf', temporaryTar, '-C', temporaryRoot, finalPackageName]",
+    );
+    expect(bundle).toContain(
+      'gzipSync(readFileSync(temporaryTar), { level: 9 })',
+    );
+  });
+
   it('tracks every root build input in both dirty scope and source hashes', () => {
     const bundle = readFileSync(BUNDLE_SCRIPT, 'utf8');
     const sourceScope =

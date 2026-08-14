@@ -111,7 +111,7 @@ export function createControlCommandBoundary(
     const disabled: ControlCommandBoundary = {
       enabled: false,
       publicKeyIds: [],
-      handleRoute: (deps2) => Promise.resolve(false),
+      handleRoute: () => Promise.resolve(false),
       services: {
         submit: () => ({ kind: 'rejected', code: 'not_configured', reason: 'Control trust root not configured' }),
         drainOnce: () => ({ executed: false }),
@@ -203,7 +203,7 @@ export function createControlCommandBoundary(
   return {
     enabled: true,
     publicKeyIds: keys.map((k) => {
-      const m = /BEGIN PUBLIC KEY[\s\S]*?([A-Za-z0-9+\/=]{16})[\s\S]*?\n-----END/.exec(k);
+      const m = /BEGIN PUBLIC KEY[\s\S]*?([A-Za-z0-9+/=]{16})[\s\S]*?\n-----END/.exec(k);
       return m ? m[1] : '(unknown)';
     }),
     handleRoute,

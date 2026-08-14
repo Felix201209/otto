@@ -13,6 +13,7 @@ import {
   type FederationClientOptions,
 } from './federationClient.js';
 import type {
+  FederationMessageType,
   FederationProvisioningManifest,
   FederationQueueInput,
 } from './federationContracts.js';
@@ -24,17 +25,28 @@ import {
   blockFederationDeploymentInRepository,
   clearFederationClaimInRepository,
   consumeFederationInboxInRepository,
+  federationConversationId,
+  getFederationChatAttachmentInRepository,
+  getFederationChatContactInRepository,
   getFederationQueueSummaryInRepository,
   getFederationRuntimeStateInRepository,
   listDueFederationOutboxInRepository,
   listFederationAcknowledgementsInRepository,
+  listFederationChatContactsInRepository,
+  listFederationChatMessagesInRepository,
   listFederationBlocksInRepository,
   listFederationInboxInRepository,
   markFederationAcknowledgedInRepository,
+  markFederationChatAttachmentReadyInRepository,
+  markFederationChatMessageReadInRepository,
   markFederationOutboxFailedInRepository,
   markFederationOutboxSentInRepository,
   queueFederationEnvelopeInRepository,
+  queueFederationChatEnvelopeInRepository,
   revokeFederationA2aGrantInRepository,
+  removeFederationChatContactInRepository,
+  saveFederationChatContactInRepository,
+  saveFederationChatAttachmentInRepository,
   saveFederationA2aGrantInRepository,
   setFederationRuntimeStateInRepository,
   storeClaimedFederationEnvelopeInRepository,
@@ -187,9 +199,179 @@ export function createFederationComposition(
         },
       };
     },
+    getFederationMemberIdentity(principalId: string) {
+      const { client } = getActive();
+      return {
+        deploymentId: store.deploymentId(),
+        principalId,
+        capabilities: [...client.capabilities],
+      };
+    },
     async lookupFederationDeployment(deploymentId: string) {
       return getActive().client.directoryEntry(deploymentId);
     },
+    async saveFederationChatContact(input: {
+      ownerAccountId: string;
+      remoteDeploymentId: string;
+      remotePrincipalId: string;
+      displayName: string;
+    }) {
+      const deployment = await getActive().client.directoryEntry(
+        input.remoteDeploymentId,
+      );
+      if (!deployment.capabilities.includes('chat.e2ee')) {
+        throw new Error('remote deployment does not support E2EE chat');
+      }
+      return saveFederationChatContactInRepository(store, {
+        ...input,
+        deploymentDisplayName: deployment.displayName,
+      });
+    },
+    listFederationChatContacts(ownerAccountId: string) {
+      return listFederationChatContactsInRepository(store, ownerAccountId);
+    },
+    removeFederationChatContact(input: {
+      ownerAccountId: string;
+      contactId: string;
+    }) {
+      return removeFederationChatContactInRepository(store, input);
+    },
+    async createFederationChatAttachmentUpload(input: {
+      ownerAccountId: string;
+      contactId: string;
+      attachmentId: string;
+      ciphertextBytes: number;
+      ciphertextSha256: string;
+      expiresInMs?: number;
+    }) {
+      const contact = getFederationChatContactInRepository(store, input);
+      if (!contact) throw new Error('federation contact was not found');
+      const deployment = await getActive().client.directoryEntry(
+        contact.remoteDeploymentId,
+      );
+      if (!deployment.capabilities.includes('attachment.e2ee')) {
+        throw new Error('remote deployment does not support E2EE attachments');
+      }
+      const result = await getActive().client.createAttachmentUpload({
+        recipientDeploymentId: contact.remoteDeploymentId,
+        attachmentId: input.attachmentId,
+        ciphertextBytes: input.ciphertextBytes,
+        ciphertextSha256: input.ciphertextSha256,
+        expiresInMs: input.expiresInMs,
+      });
+      saveFederationChatAttachmentInRepository(store, {
+        attachmentId: input.attachmentId,
+        ownerAccountId: input.ownerAccountId,
+        contactId: input.contactId,
+        remoteDeploymentId: contact.remoteDeploymentId,
+        direction: 'outbound',
+        ciphertextBytes: input.ciphertextBytes,
+        ciphertextSha256: input.ciphertextSha256,
+        status: result.upload === null ? 'ready' : 'pending',
+      });
+      return result;
+    },
+    async completeFederationChatAttachmentUpload(input: {
+      ownerAccountId: string;
+      contactId: string;
+      attachmentId: string;
+    }) {
+      const attachment = getFederationChatAttachmentInRepository(store, input);
+      if (!attachment || attachment.direction !== 'outbound') {
+        throw new Error('federation attachment upload was not found');
+      }
+      const result = await getActive().client.completeAttachmentUpload(
+        input.attachmentId,
+      );
+      markFederationChatAttachmentReadyInRepository(store, input);
+      return result;
+    },
+    async createFederationChatAttachmentDownload(input: {
+      ownerAccountId: string;
+      contactId: string;
+      attachmentId: string;
+    }) {
+      const attachment = getFederationChatAttachmentInRepository(store, input);
+      if (
+        !attachment || attachment.direction !== 'inbound' ||
+        attachment.status !== 'referenced'
+      ) {
+        throw new Error('federation attachment download was not found');
+      }
+      return getActive().client.createAttachmentDownload(input.attachmentId);
+    },
+    async queueFederationChatMessage(input: {
+      ownerAccountId: string;
+      contactId: string;
+      ciphertext: string;
+      type?: Extract<FederationMessageType, 'chat.message' | 'a2a.request' | 'a2a.response'>;
+      messageId?: string;
+      inReplyTo?: string;
+      a2aGrantId?: string;
+      a2aScope?: string;
+      attachmentIds?: string[];
+      expiresInMs?: number;
+    }) {
+      const contact = getFederationChatContactInRepository(store, input);
+      if (!contact) throw new Error('federation contact was not found');
+      const signed = await getActive().client.createSignedEnvelope({
+        recipientDeploymentId: contact.remoteDeploymentId,
+        type: input.type ?? 'chat.message',
+        ciphertext: input.ciphertext,
+        routing: {
+          conversationId: federationConversationId({
+            localDeploymentId: store.deploymentId(),
+            localPrincipalId: input.ownerAccountId,
+            remoteDeploymentId: contact.remoteDeploymentId,
+            remotePrincipalId: contact.remotePrincipalId,
+          }),
+          senderPrincipalId: input.ownerAccountId,
+          recipientPrincipalId: contact.remotePrincipalId,
+          inReplyTo: input.inReplyTo,
+          a2aGrantId: input.a2aGrantId,
+          a2aScope: input.a2aScope,
+          attachmentIds: input.attachmentIds,
+        },
+        messageId: input.messageId,
+        expiresInMs: input.expiresInMs,
+      });
+      return queueFederationChatEnvelopeInRepository(store, {
+        ownerAccountId: input.ownerAccountId,
+        contactId: input.contactId,
+        signed,
+      });
+    },
+    async createFederationContactA2aGrant(input: {
+      ownerAccountId: string;
+      contactId: string;
+      scopes: string[];
+      expiresInMs?: number;
+    }) {
+      const contact = getFederationChatContactInRepository(store, input);
+      if (!contact) throw new Error('federation contact was not found');
+      const grant = await getActive().client.createA2aGrant({
+        requesterDeploymentId: contact.remoteDeploymentId,
+        ownerPrincipalId: input.ownerAccountId,
+        requesterPrincipalId: contact.remotePrincipalId,
+        scopes: input.scopes,
+        expiresInMs: input.expiresInMs,
+      });
+      saveFederationA2aGrantInRepository(store, {
+        grantId: grant.id,
+        requesterDeploymentId: contact.remoteDeploymentId,
+        ownerPrincipalId: input.ownerAccountId,
+        requesterPrincipalId: contact.remotePrincipalId,
+        scopes: input.scopes,
+        expiresAt: grant.expiresAt,
+      });
+      return grant;
+    },
+    listFederationChatMessages: (
+      input: Parameters<typeof listFederationChatMessagesInRepository>[1],
+    ) => listFederationChatMessagesInRepository(store, input),
+    markFederationChatMessageRead: (
+      input: Parameters<typeof markFederationChatMessageReadInRepository>[1],
+    ) => markFederationChatMessageReadInRepository(store, input),
     async queueFederationMessage(input: FederationQueueInput) {
       const signed = await getActive().client.createSignedEnvelope(input);
       return queueFederationEnvelopeInRepository(store, signed);

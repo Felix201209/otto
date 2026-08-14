@@ -8,7 +8,6 @@ import { generateKeyPairSync } from 'node:crypto';
 
 import type { Database } from '../data_platform/index.js';
 import type {
-  MeshNatSession,
   MeshPathReceipt,
   MeshQuotaBucket,
   SignedMeshRendezvousRecord,
@@ -134,11 +133,6 @@ export function createMeshRendezvousComposition(
     },
     options.runtimeOptions,
   );
-
-  const sessionScope = (sessionId: string): string | null => {
-    const session = getNatSessionInRepository({ db, now }, sessionId);
-    return session ? session.tenantA ?? session.tenantB ?? null : null;
-  };
 
   return {
     now,

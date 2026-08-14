@@ -170,4 +170,15 @@ describe('enterprise database lifecycle', () => {
 
     expect(lifecycle.getReadiness()).toEqual({ ready: true, schemaVersion: 1 });
   });
+
+  it('fails before opening SQLite when the database path is a network share', () => {
+    const lifecycle = createEnterpriseDatabaseLifecycle({
+      dataDirectory: String.raw`\\server\share\otto`,
+      databasePath: String.raw`\\server\share\otto\data.db`,
+      schemaVersion: 1,
+      initializeSchema() {},
+    });
+
+    expect(() => lifecycle.getDatabase()).toThrow(/SQLite.*network/i);
+  });
 });

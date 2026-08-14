@@ -2,6 +2,10 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomInt } from 'node:crypto';
 import * as db from './db.js';
 import { isOrganizationInviteCode } from '../modules/identity_organization/index.js';
+import {
+  currentLegalDocumentReferences,
+  requireCurrentLegalDocumentReferences,
+} from '../modules/data_governance/index.js';
 import { sendPublicInvitePage } from './publicInvitePage.js';
 
 export interface AuthRouteSmsSender {
@@ -261,6 +265,7 @@ export async function handleAuthRoute({
       message: '验证码已发送，5 分钟内有效',
       registrationMode: invite ? 'enterprise' : 'personal',
       organization: invite ? { id: organization.id, name: organization.name } : null,
+      legalDocuments: currentLegalDocumentReferences(),
     });
     return true;
   }
@@ -273,6 +278,15 @@ export async function handleAuthRoute({
     const password = typeof body.password === 'string' ? body.password : '';
     if (body.legalConsent !== true) {
       sendJSON(res, 400, { error: '请先阅读并同意用户协议和隐私规则' });
+      return true;
+    }
+    let legalDocuments;
+    try {
+      legalDocuments = requireCurrentLegalDocumentReferences(body.legalDocuments);
+    } catch (error) {
+      sendJSON(res, 409, {
+        error: error instanceof Error ? error.message : '协议版本校验失败',
+      });
       return true;
     }
     if (!challengeId.startsWith('smsreg_') || !/^\d{6}$/.test(code)) {
@@ -321,7 +335,7 @@ export async function handleAuthRoute({
       }
       throw error;
     }
-    db.recordCurrentLegalConsent(account, 'registration');
+    db.recordCurrentLegalConsent(account, 'registration', legalDocuments);
     const session = db.createAuthSession(account.id);
     sendJSON(res, 200, {
       account,

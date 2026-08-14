@@ -68,3 +68,56 @@ describe('deployment update policy route', () => {
     );
   });
 });
+
+describe('deployment operations security status route', () => {
+  it('returns credential-free infrastructure, encryption and key-management posture', async () => {
+    const sendJSON = vi.fn();
+    const operationsSecurity = {
+      topology: {
+        mode: 'local-offline',
+        replicas: 1,
+        database: { backend: 'sqlite', replicas: 1, target: 'data.db' },
+        attachments: { backend: 'encrypted-filesystem', target: '.otto-enterprise' },
+        cache: { backend: 'memory' },
+      },
+      sqlCipher: {
+        state: 'active',
+        keyVersion: 2,
+        migratedFromPlaintext: true,
+      },
+      keyManagement: {
+        databaseKeyProvider: 'offline-file',
+        remoteProvider: 'not-connected',
+        automaticRotation: 'not-configured',
+        sseKms: 'not-configured',
+      },
+    } as const;
+    const services = {
+      getPrivateDeploymentStatus: vi.fn(() => ({ license: { status: 'active' } })),
+      getDataProtectionStatus: vi.fn(() => ({ backupCount: 2 })),
+      getOperationsSecurityStatus: vi.fn(() => operationsSecurity),
+    } as unknown as DeploymentRouteServices;
+    const res = {} as ServerResponse;
+
+    await expect(
+      handleDeploymentRoute({
+        path: '/enterprise/deployment/status',
+        method: 'GET',
+        req: {} as IncomingMessage,
+        res,
+        url: new URL('https://enterprise.example.test/enterprise/deployment/status'),
+        principal: { organizationId: 'org_1' },
+        memberPrincipal: { organizationId: 'org_1' },
+        services,
+        readBody: vi.fn(),
+        sendJSON,
+      }),
+    ).resolves.toBe(true);
+
+    expect(sendJSON).toHaveBeenCalledWith(res, 200, {
+      license: { status: 'active' },
+      dataProtection: { backupCount: 2 },
+      operationsSecurity,
+    });
+  });
+});

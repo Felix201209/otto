@@ -59,20 +59,27 @@ interface AllConversationsProps {
   sessions: SessionSummary[];
   activeSessionId: string | null;
   unreadSessions?: string[];
+  enterpriseUnreadCounts?: Record<string, number>;
   onSelect: (id: string) => void;
+  onOpenNotification?: (id: string) => void;
   onClose: () => void;
   onDelete: (id: string) => void;
 }
+
+type MessageCenterFilter = 'all' | 'unread' | 'local' | 'feishu' | 'enterprise';
 
 export function AllConversations({
   sessions,
   activeSessionId,
   unreadSessions = [],
+  enterpriseUnreadCounts = {},
   onSelect,
+  onOpenNotification,
   onClose,
   onDelete,
 }: AllConversationsProps): React.JSX.Element {
   const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<MessageCenterFilter>('all');
   // 键盘高亮下标（对齐 filtered 列表）。查询变化时复位到 0。
   const [highlight, setHighlight] = useState(0);
   // 正处于删除确认态的 sessionId（居中弹窗二次确认，删除不可逆）。null = 无弹窗。
@@ -80,15 +87,51 @@ export function AllConversations({
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
+  const notificationIds = useMemo(
+    () => new Set(Object.keys(enterpriseUnreadCounts)),
+    [enterpriseUnreadCounts],
+  );
+  const allItems = useMemo(() => {
+    const known = new Set(sessions.map((session) => session.sessionId));
+    const enterpriseNotifications: SessionSummary[] = Object.entries(
+      enterpriseUnreadCounts,
+    )
+      .filter(([sessionId, count]) => !known.has(sessionId) && count > 0)
+      .map(([sessionId, count]) => ({
+        sessionId,
+        source: 'enterprise',
+        title: '企业私聊',
+        status: 'idle',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        lastMessagePreview: `${count} 条未读消息 · ${sessionId.replace('enterprise:message:', '账号 ')}`,
+        messageCount: count,
+      }));
+    return [...enterpriseNotifications, ...sessions];
+  }, [enterpriseUnreadCounts, sessions]);
+  const unreadSet = useMemo(
+    () => new Set([...unreadSessions, ...notificationIds]),
+    [notificationIds, unreadSessions],
+  );
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return sessions;
-    return sessions.filter((s) =>
-      `${s.title ?? ''} ${s.lastMessagePreview ?? ''}`
-        .toLowerCase()
-        .includes(q),
-    );
-  }, [query, sessions]);
+    return allItems.filter((session) => {
+      if (filter === 'unread' && !unreadSet.has(session.sessionId)) return false;
+      if (filter === 'local' && session.source !== 'local') return false;
+      if (filter === 'feishu' && session.source !== 'feishu') return false;
+      if (
+        filter === 'enterprise' &&
+        !['enterprise', 'atoa', 'park'].includes(session.source)
+      )
+        return false;
+      return (
+        !q ||
+        `${session.title ?? ''} ${session.lastMessagePreview ?? ''}`
+          .toLowerCase()
+          .includes(q)
+      );
+    });
+  }, [allItems, filter, query, unreadSet]);
 
   // 打开即聚焦搜索框。
   useEffect(() => {
@@ -109,7 +152,8 @@ export function AllConversations({
   }, [highlight]);
 
   const pick = (id: string): void => {
-    onSelect(id);
+    if (notificationIds.has(id)) onOpenNotification?.(id);
+    else onSelect(id);
     onClose();
   };
 
@@ -140,7 +184,7 @@ export function AllConversations({
       <div
         className="otto-allconv"
         role="dialog"
-        aria-label="全部对话"
+        aria-label="消息中心"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="otto-allconv__head">
@@ -149,7 +193,7 @@ export function AllConversations({
             ref={inputRef}
             className="otto-allconv__search"
             type="text"
-            placeholder="搜索对话标题或内容…"
+            placeholder="搜索消息标题或内容…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onSearchKeyDown}
@@ -165,16 +209,38 @@ export function AllConversations({
           </button>
         </div>
 
+        <div className="otto-allconv__filters" aria-label="消息分类">
+          {([
+            ['all', '全部消息', '全部'],
+            ['unread', '仅看未读', '未读'],
+            ['local', '本地消息', '本地'],
+            ['feishu', '飞书消息', '飞书'],
+            ['enterprise', '企业消息', '企业'],
+          ] as const).map(([value, label, text]) => (
+            <button
+              type="button"
+              className={`otto-allconv__filter${filter === value ? ' is-active' : ''}`}
+              aria-label={label}
+              aria-pressed={filter === value}
+              key={value}
+              onClick={() => setFilter(value)}
+            >
+              {text}
+            </button>
+          ))}
+        </div>
+
         <div className="otto-allconv__list" ref={listRef}>
           {filtered.length === 0 ? (
             <div className="otto-allconv__empty">
-              {sessions.length === 0
-                ? '还没有任何对话'
-                : '没有匹配的对话'}
+              {allItems.length === 0
+                ? '还没有任何消息记录'
+                : '没有匹配的消息'}
             </div>
           ) : (
             filtered.map((s, i) => {
-              const unread = unreadSessions.includes(s.sessionId);
+              const unread = unreadSet.has(s.sessionId);
+              const notification = notificationIds.has(s.sessionId);
               return (
               <div
                 key={s.sessionId}
@@ -212,7 +278,7 @@ export function AllConversations({
                   <span className="otto-allconv__time">
                     {formatWhen(s.updatedAt)}
                   </span>
-                  <button
+                  {!notification ? <button
                     type="button"
                     className="otto-allconv__del"
                     title="删除对话"
@@ -223,7 +289,7 @@ export function AllConversations({
                     }}
                   >
                     <IconTrash />
-                  </button>
+                  </button> : null}
                 </div>
                 {s.lastMessagePreview ? (
                   <div className="otto-allconv__preview">
@@ -240,7 +306,7 @@ export function AllConversations({
         </div>
 
         <div className="otto-allconv__footer">
-          共 {sessions.length} 个对话
+          共 {allItems.length} 条历史与通知
           {query.trim() ? `，匹配 ${filtered.length} 个` : ''}
         </div>
       </div>

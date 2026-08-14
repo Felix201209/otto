@@ -6,7 +6,7 @@ Otto 的发布链路分成三段：先检查异常，再构建 GitHub Release �
 
 ## 当前正式发布门禁
 
-- 发布源提交必须与远端 `origin/internal` 最新提交完全相同，旧 tag、落后分支和未合并分支不能生成正式版本。
+- 发布源必须包含远端 `origin/internal` 最新提交；额外提交只允许来自经审查的 `release/*` 分支或 `v*` 版本标签，旧 tag、落后分支和未合并功能分支不能生成正式版本。
 - 根目录与桌面端版本号必须一致，企业运行时 schema、清单、构建信息均从同一提交生成。
 - macOS 必须通过 Developer ID 签名、公证和 stapler 验证；Windows 必须通过 Authenticode 验证。
 - 企业一键部署包必须带外置可信公钥可验证的 Ed25519 `.sig`，只有 SHA-256 不允许发布。

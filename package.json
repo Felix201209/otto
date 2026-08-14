@@ -1,6 +1,6 @@
 {
   "name": "otto-ai",
-  "version": "1.10.0",
+  "version": "1.10.1",
   "engines": {
     "node": ">=22.16.0"
   },
@@ -9,6 +9,7 @@
     "packages/core",
     "packages/server",
     "packages/desktop",
+    "otto-native",
     "packages/evals",
     "packages/workflow",
     "packages/rpa"
@@ -44,7 +45,16 @@
     "size:source": "node scripts/source-size-report.mjs",
     "size:source:check": "node scripts/source-size-report.mjs --check",
     "validate:boundaries": "node scripts/validate-boundaries.mjs",
+    "sqlcipher:native:verify": "node scripts/verify-sqlcipher-native-assets.mjs",
+    "security:e2ee:candidate:verify": "node scripts/verify-e2ee-release-readiness.mjs --mode candidate && node scripts/generate-e2ee-release-policy.mjs --check",
+    "security:e2ee:release:verify": "node scripts/verify-e2ee-release-readiness.mjs",
+    "security:e2ee:adversarial": "node scripts/run-e2ee-adversarial-verification.mjs",
+    "security:enterprise:probe": "node scripts/enterprise-security-probe.mjs",
+    "security:e2ee:audit:bundle": "node scripts/build-e2ee-audit-bundle.mjs",
+    "security:e2ee:policy:check": "node scripts/generate-e2ee-release-policy.mjs --check",
+    "validate:integration-baseline": "node scripts/validate-server-integration-baseline.mjs",
     "benchmark:low-resource-agents": "node scripts/low-resource-multi-agent-benchmark.mjs",
+    "benchmark:enterprise-load": "node scripts/enterprise-load-test.mjs",
     "eval:deterministic": "vitest run --config packages/evals/vitest.config.ts",
     "build": "node scripts/build.js",
     "build:packages": "npm run build --workspace=packages/core && npm run build --workspace=packages/server",
@@ -59,7 +69,7 @@
     "pack:prod": "cross-env ENABLE_CHECKPOINTING=true npm run bundle:cross-platform:prod && cross-env BUILD_ENV=production ENABLE_CHECKPOINTING=true node scripts/newpack.js",
     "pack:prod:ci": "cross-env ENABLE_CHECKPOINTING=true npm run bundle:cross-platform:prod && cross-env BUILD_ENV=production ENABLE_CHECKPOINTING=true node scripts/newpack.js -- --no-version-bump",
     "test": "npm run test --workspace=packages/core && npm run test --workspace=packages/server && npm run test --workspace=packages/desktop",
-    "test:ci": "npm run test:ci --workspace=packages/core --if-present && npm run test:ci --workspace=packages/server --if-present && npm run test --workspace=packages/desktop && npm run test:scripts && npm run eval:deterministic && npm run test --workspace=packages/workflow && npm run test --workspace=packages/rpa",
+    "test:ci": "npm run test:ci --workspace=packages/core --if-present && npm run test:ci --workspace=packages/server --if-present && npm run test:coverage --workspace=packages/desktop && npm run test:scripts && npm run eval:deterministic && npm run test --workspace=packages/workflow && npm run test --workspace=packages/rpa",
     "test:scripts": "vitest run --config ./scripts/tests/vitest.config.ts",
     "test:federation:staging": "node scripts/smoke-federation-staging.mjs",
     "test:e2e": "npm run test:integration:sandbox:none -- --verbose --keep-output",
@@ -152,19 +162,28 @@
     },
     "@grpc/grpc-js": "^1.14.4",
     "@isaacs/brace-expansion": "^5.0.1",
+    "brace-expansion@^1.0.0": "^1.1.18",
     "brace-expansion@^2.0.0": "^2.1.3",
+    "brace-expansion@^5.0.0": "^5.0.9",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@xmldom/xmldom": "^0.8.13",
     "form-data": "^4.0.6",
-    "hono": "^4.12.31",
+    "fast-uri@^3.0.0": "^3.1.5",
+    "hono": "^4.13.1",
+    "ip-address": "^10.5.0",
+    "gray-matter": {
+      "js-yaml": "3.15.1"
+    },
     "minimatch@^9.0.0": "^9.0.9",
     "minimatch@^10.0.0": {
       ".": "^10.2.5",
-      "brace-expansion": "^5.0.8"
+      "brace-expansion": "^5.0.9"
     },
+    "nanoid@^3.0.0": "^3.3.17",
     "path-to-regexp": "^8.4.2",
     "picomatch@^2.0.0": "^2.3.2",
     "protobufjs": "^7.6.5",
+    "postcss": "^8.5.26",
     "shell-quote": "^1.10.0",
     "underscore": "^1.13.8",
     "wrap-ansi": "^7.0.0"

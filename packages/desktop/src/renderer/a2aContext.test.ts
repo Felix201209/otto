@@ -34,6 +34,7 @@ describe('A2A 授权资料收集', () => {
 
     const result = await collectAuthorizedAtoaContext({
       sources: ['current_chat', 'schedules'],
+      authorizedMessageIds: ['m1'],
       peerAccountId: 'peer-1',
       currentAccountId: 'me',
       currentAccountName: 'Bob',
@@ -62,6 +63,35 @@ describe('A2A 授权资料收集', () => {
     expect(result.context).toContain('Alice: 项目评审改到几点？');
     expect(result.context).toContain('项目复盘');
     expect(result.context).not.toContain('评审必须预留 30 分钟');
+  });
+
+  it('does not decrypt or expose a private chat when no exact message was selected', async () => {
+    const listMessages = vi.fn(async () => [{
+      id: 'private-1',
+      senderAccountId: 'peer-1',
+      recipientAccountId: 'me',
+      content: 'must stay private',
+      createdAt: '2026-07-20T08:00:00.000Z',
+      readAt: null,
+    }]);
+    const result = await collectAuthorizedAtoaContext({
+      sources: ['current_chat'],
+      authorizedMessageIds: [],
+      peerAccountId: 'peer-1',
+      currentAccountId: 'me',
+      currentAccountName: 'Bob',
+      peerName: 'Alice',
+      listMessages,
+      listKnowledge: vi.fn(async () => []),
+      workLogRecent: vi.fn(async () => []),
+      schedules: [],
+    });
+    expect(listMessages).not.toHaveBeenCalled();
+    expect(result.loadedSources).toEqual([]);
+    expect(result.failedSources).toMatchObject([
+      { source: 'current_chat', reason: '未明确选择任何私聊消息片段' },
+    ]);
+    expect(result.context).not.toContain('must stay private');
   });
 
   it('单个来源失败时不伪造已读取结果，并继续收集其他已授权来源', async () => {

@@ -1,4 +1,3 @@
-
 name: CI
 
 # 在每个 PR 和推送到 internal 分支时跑起，作为合并前的强制质量门槛。
@@ -24,6 +23,8 @@ jobs:
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # packages/server/src/sqlite-compat.ts 用 Node 内置 `node:sqlite`（企业服务端
       # 存储层，零原生依赖）。该模块 v22.5 引入且需要 --experimental-sqlite flag，
@@ -58,10 +59,27 @@ jobs:
           PYTHON: python3.11
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: E2EE hostile-server and signed release gate
+        run: |
+          npm run security:e2ee:adversarial
+          npm run security:e2ee:release:verify
+          npm run security:e2ee:policy:check
+
+      - name: Preserve E2EE adversarial evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2ee-adversarial-ci-evidence
+          path: artifacts/security/e2ee-adversarial-report.json
+          if-no-files-found: error
+
       - name: 🩺 Cheap anomaly checks
         run: |
           npm run doctor
           git diff --check
+          git fetch --no-tags origin \
+            '+refs/heads/internal:refs/remotes/origin/internal'
+          npm run validate:integration-baseline -- --verify-git-refs
           npm run validate:boundaries
           npm run size:source:check
 
@@ -120,7 +138,7 @@ jobs:
         run: npm run test --workspace=packages/server
 
       - name: 🧪 Test desktop
-        run: npm run test --workspace=packages/desktop
+        run: npm run test:coverage --workspace=packages/desktop
 
       - name: 🧪 Test durable workflow and RPA runtime
         run: npm run test --workspace=packages/workflow && npm run test --workspace=packages/rpa

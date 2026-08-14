@@ -1852,6 +1852,60 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
     client.close();
   });
 
+  it('send_user_message 先快照 folder_reference，原始目录路径不进入历史或 runtime', async () => {
+    const sourcePath = path.join(tmpHome, 'original-workspace');
+    const cacheDir = path.join(tmpHome, 'chat-cache-folder');
+    fs.mkdirSync(path.join(sourcePath, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(sourcePath, 'docs', 'plan.md'), 'snapshot content', 'utf8');
+
+    let capturedContent: MessageContent | undefined;
+    const factory: RuntimeFactory = async (store, sessionId) => ({
+      async run(content) {
+        capturedContent = content;
+        store.setStatus(sessionId, 'idle');
+      },
+      cancel() {},
+      setModel() {},
+      getConfig() { return undefined; },
+      async dispose() {},
+    });
+    server = new OttoServer({
+      port: 0,
+      mock: false,
+      runtimeFactory: factory,
+      store: new InMemorySessionStore(),
+      chatFileCacheDir: cacheDir,
+    });
+    baseUrl = await startServer(server);
+    const session = server.store.createSession({ title: 'directory-snapshot' });
+
+    const client = await connectWs(baseUrl);
+    await client.waitFor((frame) => frame.type === 'welcome');
+    client.send({
+      type: 'send_user_message',
+      payload: {
+        sessionId: session.sessionId,
+        content: [{
+          type: 'folder_reference',
+          value: { folderName: 'original-workspace', folderPath: sourcePath },
+        }],
+        source: 'local',
+      },
+    });
+
+    await vi.waitFor(() => expect(capturedContent).toBeDefined());
+    const historyPart = server.store.getHistory(session.sessionId)[0].content[0];
+    if (historyPart.type !== 'folder_reference') throw new Error('unreachable');
+    expect(historyPart.value.folderPath).not.toBe(sourcePath);
+    expect(historyPart.value.folderPath.startsWith(path.join(cacheDir, session.sessionId))).toBe(true);
+    expect(fs.readFileSync(
+      path.join(historyPart.value.folderPath, 'docs', 'plan.md'),
+      'utf8',
+    )).toBe('snapshot content');
+    expect(capturedContent![0]).toEqual(historyPart);
+    client.close();
+  });
+
   it('ensureRuntime 创建期间身份指纹变化，创建完成后再次授权并销毁旧上下文', async () => {
     let releaseFactory!: () => void;
     const factoryStarted = vi.fn();

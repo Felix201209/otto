@@ -26,6 +26,22 @@ beforeEach(() => {
       enterprisePresenceHeartbeat: vi.fn(async () => undefined),
       enterpriseMessagesList: vi.fn(async () => []),
       enterpriseMessagesUnread: vi.fn(async () => []),
+      enterpriseFederationContactCode: vi.fn(async () => ''),
+      enterpriseFederationContactImport: vi.fn(async () => {
+        throw new Error('federation contact import is not configured in this test');
+      }),
+      enterpriseFederationContacts: vi.fn(async () => []),
+      enterpriseFederationContactRemove: vi.fn(async () => false),
+      enterpriseFederationMessagesList: vi.fn(async () => []),
+      enterpriseFederationMessageSend: vi.fn(async () => {
+        throw new Error('federation message send is not configured in this test');
+      }),
+      enterpriseFederationContactVerification: vi.fn(async () => {
+        throw new Error('federation verification is not configured in this test');
+      }),
+      enterpriseFederationContactVerify: vi.fn(async () => {
+        throw new Error('federation verification is not configured in this test');
+      }),
       enterpriseMessageSend: vi.fn(async (_peerAccountId: string, content: string) => ({
         id: 'msg_test',
         senderAccountId: 'me',
@@ -35,6 +51,11 @@ beforeEach(() => {
         readAt: null,
       })),
       enterpriseAtoaInbox: vi.fn(async () => []),
+      enterpriseFederationAtoaTasks: vi.fn(async () => []),
+      enterpriseFederationAtoaApprove: vi.fn(),
+      enterpriseFederationAtoaDeny: vi.fn(),
+      enterpriseFederationAtoaDispatch: vi.fn(),
+      enterpriseFederationAtoaRespond: vi.fn(),
       workLogToday: vi.fn(async () => ({
         summary: '',
         date: new Date(0).toISOString().slice(0, 10),

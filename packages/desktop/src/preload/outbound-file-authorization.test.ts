@@ -46,7 +46,10 @@ describe('preload 真实模型附件授权闸', () => {
       authorize,
     );
 
-    expect(authorize).toHaveBeenCalledWith(['/Volumes/Portable/alias/report.pdf']);
+    expect(authorize).toHaveBeenCalledWith([{
+      path: '/Volumes/Portable/alias/report.pdf',
+      kind: 'file',
+    }]);
     expect(frame.payload.content).toEqual([{
       type: 'file_reference',
       value: {
@@ -66,14 +69,24 @@ describe('preload 真实模型附件授权闸', () => {
     ).rejects.toThrow('未由你选择授权');
   });
 
-  it('目录引用在目录选择与授权账本实现前 fail closed', async () => {
-    const authorize = vi.fn(async () => ['/tmp/workspace']);
+  it('目录引用走同一授权边界并只发送 main 返回的规范路径', async () => {
+    const authorize = vi.fn(async () => ['/Volumes/Portable/real/workspace']);
 
-    expect(hasOutboundPathReference(folderMessage('/etc'))).toBe(true);
-    await expect(
-      authorizeOutboundFileReferences(folderMessage('/etc'), authorize),
-    ).rejects.toThrow('目录附件暂不支持');
-    expect(authorize).not.toHaveBeenCalled();
+    expect(hasOutboundPathReference(folderMessage('/Volumes/Portable/alias/workspace'))).toBe(true);
+    const frame = await authorizeOutboundFileReferences(
+      folderMessage('/Volumes/Portable/alias/workspace'), authorize,
+    );
+    expect(authorize).toHaveBeenCalledWith([{
+      path: '/Volumes/Portable/alias/workspace',
+      kind: 'directory',
+    }]);
+    expect(frame.payload.content).toEqual([{
+      type: 'folder_reference',
+      value: {
+        folderName: 'workspace',
+        folderPath: '/Volumes/Portable/real/workspace',
+      },
+    }]);
   });
 
   it('附件授权返回后若连接已断开则不入队也不发送', () => {

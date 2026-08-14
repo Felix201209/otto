@@ -49,7 +49,7 @@ function renderPanel() {
 }
 
 function search(): HTMLInputElement {
-  return screen.getByPlaceholderText('搜索对话标题或内容…') as HTMLInputElement;
+  return screen.getByPlaceholderText('搜索消息标题或内容…') as HTMLInputElement;
 }
 
 describe('AllConversations：键盘导航', () => {
@@ -101,6 +101,55 @@ describe('AllConversations unread indicators', () => {
 
     expect(screen.getByLabelText('未读消息')).toBeTruthy();
     expect(document.querySelector('[data-unread="true"]')).toBeTruthy();
+  });
+
+  it('combines enterprise notifications with history and filters by category or unread state', () => {
+    const onOpenNotification = vi.fn();
+    render(
+      <AllConversations
+        sessions={[
+          makeSession({ sessionId: 'local-1', title: '本地历史', source: 'local' }),
+          makeSession({ sessionId: 'feishu-1', title: '飞书历史', source: 'feishu' }),
+        ]}
+        activeSessionId="local-1"
+        unreadSessions={[]}
+        enterpriseUnreadCounts={{ 'enterprise:message:account-2': 3 }}
+        onSelect={vi.fn()}
+        onOpenNotification={onOpenNotification}
+        onClose={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('dialog', { name: '消息中心' })).toBeTruthy();
+    expect(screen.getByText('企业私聊')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '仅看未读' }));
+    expect(screen.getByText('企业私聊')).toBeTruthy();
+    expect(screen.queryByText('本地历史')).toBeNull();
+
+    fireEvent.click(screen.getByText('企业私聊'));
+    expect(onOpenNotification).toHaveBeenCalledWith(
+      'enterprise:message:account-2',
+    );
+  });
+
+  it('filters durable history by local and Feishu sources', () => {
+    render(
+      <AllConversations
+        sessions={[
+          makeSession({ sessionId: 'local-1', title: '本地历史', source: 'local' }),
+          makeSession({ sessionId: 'feishu-1', title: '飞书历史', source: 'feishu' }),
+        ]}
+        activeSessionId="local-1"
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '飞书消息' }));
+    expect(screen.getByText('飞书历史')).toBeTruthy();
+    expect(screen.queryByText('本地历史')).toBeNull();
   });
 });
 

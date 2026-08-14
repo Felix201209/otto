@@ -15,11 +15,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProductWorkspaceSnapshot } from 'otto-server';
 import type { EnterpriseAccount, EnterpriseDirectMessage } from '../../preload/index.js';
 import {
+  DirectMessagePanel,
   OrganizationTree,
   parseDirectMessageTimestamp,
 } from './OrganizationTree.js';
 
 const askLocalPeerOttoMock = vi.hoisted(() => vi.fn(async () => '本机 Otto 给出的建议。'));
+const originalScrollIntoView = Object.getOwnPropertyDescriptor(
+  HTMLElement.prototype,
+  'scrollIntoView',
+);
 
 vi.mock('../peerOttoRunner.js', async () => {
   const actual = await vi.importActual<typeof import('../peerOttoRunner.js')>(
@@ -36,6 +41,15 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.clearAllMocks();
+  if (originalScrollIntoView) {
+    Object.defineProperty(
+      HTMLElement.prototype,
+      'scrollIntoView',
+      originalScrollIntoView,
+    );
+  } else {
+    Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+  }
 });
 
 const workspace: ProductWorkspaceSnapshot = {
@@ -135,6 +149,55 @@ function ensureDepartmentOpen(name: string): HTMLElement {
 }
 
 describe('OrganizationTree', () => {
+  it('allows the user to explicitly reset an active MLS private-chat session', async () => {
+    const enterpriseMessagesList = vi.fn(async (): Promise<EnterpriseDirectMessage[]> => [
+      {
+        id: 'mls-message-1',
+        senderAccountId: 'acc_1',
+        recipientAccountId: 'acc_2',
+        content: '加密消息',
+        createdAt: '2026-08-03T00:00:00.000Z',
+        readAt: null,
+        e2ee: true,
+        e2eeProtocol: 'mls10-openmls-0.8',
+      },
+    ]);
+    const enterpriseMessageSecurityReset = vi.fn(async () => undefined);
+    Object.assign(window.otto, {
+      enterpriseMessagesList,
+      enterpriseMessageSecurityReset,
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(
+      <DirectMessagePanel
+        member={{
+          id: 'acc_2',
+          username: 'bob',
+          name: 'Bob',
+          role: 'Manager',
+          department: 'R&D',
+          isAdmin: false,
+          status: 'active',
+        }}
+        currentAccount={authenticatedEnterpriseAccount}
+        initialPosition={{ left: 0, top: 0 }}
+        stackOrder={1}
+        onActivate={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: '重置加密会话' }));
+
+    await waitFor(() =>
+      expect(enterpriseMessageSecurityReset).toHaveBeenCalledWith('acc_2'),
+    );
+    expect((await screen.findByRole('status')).textContent).toContain(
+      '加密会话已重置',
+    );
+  });
+
   it('treats SQLite chat timestamps without a timezone as UTC', () => {
     expect(
       parseDirectMessageTimestamp('2026-07-28 03:51:00').toISOString(),
@@ -927,7 +990,7 @@ describe('OrganizationTree', () => {
     await waitFor(() => {
       expect(scrollIntoView).toHaveBeenCalled();
       expect(onMessageRead).toHaveBeenCalledTimes(1);
-    });
+    }, { timeout: 3_000 });
 
     scrollIntoView.mockClear();
     const messagePoll = intervals.find((interval) => interval.delay === 2_000);
@@ -940,7 +1003,7 @@ describe('OrganizationTree', () => {
     await waitFor(() => {
       expect(scrollIntoView).toHaveBeenCalled();
       expect(onMessageRead).toHaveBeenCalledTimes(2);
-    });
+    }, { timeout: 3_000 });
     expect(onMessageRead).toHaveBeenLastCalledWith('acc_2');
 
     scrollIntoView.mockClear();

@@ -21,6 +21,7 @@ export interface FederationRoutingMetadata {
   inReplyTo?: string;
   a2aGrantId?: string;
   a2aScope?: string;
+  attachmentIds?: string[];
 }
 
 export interface FederationEnvelope {
@@ -117,4 +118,38 @@ export interface FederationProvisioningManifest {
     keyId: string;
     publicKeyPem: string;
   };
+}
+
+export interface FederationChatContactView {
+  id: string;
+  identity: string;
+  remoteDeploymentId: string;
+  remotePrincipalId: string;
+  displayName: string;
+  deploymentDisplayName: string;
+  createdAt: string;
+  updatedAt: string;
+  lastMessageAt: string | null;
+  unreadCount: number;
+}
+
+export interface FederationChatMessageView extends FederationInboxMessageView {
+  contactId: string;
+  direction: 'inbound' | 'outbound';
+  deliveryStatus: 'queued' | 'sent' | 'failed' | 'expired' | 'received';
+  readAt: string | null;
+}
+
+export interface FederationChatAttachmentView {
+  id: string;
+  ownerAccountId: string;
+  contactId: string;
+  remoteDeploymentId: string;
+  direction: 'inbound' | 'outbound';
+  messageId: string | null;
+  ciphertextBytes: number | null;
+  ciphertextSha256: string | null;
+  status: 'pending' | 'ready' | 'referenced';
+  createdAt: string;
+  updatedAt: string;
 }

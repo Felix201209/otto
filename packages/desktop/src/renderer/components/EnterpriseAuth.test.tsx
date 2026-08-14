@@ -21,17 +21,22 @@ beforeAll(() => {
   })));
 });
 
+const LEGAL_DOCUMENTS = [
+  { id: 'terms' as const, version: '2026-08-03', hash: 'a'.repeat(64) },
+  { id: 'privacy' as const, version: '2026-08-03', hash: 'b'.repeat(64) },
+];
+
 describe('企业首次注册输入规则', () => {
   it('普通注册不需要邀请码，加入企业时才校验邀请码', () => {
     expect(sanitizeSmsCode('04a27 319')).toBe('042731');
     expect(sanitizeOrganizationInviteCode('ab3D k9Pq z7xY<script>')).toBe('ab3D-k9Pq-z7xY');
-    expect(isRegistrationReady({ inviteCode: '', name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731', legalConsent: true })).toBe(true);
-    expect(isRegistrationReady({ inviteCode: '', name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731', legalConsent: false })).toBe(false);
-    expect(isRegistrationReady({ inviteCode: '', inviteRequired: true, name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731', legalConsent: true })).toBe(false);
-    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: '', code: '042731', legalConsent: true })).toBe(false);
-    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', name: '小明', password: 'short', confirmPassword: 'short', challengeId: 'sms_1', code: '042731', legalConsent: true })).toBe(false);
-    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', name: '小明', password: 'password-1', confirmPassword: 'different', challengeId: 'sms_1', code: '042731', legalConsent: true })).toBe(false);
-    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', inviteRequired: true, name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731', legalConsent: true })).toBe(true);
+    expect(isRegistrationReady({ inviteCode: '', name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731', legalConsent: true, legalDocuments: LEGAL_DOCUMENTS })).toBe(true);
+    expect(isRegistrationReady({ inviteCode: '', name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731', legalConsent: false, legalDocuments: LEGAL_DOCUMENTS })).toBe(false);
+    expect(isRegistrationReady({ inviteCode: '', inviteRequired: true, name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731', legalConsent: true, legalDocuments: LEGAL_DOCUMENTS })).toBe(false);
+    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: '', code: '042731', legalConsent: true, legalDocuments: LEGAL_DOCUMENTS })).toBe(false);
+    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', name: '小明', password: 'short', confirmPassword: 'short', challengeId: 'sms_1', code: '042731', legalConsent: true, legalDocuments: LEGAL_DOCUMENTS })).toBe(false);
+    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', name: '小明', password: 'password-1', confirmPassword: 'different', challengeId: 'sms_1', code: '042731', legalConsent: true, legalDocuments: LEGAL_DOCUMENTS })).toBe(false);
+    expect(isRegistrationReady({ inviteCode: 'Ab3D-k9Pq-Z7xY', inviteRequired: true, name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731', legalConsent: true, legalDocuments: LEGAL_DOCUMENTS })).toBe(true);
   });
 });
 
@@ -49,7 +54,7 @@ describe('登录页能力打字机', () => {
 });
 
 describe('专业登录入口', () => {
-  it('在登录和注册提交前允许填写企业服务器地址', () => {
+  it('登录和注册首页都不暴露企业服务器地址', () => {
     render(
       <EnterpriseLoginPage
         initialServerUrl="https://59.110.154.44:7777/company"
@@ -63,20 +68,19 @@ describe('专业登录入口', () => {
         onRequestRegistrationCode={async () => ({
           challengeId: 'sms_1', message: '验证码已发送', retryAfterSeconds: 60,
           organization: { id: 'org_acme', name: '星河科技' },
+          legalDocuments: LEGAL_DOCUMENTS,
         })}
         onRegister={async () => undefined}
         onClearError={() => undefined}
       />,
     );
 
-    const serverInput = screen.getByLabelText('企业服务器地址') as HTMLInputElement;
-    expect(serverInput.value).toBe('https://59.110.154.44:7777/company');
-    expect(screen.getByText('59.110.154.44:7777')).toBeTruthy();
+    expect(screen.queryByLabelText('企业服务器地址')).toBeNull();
+    expect(screen.queryByText('59.110.154.44:7777')).toBeNull();
     expect(screen.getByRole('button', { name: '进入 Otto' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: '普通注册' }));
-    expect((screen.getByLabelText('企业服务器地址') as HTMLInputElement).value)
-      .toBe('https://59.110.154.44:7777/company');
+    expect(screen.queryByLabelText('企业服务器地址')).toBeNull();
     expect(screen.getByRole('button', { name: '创建账号并进入' })).toBeTruthy();
   });
 
@@ -94,13 +98,14 @@ describe('专业登录入口', () => {
         onRequestRegistrationCode={async () => ({
           challengeId: 'sms_1', message: '验证码已发送', retryAfterSeconds: 60,
           organization: { id: 'org_acme', name: '星河科技' },
+          legalDocuments: LEGAL_DOCUMENTS,
         })}
         onRegister={async () => undefined}
         onClearError={() => undefined}
       />,
     );
 
-    expect(screen.getByLabelText('企业服务器地址')).toBeTruthy();
+    expect(screen.queryByLabelText('企业服务器地址')).toBeNull();
     expect(screen.getByLabelText('登录手机号')).toBeTruthy();
     expect(screen.getByLabelText('登录验证码')).toBeTruthy();
     expect(screen.queryByLabelText('密码')).toBeNull();
@@ -120,7 +125,7 @@ describe('专业登录入口', () => {
     expect(screen.getByText(/普通注册不需要企业邀请码/)).toBeTruthy();
   });
 
-  it('登录请求只发送到用户当前填写的服务器地址', async () => {
+  it('登录请求使用应用配置的服务器地址且不在首页暴露', async () => {
     const onPasswordLogin = vi.fn(async () => undefined);
     render(
       <EnterpriseLoginPage
@@ -131,15 +136,14 @@ describe('专业登录入口', () => {
         onRequestRegistrationCode={async () => ({
           challengeId: 'unused', message: 'unused', retryAfterSeconds: 60,
           organization: null,
+          legalDocuments: LEGAL_DOCUMENTS,
         })}
         onRegister={async () => undefined}
         onClearError={() => undefined}
       />,
     );
 
-    fireEvent.change(screen.getByLabelText('企业服务器地址'), {
-      target: { value: 'https://new.enterprise.test' },
-    });
+    expect(screen.queryByLabelText('企业服务器地址')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '密码登录' }));
     fireEvent.change(screen.getByLabelText('账号或手机号'), {
       target: { value: 'ceo@example.test' },
@@ -150,7 +154,7 @@ describe('专业登录入口', () => {
     fireEvent.click(screen.getByRole('button', { name: '进入 Otto' }));
 
     await waitFor(() => expect(onPasswordLogin).toHaveBeenCalledWith({
-      serverUrl: 'https://new.enterprise.test',
+      serverUrl: 'https://old.enterprise.test',
       identifier: 'ceo@example.test',
       password: 'strong-password',
     }));
@@ -163,6 +167,7 @@ describe('专业登录入口', () => {
       retryAfterSeconds: 60,
       registrationMode: 'personal' as const,
       organization: null,
+      legalDocuments: LEGAL_DOCUMENTS,
     }));
     render(
       <EnterpriseLoginPage
@@ -206,6 +211,7 @@ describe('专业登录入口', () => {
           message: 'unused',
           retryAfterSeconds: 60,
           organization: null,
+          legalDocuments: LEGAL_DOCUMENTS,
         })}
         onRegister={async () => undefined}
         onClearError={() => undefined}
@@ -235,6 +241,7 @@ describe('专业登录入口', () => {
       message: '验证码已发送',
       retryAfterSeconds: 60,
       organization: { id: 'org_acme', name: '星河科技' },
+      legalDocuments: LEGAL_DOCUMENTS,
     }));
     render(
       <EnterpriseLoginPage
@@ -280,6 +287,7 @@ describe('专业登录入口', () => {
       message: '验证码已发送',
       retryAfterSeconds: 60,
       organization: { id: 'org_acme', name: '星河科技' },
+      legalDocuments: LEGAL_DOCUMENTS,
     }));
     const props = {
       initialServerUrl: 'https://enterprise.otto.test',
@@ -333,6 +341,7 @@ describe('专业登录入口', () => {
         onRequestRegistrationCode={async () => ({
           challengeId: 'sms_1', message: '验证码已发送', retryAfterSeconds: 60,
           organization: { id: 'org_acme', name: '星河科技' },
+          legalDocuments: LEGAL_DOCUMENTS,
         })}
         onRegister={async () => undefined}
         onClearError={onClearError}
@@ -371,12 +380,14 @@ describe('专业登录入口', () => {
       message: string;
       retryAfterSeconds: number;
       organization: { id: string; name: string };
+      legalDocuments: typeof LEGAL_DOCUMENTS;
     }) => void;
     const requestPending = new Promise<{
       challengeId: string;
       message: string;
       retryAfterSeconds: number;
       organization: { id: string; name: string };
+      legalDocuments: typeof LEGAL_DOCUMENTS;
     }>((resolve) => {
       finishRequest = resolve;
     });
@@ -421,6 +432,7 @@ describe('专业登录入口', () => {
       message: '旧验证码已发送',
       retryAfterSeconds: 60,
       organization: { id: 'org_stale', name: '旧企业' },
+      legalDocuments: LEGAL_DOCUMENTS,
     });
 
     await waitFor(() => {

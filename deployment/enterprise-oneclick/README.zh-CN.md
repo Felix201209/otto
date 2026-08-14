@@ -1,4 +1,4 @@
-# Otto Enterprise LSTC 私有化部署包
+# Otto Enterprise 私有化部署包
 
 这是一套面向 Ubuntu 22.04/24.04 的“上传、填配置、执行一条安装命令”迁移包。它会安装固定并校验过 SHA-256 的 Node.js 22 LTS、最小企业服务、systemd 单元，并可选配置 Caddy HTTPS。
 
@@ -8,7 +8,8 @@
 
 - 只支持 `amd64/x86_64` 与 `arm64/aarch64`。
 - 默认面向全新服务器。完全相同 build 重跑时只验收、不重启；检测到不同的现有 Otto 安装会拒绝覆盖。
-- 这是“当前服务器原样迁入新机器”的 LSTC 包。实际可导入版本及目标版本以同一发布包内 `release/manifest.json` 的 `database.schemaFrom`、`database.schemaTo` 为准，安装器会在隔离副本上迁移并拒绝未声明或未来版本。
+- 这是“当前服务器原样迁入新机器”的过渡发布包。实际可导入版本及目标版本以同一发布包内 `release/manifest.json` 的 `database.schemaFrom`、`database.schemaTo` 为准，安装器会在隔离副本上迁移并拒绝未声明或未来版本。
+- `upgrade.sh` 仅在校验现有旧 release 时显式兼容历史 `lstc` 渠道；新包自身仍只能使用 `stable` 或 `transition`，不能借此重新发布旧渠道包。
 - 数据导出使用 SQLite Online Backup API，不直接复制正在写入的 `data.db`。
 - 导入先在隔离目录迁移，再在 `127.0.0.1:17777` 启动 canary；schema、外键、数据行数和 health 全部通过后才安装。
 - 服务只监听 `127.0.0.1:7778`，公网必须经过 HTTPS 反向代理。
@@ -122,6 +123,16 @@ chmod 600 ./enterprise.env
 - `OTTO_ENTERPRISE_FEISHU_DOMAIN`：`feishu` 使用飞书中国站，`lark` 使用 Lark 国际站，留空默认飞书中国站。
 
 这些可选项留空不会阻止报修记录写入，但对应的外部通知通道不会发送。安装器会把它们写入 `/etc/otto-enterprise/enterprise.env`，不会放进迁移包或日志。
+
+跨私有服务器联邦为可选配置：
+
+- `OTTO_FEDERATION_ENABLED`：仅在已完成 Control 联邦网关注册和验签配置后设为 `1`；
+- `OTTO_FEDERATION_GATEWAY_URL`：Control 联邦网关的 HTTPS 地址；
+- `OTTO_FEDERATION_DISPLAY_NAME`：该私有部署在联邦目录中展示的名称；
+- `OTTO_FEDERATION_POLL_INTERVAL_MS`：离线消息领取间隔，留空使用服务端安全默认值；
+- `OTTO_FEDERATION_SIGNING_KEY_FILE`：部署签名私钥的绝对路径，文件不得是符号链接且只能由服务账号读取。
+
+未启用联邦时应保留 `OTTO_FEDERATION_ENABLED=0`。安装和升级会原样保存上述配置，但不会自动生成签名私钥，也不会绕过 Control 的部署注册与吊销检查。
 
 `OTTO_ENTERPRISE_ADMIN_TOKEN=auto` 会生成不输出到日志的随机平台令牌。迁移库已有管理员账号时不会重建账号；空库会生成一次性管理员密码，安装结束后只写到 `/root/otto-enterprise-bootstrap-*.txt`。
 
@@ -274,7 +285,8 @@ AES-256-GCM 加密，服务启动时会先迁移旧明文数据并验证密钥�
 如配置 `OTTO_TELEMETRY_ENDPOINT`，地址必须使用 HTTPS。遥测请求除 Bearer 令牌外还
 携带 HMAC-SHA256 签名、时间戳和一次性随机数；接收端只接受 5 分钟窗口内且未重放的
 请求，本地遥测保留期由 `OTTO_TELEMETRY_RETENTION_DAYS` 控制。正式交付前必须填写
-`OTTO_DATA_CONTROLLER_NAME` 和 `OTTO_PRIVACY_CONTACT`，
+`OTTO_DATA_CONTROLLER_NAME` 和 `OTTO_PRIVACY_CONTACT`，由部署方法务确认当前完整正文后再把
+`OTTO_LEGAL_DOCUMENTS_APPROVED` 设为 `true`，
 并确认 `OTTO_DATA_REGION`、`OTTO_DATA_RESIDENCY` 与
 `OTTO_CROSS_BORDER_DATA_ENABLED` 符合客户实际数据流。只有数据目录所在磁盘已经启用
 LUKS、云盘加密卷或等价保护后，才能把 `OTTO_STORAGE_VOLUME_ENCRYPTED` 设为 `true`；

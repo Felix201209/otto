@@ -341,9 +341,15 @@ export function migrateDirectMessageContentEncryption(
 ): number {
   if (!store.fieldCipher) return 0;
   const database = store.db();
+  const hasE2eeProtocolColumn = (
+    database.prepare('PRAGMA table_info(direct_messages)').all() as Array<{
+      name: string;
+    }>
+  ).some((column) => column.name === 'e2ee_protocol_version');
   const selectBatch = database.prepare(
     `SELECT * FROM direct_messages
      WHERE content_ciphertext IS NULL
+       ${hasE2eeProtocolColumn ? 'AND e2ee_protocol_version IS NULL' : ''}
      ORDER BY created_at, id
      LIMIT 500`,
   );

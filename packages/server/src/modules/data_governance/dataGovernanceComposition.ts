@@ -16,6 +16,7 @@ import {
   recordCurrentLegalConsentInRepository,
   type DataGovernanceAccount,
 } from './dataGovernanceRepository.js';
+import type { LegalDocumentReference } from './legalDocuments.js';
 import { createPrivacyDeletionLedger } from './privacyDeletionLedger.js';
 import { buildRedactedDiagnosticPackage } from './diagnosticPackage.js';
 
@@ -43,7 +44,11 @@ export function createDataGovernanceComposition(input: {
   };
   return {
     getDataGovernanceProfile: (account?: DataGovernanceAccount | null) => getDataGovernanceProfileFromRepository(store, account),
-    recordCurrentLegalConsent: (account: DataGovernanceAccount, source: 'registration' | 'settings' | 'migration') => recordCurrentLegalConsentInRepository(store, account, source),
+    recordCurrentLegalConsent: (
+      account: DataGovernanceAccount,
+      source: 'registration' | 'settings' | 'migration',
+      references: readonly LegalDocumentReference[],
+    ) => recordCurrentLegalConsentInRepository(store, account, source, references),
     exportAccountData: (account: DataGovernanceAccount) => exportAccountDataFromRepository(store, account),
     deleteOwnAccountData: (account: DataGovernanceAccount) => deleteOwnAccountDataInRepository(store, account),
     reapplyPrivacyDeletionTombstones: () => reapplyPrivacyDeletionTombstones(store, ledger.list()),

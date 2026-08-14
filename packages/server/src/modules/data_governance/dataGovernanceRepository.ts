@@ -12,6 +12,8 @@ import {
   dataGovernanceConfiguration,
   dataProcessingInventory,
   legalDocumentHash,
+  requireCurrentLegalDocumentReferences,
+  type LegalDocumentReference,
 } from './legalDocuments.js';
 import type { PrivacyDeletionTombstone } from './privacyDeletionLedger.js';
 
@@ -145,7 +147,9 @@ export function recordCurrentLegalConsentInRepository(
   store: DataGovernanceRepositoryStore,
   account: DataGovernanceAccount,
   source: 'registration' | 'settings' | 'migration',
+  references: readonly LegalDocumentReference[],
 ): void {
+  requireCurrentLegalDocumentReferences(references);
   const acceptedAtMs = store.now();
   const insert = store.db().prepare(
     `INSERT INTO legal_consents
@@ -172,23 +176,33 @@ export function getDataGovernanceProfileFromRepository(
   account?: DataGovernanceAccount | null,
 ) {
   const accepted = account
-    ? rows<{ document_id: string; document_version: string; accepted_at_ms: number }>(
+    ? rows<{
+      document_id: string;
+      document_version: string;
+      policy_hash: string;
+      accepted_at_ms: number;
+    }>(
       store.db(),
       'legal_consents',
-      `SELECT document_id, document_version, accepted_at_ms
+      `SELECT document_id, document_version, policy_hash, accepted_at_ms
        FROM legal_consents WHERE account_id = ?`,
       account.id,
     )
     : [];
-  const acceptedKeys = new Set(accepted.map((row) => `${row.document_id}:${row.document_version}`));
-  const documents = CURRENT_LEGAL_DOCUMENTS.map((document) => ({
-    ...document,
-    hash: legalDocumentHash(document),
-    accepted: acceptedKeys.has(`${document.id}:${document.version}`),
-    acceptedAt: accepted.find((row) => (
-      row.document_id === document.id && row.document_version === document.version
-    ))?.accepted_at_ms ?? null,
-  }));
+  const documents = CURRENT_LEGAL_DOCUMENTS.map((document) => {
+    const hash = legalDocumentHash(document);
+    const consent = accepted.find((row) => (
+      row.document_id === document.id
+      && row.document_version === document.version
+      && row.policy_hash === hash
+    ));
+    return {
+      ...document,
+      hash,
+      accepted: Boolean(consent),
+      acceptedAt: consent?.accepted_at_ms ?? null,
+    };
+  });
   return {
     ...dataGovernanceConfiguration(),
     documents,

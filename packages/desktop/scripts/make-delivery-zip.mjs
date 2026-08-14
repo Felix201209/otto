@@ -80,10 +80,22 @@ const RELEASE_ASSET_NAMES = [...BUILD_ASSET_NAMES, 'latest.json'];
 const ARGS = process.argv.slice(2);
 const SHOULD_BUILD = ARGS.includes('--build');
 const SHOULD_PUBLISH = ARGS.includes('--publish');
+const ALLOW_UNSIGNED_MAC = process.env.OTTO_ALLOW_UNSIGNED_MAC === '1';
 const GITHUB_TOKEN = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
 const NPM_BIN = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const NPX_BIN = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 const EXEC_FILE_OPTIONS = process.platform === 'win32' ? { shell: true } : {};
+const UNSIGNED_MAC_BUILD_ARGS = ALLOW_UNSIGNED_MAC
+  ? [
+      '--config.mac.identity=null',
+      '--config.mac.hardenedRuntime=false',
+      '--config.mac.notarize=false',
+      '--config.dmg.sign=false',
+    ]
+  : [];
+const MAC_BUILD_ENV = ALLOW_UNSIGNED_MAC
+  ? { ...process.env, CSC_IDENTITY_AUTO_DISCOVERY: 'false' }
+  : process.env;
 
 // ── 辅助函数 ──────────────────────────────────────────────────────────────
 
@@ -227,7 +239,13 @@ function cleanupUnpackedOutput(name) {
   log('BUILD', `已清理可再生中间目录: ${name}`);
 }
 
-function runBuildStep(command, args, unpackedOutput, env = process.env) {
+function runBuildStep(
+  command,
+  args,
+  unpackedOutput,
+  env = process.env,
+  verifyUnpacked,
+) {
   try {
     execFileSync(command, args, {
       cwd: DESKTOP_DIR,
@@ -235,9 +253,27 @@ function runBuildStep(command, args, unpackedOutput, env = process.env) {
       env,
       ...EXEC_FILE_OPTIONS,
     });
+    verifyUnpacked?.();
   } finally {
     cleanupUnpackedOutput(unpackedOutput);
   }
+}
+
+function verifySignedMacApplication(unpackedOutput) {
+  const appPath = path.join(RELEASE_DIR, unpackedOutput, 'Otto.app');
+  if (!existsSync(appPath)) {
+    throw new Error(`缺少待验证的 macOS 应用包: ${appPath}`);
+  }
+  execFileSync('codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath], {
+    stdio: 'inherit',
+  });
+  execFileSync('xcrun', ['stapler', 'validate', appPath], {
+    stdio: 'inherit',
+  });
+  execFileSync('spctl', ['--assess', '--type', 'execute', '--verbose=4', appPath], {
+    stdio: 'inherit',
+  });
+  log('BUILD', `Developer ID 与公证票据验证通过: ${unpackedOutput}/Otto.app`);
 }
 
 async function writeBuildProvenance(sourceCommit) {
@@ -332,8 +368,20 @@ async function build(sourceCommit) {
   log('BUILD', '构建 Mac arm64...');
   runBuildStep(
     NPX_BIN,
-    ['electron-builder', '--mac', 'dmg', '--arm64', '--publish', 'never'],
+    [
+      'electron-builder',
+      '--mac',
+      'dmg',
+      '--arm64',
+      ...UNSIGNED_MAC_BUILD_ARGS,
+      '--publish',
+      'never',
+    ],
     'mac-arm64',
+    MAC_BUILD_ENV,
+    ALLOW_UNSIGNED_MAC
+      ? undefined
+      : () => verifySignedMacApplication('mac-arm64'),
   );
   execFileSync(
     process.execPath,
@@ -351,9 +399,33 @@ async function build(sourceCommit) {
   log('BUILD', '构建 Mac x64...');
   runBuildStep(
     NPX_BIN,
-    ['electron-builder', '--mac', 'dmg', '--x64', '--publish', 'never'],
+    [
+      'electron-builder',
+      '--mac',
+      'dmg',
+      '--x64',
+      ...UNSIGNED_MAC_BUILD_ARGS,
+      '--publish',
+      'never',
+    ],
     'mac',
+    MAC_BUILD_ENV,
+    ALLOW_UNSIGNED_MAC
+      ? undefined
+      : () => verifySignedMacApplication('mac'),
   );
+  execFileSync(
+    process.execPath,
+    [
+      path.join(__dirname, 'smoke-packaged-electron.mjs'),
+      path.join(RELEASE_DIR, `Otto-${VERSION}-x64.dmg`),
+    ],
+    {
+      cwd: DESKTOP_DIR,
+      stdio: 'inherit',
+    },
+  );
+  log('BUILD', 'Mac x64 最终 DMG 的 preload、IPC 与 WS 动态验收通过');
 
   log('BUILD', '构建 Windows x64...');
   const windowsSigningEnv = {

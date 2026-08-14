@@ -2,12 +2,154 @@
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
 
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   EnterpriseClient,
   EnterpriseJoinStateUncertainError,
   logoutAndPersistEnterpriseSession,
+  type EnterpriseLegalDocumentReference,
 } from './enterprise-client.js';
+import {
+  ENTERPRISE_MLS_CIPHERSUITE,
+  enterpriseMlsDirectConversationId,
+  parseEnterpriseMlsKeyPackageInventory,
+} from './enterprise-mls.js';
+import type {
+  EnterpriseE2eeCrypto,
+  EnterpriseE2eeDeviceBundle,
+  EnterpriseE2eeKeyTransparencyView,
+  EnterpriseE2eeWireMessage,
+} from './enterprise-e2ee.js';
+
+const E2EE_DEVICE = {
+  accountId: 'acc_1',
+  deviceId: 'device-1',
+  deviceName: 'test device',
+  identitySigningPublicKey: 'test signing key',
+  deviceExchangePublicKey: 'test exchange key',
+  keyFingerprint: '1'.repeat(64),
+  approvalState: 'approved' as const,
+  approvedByDeviceId: null,
+  approvedAt: '2026-07-31T00:00:00.000Z',
+  createdAt: '2026-07-31T00:00:00.000Z',
+  lastSeenAt: '2026-07-31T00:00:00.000Z',
+  revokedAt: null,
+};
+
+const LEGAL_DOCUMENTS = [
+  { id: 'terms', version: '2026-08-03', hash: 'a'.repeat(64) },
+  { id: 'privacy', version: '2026-08-03', hash: 'b'.repeat(64) },
+] satisfies EnterpriseLegalDocumentReference[];
+
+describe('parseEnterpriseMlsKeyPackageInventory', () => {
+  const entry = (reference: string, expiresAt = '2026-08-10T00:00:00.000Z') => ({
+    reference,
+    expiresAt,
+  });
+
+  it.each([
+    {
+      name: 'wrong device binding',
+      value: { deviceId: 'device-2', keyPackages: [] },
+    },
+    {
+      name: 'duplicate reference',
+      value: {
+        deviceId: 'device-1',
+        keyPackages: [entry('a'.repeat(64)), entry('a'.repeat(64))],
+      },
+    },
+    {
+      name: 'non-monotonic reference order',
+      value: {
+        deviceId: 'device-1',
+        keyPackages: [entry('b'.repeat(64)), entry('a'.repeat(64))],
+      },
+    },
+    {
+      name: 'expired reference',
+      value: {
+        deviceId: 'device-1',
+        keyPackages: [entry('a'.repeat(64), '2026-08-02T00:00:00.000Z')],
+      },
+    },
+  ])('rejects $name', ({ value }) => {
+    expect(() =>
+      parseEnterpriseMlsKeyPackageInventory(
+        value,
+        'device-1',
+        Date.parse('2026-08-03T00:00:00.000Z'),
+      ),
+    ).toThrow('KeyPackage inventory is invalid');
+  });
+});
+
+function mockE2eeCrypto(input: {
+  decryptContent?: string;
+  decryptedAttachments?: Array<{ id: string; fileName: string; mimeType: string; size: number }>;
+  encryptedAttachments?: Array<{ id: string; ciphertext: string; nonce: string }>;
+} = {}): EnterpriseE2eeCrypto {
+  return {
+    localDevice: vi.fn(() => E2EE_DEVICE),
+    verifyLocalDeviceRegistration: vi.fn(
+      (
+        _local: EnterpriseE2eeDeviceBundle,
+        registered: EnterpriseE2eeDeviceBundle,
+      ) => registered,
+    ),
+    verifyAndPinKeyTransparency: vi.fn(
+      ({ view }: { view: EnterpriseE2eeKeyTransparencyView }) => view,
+    ),
+    verifyDeviceDirectory: vi.fn(
+      ({ devices }: { devices: EnterpriseE2eeDeviceBundle[] }) => devices,
+    ),
+    encryptMessage: vi.fn(() => ({
+      messageId: 'message-1',
+      senderDeviceId: 'device-1',
+      protocolVersion: 1,
+      contentType: 'message',
+      inReplyToMessageId: null,
+      ciphertext: 'Y2lwaGVydGV4dCBwbHVzIGF1dGggdGFn',
+      nonce: 'AAAAAAAAAAAAAAAA',
+      signature: 'c2lnbmF0dXJl',
+      envelopes: [],
+      attachments: input.encryptedAttachments ?? [],
+    })),
+    decryptMessage: vi.fn(({ message }: { message: EnterpriseE2eeWireMessage }) => ({
+      id: message.id,
+      senderAccountId: message.senderAccountId,
+      recipientAccountId: message.recipientAccountId,
+      content: input.decryptContent ?? 'decrypted message',
+      contentType: message.contentType,
+      inReplyToMessageId: message.inReplyToMessageId,
+      createdAt: message.createdAt,
+      readAt: message.readAt,
+      attachments: input.decryptedAttachments ?? [],
+    })),
+    decryptAttachment: vi.fn(() => ({
+      id: 'attachment-1',
+      fileName: '方案.pdf',
+      mimeType: 'application/pdf',
+      size: 4,
+      data: 'JVBERg==',
+    })),
+  } as unknown as EnterpriseE2eeCrypto;
+}
+
+function emptyTransparency(accountId: string) {
+  return {
+    transparency: {
+      accountId,
+      headSequence: 0,
+      headHash: '0'.repeat(64),
+      entries: [],
+    },
+  };
+}
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -52,6 +194,8 @@ const API_V2_HEALTH = {
     'account_deletion',
     'multi_organization',
     'direct_messages',
+    'e2ee_private_messages_v1',
+    'e2ee_device_trust_v1',
     'direct_message_attachments_v1',
     'atoa',
     'position_invites',
@@ -63,7 +207,645 @@ const API_V2_HEALTH = {
   ],
 };
 
+function mockFederationCrypto(): EnterpriseE2eeCrypto {
+  const trusts = new Map<string, {
+    card: Record<string, unknown>;
+    verifiedAt: string | null;
+    pinnedAt: string;
+  }>();
+  let lastPlaintext = '';
+  const localDevice = {
+    ...E2EE_DEVICE,
+    accountId: 'deployment-a:acc_1',
+    identitySigningPublicKey: 'local federation signing key',
+    deviceExchangePublicKey: 'local federation exchange key',
+    keyFingerprint: 'a'.repeat(64),
+  };
+  const localCard = {
+    v: 2 as const,
+    deploymentId: 'deployment-a',
+    principalId: 'acc_1',
+    displayName: ACCOUNT.name,
+    device: localDevice,
+    devices: [
+      localDevice,
+      {
+        ...localDevice,
+        deviceId: 'local-federation-phone',
+        keyFingerprint: 'c'.repeat(64),
+      },
+    ],
+    identityDevice: localDevice,
+    identityKeyFingerprint: localDevice.keyFingerprint,
+    directorySequence: 2,
+    directoryHash: 'd'.repeat(64),
+    issuedAt: '2026-08-12T00:00:00.000Z',
+    signature: 'local-card-signature',
+  };
+  return {
+    verifyLocalDeviceRegistration: vi.fn((_, registered) => registered),
+    verifyAndPinKeyTransparency: vi.fn(({ view }) => view),
+    verifyDeviceDirectory: vi.fn(({ devices }) => devices),
+    verifyFederationIdentityCard: vi.fn((card) => card),
+    createFederationIdentityCard: vi.fn(() => localCard),
+    pinFederationContact: vi.fn((input: {
+      contactId: string;
+      card: typeof localCard;
+    }) => {
+      const current = trusts.get(input.contactId);
+      if (
+        current &&
+        (current.card as typeof localCard).device.keyFingerprint !==
+          input.card.device.keyFingerprint
+      ) {
+        throw new Error('federation contact device key changed');
+      }
+      const trust = {
+        card: input.card,
+        verifiedAt: current?.verifiedAt ?? null,
+        pinnedAt: current?.pinnedAt ?? '2026-08-12T00:00:00.000Z',
+      };
+      trusts.set(input.contactId, trust);
+      return trust;
+    }),
+    federationContactTrust: vi.fn((input: { contactId: string }) =>
+      trusts.get(input.contactId) ?? null),
+    verifyFederationContact: vi.fn((input: { contactId: string }) => {
+      const trust = trusts.get(input.contactId);
+      if (!trust) throw new Error('federation contact trust was not found');
+      const verified = { ...trust, verifiedAt: '2026-08-12T00:01:00.000Z' };
+      trusts.set(input.contactId, verified);
+      return verified;
+    }),
+    removeFederationContact: vi.fn((input: { contactId: string }) => {
+      trusts.delete(input.contactId);
+    }),
+    localDevice: vi.fn(() => localDevice),
+    encryptMessage: vi.fn((input: { content: string }) => {
+      lastPlaintext = input.content;
+      return {
+        messageId: 'federation-message-1',
+        senderDeviceId: localDevice.deviceId,
+        protocolVersion: 1 as const,
+        contentType: 'message' as const,
+        inReplyToMessageId: null,
+        ciphertext: 'encrypted-federation-content',
+        nonce: 'encrypted-federation-nonce',
+        signature: 'encrypted-federation-signature',
+        envelopes: [],
+        attachments: [],
+      };
+    }),
+    decryptMessage: vi.fn(({ message }: { message: EnterpriseE2eeWireMessage }) => ({
+      id: message.id,
+      senderAccountId: message.senderAccountId,
+      recipientAccountId: message.recipientAccountId,
+      content: lastPlaintext,
+      contentType: message.contentType,
+      inReplyToMessageId: message.inReplyToMessageId,
+      createdAt: message.createdAt,
+      readAt: message.readAt,
+      attachments: [],
+    })),
+  } as unknown as EnterpriseE2eeCrypto;
+}
+
 describe('EnterpriseClient', () => {
+  it('imports a signed federation contact and sends only an opaque E2EE envelope', async () => {
+    const remoteCard = {
+      v: 1 as const,
+      deploymentId: 'deployment-b',
+      principalId: 'remote-account',
+      displayName: '远程同事',
+      device: {
+        ...E2EE_DEVICE,
+        accountId: 'deployment-b:remote-account',
+        deviceId: 'remote-device',
+        identitySigningPublicKey: 'remote federation signing key',
+        deviceExchangePublicKey: 'remote federation exchange key',
+        keyFingerprint: 'b'.repeat(64),
+      },
+      issuedAt: '2026-08-12T00:00:00.000Z',
+      signature: 'remote-card-signature',
+    };
+    const contacts: Array<Record<string, unknown>> = [];
+    const messageBodies: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url.endsWith('/enterprise/health')) {
+        return jsonResponse(200, {
+          ...API_V2_HEALTH,
+          capabilities: [...API_V2_HEALTH.capabilities, 'federation_chat_v1'],
+        });
+      }
+      if (url.endsWith('/enterprise/auth/login')) {
+        return jsonResponse(200, {
+          account: ACCOUNT,
+          token: 'session-token',
+          expiresAt: '2099-01-01',
+        });
+      }
+      if (url.endsWith('/enterprise/federation/identity')) {
+        return jsonResponse(200, {
+          identity: {
+            deploymentId: 'deployment-a',
+            principalId: ACCOUNT.id,
+            capabilities: ['chat.e2ee'],
+          },
+        });
+      }
+      if (url.endsWith('/enterprise/e2ee/devices') && method === 'POST') {
+        return jsonResponse(201, {
+          device: {
+            ...E2EE_DEVICE,
+            accountId: ACCOUNT.id,
+            approvalState: 'approved',
+            revokedAt: null,
+          },
+        });
+      }
+      if (url.includes('/enterprise/e2ee/key-transparency?')) {
+        return jsonResponse(200, {
+          transparency: {
+            accountId: ACCOUNT.id,
+            headSequence: 1,
+            headHash: 'a'.repeat(64),
+            entries: [{
+              sequence: 1,
+              organizationId: ACCOUNT.organizationId,
+              accountId: ACCOUNT.id,
+              deviceId: E2EE_DEVICE.deviceId,
+              event: 'bootstrap_approved',
+              keyFingerprint: E2EE_DEVICE.keyFingerprint,
+              actorDeviceId: null,
+              previousHash: '0'.repeat(64),
+              entryHash: 'a'.repeat(64),
+              createdAt: '2026-08-12T00:00:00.000Z',
+            }],
+          },
+        });
+      }
+      if (url.includes('/enterprise/e2ee/devices?') && method === 'GET') {
+        return jsonResponse(200, {
+          devices: [{
+            ...E2EE_DEVICE,
+            accountId: ACCOUNT.id,
+            approvalState: 'approved',
+            revokedAt: null,
+          }],
+        });
+      }
+      if (url.endsWith('/enterprise/federation/contacts') && method === 'GET') {
+        return jsonResponse(200, { contacts });
+      }
+      if (url.endsWith('/enterprise/federation/contacts') && method === 'POST') {
+        const body = JSON.parse(String(init?.body)) as Record<string, string>;
+        const contact = {
+          id: 'contact-remote',
+          identity: 'deployment-b:remote-account',
+          remoteDeploymentId: body.remoteDeploymentId,
+          remotePrincipalId: body.remotePrincipalId,
+          displayName: body.displayName,
+          deploymentDisplayName: '远程私有部署',
+          createdAt: '2026-08-12T00:00:00.000Z',
+          updatedAt: '2026-08-12T00:00:00.000Z',
+          lastMessageAt: null,
+          unreadCount: 0,
+        };
+        contacts.splice(0, contacts.length, contact);
+        return jsonResponse(201, { contact });
+      }
+      if (url.includes('/enterprise/federation/conversations/') && method === 'POST') {
+        messageBodies.push(String(init?.body));
+        return jsonResponse(202, { queued: true });
+      }
+      throw new Error(`unexpected request: ${method} ${url}`);
+    });
+    const crypto = mockFederationCrypto();
+    const client = new EnterpriseClient(
+      fetchMock as typeof fetch,
+      () => undefined,
+      crypto,
+    );
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+    const contactCode = `OTTO_FEDERATION_CONTACT_V1:${Buffer.from(
+      JSON.stringify(remoteCard),
+      'utf8',
+    ).toString('base64url')}`;
+
+    await expect(client.saveFederationContactCode(contactCode)).resolves.toMatchObject({
+      id: 'contact-remote',
+      trustState: 'unverified',
+      keyFingerprint: 'b'.repeat(64),
+    });
+    await expect(client.sendFederationMessage(
+      'contact-remote',
+      '仅收件人可见的联邦消息',
+    )).resolves.toMatchObject({
+      federated: true,
+      direction: 'outbound',
+      deliveryStatus: 'queued',
+      content: '仅收件人可见的联邦消息',
+    });
+    expect(messageBodies).toHaveLength(1);
+    expect(messageBodies[0]).not.toContain('仅收件人可见的联邦消息');
+    expect(JSON.parse(messageBodies[0]!) as Record<string, unknown>).toMatchObject({
+      messageId: 'federation-message-1',
+      inReplyTo: null,
+    });
+    const encryptionInput = vi.mocked(crypto.encryptMessage).mock.calls[0]?.[0];
+    expect(encryptionInput?.devices).toHaveLength(3);
+    expect(encryptionInput?.keyring).toEqual({
+      serverScope: 'https://enterprise.otto.test',
+      accountId: ACCOUNT.id,
+    });
+  });
+
+  it('refuses to import the current account as a federation contact', async () => {
+    const ownCard = {
+      v: 1 as const,
+      deploymentId: 'deployment-a',
+      principalId: ACCOUNT.id,
+      displayName: ACCOUNT.name,
+      device: { ...E2EE_DEVICE, accountId: `deployment-a:${ACCOUNT.id}` },
+      issuedAt: '2026-08-12T00:00:00.000Z',
+      signature: 'self-signature',
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, {
+        ...API_V2_HEALTH,
+        capabilities: [...API_V2_HEALTH.capabilities, 'federation_chat_v1'],
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT,
+        token: 'session-token',
+        expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        identity: {
+          deploymentId: 'deployment-a',
+          principalId: ACCOUNT.id,
+          capabilities: ['chat.e2ee'],
+        },
+      }));
+    const client = new EnterpriseClient(
+      fetchMock as typeof fetch,
+      () => undefined,
+      mockFederationCrypto(),
+    );
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+    const code = Buffer.from(JSON.stringify(ownCard), 'utf8').toString('base64url');
+
+    await expect(client.saveFederationContactCode(code)).rejects.toThrow(
+      '不能把自己的联邦联系码添加为联系人',
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('fails closed instead of downgrading when the server advertises MLS private chat', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          ...API_V2_HEALTH,
+          capabilities: [...API_V2_HEALTH.capabilities, 'e2ee_mls_v1'],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          account: ACCOUNT,
+          token: 'session-token',
+          expiresAt: '2099-01-01',
+        }),
+      );
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    expect(client.supportsMlsPrivateMessages()).toBe(true);
+    await expect(
+      client.sendDirectMessage('acc_peer', 'must not downgrade'),
+    ).rejects.toThrow('MLS private-message transport is not active');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('wires the inactive MLS ciphertext transport without enabling MLS chat', async () => {
+    const keyPackageBytes = Buffer.from('local-key-package').toString('base64');
+    const keyPackageReference = 'a'.repeat(64);
+    const peerKeyPackageBytes =
+      Buffer.from('peer-key-package').toString('base64');
+    const peerKeyPackageReference = 'b'.repeat(64);
+    const conversationId = enterpriseMlsDirectConversationId({
+      organizationId: ACCOUNT.organizationId,
+      accountId: ACCOUNT.id,
+      peerAccountId: 'acc_peer',
+    });
+    const published = {
+      reference: keyPackageReference,
+      accountId: ACCOUNT.id,
+      deviceId: 'device-1',
+      ciphersuite: ENTERPRISE_MLS_CIPHERSUITE,
+      keyPackage: keyPackageBytes,
+      createdAt: '2026-08-02T00:00:00.000Z',
+      claimedAt: null,
+      expiresAt: '2026-08-09T00:00:00.000Z',
+    };
+    const claimed = {
+      ...published,
+      reference: peerKeyPackageReference,
+      accountId: 'acc_peer',
+      deviceId: 'peer-device',
+      keyPackage: peerKeyPackageBytes,
+      claimedAt: '2026-08-02T00:01:00.000Z',
+    };
+    const event = {
+      sequence: 1,
+      eventId: 'event-1',
+      conversationId,
+      sessionGeneration: 1,
+      senderAccountId: ACCOUNT.id,
+      senderDeviceId: 'device-1',
+      recipientAccountId: null,
+      recipientDeviceId: null,
+      eventType: 'commit' as const,
+      epoch: 1,
+      groupId: Buffer.from('group-1').toString('base64'),
+      payload: Buffer.from('commit-1').toString('base64'),
+      keyPackageReference: null,
+      createdAt: '2026-08-02T00:02:00.000Z',
+      expiresAt: '2026-10-31T00:02:00.000Z',
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          ...API_V2_HEALTH,
+          capabilities: [
+            ...API_V2_HEALTH.capabilities,
+            'e2ee_mls_transport_v1',
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          account: ACCOUNT,
+          token: 'session-token',
+          expiresAt: '2099-01-01',
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          deviceId: 'device-1',
+          keyPackages: [
+            {
+              reference: keyPackageReference,
+              expiresAt: '2099-01-01T00:00:00.000Z',
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          deviceId: 'device-1',
+          reference: keyPackageReference,
+          retired: true,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(201, { keyPackage: published }))
+      .mockResolvedValueOnce(jsonResponse(200, { keyPackage: claimed }))
+      .mockResolvedValueOnce(jsonResponse(201, { event }))
+      .mockResolvedValueOnce(jsonResponse(200, { events: [event] }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, { peerAccountIds: ['acc_other', 'acc_peer'] }),
+      );
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    expect(client.supportsMlsTransportFoundation()).toBe(true);
+    expect(client.supportsMlsPrivateMessages()).toBe(false);
+    await expect(
+      client.listMlsKeyPackageInventory('device-1'),
+    ).resolves.toEqual({
+      deviceId: 'device-1',
+      keyPackages: [
+        {
+          reference: keyPackageReference,
+          expiresAt: '2099-01-01T00:00:00.000Z',
+        },
+      ],
+    });
+    await expect(
+      client.retireMlsKeyPackage('device-1', keyPackageReference),
+    ).resolves.toBeUndefined();
+    await expect(
+      client.publishMlsKeyPackage('device-1', {
+        protocol: 'mls10-openmls-0.8',
+        ciphersuite: ENTERPRISE_MLS_CIPHERSUITE,
+        reference: keyPackageReference,
+        key_package: keyPackageBytes,
+      }),
+    ).resolves.toEqual(published);
+    await expect(
+      client.claimMlsKeyPackage('device-1', 'acc_peer'),
+    ).resolves.toEqual(claimed);
+    await expect(
+      client.appendMlsTransportEvent('acc_peer', {
+        senderDeviceId: 'device-1',
+        eventId: event.eventId,
+        eventType: event.eventType,
+        epoch: event.epoch,
+        groupId: event.groupId,
+        payload: event.payload,
+      }),
+    ).resolves.toEqual(event);
+    await expect(
+      client.listMlsTransportEvents('acc_peer', 0, 25),
+    ).resolves.toEqual([event]);
+    await expect(
+      client.listMlsInboundConversationPeers('device-1'),
+    ).resolves.toEqual(['acc_other', 'acc_peer']);
+
+    expect(fetchMock.mock.calls.slice(2).map(([url]) => url)).toEqual([
+      'https://enterprise.otto.test/enterprise/e2ee/mls/key-packages/inventory?deviceId=device-1',
+      `https://enterprise.otto.test/enterprise/e2ee/mls/key-packages/${keyPackageReference}?deviceId=device-1`,
+      'https://enterprise.otto.test/enterprise/e2ee/mls/key-packages',
+      'https://enterprise.otto.test/enterprise/e2ee/mls/key-packages/claim',
+      'https://enterprise.otto.test/enterprise/e2ee/mls/conversations/acc_peer/events',
+      'https://enterprise.otto.test/enterprise/e2ee/mls/conversations/acc_peer/events?afterSequence=0&limit=25',
+      'https://enterprise.otto.test/enterprise/e2ee/mls/inbound-conversations?deviceId=device-1&limit=500',
+    ]);
+    expect(JSON.parse(String(fetchMock.mock.calls[4]?.[1]?.body))).toMatchObject({
+      keyPackageReference,
+    });
+  });
+
+  it('rejects MLS transport responses whose cursor or account-pair binding is invalid', async () => {
+    const conversationId = enterpriseMlsDirectConversationId({
+      organizationId: ACCOUNT.organizationId,
+      accountId: ACCOUNT.id,
+      peerAccountId: 'acc_peer',
+    });
+    const event = {
+      sequence: 4,
+      eventId: 'event-4',
+      conversationId,
+      sessionGeneration: 1,
+      senderAccountId: 'unrelated-account',
+      senderDeviceId: 'unrelated-device',
+      recipientAccountId: null,
+      recipientDeviceId: null,
+      eventType: 'application',
+      epoch: 1,
+      groupId: Buffer.from('group-1').toString('base64'),
+      payload: Buffer.from('ciphertext').toString('base64'),
+      keyPackageReference: null,
+      createdAt: '2026-08-02T00:02:00.000Z',
+      expiresAt: '2026-10-31T00:02:00.000Z',
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          ...API_V2_HEALTH,
+          capabilities: [
+            ...API_V2_HEALTH.capabilities,
+            'e2ee_mls_transport_v1',
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          account: ACCOUNT,
+          token: 'session-token',
+          expiresAt: '2099-01-01',
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(200, { events: [event] }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, { peerAccountIds: ['acc_peer', 'acc_peer'] }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          deviceId: 'device-1',
+          keyPackages: [
+            {
+              reference: 'a'.repeat(64),
+              expiresAt: '2020-01-01T00:00:00.000Z',
+            },
+          ],
+        }),
+      );
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(
+      client.listMlsTransportEvents('acc_peer', 3, 100),
+    ).rejects.toThrow('binding is invalid');
+    await expect(
+      client.listMlsInboundConversationPeers('device-1'),
+    ).rejects.toThrow('inbound conversation list is invalid');
+    await expect(
+      client.listMlsKeyPackageInventory('device-1'),
+    ).rejects.toThrow('KeyPackage inventory is invalid');
+  });
+
+  it('paginates sorted inbound MLS peers with an opaque account cursor', async () => {
+    const firstPage = Array.from(
+      { length: 500 },
+      (_, index) => `peer-${String(index).padStart(4, '0')}`,
+    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          ...API_V2_HEALTH,
+          capabilities: [
+            ...API_V2_HEALTH.capabilities,
+            'e2ee_mls_transport_v1',
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          account: ACCOUNT,
+          token: 'session-token',
+          expiresAt: '2099-01-01',
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(200, { peerAccountIds: firstPage }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, { peerAccountIds: ['peer-0500'] }),
+      );
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(
+      client.listMlsInboundConversationPeers('device-1'),
+    ).resolves.toEqual([...firstPage, 'peer-0500']);
+    expect(fetchMock.mock.calls.at(-1)?.[0]).toBe(
+      'https://enterprise.otto.test/enterprise/e2ee/mls/inbound-conversations?deviceId=device-1&limit=500&afterPeerAccountId=peer-0499',
+    );
+  });
+
+  it('treats an empty peer KeyPackage inventory as a recoverable transport state', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          ...API_V2_HEALTH,
+          capabilities: [
+            ...API_V2_HEALTH.capabilities,
+            'e2ee_mls_transport_v1',
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          account: ACCOUNT,
+          token: 'session-token',
+          expiresAt: '2099-01-01',
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(404, {
+          error: 'no unclaimed MLS KeyPackage is available',
+        }),
+      );
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(
+      client.claimMlsKeyPackage('device-1', 'acc_peer'),
+    ).resolves.toBeNull();
+  });
   it('密码登录规范化服务器地址并保存会话，后续请求自动携带 Bearer token', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
@@ -129,6 +911,7 @@ describe('EnterpriseClient', () => {
     expect(challenge.organization).toEqual({ id: 'org_acme', name: '星河科技' });
     const loggedIn = await client.registerWithSms({
       challengeId: 'sms_1', code: '042731', name: '员工一号', password: 'registered-password', legalConsent: true,
+      legalDocuments: LEGAL_DOCUMENTS,
     });
     expect(loggedIn.account.id).toBe(ACCOUNT.id);
     expect(client.snapshot().token).toBe('sms-session');
@@ -142,6 +925,7 @@ describe('EnterpriseClient', () => {
     });
     expect(JSON.parse((fetchMock.mock.calls[2]?.[1] as RequestInit).body as string)).toEqual({
       challengeId: 'sms_1', code: '042731', name: '员工一号', password: 'registered-password', legalConsent: true,
+      legalDocuments: LEGAL_DOCUMENTS,
     });
   });
 
@@ -675,6 +1459,17 @@ describe('EnterpriseClient', () => {
   it('登录成员使用会话令牌读取 A2A 待处理请求', async () => {
     const requests = [{
       id: 'msg_atoa_1',
+      senderAccountId: 'acc_2',
+      recipientAccountId: 'acc_1',
+      senderDeviceId: 'peer-device',
+      senderIdentitySigningPublicKey: 'peer signing key',
+      protocolVersion: 1 as const,
+      contentType: 'atoa_request' as const,
+      inReplyToMessageId: null,
+      ciphertext: 'ciphertext',
+      nonce: 'nonce',
+      signature: 'signature',
+      envelopes: [],
       peerAccountId: 'acc_2',
       peer: {
         id: 'acc_2',
@@ -686,22 +1481,106 @@ describe('EnterpriseClient', () => {
       },
       content: 'OTTO_ATOA_REQUEST {"v":1,"id":"request-1","question":"现在方便吗？"}',
       createdAt: '2026-07-19T12:00:00.000Z',
+      readAt: null,
+      attachments: [],
     }];
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
       .mockResolvedValueOnce(jsonResponse(200, {
         account: ACCOUNT, token: 'session-token', expiresAt: '2099-01-01',
       }))
-      .mockResolvedValueOnce(jsonResponse(200, { requests }));
-    const client = new EnterpriseClient(fetchMock as typeof fetch);
+      .mockResolvedValueOnce(jsonResponse(200, { requests }))
+      .mockResolvedValueOnce(jsonResponse(200, { device: E2EE_DEVICE }))
+      .mockResolvedValueOnce(jsonResponse(200, emptyTransparency('acc_1')))
+      .mockResolvedValueOnce(jsonResponse(200, emptyTransparency('acc_2')))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        devices: [
+          E2EE_DEVICE,
+          {
+            ...E2EE_DEVICE,
+            accountId: 'acc_2',
+            deviceId: 'peer-device',
+            identitySigningPublicKey: 'peer signing key',
+          },
+        ],
+      }));
+    const client = new EnterpriseClient(
+      fetchMock as typeof fetch,
+      () => undefined,
+      mockE2eeCrypto({ decryptContent: requests[0]!.content }),
+    );
     await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
 
-    await expect(client.listAtoaInbox()).resolves.toEqual(requests);
+    await expect(client.listAtoaInbox()).resolves.toMatchObject([{
+      id: 'msg_atoa_1',
+      content: requests[0]!.content,
+      peerAccountId: 'acc_2',
+      e2ee: true,
+    }]);
     expect(fetchMock.mock.calls[2]?.[0])
       .toBe('https://enterprise.otto.test/enterprise/atoa/inbox');
     expect((fetchMock.mock.calls[2]?.[1] as RequestInit).headers).toMatchObject({
       authorization: 'Bearer session-token',
     });
+  });
+
+  it('refuses to decrypt a message whose sender key differs from the pinned directory', async () => {
+    const peerDevice = {
+      ...E2EE_DEVICE,
+      accountId: 'acc_peer',
+      deviceId: 'peer-device',
+      identitySigningPublicKey: 'trusted peer signing key',
+    };
+    const message: EnterpriseE2eeWireMessage = {
+      id: 'message-substituted-key',
+      senderAccountId: 'acc_peer',
+      recipientAccountId: 'acc_1',
+      senderDeviceId: 'peer-device',
+      senderIdentitySigningPublicKey: 'substituted peer signing key',
+      protocolVersion: 1,
+      contentType: 'message',
+      inReplyToMessageId: null,
+      ciphertext: 'ciphertext',
+      nonce: 'nonce',
+      signature: 'signature',
+      envelopes: [],
+      createdAt: '2026-07-31T00:00:00.000Z',
+      readAt: null,
+      attachments: [],
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          account: ACCOUNT,
+          token: 'session-token',
+          expiresAt: '2099-01-01',
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(200, { device: E2EE_DEVICE }))
+      .mockResolvedValueOnce(jsonResponse(200, emptyTransparency('acc_1')))
+      .mockResolvedValueOnce(jsonResponse(200, emptyTransparency('acc_peer')))
+      .mockResolvedValueOnce(
+        jsonResponse(200, { devices: [E2EE_DEVICE, peerDevice] }),
+      )
+      .mockResolvedValueOnce(jsonResponse(200, { messages: [message] }));
+    const e2ee = mockE2eeCrypto();
+    const client = new EnterpriseClient(
+      fetchMock as typeof fetch,
+      () => undefined,
+      e2ee,
+    );
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(client.listDirectMessages('acc_peer')).rejects.toThrow(
+      'sender key is not trusted',
+    );
+    expect(e2ee.decryptMessage).not.toHaveBeenCalled();
   });
 
   it('管理员删除账号后返回删除结果', async () => {
@@ -971,6 +1850,7 @@ describe('EnterpriseClient', () => {
       name: '员工一号',
       password: 'registered-password',
       legalConsent: true,
+      legalDocuments: LEGAL_DOCUMENTS,
     })).rejects.toThrow('企业服务器版本过旧或功能不完整，请联系管理员升级后重试');
 
     expect(fetchMock).toHaveBeenCalledOnce();
@@ -1039,14 +1919,21 @@ describe('EnterpriseClient', () => {
       id: 'message-1',
       senderAccountId: 'acc_1',
       recipientAccountId: 'acc_peer',
-      content: '请查收',
+      senderDeviceId: 'device-1',
+      senderIdentitySigningPublicKey: 'test signing key',
+      protocolVersion: 1 as const,
+      contentType: 'message' as const,
+      inReplyToMessageId: null,
+      ciphertext: 'ciphertext',
+      nonce: 'nonce',
+      signature: 'signature',
+      envelopes: [],
       createdAt: '2026-07-26T08:00:00.000Z',
       readAt: null,
       attachments: [{
         id: 'attachment-1',
-        fileName: attachment.fileName,
-        mimeType: attachment.mimeType,
-        size: attachment.size,
+        ciphertextSize: 20,
+        nonce: 'attachment nonce',
       }],
     };
     const fetchMock = vi.fn()
@@ -1056,24 +1943,59 @@ describe('EnterpriseClient', () => {
         token: 'session-token',
         expiresAt: '2099-01-01',
       }))
+      .mockResolvedValueOnce(jsonResponse(200, { device: E2EE_DEVICE }))
+      .mockResolvedValueOnce(jsonResponse(200, emptyTransparency('acc_1')))
+      .mockResolvedValueOnce(jsonResponse(200, emptyTransparency('acc_peer')))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        devices: [E2EE_DEVICE, { ...E2EE_DEVICE, accountId: 'acc_peer', deviceId: 'peer-device' }],
+      }))
       .mockResolvedValueOnce(jsonResponse(201, { message: responseMessage }))
       .mockResolvedValueOnce(jsonResponse(200, {
-        attachment: { ...responseMessage.attachments[0], data: attachment.data },
+        attachment: {
+          message: responseMessage,
+          attachment: {
+            id: 'attachment-1',
+            ciphertext: 'encrypted attachment',
+            nonce: 'attachment nonce',
+          },
+        },
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, { device: E2EE_DEVICE }))
+      .mockResolvedValueOnce(jsonResponse(200, emptyTransparency('acc_1')))
+      .mockResolvedValueOnce(jsonResponse(200, emptyTransparency('acc_peer')))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        devices: [E2EE_DEVICE, { ...E2EE_DEVICE, accountId: 'acc_peer', deviceId: 'peer-device' }],
       }));
-    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    const e2ee = mockE2eeCrypto({
+      decryptContent: '请查收',
+      decryptedAttachments: [{
+        id: 'attachment-1',
+        fileName: attachment.fileName,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+      }],
+    });
+    const client = new EnterpriseClient(
+      fetchMock as typeof fetch,
+      () => undefined,
+      e2ee,
+    );
     await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
 
     await expect(client.sendDirectMessage('acc_peer', '请查收', [attachment]))
-      .resolves.toEqual(responseMessage);
+      .resolves.toMatchObject({
+        id: 'message-1',
+        content: '请查收',
+        e2ee: true,
+        attachments: [{ id: 'attachment-1', fileName: attachment.fileName }],
+      });
     await expect(client.getDirectMessageAttachment('attachment-1'))
       .resolves.toMatchObject({ id: 'attachment-1', data: attachment.data });
 
-    const sendInit = fetchMock.mock.calls[2]?.[1] as RequestInit;
-    expect(JSON.parse(String(sendInit.body))).toEqual({
-      content: '请查收',
-      attachments: [attachment],
-    });
-    expect(fetchMock.mock.calls[3]?.[0]).toBe(
+    const sendInit = fetchMock.mock.calls[6]?.[1] as RequestInit;
+    expect(String(sendInit.body)).not.toContain('请查收');
+    expect(String(sendInit.body)).not.toContain('方案.pdf');
+    expect(fetchMock.mock.calls[7]?.[0]).toBe(
       'https://enterprise.otto.test/enterprise/message-attachments/attachment-1',
     );
   });
@@ -1286,6 +2208,7 @@ describe('EnterpriseClient', () => {
       name: '员工 A',
       password: 'password-a',
       legalConsent: true,
+      legalDocuments: LEGAL_DOCUMENTS,
     });
     await vi.waitFor(() => expect(fetchMock.mock.calls.some(
       ([url]) => String(url) === 'https://a.otto.test/enterprise/auth/register/sms/verify',
@@ -1418,5 +2341,437 @@ describe('EnterpriseClient', () => {
       success: true,
       eventId: 'a'.repeat(64),
     });
+  });
+
+  it('uploads E2EE ciphertext before sending PostgreSQL attachment references', async () => {
+    const ciphertext = Buffer.alloc(32, 5);
+    const checksum = createHash('sha256').update(ciphertext).digest('hex');
+    const encryptedAttachment = {
+      id: 'attachment-s3-1',
+      ciphertext: ciphertext.toString('base64'),
+      nonce: Buffer.alloc(12, 3).toString('base64'),
+    };
+    const responseMessage: EnterpriseE2eeWireMessage = {
+      id: 'message-1',
+      senderAccountId: 'acc_1',
+      recipientAccountId: 'acc_peer',
+      senderDeviceId: 'device-1',
+      senderIdentitySigningPublicKey: 'test signing key',
+      protocolVersion: 1,
+      contentType: 'message',
+      inReplyToMessageId: null,
+      ciphertext: 'ciphertext',
+      nonce: 'nonce',
+      signature: 'signature',
+      envelopes: [],
+      createdAt: '2026-08-01T00:00:00.000Z',
+      readAt: null,
+      attachments: [
+        {
+          id: encryptedAttachment.id,
+          ciphertextSize: ciphertext.length,
+          nonce: encryptedAttachment.nonce,
+        },
+      ],
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, {
+        ...API_V2_HEALTH,
+        capabilities: [
+          ...API_V2_HEALTH.capabilities,
+          'e2ee_attachment_objects_v1',
+        ],
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT,
+        token: 'session-token',
+        expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, { device: E2EE_DEVICE }))
+      .mockResolvedValueOnce(jsonResponse(200, emptyTransparency('acc_1')))
+      .mockResolvedValueOnce(jsonResponse(200, emptyTransparency('acc_peer')))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        devices: [
+          E2EE_DEVICE,
+          { ...E2EE_DEVICE, accountId: 'acc_peer', deviceId: 'peer-device' },
+        ],
+      }))
+      .mockResolvedValueOnce(jsonResponse(201, {
+        attachment: {
+          id: encryptedAttachment.id,
+          ciphertextBytes: ciphertext.length,
+          ciphertextSha256: checksum,
+        },
+      }))
+      .mockResolvedValueOnce(jsonResponse(201, { message: responseMessage }));
+    const client = new EnterpriseClient(
+      fetchMock as typeof fetch,
+      () => undefined,
+      mockE2eeCrypto({ encryptedAttachments: [encryptedAttachment] }),
+    );
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await client.sendDirectMessage('acc_peer', 'encrypted attachment', [
+      {
+        fileName: 'private.bin',
+        mimeType: 'application/octet-stream',
+        size: 16,
+        data: Buffer.alloc(16).toString('base64'),
+      },
+    ]);
+
+    expect(fetchMock.mock.calls[6]?.[0]).toBe(
+      'https://enterprise.otto.test/enterprise/attachments/inline',
+    );
+    const uploadBody = JSON.parse(
+      String((fetchMock.mock.calls[6]?.[1] as RequestInit).body),
+    ) as Record<string, unknown>;
+    expect(uploadBody).toMatchObject({
+      peerAccountId: 'acc_peer',
+      attachmentId: encryptedAttachment.id,
+      ciphertextSha256: checksum,
+    });
+    const messageBody = JSON.parse(
+      String((fetchMock.mock.calls[7]?.[1] as RequestInit).body),
+    ) as {
+      attachments: unknown[];
+      attachmentReferences: unknown[];
+    };
+    expect(messageBody.attachments).toEqual([]);
+    expect(messageBody.attachmentReferences).toEqual([
+      {
+        id: encryptedAttachment.id,
+        nonce: encryptedAttachment.nonce,
+        ciphertextBytes: ciphertext.length,
+        ciphertextSha256: checksum,
+      },
+    ]);
+    expect(JSON.stringify(messageBody)).not.toContain(
+      encryptedAttachment.ciphertext,
+    );
+  });
+
+  it('uploads an MLS attachment through resumable presigned multipart requests', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-mls-upload-'));
+    const ciphertextPath = path.join(directory, 'ciphertext.bin');
+    const ciphertext = Buffer.alloc(96, 7);
+    fs.writeFileSync(ciphertextPath, ciphertext);
+    const checksum = createHash('sha256').update(ciphertext).digest('hex');
+    const attachmentId =
+      'mls-attachment-018f0000-0000-7000-8000-000000000020';
+    const manifest = {
+      format: 1 as const,
+      cipher: 'aes-256-gcm-chunked' as const,
+      id: attachmentId,
+      fileName: 'secret.bin',
+      mimeType: 'application/octet-stream',
+      plaintextBytes: 80,
+      ciphertextBytes: ciphertext.length,
+      ciphertextSha256: checksum,
+      chunkBytes: 64 * 1024,
+      chunkCount: 1,
+      dek: Buffer.alloc(32, 1).toString('base64'),
+      noncePrefix: Buffer.alloc(8, 2).toString('base64'),
+      binding: {
+        organizationId: 'org_1',
+        conversationId: 'a'.repeat(64),
+        sessionGeneration: 2,
+        groupId: Buffer.from('group-a').toString('base64'),
+        epoch: 4,
+        messageId: 'mls-message-018f0000-0000-7000-8000-000000000021',
+      },
+      object: {
+        id: attachmentId,
+        ciphertextBytes: ciphertext.length,
+        ciphertextSha256: checksum,
+      },
+    };
+    let uploadedCiphertext: Buffer | null = null;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          ...API_V2_HEALTH,
+          capabilities: [
+            ...API_V2_HEALTH.capabilities,
+            'e2ee_mls_transport_v1',
+            'e2ee_attachment_objects_v1',
+            's3_multipart_uploads_v1',
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          account: ACCOUNT,
+          token: 'session-token',
+          expiresAt: '2099-01-01',
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(404, { error: 'attachment access denied' }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(201, { upload: { attachmentId } }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          request: {
+            method: 'PUT',
+            url: 'https://private-s3.test/upload-part',
+            expiresInSeconds: 300,
+            requiredHeaders: {
+              'content-length': String(ciphertext.length),
+              'x-amz-checksum-sha256': Buffer.from(checksum, 'hex').toString(
+                'base64',
+              ),
+            },
+          },
+        }),
+      )
+      .mockImplementationOnce((_url, init) => {
+        uploadedCiphertext = Buffer.from(init?.body as Buffer);
+        return Promise.resolve(
+          new Response(null, {
+            status: 200,
+            headers: { etag: '"part-1"' },
+          }),
+        );
+      })
+      .mockResolvedValueOnce(jsonResponse(200, { recorded: true }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          attachment: {
+            id: attachmentId,
+            ciphertextBytes: ciphertext.length,
+            ciphertextSha256: checksum,
+          },
+        }),
+      );
+    const client = new EnterpriseClient(
+      fetchMock as typeof fetch,
+      () => undefined,
+    );
+    try {
+      await client.loginWithPassword(
+        'https://enterprise.otto.test',
+        'staff01',
+        'password',
+      );
+      await expect(
+        client.uploadMlsAttachmentObject({
+          peerAccountId: 'acc_peer',
+          deviceId: 'device-1',
+          manifest,
+          ciphertextPath,
+          authorizedDevices: [
+            { accountId: 'acc_1', deviceId: 'device-1' },
+            { accountId: 'acc_peer', deviceId: 'peer-device' },
+          ],
+        }),
+      ).resolves.toEqual(manifest.object);
+      expect(fetchMock.mock.calls[2]?.[0]).toContain(
+        `/enterprise/attachments/${attachmentId}/resume`,
+      );
+      expect(fetchMock.mock.calls[3]?.[0]).toBe(
+        'https://enterprise.otto.test/enterprise/attachments/uploads',
+      );
+      expect(fetchMock.mock.calls[5]?.[0]).toBe(
+        'https://private-s3.test/upload-part',
+      );
+      expect(uploadedCiphertext).toEqual(ciphertext);
+      const initBody = JSON.parse(
+        String((fetchMock.mock.calls[3]?.[1] as RequestInit).body),
+      ) as Record<string, unknown>;
+      expect(initBody).toMatchObject({
+        peerAccountId: 'acc_peer',
+        deviceId: 'device-1',
+        attachmentId,
+        ciphertextBytes: ciphertext.length,
+        ciphertextSha256: checksum,
+        mlsBinding: manifest.binding,
+      });
+      expect(JSON.stringify(initBody)).not.toContain(manifest.dek);
+      expect(JSON.stringify(initBody)).not.toContain(manifest.fileName);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('streams and verifies an MLS object download before local decryption', async () => {
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'otto-mls-download-'),
+    );
+    const ciphertextPath = path.join(directory, 'ciphertext.bin');
+    const ciphertext = Buffer.alloc(96, 9);
+    const checksum = createHash('sha256').update(ciphertext).digest('hex');
+    const attachmentId =
+      'mls-attachment-018f0000-0000-7000-8000-000000000030';
+    const manifest = {
+      format: 1 as const,
+      cipher: 'aes-256-gcm-chunked' as const,
+      id: attachmentId,
+      fileName: 'secret.bin',
+      mimeType: 'application/octet-stream',
+      plaintextBytes: 80,
+      ciphertextBytes: 96,
+      ciphertextSha256: checksum,
+      chunkBytes: 64 * 1024,
+      chunkCount: 1,
+      dek: Buffer.alloc(32, 1).toString('base64'),
+      noncePrefix: Buffer.alloc(8, 2).toString('base64'),
+      binding: {
+        organizationId: 'org_1',
+        conversationId: 'a'.repeat(64),
+        sessionGeneration: 2,
+        groupId: Buffer.from('group-a').toString('base64'),
+        epoch: 4,
+        messageId: 'mls-message-018f0000-0000-7000-8000-000000000031',
+      },
+      object: {
+        id: attachmentId,
+        ciphertextBytes: 96,
+        ciphertextSha256: checksum,
+      },
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          ...API_V2_HEALTH,
+          capabilities: [
+            ...API_V2_HEALTH.capabilities,
+            'e2ee_mls_transport_v1',
+            'e2ee_attachment_objects_v1',
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          account: ACCOUNT,
+          token: 'session-token',
+          expiresAt: '2099-01-01',
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          attachment: {
+            kind: 'presigned',
+            ciphertextBytes: 96,
+            ciphertextSha256: checksum,
+            encryption: 'mls-client-v1',
+            request: {
+              method: 'GET',
+              url: 'https://private-s3.test/download',
+              expiresInSeconds: 300,
+              requiredHeaders: {},
+            },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(new Response(ciphertext, { status: 200 }));
+    const client = new EnterpriseClient(
+      fetchMock as typeof fetch,
+      () => undefined,
+    );
+    try {
+      await client.loginWithPassword(
+        'https://enterprise.otto.test',
+        'staff01',
+        'password',
+      );
+      await expect(
+        client.downloadMlsAttachmentObject({
+          peerAccountId: 'acc_peer',
+          deviceId: 'device-1',
+          manifest,
+          ciphertextPath,
+        }),
+      ).resolves.toEqual(manifest.object);
+      expect(fs.readFileSync(ciphertextPath)).toEqual(ciphertext);
+      expect(fetchMock.mock.calls[2]?.[0]).toContain(
+        `peerAccountId=acc_peer&deviceId=device-1`,
+      );
+      expect(fetchMock.mock.calls[3]?.[0]).toBe(
+        'https://private-s3.test/download',
+      );
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('stops before local decryption when a presigned attachment fails integrity checks', async () => {
+    const responseMessage: EnterpriseE2eeWireMessage = {
+      id: 'message-1',
+      senderAccountId: 'acc_peer',
+      recipientAccountId: 'acc_1',
+      senderDeviceId: 'peer-device',
+      senderIdentitySigningPublicKey: 'test signing key',
+      protocolVersion: 1,
+      contentType: 'message',
+      inReplyToMessageId: null,
+      ciphertext: 'ciphertext',
+      nonce: 'nonce',
+      signature: 'signature',
+      envelopes: [],
+      createdAt: '2026-08-01T00:00:00.000Z',
+      readAt: null,
+      attachments: [
+        {
+          id: 'attachment-s3-1',
+          ciphertextSize: 32,
+          nonce: Buffer.alloc(12, 3).toString('base64'),
+        },
+      ],
+    };
+    const e2ee = mockE2eeCrypto();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT,
+        token: 'session-token',
+        expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        attachment: {
+          message: responseMessage,
+          attachment: {
+            id: 'attachment-s3-1',
+            nonce: Buffer.alloc(12, 3).toString('base64'),
+            ciphertextBytes: 32,
+            ciphertextSha256: '0'.repeat(64),
+            download: {
+              method: 'GET',
+              url: 'https://objects.otto.test/signed-object',
+              expiresInSeconds: 120,
+              requiredHeaders: {},
+            },
+          },
+        },
+      }))
+      .mockResolvedValueOnce(
+        new Response(Buffer.alloc(32, 9), { status: 200 }),
+      );
+    const client = new EnterpriseClient(
+      fetchMock as typeof fetch,
+      () => undefined,
+      e2ee,
+    );
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(
+      client.getDirectMessageAttachment('attachment-s3-1'),
+    ).rejects.toThrow('shared attachment download integrity check failed');
+    expect(fetchMock.mock.calls[3]?.[0]).toBe(
+      'https://objects.otto.test/signed-object',
+    );
+    expect(e2ee.decryptAttachment).not.toHaveBeenCalled();
   });
 });

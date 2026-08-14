@@ -95,7 +95,11 @@ export type UpdateCheckResult =
       /** 资产缺失时引导用户浏览器手动下载的发布页。 */
       releasePageUrl: string;
     }
-  | { status: 'up-to-date'; currentVersion: string; latestVersion: string | null }
+  | {
+      status: 'up-to-date';
+      currentVersion: string;
+      latestVersion: string | null;
+    }
   | { status: 'check-failed'; currentVersion: string; message: string };
 
 /** 下载进度（main 经 IPC.updateProgress 节流推送）。 */
@@ -197,13 +201,20 @@ export interface VoicePublicConfig {
   hasVolcCredentials: boolean;
   hasPolishApiKey: boolean;
 }
-export interface VoiceConfigInput extends Omit<VoicePublicConfig, 'hasAsrApiKey' | 'hasVolcCredentials' | 'hasPolishApiKey'> {
+export interface VoiceConfigInput extends Omit<
+  VoicePublicConfig,
+  'hasAsrApiKey' | 'hasVolcCredentials' | 'hasPolishApiKey'
+> {
   asrApiKey?: string;
   volcAppKey?: string;
   volcAccessKey?: string;
   polishApiKey?: string;
 }
-export interface VoiceResult { text: string; rawText: string; polished: boolean }
+export interface VoiceResult {
+  text: string;
+  rawText: string;
+  polished: boolean;
+}
 
 export interface EnterpriseAccount {
   id: string;
@@ -279,6 +290,21 @@ export interface EnterpriseSmsChallenge {
   message: string;
   registrationMode?: 'personal' | 'enterprise';
   organization: { id: string; name: string } | null;
+  legalDocuments: EnterpriseLegalDocumentReference[];
+}
+
+export interface EnterpriseLegalDocumentReference {
+  id: 'terms' | 'privacy';
+  version: string;
+  hash: string;
+}
+
+export interface EnterpriseLegalDocumentSection {
+  id: string;
+  title: string;
+  paragraphs: string[];
+  items?: string[];
+  important?: boolean;
 }
 
 export interface EnterpriseSmsLoginChallenge {
@@ -303,7 +329,12 @@ export interface EnterpriseSessionState {
 
 export interface EnterpriseDataGovernanceProfile {
   controller: { name: string; privacyContact: string; configured: boolean };
-  residency: { mode: string; region: string; crossBorderEnabled: boolean; localizationReady: boolean };
+  residency: {
+    mode: string;
+    region: string;
+    crossBorderEnabled: boolean;
+    localizationReady: boolean;
+  };
   security: {
     publicTransport: string;
     database: string;
@@ -318,24 +349,44 @@ export interface EnterpriseDataGovernanceProfile {
   };
   readiness: { configured: boolean; warnings: string[] };
   documents: Array<{
-    id: 'terms' | 'privacy'; title: string; version: string; effectiveAt: string;
-    required: true; summary: string[]; sourceUrls: string[]; hash: string;
-    accepted: boolean; acceptedAt: number | null;
+    id: 'terms' | 'privacy';
+    title: string;
+    version: string;
+    effectiveAt: string;
+    required: true;
+    summary: string[];
+    sections: EnterpriseLegalDocumentSection[];
+    sourceUrls: string[];
+    hash: string;
+    accepted: boolean;
+    acceptedAt: number | null;
   }>;
   processingActivities: Array<{
-    id: string; category: string; purpose: string;
+    id: string;
+    category: string;
+    purpose: string;
     sensitivity: 'ordinary' | 'sensitive' | 'security';
     storage: 'user_device' | 'enterprise_server' | 'configured_provider';
-    atRest: string; transport: string; retention: string; deletion: string;
-    recipients: string[]; crossBorder: boolean;
+    atRest: string;
+    transport: string;
+    retention: string;
+    deletion: string;
+    recipients: string[];
+    crossBorder: boolean;
   }>;
   rights: string[];
   currentConsentComplete: boolean;
   authorization: {
     deploymentId: string;
     license: {
-      status: string; plan: string; expiresAt: string; seatLimit: number;
-      activeSeatCount: number; modules: string[]; offline: boolean; enforce: boolean;
+      status: string;
+      plan: string;
+      expiresAt: string;
+      seatLimit: number;
+      activeSeatCount: number;
+      modules: string[];
+      offline: boolean;
+      enforce: boolean;
     };
     telemetry: { enabled: boolean; contentMode: string };
     dataBoundary: Record<string, unknown>;
@@ -368,7 +419,13 @@ export interface EnterpriseKnowledgeRecordInput {
   category: string;
   content: string;
   confidence: number;
-  sourceType?: 'manual' | 'auto_capture' | 'work_result' | 'task_log' | 'document' | 'offboarding';
+  sourceType?:
+    | 'manual'
+    | 'auto_capture'
+    | 'work_result'
+    | 'task_log'
+    | 'document'
+    | 'offboarding';
   sourceLabel?: string;
   sourceSessionId?: string;
   sourceFingerprint?: string;
@@ -382,12 +439,17 @@ export interface EnterpriseKnowledgeRecordInput {
 export interface EnterpriseKnowledgeRecordResult {
   status: 'added' | 'exists' | 'observed' | 'duplicate' | 'promoted';
   added: boolean;
-  outcome?: 'added' | 'updated' | 'unchanged' | 'observed' | 'duplicate' | 'promoted';
+  outcome?:
+    'added' | 'updated' | 'unchanged' | 'observed' | 'duplicate' | 'promoted';
   reviewStatus?: EnterpriseKnowledgeItem['status'];
   knowledgeId?: number;
   retention?: {
     promoted: boolean;
-    reason: 'incubating' | 'long_term_recurrence' | 'cross_member_corroboration' | 'high_impact_verified';
+    reason:
+      | 'incubating'
+      | 'long_term_recurrence'
+      | 'cross_member_corroboration'
+      | 'high_impact_verified';
     evidenceCount: number;
     distinctSessionCount: number;
     distinctContributorCount: number;
@@ -406,7 +468,13 @@ export interface EnterpriseKnowledgeItem {
   content: string;
   contributor: string | null;
   confidence: number;
-  sourceType?: 'manual' | 'auto_capture' | 'work_result' | 'task_log' | 'document' | 'offboarding';
+  sourceType?:
+    | 'manual'
+    | 'auto_capture'
+    | 'work_result'
+    | 'task_log'
+    | 'document'
+    | 'offboarding';
   sourceLabel?: string | null;
   status?: 'pending_review' | 'active' | 'archived';
   version?: number;
@@ -437,7 +505,8 @@ export interface EnterpriseKnowledgeRevision {
 export type EnterpriseSkillVisibility = 'department' | 'company';
 export type EnterpriseSkillStatus = 'pending_review' | 'active' | 'archived';
 export type EnterpriseSkillScope = 'department' | 'company' | 'mine' | 'review';
-export type EnterpriseSkillSort = 'recommended' | 'rating' | 'installs' | 'usage' | 'newest';
+export type EnterpriseSkillSort =
+  'recommended' | 'rating' | 'installs' | 'usage' | 'newest';
 
 export interface LocalSkillShareCandidate {
   name: string;
@@ -472,7 +541,13 @@ export interface EnterpriseSkillMarketItem {
 }
 
 export interface EnterpriseSkillLeaderboard {
-  skills: Array<EnterpriseSkillMarketItem & { rank: number; score: number; successRate: number }>;
+  skills: Array<
+    EnterpriseSkillMarketItem & {
+      rank: number;
+      score: number;
+      successRate: number;
+    }
+  >;
   contributors: Array<{
     rank: number;
     accountId: string | null;
@@ -518,7 +593,8 @@ export interface EnterpriseOrganizationFeatures {
   skill_market: boolean;
 }
 
-export type EnterprisePositionRoleMapping = 'member' | 'department_admin' | 'enterprise_admin';
+export type EnterprisePositionRoleMapping =
+  'member' | 'department_admin' | 'enterprise_admin';
 
 export interface EnterpriseOrganizationPosition {
   id: string;
@@ -692,11 +768,13 @@ export interface EnterpriseDirectMessageAttachmentUpload {
   fileName: string;
   mimeType: string;
   size: number;
-  data: string;
+  data?: string;
+  sourcePath?: string;
+  /** Renderer-only object URL; Electron main ignores this field. */
+  previewUrl?: string;
 }
 
-export interface EnterpriseDirectMessageAttachmentDownload
-  extends EnterpriseDirectMessageAttachment {
+export interface EnterpriseDirectMessageAttachmentDownload extends EnterpriseDirectMessageAttachment {
   data: string;
 }
 
@@ -708,6 +786,128 @@ export interface EnterpriseDirectMessage {
   createdAt: string;
   readAt: string | null;
   attachments?: EnterpriseDirectMessageAttachment[];
+  e2ee?: true;
+  e2eeProtocol?: 'device-envelope-v1' | 'mls10-openmls-0.8';
+  contentType?: 'message' | 'atoa_request' | 'atoa_response';
+  inReplyToMessageId?: string | null;
+}
+
+export interface EnterpriseFederationContact {
+  id: string;
+  identity: string;
+  remoteDeploymentId: string;
+  remotePrincipalId: string;
+  displayName: string;
+  deploymentDisplayName: string;
+  createdAt: string;
+  updatedAt: string;
+  lastMessageAt: string | null;
+  unreadCount: number;
+  trustState: 'missing' | 'unverified' | 'verified';
+  keyFingerprint: string | null;
+}
+
+export interface EnterpriseFederatedDirectMessage extends EnterpriseDirectMessage {
+  federated: true;
+  contactId: string;
+  federationMessageType: 'chat.message' | 'a2a.request' | 'a2a.response';
+  federationA2aGrantId?: string;
+  federationA2aScope?: string;
+  direction: 'inbound' | 'outbound';
+  deliveryStatus: 'queued' | 'sent' | 'failed' | 'expired' | 'received';
+  trustState: 'unverified' | 'verified';
+}
+
+export type EnterpriseAtoaContextSource =
+  | 'current_chat'
+  | 'enterprise_knowledge'
+  | 'work_logs'
+  | 'schedules';
+
+export interface EnterpriseFederationAtoaRequestPayload {
+  v: 1;
+  id: string;
+  question: string;
+  createdAt: string;
+  mode: 'answer' | 'consult';
+  requestedSources: EnterpriseAtoaContextSource[];
+  initiatorProposal?: string;
+}
+
+export type EnterpriseFederationAtoaTask =
+  | {
+      kind: 'proposal';
+      contact: EnterpriseFederationContact;
+      message: EnterpriseFederatedDirectMessage;
+      request: EnterpriseFederationAtoaRequestPayload;
+    }
+  | {
+      kind: 'grant';
+      contact: EnterpriseFederationContact;
+      message: EnterpriseFederatedDirectMessage;
+      decision: {
+        v: 1;
+        status: 'approved';
+        requestId: string;
+        requestMessageId: string;
+        grantId: string;
+        scope: string;
+        expiresAt: string;
+        grantedSources: EnterpriseAtoaContextSource[];
+        createdAt: string;
+      };
+    }
+  | {
+      kind: 'request';
+      contact: EnterpriseFederationContact;
+      message: EnterpriseFederatedDirectMessage;
+      request: EnterpriseFederationAtoaRequestPayload;
+      grantedSources: EnterpriseAtoaContextSource[];
+      needsCurrentChatSelection: boolean;
+    };
+
+export interface EnterpriseE2eeDevice {
+  accountId: string;
+  deviceId: string;
+  deviceName: string;
+  identitySigningPublicKey: string;
+  deviceExchangePublicKey: string;
+  keyFingerprint: string;
+  approvalState: 'pending' | 'approved';
+  approvedByDeviceId: string | null;
+  approvedAt: string | null;
+  isCurrentDevice?: boolean;
+  createdAt: string;
+  lastSeenAt: string;
+  revokedAt: string | null;
+}
+
+export interface EnterpriseE2eeDeviceVerification {
+  safetyNumber: string;
+  qrPayload: string;
+  deviceFingerprints: [string, string];
+}
+
+export type EnterpriseE2eeKeyTransparencyEvent =
+  'bootstrap_approved' | 'registered_pending' | 'approved' | 'revoked';
+
+export interface EnterpriseE2eeKeyTransparencyEntry {
+  sequence: number;
+  accountId: string;
+  deviceId: string;
+  event: EnterpriseE2eeKeyTransparencyEvent;
+  keyFingerprint: string;
+  actorDeviceId: string | null;
+  previousHash: string;
+  entryHash: string;
+  createdAt: string;
+}
+
+export interface EnterpriseE2eeKeyTransparencyView {
+  accountId: string;
+  headSequence: number;
+  headHash: string;
+  entries: EnterpriseE2eeKeyTransparencyEntry[];
 }
 
 export interface EnterpriseUnreadMessageNotification {
@@ -743,7 +943,8 @@ export interface EnterpriseRepairNotification {
 
 export interface EnterpriseRepairTicketHistoryEntry {
   id: string;
-  action: 'created' | 'accept' | 'respond' | 'transfer' | 'complete' | 'confirm';
+  action:
+    'created' | 'accept' | 'respond' | 'transfer' | 'complete' | 'confirm';
   statusBefore: string | null;
   statusAfter: string;
   responseType: string | null;
@@ -871,6 +1072,7 @@ const IPC = {
   inspectLocalPath: 'otto:inspect-local-path',
   activateLocalPath: 'otto:activate-local-path',
   selectFiles: 'otto:select-files',
+  selectFolders: 'otto:select-folders',
   grantBrowserFile: 'otto:grant-browser-file',
   authorizeMessageFiles: 'otto:authorize-message-files',
   readFilePath: 'otto:read-file-path',
@@ -904,7 +1106,8 @@ const IPC = {
   enterpriseSmsLoginVerify: 'otto:enterprise-sms-login-verify',
   enterpriseRegistrationRequest: 'otto:enterprise-registration-request',
   enterpriseRegistrationIntent: 'otto:enterprise-registration-intent',
-  enterpriseRegistrationIntentOpened: 'otto:enterprise-registration-intent-opened',
+  enterpriseRegistrationIntentOpened:
+    'otto:enterprise-registration-intent-opened',
   enterpriseSessionInvalidated: 'otto:enterprise-session-invalidated',
   enterpriseAccountUpdated: 'otto:enterprise-account-updated',
   enterpriseRegister: 'otto:enterprise-register',
@@ -927,19 +1130,50 @@ const IPC = {
   enterpriseKnowledgeRevisions: 'otto:enterprise-knowledge-revisions',
   enterpriseOrganizationView: 'otto:enterprise-organization-view',
   enterprisePresenceHeartbeat: 'otto:enterprise-presence-heartbeat',
-  enterpriseOrganizationFeaturesGet: 'otto:enterprise-organization-features-get',
-  enterpriseOrganizationFeaturesUpdate: 'otto:enterprise-organization-features-update',
+  enterpriseOrganizationFeaturesGet:
+    'otto:enterprise-organization-features-get',
+  enterpriseOrganizationFeaturesUpdate:
+    'otto:enterprise-organization-features-update',
   enterpriseOrganizationDepartments: 'otto:enterprise-organization-departments',
-  enterpriseOrganizationDepartmentCreate: 'otto:enterprise-organization-department-create',
-  enterpriseOrganizationDepartmentUpdate: 'otto:enterprise-organization-department-update',
-  enterpriseOrganizationDepartmentDelete: 'otto:enterprise-organization-department-delete',
-  enterpriseOrganizationPositionCreate: 'otto:enterprise-organization-position-create',
-  enterpriseOrganizationPositionUpdate: 'otto:enterprise-organization-position-update',
-  enterpriseOrganizationPositionDelete: 'otto:enterprise-organization-position-delete',
+  enterpriseOrganizationDepartmentCreate:
+    'otto:enterprise-organization-department-create',
+  enterpriseOrganizationDepartmentUpdate:
+    'otto:enterprise-organization-department-update',
+  enterpriseOrganizationDepartmentDelete:
+    'otto:enterprise-organization-department-delete',
+  enterpriseOrganizationPositionCreate:
+    'otto:enterprise-organization-position-create',
+  enterpriseOrganizationPositionUpdate:
+    'otto:enterprise-organization-position-update',
+  enterpriseOrganizationPositionDelete:
+    'otto:enterprise-organization-position-delete',
   enterpriseMessagesList: 'otto:enterprise-messages-list',
   enterpriseMessagesUnread: 'otto:enterprise-messages-unread',
   enterpriseMessageSend: 'otto:enterprise-message-send',
+  enterpriseMessageSecurityReset: 'otto:enterprise-message-security-reset',
+  enterpriseFederationContactCode: 'otto:enterprise-federation-contact-code',
+  enterpriseFederationContactImport: 'otto:enterprise-federation-contact-import',
+  enterpriseFederationContacts: 'otto:enterprise-federation-contacts',
+  enterpriseFederationContactRemove: 'otto:enterprise-federation-contact-remove',
+  enterpriseFederationMessagesList: 'otto:enterprise-federation-messages-list',
+  enterpriseFederationMessageSend: 'otto:enterprise-federation-message-send',
+  enterpriseFederationAttachmentSave: 'otto:enterprise-federation-attachment-save',
+  enterpriseFederationAtoaTasks: 'otto:enterprise-federation-atoa-tasks',
+  enterpriseFederationAtoaApprove: 'otto:enterprise-federation-atoa-approve',
+  enterpriseFederationAtoaDeny: 'otto:enterprise-federation-atoa-deny',
+  enterpriseFederationAtoaDispatch: 'otto:enterprise-federation-atoa-dispatch',
+  enterpriseFederationAtoaRespond: 'otto:enterprise-federation-atoa-respond',
+  enterpriseFederationContactVerification:
+    'otto:enterprise-federation-contact-verification',
+  enterpriseFederationContactVerify: 'otto:enterprise-federation-contact-verify',
   enterpriseMessageAttachmentRead: 'otto:enterprise-message-attachment-read',
+  enterpriseE2eeDevicesList: 'otto:enterprise-e2ee-devices-list',
+  enterpriseE2eeKeyTransparency: 'otto:enterprise-e2ee-key-transparency',
+  enterpriseE2eeDeviceApprove: 'otto:enterprise-e2ee-device-approve',
+  enterpriseE2eeDeviceVerification: 'otto:enterprise-e2ee-device-verification',
+  enterpriseE2eeDeviceRevoke: 'otto:enterprise-e2ee-device-revoke',
+  enterpriseE2eeRecoveryExport: 'otto:enterprise-e2ee-recovery-export',
+  enterpriseE2eeRecoveryImport: 'otto:enterprise-e2ee-recovery-import',
   enterpriseAtoaInbox: 'otto:enterprise-atoa-inbox',
   enterpriseParkServicePush: 'otto:enterprise-park-service-push',
   enterpriseParkView: 'otto:enterprise-park-view',
@@ -955,13 +1189,15 @@ const IPC = {
   enterpriseParkServices: 'otto:enterprise-park-services',
   enterpriseParkServiceUpdate: 'otto:enterprise-park-service-update',
   enterpriseParkPublications: 'otto:enterprise-park-publications',
-  enterpriseParkAnnouncementResults: 'otto:enterprise-park-announcement-results',
+  enterpriseParkAnnouncementResults:
+    'otto:enterprise-park-announcement-results',
   enterpriseParkSurveyResults: 'otto:enterprise-park-survey-results',
   enterpriseParkPublicationRead: 'otto:enterprise-park-publication-read',
   enterpriseParkSurveySubmit: 'otto:enterprise-park-survey-submit',
   enterpriseParkResources: 'otto:enterprise-park-resources',
   enterpriseOrganizationInviteGet: 'otto:enterprise-organization-invite-get',
-  enterpriseOrganizationInviteIssue: 'otto:enterprise-organization-invite-issue',
+  enterpriseOrganizationInviteIssue:
+    'otto:enterprise-organization-invite-issue',
   enterpriseTicketInbox: 'otto:enterprise-ticket-inbox',
   enterpriseTicketList: 'otto:enterprise-ticket-list',
   enterpriseTicketSubmit: 'otto:enterprise-ticket-submit',
@@ -1049,6 +1285,8 @@ export interface OttoBridge {
    * 用户主动授权选择，不受浏览器沙箱限制。
    */
   selectFiles(): Promise<string[]>;
+  /** 原生目录选择器：仅返回本次由用户明确选择并登记到授权账本的真实目录。 */
+  selectFolders(): Promise<string[]>;
   /**
    * Electron 32+ 不再提供 File.path；通过 webUtils 恢复用户拖入/浏览器选择文件的
    * 真实本地路径。只接受浏览器 File 对象，不能用任意字符串伪造路径。
@@ -1081,7 +1319,11 @@ export interface OttoBridge {
     message: string;
   }>;
   /** 将右侧编辑稿导出回目标格式。取消保存时返回 null。 */
-  exportEditedDocument(sourcePath: string, suggestedFileName: string, content: string): Promise<{
+  exportEditedDocument(
+    sourcePath: string,
+    suggestedFileName: string,
+    content: string,
+  ): Promise<{
     ok: boolean;
     path: string;
     format: 'text' | 'markdown' | 'docx' | 'pdf';
@@ -1093,7 +1335,10 @@ export interface OttoBridge {
    * host-only 命令：原生保存对话框 + 写文本文件（导出会话用）。
    * 返回实际写入路径；用户取消对话框时返回 null。
    */
-  saveTextFile(suggestedFileName: string, content: string): Promise<string | null>;
+  saveTextFile(
+    suggestedFileName: string,
+    content: string,
+  ): Promise<string | null>;
   feishuStart(): Promise<{ text: string; pid?: number }>;
   feishuStop(): Promise<{ text: string }>;
   /**
@@ -1121,7 +1366,9 @@ export interface OttoBridge {
   /** 当前外观主题（'system' 跟随系统 / 'light' / 'dark'）。 */
   themeGet(): Promise<'system' | 'light' | 'dark'>;
   /** 设置外观主题并持久化；返回生效值。 */
-  themeSet(v: 'system' | 'light' | 'dark'): Promise<'system' | 'light' | 'dark'>;
+  themeSet(
+    v: 'system' | 'light' | 'dark',
+  ): Promise<'system' | 'light' | 'dark'>;
   /** Skill 排行榜 + 贡献明星榜（krx 企业面板；数据读 .otto/org/skill-shares.json）。 */
   skillLeaderboard(teamId?: string): Promise<{
     leaderboard: string;
@@ -1129,7 +1376,12 @@ export interface OttoBridge {
     tabs: Array<{ id: string; label: string; icon: string }>;
   }>;
   /** 今日工作日志汇总。 */
-  workLogToday(): Promise<{ summary: string; date: string; totalActions: number; workResults: number }>;
+  workLogToday(): Promise<{
+    summary: string;
+    date: string;
+    totalActions: number;
+    workResults: number;
+  }>;
   /** 近 N 天逐日日志明细（日历 hover 视图）。 */
   workLogRecent(days?: number): Promise<
     Array<{
@@ -1156,7 +1408,12 @@ export interface OttoBridge {
     message: string;
   }>;
   /** 一键生成脱敏诊断包并保存到桌面。 */
-  createDiagnosticBundle(): Promise<{ ok: boolean; path: string; fileCount: number; message: string }>;
+  createDiagnosticBundle(): Promise<{
+    ok: boolean;
+    path: string;
+    fileCount: number;
+    message: string;
+  }>;
   runtimeDiagnostic(): Promise<DesktopRuntimeDiagnostic>;
   /** 部门共享 Skill 列表。 */
   skillShareList(teamId?: string): Promise<{ text: string }>;
@@ -1171,7 +1428,10 @@ export interface OttoBridge {
   enterpriseSkillSubmit(input: {
     localSkillName: string;
     visibility: EnterpriseSkillVisibility;
-  }): Promise<{ outcome: 'submitted' | 'exists'; skill: EnterpriseSkillMarketItem }>;
+  }): Promise<{
+    outcome: 'submitted' | 'exists';
+    skill: EnterpriseSkillMarketItem;
+  }>;
   enterpriseSkillReview(
     id: string,
     action: 'approve' | 'archive',
@@ -1181,7 +1441,10 @@ export interface OttoBridge {
     skill: EnterpriseSkillMarketItem;
     installedPath: string;
   }>;
-  enterpriseSkillRate(id: string, score: number): Promise<EnterpriseSkillMarketItem>;
+  enterpriseSkillRate(
+    id: string,
+    score: number,
+  ): Promise<EnterpriseSkillMarketItem>;
   enterpriseSkillLeaderboard(): Promise<EnterpriseSkillLeaderboard>;
   /**
    * 本地测试模式：把 customProxyServerUrl 设为指定地址（不空）或清除（空字符串）。
@@ -1230,9 +1493,14 @@ export interface OttoBridge {
   /** 订阅下载进度（main 节流推送），返回取消订阅函数。 */
   onUpdateProgress(handler: (progress: UpdateProgressInfo) => void): () => void;
   /** 检查补丁 / 内核 / 组件增量更新。 */
-  incrementalUpdateCheck(input?: { manifestUrl?: string }): Promise<IncrementalUpdateCheckResult>;
+  incrementalUpdateCheck(input?: {
+    manifestUrl?: string;
+  }): Promise<IncrementalUpdateCheckResult>;
   /** 应用最近一次检查到的增量更新；当前仅 component 有执行器。 */
-  incrementalUpdateApply(input: { kind: IncrementalUpdateKind; id: string }): Promise<IncrementalUpdateApplyResult>;
+  incrementalUpdateApply(input: {
+    kind: IncrementalUpdateKind;
+    id: string;
+  }): Promise<IncrementalUpdateApplyResult>;
   voiceGetConfig(): Promise<VoicePublicConfig>;
   voiceSaveConfig(config: VoiceConfigInput): Promise<VoicePublicConfig>;
   voiceTranscribe(bytes: Uint8Array, mimeType: string): Promise<VoiceResult>;
@@ -1242,7 +1510,11 @@ export interface OttoBridge {
     serverUrl: string;
     identifier: string;
     password: string;
-  }): Promise<{ serverUrl: string; account: EnterpriseAccount; expiresAt: string }>;
+  }): Promise<{
+    serverUrl: string;
+    account: EnterpriseAccount;
+    expiresAt: string;
+  }>;
   enterpriseSmsLoginRequest(input: {
     serverUrl: string;
     phone: string;
@@ -1250,7 +1522,11 @@ export interface OttoBridge {
   enterpriseSmsLoginVerify(input: {
     challengeId: string;
     code: string;
-  }): Promise<{ serverUrl: string; account: EnterpriseAccount; expiresAt: string }>;
+  }): Promise<{
+    serverUrl: string;
+    account: EnterpriseAccount;
+    expiresAt: string;
+  }>;
   enterpriseRegistrationRequest(input: {
     serverUrl: string;
     phone: string;
@@ -1261,14 +1537,21 @@ export interface OttoBridge {
     handler: (intent: EnterpriseRegistrationIntent) => void,
   ): () => void;
   onEnterpriseSessionInvalidated(handler: () => void): () => void;
-  onEnterpriseAccountUpdated(handler: (account: EnterpriseAccount) => void): () => void;
+  onEnterpriseAccountUpdated(
+    handler: (account: EnterpriseAccount) => void,
+  ): () => void;
   enterpriseRegister(input: {
     challengeId: string;
     code: string;
     name: string;
     password: string;
     legalConsent: true;
-  }): Promise<{ serverUrl: string; account: EnterpriseAccount; expiresAt: string }>;
+    legalDocuments: EnterpriseLegalDocumentReference[];
+  }): Promise<{
+    serverUrl: string;
+    account: EnterpriseAccount;
+    expiresAt: string;
+  }>;
   enterpriseJoinOrganization(input: {
     inviteCode: string;
   }): Promise<{ serverUrl: string; account: EnterpriseAccount }>;
@@ -1280,11 +1563,18 @@ export interface OttoBridge {
     enterpriseUrl?: string;
   }>;
   enterpriseAccounts(): Promise<EnterpriseAccount[]>;
-  enterpriseAccountCreate(input: EnterpriseAccountCreateInput): Promise<EnterpriseAccount>;
-  enterpriseAccountUpdate(id: string, input: EnterpriseAccountUpdateInput): Promise<EnterpriseAccount>;
+  enterpriseAccountCreate(
+    input: EnterpriseAccountCreateInput,
+  ): Promise<EnterpriseAccount>;
+  enterpriseAccountUpdate(
+    id: string,
+    input: EnterpriseAccountUpdateInput,
+  ): Promise<EnterpriseAccount>;
   enterpriseAccountDelete(id: string): Promise<{ id: string; deleted: true }>;
   enterpriseDataGovernanceGet(): Promise<EnterpriseDataGovernanceProfile>;
-  enterpriseLegalAccept(): Promise<EnterpriseDataGovernanceProfile>;
+  enterpriseLegalAccept(
+    documents: EnterpriseLegalDocumentReference[],
+  ): Promise<EnterpriseDataGovernanceProfile>;
   enterprisePrivacyExport(): Promise<{ ok: true; path: string } | null>;
   enterprisePrivacyDelete(input: {
     password: string;
@@ -1294,7 +1584,9 @@ export interface OttoBridge {
     recorded: boolean;
     source: 'client_reported';
   }>;
-  enterpriseKnowledgeRecord(input: EnterpriseKnowledgeRecordInput): Promise<EnterpriseKnowledgeRecordResult>;
+  enterpriseKnowledgeRecord(
+    input: EnterpriseKnowledgeRecordInput,
+  ): Promise<EnterpriseKnowledgeRecordResult>;
   enterpriseKnowledgeList(input?: {
     query?: string;
     department?: string;
@@ -1306,33 +1598,54 @@ export interface OttoBridge {
     action: 'approve' | 'archive',
     note?: string,
   ): Promise<EnterpriseKnowledgeItem>;
-  enterpriseKnowledgeRevise(id: string, input: {
-    title: string;
-    category: string;
-    content: string;
-    confidence?: number;
-    changeNote?: string;
-  }): Promise<EnterpriseKnowledgeItem>;
-  enterpriseKnowledgeRevisions(id: string): Promise<EnterpriseKnowledgeRevision[]>;
-  enterpriseOrganizationView(organizationId?: string): Promise<EnterpriseOrganizationView>;
+  enterpriseKnowledgeRevise(
+    id: string,
+    input: {
+      title: string;
+      category: string;
+      content: string;
+      confidence?: number;
+      changeNote?: string;
+    },
+  ): Promise<EnterpriseKnowledgeItem>;
+  enterpriseKnowledgeRevisions(
+    id: string,
+  ): Promise<EnterpriseKnowledgeRevision[]>;
+  enterpriseOrganizationView(
+    organizationId?: string,
+  ): Promise<EnterpriseOrganizationView>;
   enterprisePresenceHeartbeat(): Promise<void>;
   enterpriseOrganizationFeaturesGet(): Promise<EnterpriseOrganizationFeatures>;
-  enterpriseOrganizationFeaturesUpdate(patch: Partial<EnterpriseOrganizationFeatures>): Promise<EnterpriseOrganizationFeatures>;
-  enterpriseOrganizationDepartments(): Promise<EnterpriseOrganizationDepartment[]>;
-  enterpriseOrganizationDepartmentCreate(name: string): Promise<EnterpriseOrganizationDepartment>;
-  enterpriseOrganizationDepartmentUpdate(id: string, name: string): Promise<EnterpriseOrganizationDepartment>;
+  enterpriseOrganizationFeaturesUpdate(
+    patch: Partial<EnterpriseOrganizationFeatures>,
+  ): Promise<EnterpriseOrganizationFeatures>;
+  enterpriseOrganizationDepartments(): Promise<
+    EnterpriseOrganizationDepartment[]
+  >;
+  enterpriseOrganizationDepartmentCreate(
+    name: string,
+  ): Promise<EnterpriseOrganizationDepartment>;
+  enterpriseOrganizationDepartmentUpdate(
+    id: string,
+    name: string,
+  ): Promise<EnterpriseOrganizationDepartment>;
   enterpriseOrganizationDepartmentDelete(id: string): Promise<boolean>;
   enterpriseOrganizationPositionCreate(input: {
     departmentId: string;
     title: string;
     roleMapping: EnterprisePositionRoleMapping;
   }): Promise<EnterpriseOrganizationPosition>;
-  enterpriseOrganizationPositionUpdate(id: string, input: {
-    title?: string;
-    roleMapping?: EnterprisePositionRoleMapping;
-  }): Promise<EnterpriseOrganizationPosition>;
+  enterpriseOrganizationPositionUpdate(
+    id: string,
+    input: {
+      title?: string;
+      roleMapping?: EnterprisePositionRoleMapping;
+    },
+  ): Promise<EnterpriseOrganizationPosition>;
   enterpriseOrganizationPositionDelete(id: string): Promise<boolean>;
-  enterpriseMessagesList(peerAccountId: string): Promise<EnterpriseDirectMessage[]>;
+  enterpriseMessagesList(
+    peerAccountId: string,
+  ): Promise<EnterpriseDirectMessage[]>;
   enterpriseMessagesUnread(): Promise<EnterpriseUnreadMessageNotification[]>;
   enterpriseMessageSend(
     peerAccountId: string,
@@ -1342,6 +1655,64 @@ export interface OttoBridge {
   enterpriseMessageAttachmentRead(
     attachmentId: string,
   ): Promise<EnterpriseDirectMessageAttachmentDownload>;
+  enterpriseMessageSecurityReset(peerAccountId: string): Promise<void>;
+  enterpriseFederationContactCode(): Promise<string>;
+  enterpriseFederationContactImport(code: string): Promise<EnterpriseFederationContact>;
+  enterpriseFederationContacts(): Promise<EnterpriseFederationContact[]>;
+  enterpriseFederationContactRemove(contactId: string): Promise<boolean>;
+  enterpriseFederationMessagesList(
+    contactId: string,
+    options?: { markRead?: boolean },
+  ): Promise<EnterpriseFederatedDirectMessage[]>;
+  enterpriseFederationMessageSend(
+    contactId: string,
+    content: string,
+    attachments?: EnterpriseDirectMessageAttachmentUpload[],
+  ): Promise<EnterpriseFederatedDirectMessage>;
+  enterpriseFederationAttachmentSave(
+    contactId: string,
+    messageId: string,
+    attachmentId: string,
+    suggestedFileName: string,
+  ): Promise<(EnterpriseDirectMessageAttachment & { path: string }) | null>;
+  enterpriseFederationAtoaTasks(): Promise<EnterpriseFederationAtoaTask[]>;
+  enterpriseFederationAtoaApprove(input: {
+    contactId: string;
+    messageId: string;
+    grantedSources: EnterpriseAtoaContextSource[];
+  }): Promise<EnterpriseFederatedDirectMessage>;
+  enterpriseFederationAtoaDeny(input: {
+    contactId: string;
+    messageId: string;
+  }): Promise<EnterpriseFederatedDirectMessage>;
+  enterpriseFederationAtoaDispatch(input: {
+    contactId: string;
+    decisionMessageId: string;
+  }): Promise<EnterpriseFederatedDirectMessage>;
+  enterpriseFederationAtoaRespond(input: {
+    contactId: string;
+    requestMessageId: string;
+    answer: string;
+    grantedSources: EnterpriseAtoaContextSource[];
+  }): Promise<EnterpriseFederatedDirectMessage>;
+  enterpriseFederationContactVerification(contactId: string): Promise<
+    EnterpriseE2eeDeviceVerification & { verifiedAt: string | null }
+  >;
+  enterpriseFederationContactVerify(contactId: string): Promise<
+    EnterpriseE2eeDeviceVerification & { verifiedAt: string | null }
+  >;
+  enterpriseE2eeDevicesList(): Promise<EnterpriseE2eeDevice[]>;
+  enterpriseE2eeKeyTransparency(): Promise<EnterpriseE2eeKeyTransparencyView>;
+  enterpriseE2eeDeviceApprove(deviceId: string): Promise<EnterpriseE2eeDevice>;
+  enterpriseE2eeDeviceVerification(
+    deviceId: string,
+  ): Promise<EnterpriseE2eeDeviceVerification>;
+  enterpriseE2eeDeviceRevoke(deviceId: string): Promise<void>;
+  enterpriseE2eeRecoveryExport(passphrase: string): Promise<string>;
+  enterpriseE2eeRecoveryImport(
+    bundle: string,
+    passphrase: string,
+  ): Promise<void>;
   enterpriseAtoaInbox(): Promise<EnterpriseAtoaInboxMessage[]>;
   enterpriseParkServicePush(input: {
     recipientAccountId: string;
@@ -1353,18 +1724,34 @@ export interface OttoBridge {
     recipientCount?: number;
   }>;
   enterpriseParkView(): Promise<EnterprisePark | null>;
-  enterpriseParkRegister(input: { name: string; slug?: string; brandName?: string }): Promise<EnterprisePark>;
-  enterpriseParkJoin(input: { inviteCode: string; address: string; roomNumber: string }): Promise<EnterprisePark>;
+  enterpriseParkRegister(input: {
+    name: string;
+    slug?: string;
+    brandName?: string;
+  }): Promise<EnterprisePark>;
+  enterpriseParkJoin(input: {
+    inviteCode: string;
+    address: string;
+    roomNumber: string;
+  }): Promise<EnterprisePark>;
   enterpriseParkProfileUpdate(input: {
     address: string;
     roomNumber: string;
   }): Promise<EnterpriseParkTenantProfile>;
-  enterpriseParkInviteIssue(maxUses?: number | null): Promise<EnterpriseParkInvite>;
+  enterpriseParkInviteIssue(
+    maxUses?: number | null,
+  ): Promise<EnterpriseParkInvite>;
   enterpriseParkTenants(): Promise<EnterpriseParkTenantOrganization[]>;
   enterpriseParkStatistics(): Promise<EnterpriseParkStatistics>;
   enterpriseParkSpecialists(): Promise<EnterpriseParkSpecialist[]>;
-  enterpriseParkSpecialistSet(serviceId: string, accountId: string): Promise<EnterpriseParkSpecialist>;
-  enterpriseParkSpecialistRemove(serviceId: string, accountId: string): Promise<boolean>;
+  enterpriseParkSpecialistSet(
+    serviceId: string,
+    accountId: string,
+  ): Promise<EnterpriseParkSpecialist>;
+  enterpriseParkSpecialistRemove(
+    serviceId: string,
+    accountId: string,
+  ): Promise<boolean>;
   enterpriseParkServices(): Promise<EnterpriseParkService[]>;
   enterpriseParkServiceUpdate(input: {
     serviceId: string;
@@ -1373,10 +1760,15 @@ export interface OttoBridge {
     config?: Record<string, string>;
   }): Promise<EnterpriseParkService>;
   enterpriseParkPublications(): Promise<EnterpriseParkPublication[]>;
-  enterpriseParkAnnouncementResults(): Promise<EnterpriseParkAnnouncementResult[]>;
+  enterpriseParkAnnouncementResults(): Promise<
+    EnterpriseParkAnnouncementResult[]
+  >;
   enterpriseParkSurveyResults(): Promise<EnterpriseParkSurveyResult[]>;
   enterpriseParkPublicationRead(id: string): Promise<EnterpriseParkPublication>;
-  enterpriseParkSurveySubmit(id: string, responseData: Record<string, string>): Promise<EnterpriseParkPublication>;
+  enterpriseParkSurveySubmit(
+    id: string,
+    responseData: Record<string, string>,
+  ): Promise<EnterpriseParkPublication>;
   enterpriseParkResources(): Promise<EnterpriseParkResources>;
   enterpriseOrganizationInviteGet(): Promise<EnterpriseOrganizationInviteContext>;
   enterpriseOrganizationInviteIssue(input?: {
@@ -1386,9 +1778,11 @@ export interface OttoBridge {
     positionTitle?: string | null;
     defaultRole?: string | null;
     maxUses?: number | null;
-  }): Promise<EnterpriseOrganizationInviteContext & {
-    invite: EnterpriseOrganizationInvite;
-  }>;
+  }): Promise<
+    EnterpriseOrganizationInviteContext & {
+      invite: EnterpriseOrganizationInvite;
+    }
+  >;
   enterpriseTicketInbox(): Promise<EnterpriseRepairTicket[]>;
   enterpriseTicketList(): Promise<EnterpriseRepairTicket[]>;
   enterpriseTicketSubmit(input: {
@@ -1404,18 +1798,17 @@ export interface OttoBridge {
     contactPhone?: string;
   }): Promise<EnterpriseRepairTicket>;
   enterpriseTicketRead(id: string): Promise<EnterpriseRepairTicket>;
-  enterpriseTicketAction(id: string, input: {
-    action:
-      | 'respond'
-      | 'accept'
-      | 'complete'
-      | 'confirm'
-      | 'respond_and_transfer';
-    responseType?: string;
-    responseText?: string;
-    transferDepartment?: string;
-    transferNote?: string;
-  }): Promise<EnterpriseRepairTicket>;
+  enterpriseTicketAction(
+    id: string,
+    input: {
+      action:
+        'respond' | 'accept' | 'complete' | 'confirm' | 'respond_and_transfer';
+      responseType?: string;
+      responseText?: string;
+      transferDepartment?: string;
+      transferNote?: string;
+    },
+  ): Promise<EnterpriseRepairTicket>;
   parkNativeNotify(title: string, body: string): Promise<boolean>;
   /** 将文本写入系统剪贴板（通过 IPC 调用 main 进程 clipboard 模块，不受 renderer 权限限制）。 */
   writeClipboard(text: string): Promise<boolean>;
@@ -1449,8 +1842,11 @@ function notifyConnection(connected: boolean): void {
 
 function dispatchFrame(frame: ServerToClient): void {
   if ((frame as { type: string }).type === 'external_inbound_notification') {
-    const notificationFrame = frame as unknown as ExternalInboundNotificationFrame;
-    void ipcRenderer.invoke(IPC.notificationShow, notificationFrame.payload).catch(() => undefined);
+    const notificationFrame =
+      frame as unknown as ExternalInboundNotificationFrame;
+    void ipcRenderer
+      .invoke(IPC.notificationShow, notificationFrame.payload)
+      .catch(() => undefined);
     // 不经 renderer React 生命周期：窗口隐藏、切在其它会话或 UI 重载时，
     // preload 仍会把全局入站帧直接交给 main NotificationService。
     return;
@@ -1459,7 +1855,9 @@ function dispatchFrame(frame: ServerToClient): void {
     const updateFrame = frame as { payload?: { manifestUrl?: unknown } };
     const manifestUrl = updateFrame.payload?.manifestUrl;
     if (typeof manifestUrl === 'string' && manifestUrl.trim()) {
-      void ipcRenderer.invoke(IPC.incrementalUpdateCheck, { manifestUrl }).catch(() => undefined);
+      void ipcRenderer
+        .invoke(IPC.incrementalUpdateCheck, { manifestUrl })
+        .catch(() => undefined);
     }
   }
   for (const h of frameHandlers) {
@@ -1618,26 +2016,31 @@ const bridge: OttoBridge = {
     }
     void authorizeOutboundFileReferences(
       frame,
-      (filePaths) => ipcRenderer.invoke(
-        IPC.authorizeMessageFiles,
-        filePaths,
-      ) as Promise<string[]>,
-    ).then((authorized) => {
-      sendAuthorizedFileFrame(
-        authorized,
-        Boolean(ws && ws.readyState === WebSocket.OPEN),
-        (readyFrame) => ws!.send(JSON.stringify(readyFrame)),
-      );
-    }).catch((error: unknown) => {
-      dispatchFrame({
-        type: 'error',
-        payload: {
-          sessionId: frame.payload.sessionId,
-          code: 'file_access_denied',
-          message: error instanceof Error ? error.message : '附件未获得授权，消息未发送',
-        },
+      (references) =>
+        ipcRenderer.invoke(IPC.authorizeMessageFiles, references) as Promise<
+          string[]
+        >,
+    )
+      .then((authorized) => {
+        sendAuthorizedFileFrame(
+          authorized,
+          Boolean(ws && ws.readyState === WebSocket.OPEN),
+          (readyFrame) => ws!.send(JSON.stringify(readyFrame)),
+        );
+      })
+      .catch((error: unknown) => {
+        dispatchFrame({
+          type: 'error',
+          payload: {
+            sessionId: frame.payload.sessionId,
+            code: 'file_access_denied',
+            message:
+              error instanceof Error
+                ? error.message
+                : '附件未获得授权，消息未发送',
+          },
+        });
       });
-    });
   },
 
   onFrame(handler: FrameHandler): () => void {
@@ -1704,6 +2107,10 @@ const bridge: OttoBridge = {
     return ipcRenderer.invoke(IPC.selectFiles) as Promise<string[]>;
   },
 
+  selectFolders(): Promise<string[]> {
+    return ipcRenderer.invoke(IPC.selectFolders) as Promise<string[]>;
+  },
+
   getPathForFile(file: File): string {
     try {
       return webUtils.getPathForFile(file);
@@ -1720,7 +2127,10 @@ const bridge: OttoBridge = {
       filePath = '';
     }
     if (!filePath) throw new Error('无法获取所选文件的真实路径');
-    return ipcRenderer.invoke(IPC.grantBrowserFile, filePath) as Promise<string>;
+    return ipcRenderer.invoke(
+      IPC.grantBrowserFile,
+      filePath,
+    ) as Promise<string>;
   },
 
   readFilePath(filePath: string): Promise<{
@@ -1747,7 +2157,10 @@ const bridge: OttoBridge = {
     readonly: boolean;
     message: string;
   }> {
-    return ipcRenderer.invoke(IPC.extractEditableDocument, filePath) as Promise<{
+    return ipcRenderer.invoke(
+      IPC.extractEditableDocument,
+      filePath,
+    ) as Promise<{
       filePath: string;
       fileName: string;
       sourceFormat: 'text' | 'markdown' | 'docx' | 'pdf';
@@ -1758,13 +2171,22 @@ const bridge: OttoBridge = {
     }>;
   },
 
-  exportEditedDocument(sourcePath: string, suggestedFileName: string, content: string): Promise<{
+  exportEditedDocument(
+    sourcePath: string,
+    suggestedFileName: string,
+    content: string,
+  ): Promise<{
     ok: boolean;
     path: string;
     format: 'text' | 'markdown' | 'docx' | 'pdf';
     message: string;
   } | null> {
-    return ipcRenderer.invoke(IPC.exportEditedDocument, sourcePath, suggestedFileName, content) as Promise<{
+    return ipcRenderer.invoke(
+      IPC.exportEditedDocument,
+      sourcePath,
+      suggestedFileName,
+      content,
+    ) as Promise<{
       ok: boolean;
       path: string;
       format: 'text' | 'markdown' | 'docx' | 'pdf';
@@ -1773,10 +2195,16 @@ const bridge: OttoBridge = {
   },
 
   openVideoEditor(): Promise<{ ok: boolean; error?: string }> {
-    return ipcRenderer.invoke(IPC.openVideoEditor) as Promise<{ ok: boolean; error?: string }>;
+    return ipcRenderer.invoke(IPC.openVideoEditor) as Promise<{
+      ok: boolean;
+      error?: string;
+    }>;
   },
 
-  saveTextFile(suggestedFileName: string, content: string): Promise<string | null> {
+  saveTextFile(
+    suggestedFileName: string,
+    content: string,
+  ): Promise<string | null> {
     return ipcRenderer.invoke(
       IPC.saveTextFile,
       suggestedFileName,
@@ -1784,7 +2212,10 @@ const bridge: OttoBridge = {
     ) as Promise<string | null>;
   },
   feishuStart(): Promise<{ text: string; pid?: number }> {
-    return ipcRenderer.invoke('otto:feishu-start') as Promise<{ text: string; pid?: number }>;
+    return ipcRenderer.invoke('otto:feishu-start') as Promise<{
+      text: string;
+      pid?: number;
+    }>;
   },
   feishuStop(): Promise<{ text: string }> {
     return ipcRenderer.invoke('otto:feishu-stop') as Promise<{ text: string }>;
@@ -1801,22 +2232,37 @@ const bridge: OttoBridge = {
     }>;
   },
   feishuGetConfig(): Promise<FeishuConfigResult> {
-    return ipcRenderer.invoke('otto:feishu-get-config') as Promise<FeishuConfigResult>;
+    return ipcRenderer.invoke(
+      'otto:feishu-get-config',
+    ) as Promise<FeishuConfigResult>;
   },
   feishuSaveConfig(body: FeishuConfigSaveRequest): Promise<FeishuConfigResult> {
-    return ipcRenderer.invoke('otto:feishu-save-config', body) as Promise<FeishuConfigResult>;
+    return ipcRenderer.invoke(
+      'otto:feishu-save-config',
+      body,
+    ) as Promise<FeishuConfigResult>;
   },
   feishuClearConfig(): Promise<FeishuConfigResult> {
-    return ipcRenderer.invoke('otto:feishu-clear-config') as Promise<FeishuConfigResult>;
+    return ipcRenderer.invoke(
+      'otto:feishu-clear-config',
+    ) as Promise<FeishuConfigResult>;
   },
   parkConfig(): Promise<ParkServicesConfig | null> {
-    return ipcRenderer.invoke('otto:park-config') as Promise<ParkServicesConfig | null>;
+    return ipcRenderer.invoke(
+      'otto:park-config',
+    ) as Promise<ParkServicesConfig | null>;
   },
   themeGet(): Promise<'system' | 'light' | 'dark'> {
-    return ipcRenderer.invoke('otto:theme-get') as Promise<'system' | 'light' | 'dark'>;
+    return ipcRenderer.invoke('otto:theme-get') as Promise<
+      'system' | 'light' | 'dark'
+    >;
   },
-  themeSet(v: 'system' | 'light' | 'dark'): Promise<'system' | 'light' | 'dark'> {
-    return ipcRenderer.invoke('otto:theme-set', v) as Promise<'system' | 'light' | 'dark'>;
+  themeSet(
+    v: 'system' | 'light' | 'dark',
+  ): Promise<'system' | 'light' | 'dark'> {
+    return ipcRenderer.invoke('otto:theme-set', v) as Promise<
+      'system' | 'light' | 'dark'
+    >;
   },
   skillLeaderboard(teamId?: string): Promise<{
     leaderboard: string;
@@ -1890,7 +2336,12 @@ const bridge: OttoBridge = {
       message: string;
     }>;
   },
-  createDiagnosticBundle(): Promise<{ ok: boolean; path: string; fileCount: number; message: string }> {
+  createDiagnosticBundle(): Promise<{
+    ok: boolean;
+    path: string;
+    fileCount: number;
+    message: string;
+  }> {
     return ipcRenderer.invoke('otto:create-diagnostic-bundle') as Promise<{
       ok: boolean;
       path: string;
@@ -1899,38 +2350,59 @@ const bridge: OttoBridge = {
     }>;
   },
   runtimeDiagnostic(): Promise<DesktopRuntimeDiagnostic> {
-    return ipcRenderer.invoke(IPC.runtimeDiagnostic) as Promise<DesktopRuntimeDiagnostic>;
+    return ipcRenderer.invoke(
+      IPC.runtimeDiagnostic,
+    ) as Promise<DesktopRuntimeDiagnostic>;
   },
   skillShareList(teamId?: string): Promise<{ text: string }> {
-    return ipcRenderer.invoke('otto:skill-share-list', teamId) as Promise<{ text: string }>;
+    return ipcRenderer.invoke('otto:skill-share-list', teamId) as Promise<{
+      text: string;
+    }>;
   },
   skillMarketplace(): Promise<{ text: string }> {
-    return ipcRenderer.invoke('otto:skill-marketplace') as Promise<{ text: string }>;
+    return ipcRenderer.invoke('otto:skill-marketplace') as Promise<{
+      text: string;
+    }>;
   },
   enterpriseSkillLocalList() {
-    return ipcRenderer.invoke(IPC.enterpriseSkillLocalList) as Promise<LocalSkillShareCandidate[]>;
+    return ipcRenderer.invoke(IPC.enterpriseSkillLocalList) as Promise<
+      LocalSkillShareCandidate[]
+    >;
   },
   enterpriseSkillList(input = {}) {
-    return ipcRenderer.invoke(IPC.enterpriseSkillList, input) as Promise<EnterpriseSkillMarketItem[]>;
+    return ipcRenderer.invoke(IPC.enterpriseSkillList, input) as Promise<
+      EnterpriseSkillMarketItem[]
+    >;
   },
   enterpriseSkillSubmit(input) {
     return ipcRenderer.invoke(IPC.enterpriseSkillSubmit, input) as Promise<{
-      outcome: 'submitted' | 'exists'; skill: EnterpriseSkillMarketItem;
+      outcome: 'submitted' | 'exists';
+      skill: EnterpriseSkillMarketItem;
     }>;
   },
   enterpriseSkillReview(id, action, visibility) {
-    return ipcRenderer.invoke(IPC.enterpriseSkillReview, { id, action, visibility }) as Promise<EnterpriseSkillMarketItem>;
+    return ipcRenderer.invoke(IPC.enterpriseSkillReview, {
+      id,
+      action,
+      visibility,
+    }) as Promise<EnterpriseSkillMarketItem>;
   },
   enterpriseSkillInstall(id) {
     return ipcRenderer.invoke(IPC.enterpriseSkillInstall, { id }) as Promise<{
-      skill: EnterpriseSkillMarketItem; installedPath: string;
+      skill: EnterpriseSkillMarketItem;
+      installedPath: string;
     }>;
   },
   enterpriseSkillRate(id, score) {
-    return ipcRenderer.invoke(IPC.enterpriseSkillRate, { id, score }) as Promise<EnterpriseSkillMarketItem>;
+    return ipcRenderer.invoke(IPC.enterpriseSkillRate, {
+      id,
+      score,
+    }) as Promise<EnterpriseSkillMarketItem>;
   },
   enterpriseSkillLeaderboard() {
-    return ipcRenderer.invoke(IPC.enterpriseSkillLeaderboard) as Promise<EnterpriseSkillLeaderboard>;
+    return ipcRenderer.invoke(
+      IPC.enterpriseSkillLeaderboard,
+    ) as Promise<EnterpriseSkillLeaderboard>;
   },
   setLocalTestUrl(url: string): Promise<void> {
     return ipcRenderer.invoke(IPC.setLocalTestUrl, url) as Promise<void>;
@@ -1942,21 +2414,38 @@ const bridge: OttoBridge = {
     return ipcRenderer.invoke(IPC.updateCheck) as Promise<UpdateCheckResult>;
   },
   updateDownload(): Promise<UpdateDownloadResult> {
-    return ipcRenderer.invoke(IPC.updateDownload) as Promise<UpdateDownloadResult>;
+    return ipcRenderer.invoke(
+      IPC.updateDownload,
+    ) as Promise<UpdateDownloadResult>;
   },
   updateCancel(): Promise<void> {
     return ipcRenderer.invoke(IPC.updateCancel) as Promise<void>;
   },
   updateInstall(): Promise<UpdateInstallResult> {
-    return ipcRenderer.invoke(IPC.updateInstall) as Promise<UpdateInstallResult>;
+    return ipcRenderer.invoke(
+      IPC.updateInstall,
+    ) as Promise<UpdateInstallResult>;
   },
-  incrementalUpdateCheck(input?: { manifestUrl?: string }): Promise<IncrementalUpdateCheckResult> {
-    return ipcRenderer.invoke(IPC.incrementalUpdateCheck, input) as Promise<IncrementalUpdateCheckResult>;
+  incrementalUpdateCheck(input?: {
+    manifestUrl?: string;
+  }): Promise<IncrementalUpdateCheckResult> {
+    return ipcRenderer.invoke(
+      IPC.incrementalUpdateCheck,
+      input,
+    ) as Promise<IncrementalUpdateCheckResult>;
   },
-  incrementalUpdateApply(input: { kind: IncrementalUpdateKind; id: string }): Promise<IncrementalUpdateApplyResult> {
-    return ipcRenderer.invoke(IPC.incrementalUpdateApply, input) as Promise<IncrementalUpdateApplyResult>;
+  incrementalUpdateApply(input: {
+    kind: IncrementalUpdateKind;
+    id: string;
+  }): Promise<IncrementalUpdateApplyResult> {
+    return ipcRenderer.invoke(
+      IPC.incrementalUpdateApply,
+      input,
+    ) as Promise<IncrementalUpdateApplyResult>;
   },
-  onUpdateProgress(handler: (progress: UpdateProgressInfo) => void): () => void {
+  onUpdateProgress(
+    handler: (progress: UpdateProgressInfo) => void,
+  ): () => void {
     // 仿 onMenu 订阅：进度帧由 main 的 UpdateService 节流推送。
     const listener = (
       _e: Electron.IpcRendererEvent,
@@ -1979,32 +2468,48 @@ const bridge: OttoBridge = {
     return ipcRenderer.invoke(IPC.notificationShow, payload) as Promise<void>;
   },
   notificationMarkRead(sessionId: string): Promise<void> {
-    return ipcRenderer.invoke(IPC.notificationMarkRead, sessionId) as Promise<void>;
+    return ipcRenderer.invoke(
+      IPC.notificationMarkRead,
+      sessionId,
+    ) as Promise<void>;
   },
   notificationGetUnread(): Promise<string[]> {
     return ipcRenderer.invoke(IPC.notificationGetUnread) as Promise<string[]>;
   },
   notificationCheckPermission(): Promise<boolean> {
-    return ipcRenderer.invoke(IPC.notificationCheckPermission) as Promise<boolean>;
+    return ipcRenderer.invoke(
+      IPC.notificationCheckPermission,
+    ) as Promise<boolean>;
   },
   onNotificationUnreadChanged(cb: (unread: string[]) => void): () => void {
-    const listener = (_e: Electron.IpcRendererEvent, unread: string[]): void => cb(unread);
+    const listener = (_e: Electron.IpcRendererEvent, unread: string[]): void =>
+      cb(unread);
     ipcRenderer.on(IPC.notificationUnreadChanged, listener);
-    return () => ipcRenderer.removeListener(IPC.notificationUnreadChanged, listener);
+    return () =>
+      ipcRenderer.removeListener(IPC.notificationUnreadChanged, listener);
   },
   onNotificationSessionOpen(cb: (sessionId: string) => void): () => void {
-    const listener = (_e: Electron.IpcRendererEvent, sessionId: string): void => cb(sessionId);
+    const listener = (_e: Electron.IpcRendererEvent, sessionId: string): void =>
+      cb(sessionId);
     ipcRenderer.on(IPC.notificationSessionOpen, listener);
-    return () => ipcRenderer.removeListener(IPC.notificationSessionOpen, listener);
+    return () =>
+      ipcRenderer.removeListener(IPC.notificationSessionOpen, listener);
   },
   voiceGetConfig(): Promise<VoicePublicConfig> {
     return ipcRenderer.invoke(IPC.voiceGetConfig) as Promise<VoicePublicConfig>;
   },
   voiceSaveConfig(config: VoiceConfigInput): Promise<VoicePublicConfig> {
-    return ipcRenderer.invoke(IPC.voiceSaveConfig, config) as Promise<VoicePublicConfig>;
+    return ipcRenderer.invoke(
+      IPC.voiceSaveConfig,
+      config,
+    ) as Promise<VoicePublicConfig>;
   },
   voiceTranscribe(bytes: Uint8Array, mimeType: string): Promise<VoiceResult> {
-    return ipcRenderer.invoke(IPC.voiceTranscribe, bytes, mimeType) as Promise<VoiceResult>;
+    return ipcRenderer.invoke(
+      IPC.voiceTranscribe,
+      bytes,
+      mimeType,
+    ) as Promise<VoiceResult>;
   },
   autoGeneratedAgentProfiles(): Promise<AutoGeneratedAgentProfile[]> {
     return ipcRenderer.invoke(IPC.autoGeneratedAgentProfiles) as Promise<
@@ -2012,13 +2517,19 @@ const bridge: OttoBridge = {
     >;
   },
   enterpriseSession(): Promise<EnterpriseSessionState> {
-    return ipcRenderer.invoke(IPC.enterpriseSession) as Promise<EnterpriseSessionState>;
+    return ipcRenderer.invoke(
+      IPC.enterpriseSession,
+    ) as Promise<EnterpriseSessionState>;
   },
   enterprisePasswordLogin(input: {
     serverUrl: string;
     identifier: string;
     password: string;
-  }): Promise<{ serverUrl: string; account: EnterpriseAccount; expiresAt: string }> {
+  }): Promise<{
+    serverUrl: string;
+    account: EnterpriseAccount;
+    expiresAt: string;
+  }> {
     return ipcRenderer.invoke(IPC.enterprisePasswordLogin, input) as Promise<{
       serverUrl: string;
       account: EnterpriseAccount;
@@ -2029,14 +2540,19 @@ const bridge: OttoBridge = {
     serverUrl: string;
     phone: string;
   }): Promise<EnterpriseSmsLoginChallenge> {
-    return ipcRenderer.invoke(IPC.enterpriseSmsLoginRequest, input) as Promise<
-      EnterpriseSmsLoginChallenge
-    >;
+    return ipcRenderer.invoke(
+      IPC.enterpriseSmsLoginRequest,
+      input,
+    ) as Promise<EnterpriseSmsLoginChallenge>;
   },
   enterpriseSmsLoginVerify(input: {
     challengeId: string;
     code: string;
-  }): Promise<{ serverUrl: string; account: EnterpriseAccount; expiresAt: string }> {
+  }): Promise<{
+    serverUrl: string;
+    account: EnterpriseAccount;
+    expiresAt: string;
+  }> {
     return ipcRenderer.invoke(IPC.enterpriseSmsLoginVerify, input) as Promise<{
       serverUrl: string;
       account: EnterpriseAccount;
@@ -2048,12 +2564,15 @@ const bridge: OttoBridge = {
     phone: string;
     inviteCode?: string;
   }): Promise<EnterpriseSmsChallenge> {
-    return ipcRenderer.invoke(IPC.enterpriseRegistrationRequest, input) as Promise<EnterpriseSmsChallenge>;
+    return ipcRenderer.invoke(
+      IPC.enterpriseRegistrationRequest,
+      input,
+    ) as Promise<EnterpriseSmsChallenge>;
   },
   enterpriseRegistrationIntent(): Promise<EnterpriseRegistrationIntent | null> {
-    return ipcRenderer.invoke(IPC.enterpriseRegistrationIntent) as Promise<
-      EnterpriseRegistrationIntent | null
-    >;
+    return ipcRenderer.invoke(
+      IPC.enterpriseRegistrationIntent,
+    ) as Promise<EnterpriseRegistrationIntent | null>;
   },
   onEnterpriseRegistrationIntent(
     handler: (intent: EnterpriseRegistrationIntent) => void,
@@ -2063,19 +2582,30 @@ const bridge: OttoBridge = {
       intent: EnterpriseRegistrationIntent,
     ): void => handler(intent);
     ipcRenderer.on(IPC.enterpriseRegistrationIntentOpened, listener);
-    return () => ipcRenderer.removeListener(IPC.enterpriseRegistrationIntentOpened, listener);
+    return () =>
+      ipcRenderer.removeListener(
+        IPC.enterpriseRegistrationIntentOpened,
+        listener,
+      );
   },
   onEnterpriseSessionInvalidated(handler: () => void): () => void {
     const listener = (): void => handler();
     ipcRenderer.on(IPC.enterpriseSessionInvalidated, listener);
-    return () => ipcRenderer.removeListener(IPC.enterpriseSessionInvalidated, listener);
+    return () =>
+      ipcRenderer.removeListener(IPC.enterpriseSessionInvalidated, listener);
   },
-  onEnterpriseAccountUpdated(handler: (account: EnterpriseAccount) => void): () => void {
-    const listener = (_event: Electron.IpcRendererEvent, account: EnterpriseAccount): void => {
+  onEnterpriseAccountUpdated(
+    handler: (account: EnterpriseAccount) => void,
+  ): () => void {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      account: EnterpriseAccount,
+    ): void => {
       handler(account);
     };
     ipcRenderer.on(IPC.enterpriseAccountUpdated, listener);
-    return () => ipcRenderer.removeListener(IPC.enterpriseAccountUpdated, listener);
+    return () =>
+      ipcRenderer.removeListener(IPC.enterpriseAccountUpdated, listener);
   },
   enterpriseRegister(input: {
     challengeId: string;
@@ -2083,7 +2613,12 @@ const bridge: OttoBridge = {
     name: string;
     password: string;
     legalConsent: true;
-  }): Promise<{ serverUrl: string; account: EnterpriseAccount; expiresAt: string }> {
+    legalDocuments: EnterpriseLegalDocumentReference[];
+  }): Promise<{
+    serverUrl: string;
+    account: EnterpriseAccount;
+    expiresAt: string;
+  }> {
     return ipcRenderer.invoke(IPC.enterpriseRegister, input) as Promise<{
       serverUrl: string;
       account: EnterpriseAccount;
@@ -2093,7 +2628,10 @@ const bridge: OttoBridge = {
   enterpriseJoinOrganization(input: {
     inviteCode: string;
   }): Promise<{ serverUrl: string; account: EnterpriseAccount }> {
-    return ipcRenderer.invoke(IPC.enterpriseJoinOrganization, input) as Promise<{
+    return ipcRenderer.invoke(
+      IPC.enterpriseJoinOrganization,
+      input,
+    ) as Promise<{
       serverUrl: string;
       account: EnterpriseAccount;
     }>;
@@ -2109,16 +2647,27 @@ const bridge: OttoBridge = {
     }>;
   },
   enterpriseAccounts(): Promise<EnterpriseAccount[]> {
-    return ipcRenderer.invoke(IPC.enterpriseAccounts) as Promise<EnterpriseAccount[]>;
+    return ipcRenderer.invoke(IPC.enterpriseAccounts) as Promise<
+      EnterpriseAccount[]
+    >;
   },
-  enterpriseAccountCreate(input: EnterpriseAccountCreateInput): Promise<EnterpriseAccount> {
-    return ipcRenderer.invoke(IPC.enterpriseAccountCreate, input) as Promise<EnterpriseAccount>;
+  enterpriseAccountCreate(
+    input: EnterpriseAccountCreateInput,
+  ): Promise<EnterpriseAccount> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseAccountCreate,
+      input,
+    ) as Promise<EnterpriseAccount>;
   },
   enterpriseAccountUpdate(
     id: string,
     input: EnterpriseAccountUpdateInput,
   ): Promise<EnterpriseAccount> {
-    return ipcRenderer.invoke(IPC.enterpriseAccountUpdate, id, input) as Promise<EnterpriseAccount>;
+    return ipcRenderer.invoke(
+      IPC.enterpriseAccountUpdate,
+      id,
+      input,
+    ) as Promise<EnterpriseAccount>;
   },
   enterpriseAccountDelete(id: string): Promise<{ id: string; deleted: true }> {
     return ipcRenderer.invoke(IPC.enterpriseAccountDelete, id) as Promise<{
@@ -2127,19 +2676,32 @@ const bridge: OttoBridge = {
     }>;
   },
   enterpriseDataGovernanceGet(): Promise<EnterpriseDataGovernanceProfile> {
-    return ipcRenderer.invoke(IPC.enterpriseDataGovernanceGet) as Promise<EnterpriseDataGovernanceProfile>;
+    return ipcRenderer.invoke(
+      IPC.enterpriseDataGovernanceGet,
+    ) as Promise<EnterpriseDataGovernanceProfile>;
   },
-  enterpriseLegalAccept(): Promise<EnterpriseDataGovernanceProfile> {
-    return ipcRenderer.invoke(IPC.enterpriseLegalAccept) as Promise<EnterpriseDataGovernanceProfile>;
+  enterpriseLegalAccept(
+    documents: EnterpriseLegalDocumentReference[],
+  ): Promise<EnterpriseDataGovernanceProfile> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseLegalAccept,
+      documents,
+    ) as Promise<EnterpriseDataGovernanceProfile>;
   },
   enterprisePrivacyExport(): Promise<{ ok: true; path: string } | null> {
-    return ipcRenderer.invoke(IPC.enterprisePrivacyExport) as Promise<{ ok: true; path: string } | null>;
+    return ipcRenderer.invoke(IPC.enterprisePrivacyExport) as Promise<{
+      ok: true;
+      path: string;
+    } | null>;
   },
   enterprisePrivacyDelete(input: {
     password: string;
     confirmation: string;
   }): Promise<EnterprisePrivacyDeletionReceipt> {
-    return ipcRenderer.invoke(IPC.enterprisePrivacyDelete, input) as Promise<EnterprisePrivacyDeletionReceipt>;
+    return ipcRenderer.invoke(
+      IPC.enterprisePrivacyDelete,
+      input,
+    ) as Promise<EnterprisePrivacyDeletionReceipt>;
   },
   enterpriseUsageRecord(input: EnterpriseTokenUsageInput): Promise<{
     recorded: boolean;
@@ -2150,7 +2712,9 @@ const bridge: OttoBridge = {
       source: 'client_reported';
     }>;
   },
-  enterpriseKnowledgeRecord(input: EnterpriseKnowledgeRecordInput): Promise<EnterpriseKnowledgeRecordResult> {
+  enterpriseKnowledgeRecord(
+    input: EnterpriseKnowledgeRecordInput,
+  ): Promise<EnterpriseKnowledgeRecordResult> {
     return ipcRenderer.invoke(
       IPC.enterpriseKnowledgeRecord,
       input,
@@ -2162,70 +2726,129 @@ const bridge: OttoBridge = {
     includeReview?: boolean;
     status?: EnterpriseKnowledgeItem['status'];
   }): Promise<EnterpriseKnowledgeItem[]> {
-    return ipcRenderer.invoke(IPC.enterpriseKnowledgeList, input ?? {}) as Promise<EnterpriseKnowledgeItem[]>;
+    return ipcRenderer.invoke(
+      IPC.enterpriseKnowledgeList,
+      input ?? {},
+    ) as Promise<EnterpriseKnowledgeItem[]>;
   },
   enterpriseKnowledgeReview(
     id: string,
     action: 'approve' | 'archive',
     note?: string,
   ): Promise<EnterpriseKnowledgeItem> {
-    return ipcRenderer.invoke(IPC.enterpriseKnowledgeReview, { id, action, note }) as Promise<EnterpriseKnowledgeItem>;
+    return ipcRenderer.invoke(IPC.enterpriseKnowledgeReview, {
+      id,
+      action,
+      note,
+    }) as Promise<EnterpriseKnowledgeItem>;
   },
   enterpriseKnowledgeRevise(id, input) {
-    return ipcRenderer.invoke(IPC.enterpriseKnowledgeRevise, { id, input }) as Promise<EnterpriseKnowledgeItem>;
+    return ipcRenderer.invoke(IPC.enterpriseKnowledgeRevise, {
+      id,
+      input,
+    }) as Promise<EnterpriseKnowledgeItem>;
   },
   enterpriseKnowledgeRevisions(id) {
-    return ipcRenderer.invoke(IPC.enterpriseKnowledgeRevisions, { id }) as Promise<EnterpriseKnowledgeRevision[]>;
+    return ipcRenderer.invoke(IPC.enterpriseKnowledgeRevisions, {
+      id,
+    }) as Promise<EnterpriseKnowledgeRevision[]>;
   },
-  enterpriseOrganizationView(organizationId?: string): Promise<EnterpriseOrganizationView> {
-    return ipcRenderer.invoke(IPC.enterpriseOrganizationView, organizationId ?? null) as Promise<
-      EnterpriseOrganizationView
-    >;
+  enterpriseOrganizationView(
+    organizationId?: string,
+  ): Promise<EnterpriseOrganizationView> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseOrganizationView,
+      organizationId ?? null,
+    ) as Promise<EnterpriseOrganizationView>;
   },
   enterprisePresenceHeartbeat(): Promise<void> {
     return ipcRenderer.invoke(IPC.enterprisePresenceHeartbeat) as Promise<void>;
   },
   enterpriseOrganizationFeaturesGet(): Promise<EnterpriseOrganizationFeatures> {
-    return ipcRenderer.invoke(IPC.enterpriseOrganizationFeaturesGet) as Promise<EnterpriseOrganizationFeatures>;
+    return ipcRenderer.invoke(
+      IPC.enterpriseOrganizationFeaturesGet,
+    ) as Promise<EnterpriseOrganizationFeatures>;
   },
   enterpriseOrganizationFeaturesUpdate(
     patch: Partial<EnterpriseOrganizationFeatures>,
   ): Promise<EnterpriseOrganizationFeatures> {
-    return ipcRenderer.invoke(IPC.enterpriseOrganizationFeaturesUpdate, patch) as Promise<EnterpriseOrganizationFeatures>;
+    return ipcRenderer.invoke(
+      IPC.enterpriseOrganizationFeaturesUpdate,
+      patch,
+    ) as Promise<EnterpriseOrganizationFeatures>;
   },
-  enterpriseOrganizationDepartments(): Promise<EnterpriseOrganizationDepartment[]> {
-    return ipcRenderer.invoke(IPC.enterpriseOrganizationDepartments) as Promise<EnterpriseOrganizationDepartment[]>;
+  enterpriseOrganizationDepartments(): Promise<
+    EnterpriseOrganizationDepartment[]
+  > {
+    return ipcRenderer.invoke(IPC.enterpriseOrganizationDepartments) as Promise<
+      EnterpriseOrganizationDepartment[]
+    >;
   },
-  enterpriseOrganizationDepartmentCreate(name: string): Promise<EnterpriseOrganizationDepartment> {
-    return ipcRenderer.invoke(IPC.enterpriseOrganizationDepartmentCreate, name) as Promise<EnterpriseOrganizationDepartment>;
+  enterpriseOrganizationDepartmentCreate(
+    name: string,
+  ): Promise<EnterpriseOrganizationDepartment> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseOrganizationDepartmentCreate,
+      name,
+    ) as Promise<EnterpriseOrganizationDepartment>;
   },
-  enterpriseOrganizationDepartmentUpdate(id: string, name: string): Promise<EnterpriseOrganizationDepartment> {
-    return ipcRenderer.invoke(IPC.enterpriseOrganizationDepartmentUpdate, id, name) as Promise<EnterpriseOrganizationDepartment>;
+  enterpriseOrganizationDepartmentUpdate(
+    id: string,
+    name: string,
+  ): Promise<EnterpriseOrganizationDepartment> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseOrganizationDepartmentUpdate,
+      id,
+      name,
+    ) as Promise<EnterpriseOrganizationDepartment>;
   },
   enterpriseOrganizationDepartmentDelete(id: string): Promise<boolean> {
-    return ipcRenderer.invoke(IPC.enterpriseOrganizationDepartmentDelete, id) as Promise<boolean>;
+    return ipcRenderer.invoke(
+      IPC.enterpriseOrganizationDepartmentDelete,
+      id,
+    ) as Promise<boolean>;
   },
   enterpriseOrganizationPositionCreate(input: {
     departmentId: string;
     title: string;
     roleMapping: EnterprisePositionRoleMapping;
   }): Promise<EnterpriseOrganizationPosition> {
-    return ipcRenderer.invoke(IPC.enterpriseOrganizationPositionCreate, input) as Promise<EnterpriseOrganizationPosition>;
+    return ipcRenderer.invoke(
+      IPC.enterpriseOrganizationPositionCreate,
+      input,
+    ) as Promise<EnterpriseOrganizationPosition>;
   },
-  enterpriseOrganizationPositionUpdate(id: string, input: {
-    title?: string;
-    roleMapping?: EnterprisePositionRoleMapping;
-  }): Promise<EnterpriseOrganizationPosition> {
-    return ipcRenderer.invoke(IPC.enterpriseOrganizationPositionUpdate, id, input) as Promise<EnterpriseOrganizationPosition>;
+  enterpriseOrganizationPositionUpdate(
+    id: string,
+    input: {
+      title?: string;
+      roleMapping?: EnterprisePositionRoleMapping;
+    },
+  ): Promise<EnterpriseOrganizationPosition> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseOrganizationPositionUpdate,
+      id,
+      input,
+    ) as Promise<EnterpriseOrganizationPosition>;
   },
   enterpriseOrganizationPositionDelete(id: string): Promise<boolean> {
-    return ipcRenderer.invoke(IPC.enterpriseOrganizationPositionDelete, id) as Promise<boolean>;
+    return ipcRenderer.invoke(
+      IPC.enterpriseOrganizationPositionDelete,
+      id,
+    ) as Promise<boolean>;
   },
-  enterpriseMessagesList(peerAccountId: string): Promise<EnterpriseDirectMessage[]> {
-    return ipcRenderer.invoke(IPC.enterpriseMessagesList, peerAccountId) as Promise<EnterpriseDirectMessage[]>;
+  enterpriseMessagesList(
+    peerAccountId: string,
+  ): Promise<EnterpriseDirectMessage[]> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseMessagesList,
+      peerAccountId,
+    ) as Promise<EnterpriseDirectMessage[]>;
   },
   enterpriseMessagesUnread(): Promise<EnterpriseUnreadMessageNotification[]> {
-    return ipcRenderer.invoke(IPC.enterpriseMessagesUnread) as Promise<EnterpriseUnreadMessageNotification[]>;
+    return ipcRenderer.invoke(IPC.enterpriseMessagesUnread) as Promise<
+      EnterpriseUnreadMessageNotification[]
+    >;
   },
   enterpriseMessageSend(
     peerAccountId: string,
@@ -2247,8 +2870,178 @@ const bridge: OttoBridge = {
       attachmentId,
     ) as Promise<EnterpriseDirectMessageAttachmentDownload>;
   },
+  enterpriseMessageSecurityReset(peerAccountId: string): Promise<void> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseMessageSecurityReset,
+      peerAccountId,
+    ) as Promise<void>;
+  },
+  enterpriseFederationContactCode(): Promise<string> {
+    return ipcRenderer.invoke(IPC.enterpriseFederationContactCode) as Promise<string>;
+  },
+  enterpriseFederationContactImport(code: string): Promise<EnterpriseFederationContact> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationContactImport,
+      code,
+    ) as Promise<EnterpriseFederationContact>;
+  },
+  enterpriseFederationContacts(): Promise<EnterpriseFederationContact[]> {
+    return ipcRenderer.invoke(IPC.enterpriseFederationContacts) as Promise<
+      EnterpriseFederationContact[]
+    >;
+  },
+  enterpriseFederationContactRemove(contactId: string): Promise<boolean> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationContactRemove,
+      contactId,
+    ) as Promise<boolean>;
+  },
+  enterpriseFederationMessagesList(
+    contactId: string,
+    options?: { markRead?: boolean },
+  ): Promise<EnterpriseFederatedDirectMessage[]> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationMessagesList,
+      contactId,
+      options,
+    ) as Promise<EnterpriseFederatedDirectMessage[]>;
+  },
+  enterpriseFederationMessageSend(
+    contactId: string,
+    content: string,
+    attachments: EnterpriseDirectMessageAttachmentUpload[] = [],
+  ): Promise<EnterpriseFederatedDirectMessage> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationMessageSend,
+      contactId,
+      content,
+      attachments,
+    ) as Promise<EnterpriseFederatedDirectMessage>;
+  },
+  enterpriseFederationAttachmentSave(
+    contactId: string,
+    messageId: string,
+    attachmentId: string,
+    suggestedFileName: string,
+  ): Promise<(EnterpriseDirectMessageAttachment & { path: string }) | null> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationAttachmentSave,
+      contactId,
+      messageId,
+      attachmentId,
+      suggestedFileName,
+    ) as Promise<(EnterpriseDirectMessageAttachment & { path: string }) | null>;
+  },
+  enterpriseFederationAtoaTasks(): Promise<EnterpriseFederationAtoaTask[]> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationAtoaTasks,
+    ) as Promise<EnterpriseFederationAtoaTask[]>;
+  },
+  enterpriseFederationAtoaApprove(input: {
+    contactId: string;
+    messageId: string;
+    grantedSources: EnterpriseAtoaContextSource[];
+  }): Promise<EnterpriseFederatedDirectMessage> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationAtoaApprove,
+      input,
+    ) as Promise<EnterpriseFederatedDirectMessage>;
+  },
+  enterpriseFederationAtoaDeny(input: {
+    contactId: string;
+    messageId: string;
+  }): Promise<EnterpriseFederatedDirectMessage> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationAtoaDeny,
+      input,
+    ) as Promise<EnterpriseFederatedDirectMessage>;
+  },
+  enterpriseFederationAtoaDispatch(input: {
+    contactId: string;
+    decisionMessageId: string;
+  }): Promise<EnterpriseFederatedDirectMessage> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationAtoaDispatch,
+      input,
+    ) as Promise<EnterpriseFederatedDirectMessage>;
+  },
+  enterpriseFederationAtoaRespond(input: {
+    contactId: string;
+    requestMessageId: string;
+    answer: string;
+    grantedSources: EnterpriseAtoaContextSource[];
+  }): Promise<EnterpriseFederatedDirectMessage> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationAtoaRespond,
+      input,
+    ) as Promise<EnterpriseFederatedDirectMessage>;
+  },
+  enterpriseFederationContactVerification(contactId: string): Promise<
+    EnterpriseE2eeDeviceVerification & { verifiedAt: string | null }
+  > {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationContactVerification,
+      contactId,
+    ) as Promise<EnterpriseE2eeDeviceVerification & { verifiedAt: string | null }>;
+  },
+  enterpriseFederationContactVerify(contactId: string): Promise<
+    EnterpriseE2eeDeviceVerification & { verifiedAt: string | null }
+  > {
+    return ipcRenderer.invoke(
+      IPC.enterpriseFederationContactVerify,
+      contactId,
+    ) as Promise<EnterpriseE2eeDeviceVerification & { verifiedAt: string | null }>;
+  },
+  enterpriseE2eeDevicesList(): Promise<EnterpriseE2eeDevice[]> {
+    return ipcRenderer.invoke(IPC.enterpriseE2eeDevicesList) as Promise<
+      EnterpriseE2eeDevice[]
+    >;
+  },
+  enterpriseE2eeKeyTransparency(): Promise<EnterpriseE2eeKeyTransparencyView> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseE2eeKeyTransparency,
+    ) as Promise<EnterpriseE2eeKeyTransparencyView>;
+  },
+  enterpriseE2eeDeviceApprove(deviceId: string): Promise<EnterpriseE2eeDevice> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseE2eeDeviceApprove,
+      deviceId,
+    ) as Promise<EnterpriseE2eeDevice>;
+  },
+  enterpriseE2eeDeviceVerification(
+    deviceId: string,
+  ): Promise<EnterpriseE2eeDeviceVerification> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseE2eeDeviceVerification,
+      deviceId,
+    ) as Promise<EnterpriseE2eeDeviceVerification>;
+  },
+  enterpriseE2eeDeviceRevoke(deviceId: string): Promise<void> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseE2eeDeviceRevoke,
+      deviceId,
+    ) as Promise<void>;
+  },
+  enterpriseE2eeRecoveryExport(passphrase: string): Promise<string> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseE2eeRecoveryExport,
+      passphrase,
+    ) as Promise<string>;
+  },
+  enterpriseE2eeRecoveryImport(
+    bundle: string,
+    passphrase: string,
+  ): Promise<void> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseE2eeRecoveryImport,
+      bundle,
+      passphrase,
+    ) as Promise<void>;
+  },
   enterpriseAtoaInbox(): Promise<EnterpriseAtoaInboxMessage[]> {
-    return ipcRenderer.invoke(IPC.enterpriseAtoaInbox) as Promise<EnterpriseAtoaInboxMessage[]>;
+    return ipcRenderer.invoke(IPC.enterpriseAtoaInbox) as Promise<
+      EnterpriseAtoaInboxMessage[]
+    >;
   },
   enterpriseParkServicePush(input: {
     recipientAccountId: string;
@@ -2266,41 +3059,86 @@ const bridge: OttoBridge = {
     }>;
   },
   enterpriseParkView(): Promise<EnterprisePark | null> {
-    return ipcRenderer.invoke(IPC.enterpriseParkView) as Promise<EnterprisePark | null>;
+    return ipcRenderer.invoke(
+      IPC.enterpriseParkView,
+    ) as Promise<EnterprisePark | null>;
   },
   enterpriseParkRegister(input: {
-    name: string; slug?: string; brandName?: string;
+    name: string;
+    slug?: string;
+    brandName?: string;
   }): Promise<EnterprisePark> {
-    return ipcRenderer.invoke(IPC.enterpriseParkRegister, input) as Promise<EnterprisePark>;
+    return ipcRenderer.invoke(
+      IPC.enterpriseParkRegister,
+      input,
+    ) as Promise<EnterprisePark>;
   },
-  enterpriseParkJoin(input: { inviteCode: string; address: string; roomNumber: string }): Promise<EnterprisePark> {
-    return ipcRenderer.invoke(IPC.enterpriseParkJoin, input) as Promise<EnterprisePark>;
+  enterpriseParkJoin(input: {
+    inviteCode: string;
+    address: string;
+    roomNumber: string;
+  }): Promise<EnterprisePark> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseParkJoin,
+      input,
+    ) as Promise<EnterprisePark>;
   },
   enterpriseParkProfileUpdate(input: {
-    address: string; roomNumber: string;
+    address: string;
+    roomNumber: string;
   }): Promise<EnterpriseParkTenantProfile> {
-    return ipcRenderer.invoke(IPC.enterpriseParkProfileUpdate, input) as Promise<EnterpriseParkTenantProfile>;
+    return ipcRenderer.invoke(
+      IPC.enterpriseParkProfileUpdate,
+      input,
+    ) as Promise<EnterpriseParkTenantProfile>;
   },
-  enterpriseParkInviteIssue(maxUses?: number | null): Promise<EnterpriseParkInvite> {
-    return ipcRenderer.invoke(IPC.enterpriseParkInviteIssue, maxUses ?? null) as Promise<EnterpriseParkInvite>;
+  enterpriseParkInviteIssue(
+    maxUses?: number | null,
+  ): Promise<EnterpriseParkInvite> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseParkInviteIssue,
+      maxUses ?? null,
+    ) as Promise<EnterpriseParkInvite>;
   },
   enterpriseParkTenants(): Promise<EnterpriseParkTenantOrganization[]> {
-    return ipcRenderer.invoke(IPC.enterpriseParkTenants) as Promise<EnterpriseParkTenantOrganization[]>;
+    return ipcRenderer.invoke(IPC.enterpriseParkTenants) as Promise<
+      EnterpriseParkTenantOrganization[]
+    >;
   },
   enterpriseParkStatistics(): Promise<EnterpriseParkStatistics> {
-    return ipcRenderer.invoke(IPC.enterpriseParkStatistics) as Promise<EnterpriseParkStatistics>;
+    return ipcRenderer.invoke(
+      IPC.enterpriseParkStatistics,
+    ) as Promise<EnterpriseParkStatistics>;
   },
   enterpriseParkSpecialists(): Promise<EnterpriseParkSpecialist[]> {
-    return ipcRenderer.invoke(IPC.enterpriseParkSpecialists) as Promise<EnterpriseParkSpecialist[]>;
+    return ipcRenderer.invoke(IPC.enterpriseParkSpecialists) as Promise<
+      EnterpriseParkSpecialist[]
+    >;
   },
-  enterpriseParkSpecialistSet(serviceId: string, accountId: string): Promise<EnterpriseParkSpecialist> {
-    return ipcRenderer.invoke(IPC.enterpriseParkSpecialistSet, serviceId, accountId) as Promise<EnterpriseParkSpecialist>;
+  enterpriseParkSpecialistSet(
+    serviceId: string,
+    accountId: string,
+  ): Promise<EnterpriseParkSpecialist> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseParkSpecialistSet,
+      serviceId,
+      accountId,
+    ) as Promise<EnterpriseParkSpecialist>;
   },
-  enterpriseParkSpecialistRemove(serviceId: string, accountId: string): Promise<boolean> {
-    return ipcRenderer.invoke(IPC.enterpriseParkSpecialistRemove, serviceId, accountId) as Promise<boolean>;
+  enterpriseParkSpecialistRemove(
+    serviceId: string,
+    accountId: string,
+  ): Promise<boolean> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseParkSpecialistRemove,
+      serviceId,
+      accountId,
+    ) as Promise<boolean>;
   },
   enterpriseParkServices(): Promise<EnterpriseParkService[]> {
-    return ipcRenderer.invoke(IPC.enterpriseParkServices) as Promise<EnterpriseParkService[]>;
+    return ipcRenderer.invoke(IPC.enterpriseParkServices) as Promise<
+      EnterpriseParkService[]
+    >;
   },
   enterpriseParkServiceUpdate(input: {
     serviceId: string;
@@ -2308,30 +3146,55 @@ const bridge: OttoBridge = {
     enabled?: boolean;
     config?: Record<string, string>;
   }): Promise<EnterpriseParkService> {
-    return ipcRenderer.invoke(IPC.enterpriseParkServiceUpdate, input) as Promise<EnterpriseParkService>;
+    return ipcRenderer.invoke(
+      IPC.enterpriseParkServiceUpdate,
+      input,
+    ) as Promise<EnterpriseParkService>;
   },
   enterpriseParkPublications(): Promise<EnterpriseParkPublication[]> {
-    return ipcRenderer.invoke(IPC.enterpriseParkPublications) as Promise<EnterpriseParkPublication[]>;
+    return ipcRenderer.invoke(IPC.enterpriseParkPublications) as Promise<
+      EnterpriseParkPublication[]
+    >;
   },
-  enterpriseParkAnnouncementResults(): Promise<EnterpriseParkAnnouncementResult[]> {
-    return ipcRenderer.invoke(IPC.enterpriseParkAnnouncementResults) as Promise<EnterpriseParkAnnouncementResult[]>;
+  enterpriseParkAnnouncementResults(): Promise<
+    EnterpriseParkAnnouncementResult[]
+  > {
+    return ipcRenderer.invoke(IPC.enterpriseParkAnnouncementResults) as Promise<
+      EnterpriseParkAnnouncementResult[]
+    >;
   },
   enterpriseParkSurveyResults(): Promise<EnterpriseParkSurveyResult[]> {
-    return ipcRenderer.invoke(IPC.enterpriseParkSurveyResults) as Promise<EnterpriseParkSurveyResult[]>;
+    return ipcRenderer.invoke(IPC.enterpriseParkSurveyResults) as Promise<
+      EnterpriseParkSurveyResult[]
+    >;
   },
-  enterpriseParkPublicationRead(id: string): Promise<EnterpriseParkPublication> {
-    return ipcRenderer.invoke(IPC.enterpriseParkPublicationRead, id) as Promise<EnterpriseParkPublication>;
+  enterpriseParkPublicationRead(
+    id: string,
+  ): Promise<EnterpriseParkPublication> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseParkPublicationRead,
+      id,
+    ) as Promise<EnterpriseParkPublication>;
   },
-  enterpriseParkSurveySubmit(id: string, responseData: Record<string, string>): Promise<EnterpriseParkPublication> {
-    return ipcRenderer.invoke(IPC.enterpriseParkSurveySubmit, id, responseData) as Promise<EnterpriseParkPublication>;
+  enterpriseParkSurveySubmit(
+    id: string,
+    responseData: Record<string, string>,
+  ): Promise<EnterpriseParkPublication> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseParkSurveySubmit,
+      id,
+      responseData,
+    ) as Promise<EnterpriseParkPublication>;
   },
   enterpriseParkResources(): Promise<EnterpriseParkResources> {
-    return ipcRenderer.invoke(IPC.enterpriseParkResources) as Promise<EnterpriseParkResources>;
+    return ipcRenderer.invoke(
+      IPC.enterpriseParkResources,
+    ) as Promise<EnterpriseParkResources>;
   },
   enterpriseOrganizationInviteGet(): Promise<EnterpriseOrganizationInviteContext> {
-    return ipcRenderer.invoke(IPC.enterpriseOrganizationInviteGet) as Promise<
-      EnterpriseOrganizationInviteContext
-    >;
+    return ipcRenderer.invoke(
+      IPC.enterpriseOrganizationInviteGet,
+    ) as Promise<EnterpriseOrganizationInviteContext>;
   },
   enterpriseOrganizationInviteIssue(input?: {
     defaultDepartment?: string | null;
@@ -2340,18 +3203,29 @@ const bridge: OttoBridge = {
     positionTitle?: string | null;
     defaultRole?: string | null;
     maxUses?: number | null;
-  }): Promise<EnterpriseOrganizationInviteContext & {
-    invite: EnterpriseOrganizationInvite;
-  }> {
-    return ipcRenderer.invoke(IPC.enterpriseOrganizationInviteIssue, input ?? {}) as Promise<
-      EnterpriseOrganizationInviteContext & { invite: EnterpriseOrganizationInvite }
+  }): Promise<
+    EnterpriseOrganizationInviteContext & {
+      invite: EnterpriseOrganizationInvite;
+    }
+  > {
+    return ipcRenderer.invoke(
+      IPC.enterpriseOrganizationInviteIssue,
+      input ?? {},
+    ) as Promise<
+      EnterpriseOrganizationInviteContext & {
+        invite: EnterpriseOrganizationInvite;
+      }
     >;
   },
   enterpriseTicketInbox(): Promise<EnterpriseRepairTicket[]> {
-    return ipcRenderer.invoke(IPC.enterpriseTicketInbox) as Promise<EnterpriseRepairTicket[]>;
+    return ipcRenderer.invoke(IPC.enterpriseTicketInbox) as Promise<
+      EnterpriseRepairTicket[]
+    >;
   },
   enterpriseTicketList(): Promise<EnterpriseRepairTicket[]> {
-    return ipcRenderer.invoke(IPC.enterpriseTicketList) as Promise<EnterpriseRepairTicket[]>;
+    return ipcRenderer.invoke(IPC.enterpriseTicketList) as Promise<
+      EnterpriseRepairTicket[]
+    >;
   },
   enterpriseTicketSubmit(input: {
     serviceId?: string;
@@ -2365,27 +3239,40 @@ const bridge: OttoBridge = {
     contact?: string;
     contactPhone?: string;
   }): Promise<EnterpriseRepairTicket> {
-    return ipcRenderer.invoke(IPC.enterpriseTicketSubmit, input) as Promise<EnterpriseRepairTicket>;
+    return ipcRenderer.invoke(
+      IPC.enterpriseTicketSubmit,
+      input,
+    ) as Promise<EnterpriseRepairTicket>;
   },
   enterpriseTicketRead(id: string): Promise<EnterpriseRepairTicket> {
-    return ipcRenderer.invoke(IPC.enterpriseTicketRead, id) as Promise<EnterpriseRepairTicket>;
+    return ipcRenderer.invoke(
+      IPC.enterpriseTicketRead,
+      id,
+    ) as Promise<EnterpriseRepairTicket>;
   },
-  enterpriseTicketAction(id: string, input: {
-    action:
-      | 'respond'
-      | 'accept'
-      | 'complete'
-      | 'confirm'
-      | 'respond_and_transfer';
-    responseType?: string;
-    responseText?: string;
-    transferDepartment?: string;
-    transferNote?: string;
-  }): Promise<EnterpriseRepairTicket> {
-    return ipcRenderer.invoke(IPC.enterpriseTicketAction, id, input) as Promise<EnterpriseRepairTicket>;
+  enterpriseTicketAction(
+    id: string,
+    input: {
+      action:
+        'respond' | 'accept' | 'complete' | 'confirm' | 'respond_and_transfer';
+      responseType?: string;
+      responseText?: string;
+      transferDepartment?: string;
+      transferNote?: string;
+    },
+  ): Promise<EnterpriseRepairTicket> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseTicketAction,
+      id,
+      input,
+    ) as Promise<EnterpriseRepairTicket>;
   },
   parkNativeNotify(title: string, body: string): Promise<boolean> {
-    return ipcRenderer.invoke(IPC.parkNativeNotify, title, body) as Promise<boolean>;
+    return ipcRenderer.invoke(
+      IPC.parkNativeNotify,
+      title,
+      body,
+    ) as Promise<boolean>;
   },
   writeClipboard(text: string): Promise<boolean> {
     return ipcRenderer.invoke(IPC.writeClipboard, text) as Promise<boolean>;

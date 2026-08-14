@@ -12,6 +12,7 @@ function unread(input: Partial<{
   senderName: string;
   preview: string;
   createdAt: string;
+  count: number;
 }> = {}) {
   return {
     id: 'message-1',
@@ -58,6 +59,22 @@ describe('enterprise tray message popover', () => {
     ]);
   });
 
+  it('preserves the backend unread count for an encrypted federation contact', () => {
+    expect(summarizeEnterpriseTrayContacts([
+      unread({
+        senderAccountId: 'federation:contact-remote',
+        senderName: '远程同事',
+        preview: '收到一条端到端加密的跨服务器消息',
+        count: 7,
+      }),
+    ])).toEqual([
+      expect.objectContaining({
+        accountId: 'federation:contact-remote',
+        count: 7,
+      }),
+    ]);
+  });
+
   it('渲染美化后的消息摘要并转义不可信内容', () => {
     const html = renderEnterpriseTrayPopoverHtml([
       {
@@ -69,7 +86,7 @@ describe('enterprise tray message popover', () => {
       },
     ], { now: Date.parse('2026-07-26T08:05:00.000Z') });
 
-    expect(html).toContain('未读消息');
+    expect(html).toContain('未读提醒');
     expect(html).toContain('5 分钟前');
     expect(html).toContain('&lt;Alice&gt;');
     expect(html).toContain('&lt;img src=x onerror=alert(1)&gt; 项目方案已更新');

@@ -5,10 +5,13 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "${SCRIPT_DIR}/lib/common.sh"
 
+CONFIG_PATH="${OTTO_CONFIG_PATH:-/etc/otto-enterprise/enterprise.env}"
+[ -f "$CONFIG_PATH" ] && otto_load_config "$CONFIG_PATH"
+
 INSTALL_ROOT="${OTTO_INSTALL_ROOT:-/opt/otto-enterprise}"
 CURRENT="${INSTALL_ROOT}/current"
 RUNTIME_NODE="${INSTALL_ROOT}/runtime/current/bin/node"
-DATA_DB="${OTTO_DATA_DIR:-/var/lib/otto-enterprise}/data.db"
+DATA_DB="${OTTO_ENTERPRISE_DIR:-${OTTO_DATA_DIR:-/var/lib/otto-enterprise}}/data.db"
 ALLOW_SMS="${OTTO_ALLOW_SMS_DISABLED:-0}"
 
 [ -x "$RUNTIME_NODE" ] || otto_die "找不到固定 Node runtime：${RUNTIME_NODE}" 3

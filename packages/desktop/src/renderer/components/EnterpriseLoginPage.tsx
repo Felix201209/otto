@@ -3,6 +3,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
+import type { EnterpriseLegalDocumentReference } from '../../preload/index.js';
 import { OttoPetStage } from './OttoPetStage.js';
 
 type LoginMode = 'login' | 'register' | 'join';
@@ -71,6 +72,7 @@ export function isRegistrationReady(input: {
   challengeId: string;
   code: string;
   legalConsent: boolean;
+  legalDocuments: EnterpriseLegalDocumentReference[];
 }): boolean {
   return (!input.inviteRequired
     || input.inviteCode.replace(/[^A-HJ-NP-Za-km-z2-9]/g, '').length === 12)
@@ -79,15 +81,8 @@ export function isRegistrationReady(input: {
     && input.password === input.confirmPassword
     && Boolean(input.challengeId)
     && /^\d{6}$/.test(input.code)
-    && input.legalConsent;
-}
-
-function enterpriseServerHost(serverUrl: string): string {
-  try {
-    return new URL(serverUrl).host || serverUrl.trim();
-  } catch {
-    return serverUrl.trim();
-  }
+    && input.legalConsent
+    && input.legalDocuments.length === 2;
 }
 
 function enterpriseLegalUrl(serverUrl: string): string | null {
@@ -173,8 +168,16 @@ export function EnterpriseLoginPage({
     retryAfterSeconds: number;
     registrationMode?: 'personal' | 'enterprise';
     organization: { id: string; name: string } | null;
+    legalDocuments: EnterpriseLegalDocumentReference[];
   }>;
-  onRegister: (input: { challengeId: string; code: string; name: string; password: string; legalConsent: true }) => Promise<void>;
+  onRegister: (input: {
+    challengeId: string;
+    code: string;
+    name: string;
+    password: string;
+    legalConsent: true;
+    legalDocuments: EnterpriseLegalDocumentReference[];
+  }) => Promise<void>;
   onClearError: () => void;
 }): React.JSX.Element {
   const [mode, setMode] = useState<LoginMode>(initialInviteCode ? 'join' : 'login');
@@ -189,7 +192,7 @@ export function EnterpriseLoginPage({
   const [loginNotice, setLoginNotice] = useState('');
   const [loginCountdown, setLoginCountdown] = useState(0);
   const [loginRequesting, setLoginRequesting] = useState(false);
-  const [serverUrl, setServerUrl] = useState(initialServerUrl);
+  const serverUrl = initialServerUrl;
   const [name, setName] = useState('');
   const [registrationPassword, setRegistrationPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -201,6 +204,7 @@ export function EnterpriseLoginPage({
   const [challengeId, setChallengeId] = useState('');
   const [notice, setNotice] = useState('');
   const [legalConsent, setLegalConsent] = useState(false);
+  const [legalDocuments, setLegalDocuments] = useState<EnterpriseLegalDocumentReference[]>([]);
   const [organizationName, setOrganizationName] = useState('');
   const [requesting, setRequesting] = useState(false);
   const [countdown, setCountdown] = useState(0);
@@ -208,7 +212,6 @@ export function EnterpriseLoginPage({
   const requestEpochRef = useRef(0);
   const submitLockedRef = useRef(false);
   const formPending = busy || submitting;
-  const serverHost = enterpriseServerHost(serverUrl);
   const legalUrl = enterpriseLegalUrl(serverUrl);
 
   useEffect(() => {
@@ -220,6 +223,7 @@ export function EnterpriseLoginPage({
     setCode('');
     setNotice('');
     setOrganizationName('');
+    setLegalDocuments([]);
     setCountdown(0);
     setRequesting(false);
     onClearError();
@@ -256,6 +260,7 @@ export function EnterpriseLoginPage({
       setChallengeId(result.challengeId);
       setNotice(result.message);
       setOrganizationName(result.organization?.name ?? '');
+      setLegalDocuments(result.legalDocuments);
       setCountdown(result.retryAfterSeconds);
     } catch {
       // 具体错误由 useEnterpriseAuth 写入 error，表单只负责结束 loading。
@@ -303,11 +308,11 @@ export function EnterpriseLoginPage({
     setCode('');
     setNotice('');
     setOrganizationName('');
+    setLegalDocuments([]);
     setCountdown(0);
   };
 
   useEffect(() => {
-    setServerUrl(initialServerUrl);
     requestEpochRef.current += 1;
     setLoginChallengeId('');
     setLoginCode('');
@@ -322,13 +327,6 @@ export function EnterpriseLoginPage({
     setCountdown(0);
   }, [initialServerUrl]);
 
-  const updateServerUrl = (value: string): void => {
-    setServerUrl(value);
-    invalidateLoginChallenge();
-    invalidateRegistrationChallenge();
-    onClearError();
-  };
-
   const submitAuth = async (): Promise<void> => {
     if (formPending || requesting || loginRequesting || submitLockedRef.current) return;
     if (!serverUrl.trim()) return;
@@ -341,6 +339,7 @@ export function EnterpriseLoginPage({
       challengeId,
       code,
       legalConsent,
+      legalDocuments,
     })) return;
     if (
       mode === 'login'
@@ -361,6 +360,7 @@ export function EnterpriseLoginPage({
           name: name.trim(),
           password: registrationPassword,
           legalConsent: true,
+          legalDocuments,
         });
       } else if (loginMethod === 'password') {
         await onPasswordLogin({
@@ -424,25 +424,6 @@ export function EnterpriseLoginPage({
             <span><strong>OTTO SECURE ACCESS</strong><small>企业身份门禁</small></span>
             <b>{mode === 'login' ? 'AUTHORIZED' : mode === 'join' ? 'JOIN COMPANY' : 'NEW ACCOUNT'}</b>
           </header>
-          <label
-            className="otto-auth-server"
-          >
-            <span>企业服务器地址</span>
-            <input
-              aria-label="企业服务器地址"
-              type="url"
-              inputMode="url"
-              autoCapitalize="none"
-              autoComplete="url"
-              spellCheck={false}
-              value={serverUrl}
-              disabled={formPending}
-              onChange={(event) => updateServerUrl(event.target.value)}
-              placeholder="https://enterprise.example.com"
-              required
-            />
-            <strong>{serverHost || '请输入管理员提供的 HTTPS 地址'}</strong>
-          </label>
           <div className="otto-auth-card__topline">
             <span className="otto-auth-status-dot" />
             {mode === 'login'
@@ -612,6 +593,11 @@ export function EnterpriseLoginPage({
                       if (legalUrl) void window.otto.openExternal(legalUrl);
                     }}
                   >《用户服务协议》与《隐私规则》</button>
+                  <small>
+                    {legalDocuments.length === 2
+                      ? `当前版本 ${legalDocuments.map((document) => `${document.id}:${document.version}#${document.hash.slice(0, 8)}`).join(' · ')}`
+                      : '获取验证码后将绑定当前协议版本与正文哈希'}
+                  </small>
                 </span>
               </label>
             </>
@@ -754,6 +740,7 @@ export function EnterpriseLoginPage({
                 challengeId,
                 code,
                 legalConsent,
+                legalDocuments,
               }))}
           >
             <span>

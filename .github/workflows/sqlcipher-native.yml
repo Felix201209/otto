@@ -1,0 +1,264 @@
+name: SQLCipher native assets
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  pull_request:
+    paths:
+      - '.github/workflows/sqlcipher-native.yml'
+      - 'package-lock.json'
+      - 'packages/desktop/package.json'
+      - 'packages/desktop/scripts/after-pack.cjs'
+      - 'packages/desktop/scripts/probe-packaged-sqlcipher.mjs'
+      - 'packages/desktop/scripts/verify-packaged-runtime.mjs'
+      - 'packages/server/package.json'
+      - 'scripts/finalize-sqlcipher-native-asset.mjs'
+      - 'scripts/verify-sqlcipher-native-assets.mjs'
+      - 'scripts/tests/sqlcipher-native-assets.test.js'
+      - 'native/sqlcipher/THIRD_PARTY_NOTICES.md'
+  push:
+    paths:
+      - '.github/workflows/sqlcipher-native.yml'
+      - 'package-lock.json'
+      - 'packages/desktop/package.json'
+      - 'packages/desktop/scripts/after-pack.cjs'
+      - 'packages/desktop/scripts/probe-packaged-sqlcipher.mjs'
+      - 'packages/desktop/scripts/verify-packaged-runtime.mjs'
+      - 'packages/server/package.json'
+      - 'scripts/finalize-sqlcipher-native-asset.mjs'
+      - 'scripts/verify-sqlcipher-native-assets.mjs'
+      - 'scripts/tests/sqlcipher-native-assets.test.js'
+      - 'native/sqlcipher/THIRD_PARTY_NOTICES.md'
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+env:
+  SQLCIPHER_SOURCE_REVISION: e2a6040f2ae5cfff2b3e08eb3320007d93cdf3fc
+  ELECTRON_VERSION: 43.1.0
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: linux-x64
+            shell: bash
+          - runner: ubuntu-24.04-arm
+            target: linux-arm64
+            shell: bash
+          - runner: macos-15-intel
+            target: darwin-x64
+            shell: bash
+          - runner: macos-15
+            target: darwin-arm64
+            shell: bash
+          - runner: windows-2025
+            target: win32-x64
+            shell: pwsh
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install locked JavaScript dependencies without registry native prebuilds
+        run: npm ci --ignore-scripts
+
+      - name: Checkout immutable official SQLCipher source
+        shell: bash
+        run: |
+          git init .sqlcipher-source
+          git -C .sqlcipher-source remote add origin https://github.com/sqlcipher/sqlcipher.git
+          git -C .sqlcipher-source fetch --depth 1 origin "$SQLCIPHER_SOURCE_REVISION"
+          git -C .sqlcipher-source checkout --detach FETCH_HEAD
+          test "$(git -C .sqlcipher-source rev-parse HEAD)" = "$SQLCIPHER_SOURCE_REVISION"
+
+      - name: Install Unix SQLCipher build prerequisites
+        if: runner.os == 'Linux'
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install -y binutils libssl-dev make tcl
+
+      - name: Generate SQLCipher amalgamation on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        working-directory: .sqlcipher-source
+        run: |
+          ./configure --with-tempstore=yes \
+            CFLAGS="-DSQLITE_HAS_CODEC -DSQLITE_EXTRA_INIT=sqlcipher_extra_init -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown -DSQLCIPHER_CRYPTO_OPENSSL" \
+            LDFLAGS="-lcrypto"
+          make sqlite3.c
+
+      - name: Generate SQLCipher amalgamation on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        working-directory: .sqlcipher-source
+        run: |
+          OPENSSL_PREFIX="$(brew --prefix openssl@3)"
+          ./configure --with-tempstore=yes \
+            CFLAGS="-I${OPENSSL_PREFIX}/include -DSQLITE_HAS_CODEC -DSQLITE_EXTRA_INIT=sqlcipher_extra_init -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown -DSQLCIPHER_CRYPTO_OPENSSL" \
+            LDFLAGS="-L${OPENSSL_PREFIX}/lib -lcrypto"
+          make sqlite3.c
+
+      - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git
+            make
+            tcl
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-openssl
+
+      - name: Generate SQLCipher amalgamation on Windows
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        working-directory: .sqlcipher-source
+        run: |
+          ./configure --with-tempstore=yes \
+            CFLAGS="-DSQLITE_HAS_CODEC -DSQLITE_EXTRA_INIT=sqlcipher_extra_init -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown -DSQLCIPHER_CRYPTO_OPENSSL" \
+            LDFLAGS="-lcrypto"
+          make sqlite3.c
+
+      - name: Install MSVC OpenSSL for Windows addon linkage
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: vcpkg install openssl:x64-windows-static
+
+      - name: Build Electron SQLCipher addon on Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          if [ "${RUNNER_OS}" = "macOS" ]; then
+            OPENSSL_PREFIX="$(brew --prefix openssl@3)"
+            export CPPFLAGS="-I${OPENSSL_PREFIX}/include"
+            export LDFLAGS="-L${OPENSSL_PREFIX}/lib -lcrypto"
+          else
+            # Ubuntu enables --as-needed by default. node-gyp places LDFLAGS
+            # before the static SQLCipher archive, so plain -lcrypto can be
+            # discarded before RAND_bytes and the other OpenSSL references
+            # are seen. Keep libcrypto as an explicit runtime dependency.
+            export LDFLAGS="-Wl,--no-as-needed -lcrypto"
+          fi
+          export CFLAGS="${CPPFLAGS:-} -DSQLITE_HAS_CODEC -DSQLITE_TEMP_STORE=2 -DSQLITE_EXTRA_INIT=sqlcipher_extra_init -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown -DSQLCIPHER_CRYPTO_OPENSSL"
+          export npm_config_runtime=electron
+          export npm_config_target="$ELECTRON_VERSION"
+          export npm_config_disturl=https://electronjs.org/headers
+          export npm_config_build_from_source=true
+          export npm_config_sqlite3="$GITHUB_WORKSPACE/.sqlcipher-source"
+          npm rebuild better-sqlite3 --build-from-source
+
+      - name: Verify Linux addon resolves OpenSSL at runtime
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          binding="node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+          readelf -d "$binding" | grep -E 'NEEDED.*libcrypto\.so'
+          ldd "$binding" | grep -E 'libcrypto\.so.*=>.*'
+
+      - name: Build Electron SQLCipher addon on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $openssl = Join-Path $env:VCPKG_INSTALLATION_ROOT 'installed\x64-windows-static'
+          $env:CL = "/I`"$openssl\include`" /DSQLITE_HAS_CODEC /DSQLITE_TEMP_STORE=2 /DSQLITE_EXTRA_INIT=sqlcipher_extra_init /DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown /DSQLCIPHER_CRYPTO_OPENSSL"
+          $env:LINK = "/LIBPATH:`"$openssl\lib`" libcrypto.lib Crypt32.lib Ws2_32.lib Advapi32.lib User32.lib"
+          $env:npm_config_runtime = 'electron'
+          $env:npm_config_target = $env:ELECTRON_VERSION
+          $env:npm_config_disturl = 'https://electronjs.org/headers'
+          $env:npm_config_build_from_source = 'true'
+          $env:npm_config_sqlite3 = Join-Path $env:GITHUB_WORKSPACE '.sqlcipher-source'
+          npm rebuild better-sqlite3 --build-from-source
+
+      - name: Run SQLCipher behavior tests and finalize Unix asset
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron \
+            scripts/finalize-sqlcipher-native-asset.mjs \
+            --binding node_modules/better-sqlite3/build/Release/better_sqlite3.node \
+            --output-root native/sqlcipher \
+            --target "${{ matrix.target }}"
+          node scripts/verify-sqlcipher-native-assets.mjs \
+            --target "${{ matrix.target }}" \
+            --expected-build-commit "$GITHUB_SHA" \
+            --expected-source-revision "$SQLCIPHER_SOURCE_REVISION" \
+            --expected-runtime-version "$ELECTRON_VERSION"
+
+      - name: Run SQLCipher behavior tests and finalize Windows asset
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          .\node_modules\.bin\electron.cmd scripts/finalize-sqlcipher-native-asset.mjs `
+            --binding node_modules\better-sqlite3\build\Release\better_sqlite3.node `
+            --output-root native\sqlcipher `
+            --target '${{ matrix.target }}'
+          node scripts/verify-sqlcipher-native-assets.mjs `
+            --target '${{ matrix.target }}' `
+            --expected-build-commit $env:GITHUB_SHA `
+            --expected-source-revision $env:SQLCIPHER_SOURCE_REVISION `
+            --expected-runtime-version $env:ELECTRON_VERSION
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sqlcipher-${{ matrix.target }}
+          path: native/sqlcipher
+          if-no-files-found: error
+          retention-days: 14
+
+  verify-matrix:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: sqlcipher-*
+          path: native/sqlcipher
+          merge-multiple: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Verify and lock the complete native matrix
+        shell: bash
+        run: |
+          node scripts/verify-sqlcipher-native-assets.mjs \
+            --expected-build-commit "$GITHUB_SHA" \
+            --expected-source-revision "$SQLCIPHER_SOURCE_REVISION" \
+            --expected-runtime-version "$ELECTRON_VERSION" \
+            --write-matrix-manifest
+          node scripts/verify-sqlcipher-native-assets.mjs \
+            --expected-build-commit "$GITHUB_SHA" \
+            --expected-source-revision "$SQLCIPHER_SOURCE_REVISION" \
+            --expected-runtime-version "$ELECTRON_VERSION" \
+            --require-matrix-manifest
+      - name: Attest verified native bindings
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: native/sqlcipher/*/better_sqlite3.node
+      - name: Attest the matrix manifest that binds metadata and SBOMs
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: native/sqlcipher/matrix-manifest.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sqlcipher-native-matrix
+          path: native/sqlcipher
+          if-no-files-found: error
+          retention-days: 14

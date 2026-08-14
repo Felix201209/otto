@@ -259,6 +259,8 @@ const mockBridge = {
   async enterpriseUsageRecord(): Promise<any> { return { recorded: false, source: 'client_reported' }; },
   async enterpriseKnowledgeRecord(): Promise<any> { return { status: 'added', added: true }; },
   async enterpriseKnowledgeList(): Promise<any> { return []; },
+  async enterpriseMessagesUnread(): Promise<any> { return []; },
+  async enterpriseMessagesList(): Promise<any> { return []; },
   async enterpriseOrganizationView(organizationId?: string): Promise<any> {
     if (organizationId && previewOrganizationViews[organizationId]) return previewOrganizationViews[organizationId];
     return {

@@ -32,6 +32,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createAliyunLoginSmsFromEnv } from 'otto-core';
 import * as db from './db.js';
+import { e2eeProductionCapabilities } from './e2eeProductionReleasePolicy.js';
 
 import { resolveEnterprisePublicBaseUrl } from '../modules/identity_organization/index.js';
 import {
@@ -69,10 +70,9 @@ import {
   startPrivateDeploymentRuntime,
 } from '../modules/commercial_control/index.js';
 import {
-  createControlCommandBoundary,
   controlPublicKeysFromEnv,
-  type ControlCommandBoundary,
 } from '../modules/control_commands/index.js';
+import { createEnterpriseControlCommandBoundary } from './controlCommandIntegration.js';
 
 export { adminAccountsHTML } from './adminAccountsPage.js';
 export {
@@ -164,6 +164,13 @@ const ENTERPRISE_CAPABILITIES = [
   'privacy_self_service',
   'multi_organization',
   'direct_messages',
+  'federation_chat_v1',
+  'e2ee_private_messages_v1',
+  'e2ee_device_trust_v1',
+  'e2ee_mls_transport_v1',
+  'e2ee_mls_resource_governance_v1',
+  'e2ee_mls_transport_session_reset_v1',
+  ...e2eeProductionCapabilities(),
   'direct_message_attachments_v1',
   'encrypted_attachment_storage_v1',
   'encrypted_message_storage_v1',
@@ -430,7 +437,7 @@ function makeHandler(
       };
       if (
         (isAdminRoute(path) || isMemberRoute(path)) &&
-        !isLicenseMaintenanceRoute(path) &&
+        !isLicenseMaintenanceRoute(path, method) &&
         db.isLicenseRestricted()
       ) {
         auditCommercialDecision('commercial_license_denied', {
@@ -713,11 +720,9 @@ export function createEnterpriseServer(opts: EnterpriseServerOptions = {}): {
       resultSummary: 'no executor configured',
       errorCategory: 'not_configured',
     }));
-  const controlBoundary = createControlCommandBoundary({
-    db: () => db.getDB(),
+  const controlBoundary = createEnterpriseControlCommandBoundary({
     deploymentId:
       process.env.OTTO_ENTERPRISE_DEPLOYMENT_ID || publicBaseUrl,
-    now: () => Date.now(),
     controlPublicKeys: controlKeys,
     signingPrivateKey: opts.controlSigningPrivateKey,
     execute: controlExecute,
@@ -866,7 +871,10 @@ export function startEnterpriseServer(
   });
   const stopPrivateDeploymentRuntime = startPrivateDeploymentRuntime(db, {
     onError: (error) =>
-      console.error('[Otto Enterprise] private deployment runtime failed', error),
+      console.error(
+        '[Otto Enterprise] private deployment runtime failed',
+        error,
+      ),
   });
   let stopFederationRuntime: () => void;
   try {
@@ -885,6 +893,22 @@ export function startEnterpriseServer(
     server.close();
     throw error;
   }
+  let mlsCleanupRunning = false;
+  const runMlsCleanup = () => {
+    if (mlsCleanupRunning) return;
+    mlsCleanupRunning = true;
+    try {
+      db.cleanupExpiredMlsResources({ limit: 500 });
+    } catch (error) {
+      console.error('[Otto Enterprise] MLS resource cleanup failed', error);
+    } finally {
+      mlsCleanupRunning = false;
+    }
+  };
+  const mlsCleanupTimer = setInterval(runMlsCleanup, 15 * 60 * 1_000);
+  mlsCleanupTimer.unref();
+  const initialMlsCleanup = setImmediate(runMlsCleanup);
+  initialMlsCleanup.unref();
   let stopTicketNotificationRuntime: () => void;
   try {
     stopTicketNotificationRuntime = startTicketNotificationRuntime({
@@ -894,6 +918,8 @@ export function startEnterpriseServer(
         console.error('[Otto Enterprise] 工单通知升级任务失败', error),
     });
   } catch (error) {
+    clearImmediate(initialMlsCleanup);
+    clearInterval(mlsCleanupTimer);
     stopPrivateDeploymentRuntime();
     stopFederationRuntime();
     stopDataProtectionRuntime();
@@ -901,6 +927,8 @@ export function startEnterpriseServer(
     throw error;
   }
   server.once('close', () => {
+    clearImmediate(initialMlsCleanup);
+    clearInterval(mlsCleanupTimer);
     stopPrivateDeploymentRuntime();
     stopFederationRuntime();
     stopDataProtectionRuntime();

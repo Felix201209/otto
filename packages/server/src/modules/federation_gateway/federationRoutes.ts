@@ -26,6 +26,7 @@ interface FederationAdminPrincipal {
 export interface FederationRouteServices {
   getFederationStatus(): unknown;
   getFederationProvisioningManifest(): unknown;
+  getFederationMemberIdentity(principalId: string): unknown;
   runFederationCycle(): Promise<unknown>;
   listFederationBlocks(): unknown;
   blockFederationDeployment(input: {
@@ -34,6 +35,64 @@ export interface FederationRouteServices {
   }): void;
   unblockFederationDeployment(deploymentId: string): boolean;
   lookupFederationDeployment(deploymentId: string): Promise<unknown>;
+  saveFederationChatContact(input: {
+    ownerAccountId: string;
+    remoteDeploymentId: string;
+    remotePrincipalId: string;
+    displayName: string;
+  }): Promise<unknown>;
+  listFederationChatContacts(ownerAccountId: string): unknown;
+  removeFederationChatContact(input: {
+    ownerAccountId: string;
+    contactId: string;
+  }): boolean;
+  createFederationChatAttachmentUpload(input: {
+    ownerAccountId: string;
+    contactId: string;
+    attachmentId: string;
+    ciphertextBytes: number;
+    ciphertextSha256: string;
+    expiresInMs?: number;
+  }): Promise<unknown>;
+  completeFederationChatAttachmentUpload(input: {
+    ownerAccountId: string;
+    contactId: string;
+    attachmentId: string;
+  }): Promise<unknown>;
+  createFederationChatAttachmentDownload(input: {
+    ownerAccountId: string;
+    contactId: string;
+    attachmentId: string;
+  }): Promise<unknown>;
+  queueFederationChatMessage(input: {
+    ownerAccountId: string;
+    contactId: string;
+    ciphertext: string;
+    type?: 'chat.message' | 'a2a.request' | 'a2a.response';
+    messageId?: string;
+    inReplyTo?: string;
+    a2aGrantId?: string;
+    a2aScope?: string;
+    attachmentIds?: string[];
+    expiresInMs?: number;
+  }): Promise<unknown>;
+  createFederationContactA2aGrant(input: {
+    ownerAccountId: string;
+    contactId: string;
+    scopes: string[];
+    expiresInMs?: number;
+  }): Promise<unknown>;
+  listFederationChatMessages(input: {
+    ownerAccountId: string;
+    contactId: string;
+    afterSequence?: number;
+    limit?: number;
+  }): unknown;
+  markFederationChatMessageRead(input: {
+    ownerAccountId: string;
+    contactId: string;
+    messageId: string;
+  }): boolean;
   queueFederationMessage(input: FederationQueueInput): Promise<unknown>;
   listFederationInbox(input: {
     recipientPrincipalId: string;
@@ -97,6 +156,25 @@ function integer(value: unknown, fallback: number, maximum: number): number {
   return Number.isFinite(parsed)
     ? Math.max(0, Math.min(maximum, Math.floor(parsed)))
     : fallback;
+}
+
+function positiveInteger(value: unknown, label: string, maximum: number): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 1 || Number(value) > maximum) {
+    throw new Error(`${label} is invalid`);
+  }
+  return Number(value);
+}
+
+function attachmentIdentifiers(value: unknown): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value) || value.length > 6) {
+    throw new Error('attachment ids are invalid');
+  }
+  const ids = value.map((item) => requiredIdentifier(item, 'attachment id'));
+  if (new Set(ids).size !== ids.length) {
+    throw new Error('attachment ids must be unique');
+  }
+  return ids;
 }
 
 function requireFeature(
@@ -233,6 +311,20 @@ export async function handleFederationRoute(
     return true;
   }
 
+  if (path === '/enterprise/federation/identity' && method === 'GET') {
+    if (!requireFeature(deps, 'direct_messages')) return true;
+    try {
+      sendJSON(res, 200, {
+        identity: services.getFederationMemberIdentity(deps.memberAccount.id),
+      });
+    } catch (error) {
+      sendJSON(res, 503, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return true;
+  }
+
   if (
     path.startsWith('/enterprise/federation/directory/') &&
     method === 'GET'
@@ -248,6 +340,267 @@ export async function handleFederationRoute(
       });
     } catch (error) {
       sendJSON(res, 404, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return true;
+  }
+
+  if (path === '/enterprise/federation/contacts') {
+    if (!requireFeature(deps, 'direct_messages')) return true;
+    if (method === 'GET') {
+      sendJSON(res, 200, {
+        contacts: services.listFederationChatContacts(deps.memberAccount.id),
+      });
+      return true;
+    }
+    if (method === 'POST') {
+      try {
+        const body = await readBody(req);
+        const contact = await services.saveFederationChatContact({
+          ownerAccountId: deps.memberAccount.id,
+          remoteDeploymentId: requiredIdentifier(
+            body.remoteDeploymentId,
+            'remote deployment id',
+          ),
+          remotePrincipalId: requiredIdentifier(
+            body.remotePrincipalId,
+            'remote principal id',
+          ),
+          displayName: requiredText(body.displayName, 'display name', 120).trim(),
+        });
+        sendJSON(res, 201, { contact });
+      } catch (error) {
+        sendJSON(res, 400, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return true;
+    }
+  }
+
+  if (
+    path.startsWith('/enterprise/federation/contacts/') &&
+    method === 'DELETE'
+  ) {
+    if (!requireFeature(deps, 'direct_messages')) return true;
+    try {
+      const contactId = requiredIdentifier(
+        decodeURIComponent(path.slice('/enterprise/federation/contacts/'.length)),
+        'contact id',
+      );
+      const removed = services.removeFederationChatContact({
+        ownerAccountId: deps.memberAccount.id,
+        contactId,
+      });
+      sendJSON(res, removed ? 200 : 404, { removed });
+    } catch (error) {
+      sendJSON(res, 400, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return true;
+  }
+
+  const attachmentUploads = /^\/enterprise\/federation\/conversations\/([^/]+)\/attachments\/uploads$/u
+    .exec(path);
+  if (attachmentUploads && method === 'POST') {
+    if (!requireFeature(deps, 'direct_messages')) return true;
+    try {
+      const body = await readBody(req);
+      const sha256 = requiredText(
+        body.ciphertextSha256,
+        'ciphertext SHA-256',
+        64,
+      ).trim().toLowerCase();
+      if (!/^[a-f0-9]{64}$/u.test(sha256)) {
+        throw new Error('ciphertext SHA-256 is invalid');
+      }
+      const result = await services.createFederationChatAttachmentUpload({
+        ownerAccountId: deps.memberAccount.id,
+        contactId: requiredIdentifier(
+          decodeURIComponent(attachmentUploads[1]!),
+          'contact id',
+        ),
+        attachmentId: requiredIdentifier(body.attachmentId, 'attachment id'),
+        ciphertextBytes: positiveInteger(
+          body.ciphertextBytes,
+          'ciphertext bytes',
+          1024 * 1024 * 1024,
+        ),
+        ciphertextSha256: sha256,
+        expiresInMs: body.expiresInMs === undefined
+          ? undefined
+          : positiveInteger(
+              body.expiresInMs,
+              'attachment lifetime',
+              7 * 24 * 60 * 60_000,
+            ),
+      });
+      sendJSON(res, 201, result);
+    } catch (error) {
+      sendJSON(res, 400, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return true;
+  }
+
+  const attachmentAction = /^\/enterprise\/federation\/conversations\/([^/]+)\/attachments\/([^/]+)\/(complete|download)$/u
+    .exec(path);
+  if (attachmentAction && method === 'POST') {
+    if (!requireFeature(deps, 'direct_messages')) return true;
+    try {
+      const input = {
+        ownerAccountId: deps.memberAccount.id,
+        contactId: requiredIdentifier(
+          decodeURIComponent(attachmentAction[1]!),
+          'contact id',
+        ),
+        attachmentId: requiredIdentifier(
+          decodeURIComponent(attachmentAction[2]!),
+          'attachment id',
+        ),
+      };
+      const result = attachmentAction[3] === 'complete'
+        ? await services.completeFederationChatAttachmentUpload(input)
+        : await services.createFederationChatAttachmentDownload(input);
+      sendJSON(res, 200, result);
+    } catch (error) {
+      sendJSON(res, 400, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return true;
+  }
+
+  const conversationMessages = /^\/enterprise\/federation\/conversations\/([^/]+)\/messages$/u
+    .exec(path);
+  if (conversationMessages) {
+    if (!requireFeature(deps, 'direct_messages')) return true;
+    try {
+      const contactId = requiredIdentifier(
+        decodeURIComponent(conversationMessages[1]!),
+        'contact id',
+      );
+      if (method === 'GET') {
+        sendJSON(res, 200, {
+          messages: services.listFederationChatMessages({
+            ownerAccountId: deps.memberAccount.id,
+            contactId,
+            afterSequence: integer(
+              url.searchParams.get('after'),
+              0,
+              Number.MAX_SAFE_INTEGER,
+            ),
+            limit: integer(url.searchParams.get('limit'), 100, 200),
+          }),
+        });
+        return true;
+      }
+      if (method === 'POST') {
+        const body = await readBody(req, 2 * 1024 * 1024);
+        const type = normalizedMessageType(body.type);
+        if (type === 'chat.receipt') {
+          throw new Error('chat receipts cannot be queued as conversation messages');
+        }
+        if (
+          (type === 'a2a.request' || type === 'a2a.response') &&
+          !requireFeature(deps, 'atoa')
+        ) return true;
+        const a2aGrantId = optionalIdentifier(body.a2aGrantId, 'A2A grant id');
+        const a2aScope = typeof body.a2aScope === 'string'
+          ? body.a2aScope.trim()
+          : undefined;
+        if (
+          type === 'a2a.request' &&
+          (!a2aGrantId || !a2aScope || !SCOPE.test(a2aScope))
+        ) {
+          throw new Error('A2A request requires a valid grant and scope');
+        }
+        const attachmentIds = attachmentIdentifiers(body.attachmentIds) ?? [];
+        if (type !== 'chat.message' && attachmentIds.length > 0) {
+          throw new Error('A2A messages cannot reference attachments');
+        }
+        const queued = await services.queueFederationChatMessage({
+          ownerAccountId: deps.memberAccount.id,
+          contactId,
+          ciphertext: requiredText(body.ciphertext, 'ciphertext', 1024 * 1024),
+          type,
+          messageId: optionalIdentifier(body.messageId, 'message id'),
+          inReplyTo: optionalIdentifier(body.inReplyTo, 'reply message id'),
+          a2aGrantId,
+          a2aScope,
+          attachmentIds,
+          expiresInMs: body.expiresInMs === undefined
+            ? undefined
+            : integer(body.expiresInMs, 0, 7 * 24 * 60 * 60_000),
+        });
+        sendJSON(res, 202, { queued });
+        return true;
+      }
+    } catch (error) {
+      sendJSON(res, 400, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return true;
+    }
+  }
+
+  const contactA2aGrants = /^\/enterprise\/federation\/conversations\/([^/]+)\/a2a\/grants$/u
+    .exec(path);
+  if (contactA2aGrants && method === 'POST') {
+    if (!requireFeature(deps, 'atoa')) return true;
+    try {
+      const body = await readBody(req);
+      const scopes = Array.isArray(body.scopes)
+        ? [...new Set(body.scopes.map((scope) => String(scope).trim()))]
+        : [];
+      if (
+        scopes.length < 1 || scopes.length > 16 ||
+        scopes.some((scope) => !SCOPE.test(scope))
+      ) {
+        throw new Error('A2A scopes are invalid');
+      }
+      const grant = await services.createFederationContactA2aGrant({
+        ownerAccountId: deps.memberAccount.id,
+        contactId: requiredIdentifier(
+          decodeURIComponent(contactA2aGrants[1]!),
+          'contact id',
+        ),
+        scopes,
+        expiresInMs: body.expiresInMs === undefined
+          ? undefined
+          : integer(body.expiresInMs, 0, 24 * 60 * 60_000),
+      });
+      sendJSON(res, 201, { grant });
+    } catch (error) {
+      sendJSON(res, 400, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return true;
+  }
+
+  const readMessage = /^\/enterprise\/federation\/conversations\/([^/]+)\/messages\/([^/]+)\/read$/u
+    .exec(path);
+  if (readMessage && method === 'POST') {
+    if (!requireFeature(deps, 'direct_messages')) return true;
+    try {
+      const read = services.markFederationChatMessageRead({
+        ownerAccountId: deps.memberAccount.id,
+        contactId: requiredIdentifier(
+          decodeURIComponent(readMessage[1]!),
+          'contact id',
+        ),
+        messageId: requiredIdentifier(
+          decodeURIComponent(readMessage[2]!),
+          'message id',
+        ),
+      });
+      sendJSON(res, read ? 200 : 404, { read });
+    } catch (error) {
+      sendJSON(res, 400, {
         error: error instanceof Error ? error.message : String(error),
       });
     }

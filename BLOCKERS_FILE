@@ -22,20 +22,19 @@
 - #271 MLS 本地安全状态清除后必须退出 ready 并阻止隐式继续使用 | 原因: 实现提交 b75bb38 依赖尚未合入 internal 的 PR #233，当前分支缺少 MLS/E2EE 基础文件，无法独立安全移植
 - #269 [RELEASE][P0] 实际构建并验证五平台 SQLCipher 原生发布资产 | 原因: GitHub Actions 计费限制导致五平台 job 均零步骤失败，且缺少 macOS/跨平台真机与正式签名公证条件
 - #257 [NSI-09][P0] 建立正式桌面真机与弱性能验收矩阵 | 原因: DoD 要求 Win10/11、macOS Intel/ARM、弱性能及多设备长稳真机证据，当前单一 Windows 环境无法完成且 issue 尚无证据附件
-- #253 [NSI-05][P0] 接入 E2EE 设备安全用户流程 | 原因: 正式 E2EE API/UI 位于尚未合入且当前冲突的 PR #233，SERVER-03/04 与 #238 依赖未闭环，并缺少双设备真机验收条件
+- #253 [NSI-05][P0] 接入 E2EE 设备安全用户流程 | 原因: 正式 E2EE API/UI 已进入统一候选基线，但 SERVER-03/04、外部审计和双设备真机验收尚未闭环
 - #252 [NSI-04][P0] 完成软件内自动更新与回滚真机闭环 | 原因: 缺少受信旧版/新版签名发布资产、正式更新频道及 Windows/macOS 跨版本安装重启与数据回滚真机证据
 - #245 [SERVER-10][P0] 完成 RBAC/ABAC 与身份映射总审计 | 原因: 明确依赖仍开放的 SERVER-09/#244，且缺少 SSO/SCIM 身份源与真实环境验收证据，无法安全完成统一权限总审计
-- #244 [SERVER-09][P0] 企业统一身份：OIDC、SAML、SCIM、MFA 与访问复核 | 原因: 依赖仍开放的 #238 与 PostgreSQL 权威数据层 #239，且缺少真实 OIDC/SAML IdP、SCIM 兼容性套件及验收凭据
-- #243 [SERVER-08][P0] 真实业务 Agent 评测与质量发布门禁 | 原因: 依赖仍开放的 #238/#241，且缺少三模型真实运行环境、版本化业务题库、人工标注校准主体与 nightly 验收历史
-- #241 [SERVER-06][P0] PostgreSQL 耐久工作流队列与多实例 Worker | 原因: 依赖仍开放的 #238/#239/#242，且缺少 PostgreSQL 集群、双 Worker 故障注入与 24 小时长稳验收环境
+- #244 [SERVER-09][P0] 企业统一身份：OIDC、SAML、SCIM、MFA 与访问复核 | 原因: 依赖仍开放的 PostgreSQL 权威数据层 #239，且缺少真实 OIDC/SAML IdP、SCIM 兼容性套件及验收凭据
+- #243 [SERVER-08][P0] 真实业务 Agent 评测与质量发布门禁 | 原因: 依赖仍开放的 #241，且缺少三模型真实运行环境、版本化业务题库、人工标注校准主体与 nightly 验收历史
+- #241 [SERVER-06][P0] PostgreSQL 耐久工作流队列与多实例 Worker | 原因: 依赖仍开放的 #239/#242，且缺少 PostgreSQL 集群、双 Worker 故障注入与 24 小时长稳验收环境
 - #240 [SERVER-04][P0] 完成 SQLCipher 与 Rust MLS 五平台发行资产 | 原因: 依赖仍开放的 SERVER-03/#235，当前 internal 缺少 Rust MLS/SQLCipher 发行源码，且无 macOS/Linux 双架构真实构建与加载验收环境
-- #239 [SERVER-02][P0] 选择性合入 PostgreSQL 权威数据层与迁移工具 | 原因: 依赖尚未完成的 #238；候选实现仅存在于混合 SQLCipher/E2EE/UI 的开放 PR #233，且缺少真实 PostgreSQL 双实例迁移、并发与回滚验收环境
-- #238 [SERVER-01][P0] 建立唯一集成分支并完成能力台账 | 原因: 候选实现仍仅在开放 PR #266，internal 不含其提交；唯一 CI check 失败且 merge 状态未知，不能绕过失败门禁建立权威发布基线
+- #239 [SERVER-02][P0] 选择性合入 PostgreSQL 权威数据层与迁移工具 | 原因: 候选实现已进入统一候选基线，但仍缺少真实 PostgreSQL 双实例迁移、并发与回滚验收环境
 - #237 [CONTROL-09][P0] 将 Otto Server 接入 Control 联邦网关 | 原因: 正式集成 PR #329 仍开放且 Actions 因账户 Billing/Spending Limit 未执行；缺少 staging Control 与两台独立私有服务器的真实脱敏验收证据
-- #235 [SERVER-03][P0] 整合 E2EE 分支并补齐正式协议 | 原因: 依赖已阻塞的 #238/#239，正式 OpenMLS 实现仍在混合开放 PR #233；缺少独立密码学审计、发布批准及多设备恶意服务器/重放/乱序/篡改真实验收
+- #235 [SERVER-03][P0] 整合 E2EE 分支并补齐正式协议 | 原因: 依赖仍开放的 #239；OpenMLS 实现已进入统一候选基线，但缺少独立密码学审计、发布批准及多设备恶意服务器/重放/乱序/篡改真实验收
 - #325 [AI-GOV-03][P1] 员工 AI 画像与部门 AI 使用评价 | 原因: 依赖的 AI-GOV-01/#323 与 AI-GOV-02/#324 均仍开放，缺少可信授权收据和聚合输入；完成定义所需业务/HR/安全签字无法由本地开发替代
 - #260 [NSI-12][P1] 企业知识检索与 Skill 商业治理闭环 | 原因: 验收直接依赖仍开放的真实业务评测 #243、耐久工作流 #241 与 PostgreSQL 权威迁移 #277，并缺少真实题库/多实例集群/Skill 沙箱及供应链扫描验收环境，无法用局部实现满足闭环完成定义
-- #256 [NSI-08][P1] 选择性吸收 UI 预览分支而不整体换肤 | 原因: SERVER-01/#238 依赖仍开放；uiux-preview 与 internal 无共同祖先且混合功能修复和整体换肤，当前 internal 已独立具备组织/收件箱已读/直聊/窄屏能力，但缺少 DoD 要求的正式桌面与窄屏真实环境、权限服务端联调验收证据
+- #256 [NSI-08][P1] 选择性吸收 UI 预览分支而不整体换肤 | 原因: UI 预览能力已选择性进入统一候选基线，但仍缺少 DoD 要求的正式桌面与窄屏真实环境、权限服务端联调验收证据
 - #242 [SERVER-07][P1] 企业审批、补偿事务与人工接管中心 | 原因: 直接依赖仍开放的 PostgreSQL 耐久工作流 #241 与企业身份/职责分离 #244，且缺少 PostgreSQL 多实例故障注入、真实邮件/消息外发或测试支付环境，无法完成三类 Saga、双人接管与唯一权威源验收
 - #277 PostgreSQL: migrate all remaining enterprise business routes | 原因: 候选提交 3bb7f157 仅在开放混合 PR #233/codex/sqlcipher，包含 SQLCipher/E2EE/S3/Redis/UI 大量耦合提交且 CI 全失败、合并状态未知；issue 要求推该 PR 分支与本轮只推 internal 的授权冲突，无法安全摘取或合并
 - #276 E2EE: safely accept same-conversation multi-device MLS member additions | 原因: 候选提交 f6cb5141 仅在冲突且 CI 失败的混合 PR #233；internal 缺少 OpenMLS 接收器、KeyPackage/Welcome 与加密状态持久化基础，也缺少外部审计和真实多设备验收环境，无法独立安全移植

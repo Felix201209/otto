@@ -6,11 +6,13 @@
  * production deployment because it temporarily disables one test deployment.
  */
 
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
 const RESPONSE_LIMIT = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 15_000;
+const DEFAULT_ATTACHMENT_BYTES = 12 * 1024 * 1024;
+const MAX_ATTACHMENT_BYTES = 64 * 1024 * 1024;
 
 function required(env, name) {
   const value = env[name]?.trim();
@@ -28,6 +30,15 @@ function origin(value, name, allowInsecureLoopback) {
     throw new Error(`${name} must be an HTTPS origin without credentials or path`);
   }
   return url.origin;
+}
+
+function positiveInteger(value, name, fallback) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > MAX_ATTACHMENT_BYTES) {
+    throw new Error(`${name} must be an integer between 1 and ${MAX_ATTACHMENT_BYTES}`);
+  }
+  return parsed;
 }
 
 export function parseFederationStagingSmokeConfig(env = process.env) {
@@ -56,6 +67,11 @@ export function parseFederationStagingSmokeConfig(env = process.env) {
     ),
     serverBAdminToken: required(env, 'OTTO_FEDERATION_SMOKE_SERVER_B_ADMIN_TOKEN'),
     serverBMemberToken: required(env, 'OTTO_FEDERATION_SMOKE_SERVER_B_MEMBER_TOKEN'),
+    attachmentBytes: positiveInteger(
+      env.OTTO_FEDERATION_SMOKE_ATTACHMENT_BYTES,
+      'OTTO_FEDERATION_SMOKE_ATTACHMENT_BYTES',
+      DEFAULT_ATTACHMENT_BYTES,
+    ),
     sourceCommit: env.OTTO_FEDERATION_SMOKE_SOURCE_COMMIT?.trim() || null,
   };
 }
@@ -115,6 +131,66 @@ async function requestJson(fetchImpl, input) {
   return payload;
 }
 
+function signedObjectRequest(value, expectedMethod) {
+  if (
+    !value || typeof value !== 'object' ||
+    value.method !== expectedMethod || typeof value.url !== 'string' ||
+    !value.headers || typeof value.headers !== 'object'
+  ) {
+    throw new Error(`federation attachment response is missing a ${expectedMethod} request`);
+  }
+  const url = new URL(value.url);
+  if (
+    url.username || url.password ||
+    (url.protocol !== 'https:' && !(
+      url.protocol === 'http:' && ['127.0.0.1', 'localhost', '::1'].includes(url.hostname)
+    ))
+  ) {
+    throw new Error('federation attachment object URL must use HTTPS');
+  }
+  return { method: expectedMethod, url: url.toString(), headers: value.headers };
+}
+
+async function uploadAttachmentObject(fetchImpl, upload, ciphertext) {
+  const request = signedObjectRequest(upload, 'PUT');
+  const response = await fetchImpl(request.url, {
+    method: request.method,
+    redirect: 'error',
+    headers: request.headers,
+    body: ciphertext,
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error(`federation attachment upload failed (${response.status})`);
+  }
+  await response.body?.cancel();
+}
+
+async function downloadAttachmentObject(fetchImpl, download, expectedBytes) {
+  const request = signedObjectRequest(download, 'GET');
+  const response = await fetchImpl(request.url, {
+    method: request.method,
+    redirect: 'error',
+    headers: request.headers,
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error(`federation attachment download failed (${response.status})`);
+  }
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared !== expectedBytes) {
+    await response.body?.cancel();
+    throw new Error('federation attachment download size does not match signed metadata');
+  }
+  const body = Buffer.from(await response.arrayBuffer());
+  if (body.length !== expectedBytes) {
+    throw new Error('federation attachment download was truncated or expanded');
+  }
+  return body;
+}
+
 function encryptedPayload(options = {}) {
   return Buffer.from(JSON.stringify({
     messageCiphertext: randomBytes(48).toString('base64url'),
@@ -141,6 +217,23 @@ async function member(fetchImpl, serverUrl, token) {
     throw new Error('enterprise member response is incomplete');
   }
   return response.account;
+}
+
+async function contact(fetchImpl, input) {
+  const response = await requestJson(fetchImpl, {
+    origin: input.serverUrl,
+    path: '/enterprise/federation/contacts',
+    method: 'POST',
+    token: input.memberToken,
+    expected: [200, 201],
+    body: {
+      remoteDeploymentId: input.remoteDeploymentId,
+      remotePrincipalId: input.remotePrincipalId,
+      displayName: input.displayName,
+    },
+  });
+  if (!response.contact?.id) throw new Error('federation contact response is incomplete');
+  return response.contact;
 }
 
 async function provisioning(fetchImpl, serverUrl, token) {
@@ -275,6 +368,21 @@ export async function runFederationStagingSmoke(config, options = {}) {
     token: config.serverBMemberToken,
   });
 
+  const contactA = await contact(fetchImpl, {
+    serverUrl: config.serverAUrl,
+    memberToken: config.serverAMemberToken,
+    remoteDeploymentId: manifestB.deployment.id,
+    remotePrincipalId: accountB.id,
+    displayName: 'Federation staging B',
+  });
+  const contactB = await contact(fetchImpl, {
+    serverUrl: config.serverBUrl,
+    memberToken: config.serverBMemberToken,
+    remoteDeploymentId: manifestA.deployment.id,
+    remotePrincipalId: accountA.id,
+    displayName: 'Federation staging A',
+  });
+
   const chatId = messageId('chat');
   const chatCiphertext = encryptedPayload({ withAttachment: true });
   const chatMessage = {
@@ -316,6 +424,87 @@ export async function runFederationStagingSmoke(config, options = {}) {
     .some((message) => message.messageId === chatId)) {
     throw new Error('consumed federation message remained in the recipient inbox');
   }
+
+  const attachmentCiphertext = randomBytes(config.attachmentBytes);
+  const attachmentId = `fattachment_smoke_${randomUUID().replaceAll('-', '')}`;
+  const attachmentSha256 = createHash('sha256')
+    .update(attachmentCiphertext)
+    .digest('hex');
+  const initializedAttachment = await requestJson(fetchImpl, {
+    origin: config.serverAUrl,
+    path: `/enterprise/federation/conversations/${encodeURIComponent(contactA.id)}` +
+      '/attachments/uploads',
+    method: 'POST',
+    token: config.serverAMemberToken,
+    expected: [201],
+    body: {
+      attachmentId,
+      ciphertextBytes: attachmentCiphertext.length,
+      ciphertextSha256: attachmentSha256,
+      expiresInMs: 60 * 60_000,
+    },
+  });
+  if (initializedAttachment.upload) {
+    await uploadAttachmentObject(
+      fetchImpl,
+      initializedAttachment.upload,
+      attachmentCiphertext,
+    );
+  }
+  await requestJson(fetchImpl, {
+    origin: config.serverAUrl,
+    path: `/enterprise/federation/conversations/${encodeURIComponent(contactA.id)}` +
+      `/attachments/${encodeURIComponent(attachmentId)}/complete`,
+    method: 'POST',
+    token: config.serverAMemberToken,
+  });
+  const attachmentMessageId = messageId('attachment');
+  await requestJson(fetchImpl, {
+    origin: config.serverAUrl,
+    path: `/enterprise/federation/conversations/${encodeURIComponent(contactA.id)}/messages`,
+    method: 'POST',
+    token: config.serverAMemberToken,
+    expected: [202],
+    body: {
+      messageId: attachmentMessageId,
+      type: 'chat.message',
+      ciphertext: encryptedPayload(),
+      attachmentIds: [attachmentId],
+    },
+  });
+  await waitForMessage(fetchImpl, {
+    senderUrl: config.serverAUrl,
+    senderAdminToken: config.serverAAdminToken,
+    recipientUrl: config.serverBUrl,
+    recipientAdminToken: config.serverBAdminToken,
+    recipientMemberToken: config.serverBMemberToken,
+    messageId: attachmentMessageId,
+  });
+  const attachmentDownload = await requestJson(fetchImpl, {
+    origin: config.serverBUrl,
+    path: `/enterprise/federation/conversations/${encodeURIComponent(contactB.id)}` +
+      `/attachments/${encodeURIComponent(attachmentId)}/download`,
+    method: 'POST',
+    token: config.serverBMemberToken,
+  });
+  const downloadedCiphertext = await downloadAttachmentObject(
+    fetchImpl,
+    attachmentDownload.download,
+    attachmentCiphertext.length,
+  );
+  if (
+    createHash('sha256').update(downloadedCiphertext).digest('hex') !==
+    attachmentSha256
+  ) {
+    throw new Error('federation attachment ciphertext SHA-256 changed in transit');
+  }
+  await consume(
+    fetchImpl,
+    config.serverBUrl,
+    config.serverBMemberToken,
+    attachmentMessageId,
+  );
+  await runCycle(fetchImpl, config.serverBUrl, config.serverBAdminToken);
 
   const grantResponse = await requestJson(fetchImpl, {
     origin: config.serverBUrl,
@@ -426,6 +615,11 @@ export async function runFederationStagingSmoke(config, options = {}) {
     evidence: {
       directory: 'passed',
       opaqueMessageAndAttachmentPayload: 'passed',
+      encryptedObjectAttachmentRelay: {
+        result: 'passed',
+        bytes: attachmentCiphertext.length,
+        sha256: attachmentSha256,
+      },
       inboxAcknowledgement: 'passed',
       oneTimeScopedA2aGrant: 'passed',
       disabledDeploymentFailClosed: 'passed',

@@ -9,7 +9,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const packageRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+);
 const repoRoot = path.resolve(packageRoot, '../..');
 const require = createRequire(import.meta.url);
 const afterPack = require('./after-pack.cjs');
@@ -41,7 +44,9 @@ describe('desktop packaging contract', () => {
       const imageSize = icon.readUInt32LE(entryOffset + 8);
       const imageOffset = icon.readUInt32LE(entryOffset + 12);
       sizes.add(widthByte === 0 ? 256 : widthByte);
-      expect(heightByte === 0 ? 256 : heightByte).toBe(widthByte === 0 ? 256 : widthByte);
+      expect(heightByte === 0 ? 256 : heightByte).toBe(
+        widthByte === 0 ? 256 : widthByte,
+      );
       // rcedit writes this size through a 16-bit Windows resource field. A
       // larger PNG is truncated in the final Otto.exe even though the source
       // ICO itself still opens correctly.
@@ -124,7 +129,7 @@ describe('desktop packaging contract', () => {
       },
     ]);
     expect(packageJson.scripts['dist:win']).toContain(
-      'node scripts/verify-packaged-runtime.mjs release/win-unpacked/resources/app.asar --platform win32',
+      'node scripts/verify-packaged-runtime.mjs release/win-unpacked/resources/app.asar --platform win32 --arch x64',
     );
     expect(packageJson.scripts['dist:win']).toContain('--publish never');
   });
@@ -141,7 +146,9 @@ describe('desktop packaging contract', () => {
     expect(script).toContain('resolveUpdateAssetBaseUrl()');
     expect(mirrorConfig).toContain('process.env.OTTO_UPDATE_ASSET_BASE_URL');
     expect(mirrorConfig).toContain('https://59.110.154.44:7777/downloads');
-    expect(script).not.toContain('github.com/Felix201209/otto-releases/releases/download');
+    expect(script).not.toContain(
+      'github.com/Felix201209/otto-releases/releases/download',
+    );
   });
 
   it('disables electron-builder implicit publishing for tagged release builds', async () => {
@@ -149,7 +156,28 @@ describe('desktop packaging contract', () => {
       path.join(packageRoot, 'scripts', 'make-delivery-zip.mjs'),
       'utf8',
     );
-    expect(script).toContain("'--publish', 'never'");
+    expect(script).toMatch(/'--publish',\s*'never'/);
+  });
+
+  it('requires an explicit transition flag before disabling macOS signing', async () => {
+    const script = await readFile(
+      path.join(packageRoot, 'scripts', 'make-delivery-zip.mjs'),
+      'utf8',
+    );
+    const workflow = await readFile(
+      path.join(repoRoot, '.github', 'workflows', 'release.yml'),
+      'utf8',
+    );
+    expect(script).toContain("process.env.OTTO_ALLOW_UNSIGNED_MAC === '1'");
+    expect(script).toContain("'--config.mac.identity=null'");
+    expect(script).toContain("'--config.mac.hardenedRuntime=false'");
+    expect(script).toContain("'--config.mac.notarize=false'");
+    expect(script).toContain("'--config.dmg.sign=false'");
+    expect(script).toContain("CSC_IDENTITY_AUTO_DISCOVERY: 'false'");
+    expect(workflow).toContain('unsigned_mac_transition:');
+    expect(workflow).toContain(
+      "OTTO_ALLOW_UNSIGNED_MAC: ${{ inputs.unsigned_mac_transition && '1' || '0' }}",
+    );
   });
 
   it('publishes releases only after the update mirror and enterprise deploy pass', async () => {
@@ -157,10 +185,16 @@ describe('desktop packaging contract', () => {
       path.join(repoRoot, '.github', 'workflows', 'release.yml'),
       'utf8',
     );
+    const deliveryScript = await readFile(
+      path.join(packageRoot, 'scripts', 'make-delivery-zip.mjs'),
+      'utf8',
+    );
     expect(workflow).toContain('deploy-update-mirror:');
     expect(workflow).toContain('name: Deploy Desktop Update Mirror');
     expect(workflow).toContain('draft: true');
-    expect(workflow).toContain("needs.deploy-update-mirror.result == 'success'");
+    expect(workflow).toContain(
+      "needs.deploy-update-mirror.result == 'success'",
+    );
     expect(workflow).toContain("needs.deploy-enterprise.result == 'success'");
     expect(workflow).toContain(
       'node packages/desktop/scripts/verify-update-manifest.mjs "$DESKTOP_RELEASE" "$VERSION"',
@@ -169,14 +203,19 @@ describe('desktop packaging contract', () => {
       'node packages/desktop/scripts/verify-update-manifest.mjs "mirror-upload" "$VERSION"',
     );
     expect(
-      workflow.match(/node packages\/desktop\/scripts\/verify-update-manifest\.mjs/g)
-        ?.length,
+      workflow.match(
+        /node packages\/desktop\/scripts\/verify-update-manifest\.mjs/g,
+      )?.length,
     ).toBe(2);
     expect(workflow).not.toContain("['macArm64', 'macX64', 'winX64']");
     expect(workflow).not.toContain("const crypto = require('node:crypto');");
     expect(workflow).toContain('sha256sum -c SHA256SUMS');
     expect(workflow).toContain('latest.json.next');
     expect(workflow).toContain('Windows no-proxy download');
+    expect(workflow).toContain(
+      'git merge-base --is-ancestor "$INTERNAL_COMMIT" "$SOURCE_COMMIT"',
+    );
+    expect(workflow).toContain('refs/heads/release/*');
     expect(workflow.indexOf('name: Upload workflow artifacts')).toBeLessThan(
       workflow.indexOf('name: Create draft GitHub release'),
     );
@@ -185,6 +224,25 @@ describe('desktop packaging contract', () => {
     expect(workflow).not.toContain(
       'secrets.OTTO_RELEASES_TOKEN || secrets.GITHUB_TOKEN',
     );
+    expect(workflow).toContain(
+      'Require desktop signing and notarization custody',
+    );
+    expect(workflow).toContain(
+      'Verify Windows Authenticode and packaged runtime',
+    );
+    expect(workflow).toContain(
+      "needs.verify-windows-signature.result == 'success'",
+    );
+    expect(deliveryScript).toContain("['stapler', 'validate', appPath]");
+    expect(workflow).not.toContain('This release is unsigned');
+    expect(workflow).not.toContain('OTTO_ALLOW_UNSIGNED_ENTERPRISE_PACKAGE');
+    expect(workflow).toContain(
+      'node scripts/verify-enterprise-package-signature.mjs',
+    );
+    expect(workflow).toContain(
+      'deliverables/otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz.sig',
+    );
+    expect(workflow).toContain('probe-packaged-sqlcipher.mjs');
   });
 
   it('uses the shared update manifest verifier in the local release gate', async () => {

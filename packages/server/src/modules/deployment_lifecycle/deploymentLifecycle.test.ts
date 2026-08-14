@@ -26,7 +26,7 @@ import {
 const NOW = 1_700_000_000_000;
 
 /** 测试用 Ed25519 签/验实现（匹配 BootstrapTokenSigner 接口）。 */
-function makeSigner(kp: { publicKey: string; privateKey: string }): BootstrapTokenSigner {
+function makeSigner(): BootstrapTokenSigner {
   return {
     sign(message: unknown, privateKeyPem: string): string {
       const msg = typeof message === 'string' ? message : JSON.stringify(message);
@@ -142,7 +142,7 @@ describe('CONTROL-10 bootstrap token（计算巢注入，一次性）', () => {
       artifactsDigest: 'sha256:deadbeef',
       kind: 'compute-nest',
     });
-    return signBootstrapToken(makeSigner(kp), {
+    return signBootstrapToken(makeSigner(), {
       payload,
       privateKeyPem: kp.privateKey,
       signingKeyId: 'ctl-boot-2026',
@@ -163,7 +163,7 @@ describe('CONTROL-10 bootstrap token（计算巢注入，一次性）', () => {
   it('合法 token 通过（签名 + 时间窗 + 绑定 + 制品摘要）', () => {
     const ctl = makeKeyPair();
     const token = validToken(ctl);
-    const verdict = verifyBootstrapToken(makeSigner(ctl), token, verifyOpts({ controlPublicKey: ctl.publicKey }));
+    const verdict = verifyBootstrapToken(makeSigner(), token, verifyOpts({ controlPublicKey: ctl.publicKey }));
     expect(verdict.ok).toBe(true);
     if (verdict.ok) expect(verdict.payload.deploymentId).toBe('dep-1');
   });
@@ -171,7 +171,7 @@ describe('CONTROL-10 bootstrap token（计算巢注入，一次性）', () => {
   it('过期 token 被拒（expired）', () => {
     const ctl = makeKeyPair();
     const token = validToken(ctl);
-    const verdict = verifyBootstrapToken(makeSigner(ctl), token, verifyOpts({ receiverNowMs: NOW + 120_000, controlPublicKey: ctl.publicKey }));
+    const verdict = verifyBootstrapToken(makeSigner(), token, verifyOpts({ receiverNowMs: NOW + 120_000, controlPublicKey: ctl.publicKey }));
     expect(verdict).toMatchObject({ ok: false, reason: 'expired' });
   });
 
@@ -179,7 +179,7 @@ describe('CONTROL-10 bootstrap token（计算巢注入，一次性）', () => {
     const ctl = makeKeyPair();
     const attacker = makeKeyPair();
     const token = validToken(attacker); // 由无关方签发
-    const verdict = verifyBootstrapToken(makeSigner(ctl), token, verifyOpts({ controlPublicKey: ctl.publicKey }));
+    const verdict = verifyBootstrapToken(makeSigner(), token, verifyOpts({ controlPublicKey: ctl.publicKey }));
     expect(verdict).toMatchObject({ ok: false, reason: 'bad_signature' });
   });
 
@@ -187,13 +187,13 @@ describe('CONTROL-10 bootstrap token（计算巢注入，一次性）', () => {
     const ctl = makeKeyPair();
     const token = validToken(ctl);
     expect(
-      verifyBootstrapToken(makeSigner(ctl), token, verifyOpts({ controlPublicKey: ctl.publicKey, expectedDeploymentId: 'dep-999' })),
+      verifyBootstrapToken(makeSigner(), token, verifyOpts({ controlPublicKey: ctl.publicKey, expectedDeploymentId: 'dep-999' })),
     ).toMatchObject({ ok: false, reason: 'wrong_deployment' });
     expect(
-      verifyBootstrapToken(makeSigner(ctl), token, verifyOpts({ controlPublicKey: ctl.publicKey, expectedOrderId: 'ord-999' })),
+      verifyBootstrapToken(makeSigner(), token, verifyOpts({ controlPublicKey: ctl.publicKey, expectedOrderId: 'ord-999' })),
     ).toMatchObject({ ok: false, reason: 'wrong_deployment' });
     expect(
-      verifyBootstrapToken(makeSigner(ctl), token, verifyOpts({ controlPublicKey: ctl.publicKey, expectedCustomerId: 'cus-999' })),
+      verifyBootstrapToken(makeSigner(), token, verifyOpts({ controlPublicKey: ctl.publicKey, expectedCustomerId: 'cus-999' })),
     ).toMatchObject({ ok: false, reason: 'wrong_customer' });
   });
 
@@ -201,7 +201,7 @@ describe('CONTROL-10 bootstrap token（计算巢注入，一次性）', () => {
     const ctl = makeKeyPair();
     const token = validToken(ctl);
     expect(
-      verifyBootstrapToken(makeSigner(ctl), token, verifyOpts({ controlPublicKey: ctl.publicKey, expectedArtifactsDigest: 'sha256:other' })),
+      verifyBootstrapToken(makeSigner(), token, verifyOpts({ controlPublicKey: ctl.publicKey, expectedArtifactsDigest: 'sha256:other' })),
     ).toMatchObject({ ok: false, reason: 'artifact_mismatch' });
   });
 
@@ -210,7 +210,7 @@ describe('CONTROL-10 bootstrap token（计算巢注入，一次性）', () => {
     const token = validToken(ctl); // issuedAt = NOW-1000
     // 模拟接收时钟比签发时间早 1 小时 → skew 超阈值
     const verdict = verifyBootstrapToken(
-      makeSigner(ctl),
+      makeSigner(),
       token,
       verifyOpts({ controlPublicKey: ctl.publicKey, receiverNowMs: NOW - 3600_000 }),
     );

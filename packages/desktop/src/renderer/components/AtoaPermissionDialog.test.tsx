@@ -27,6 +27,26 @@ const request: AtoaPermissionRequest = {
     requestedSources: ['current_chat', 'schedules'],
     initiatorProposal: '发起方 Otto 建议 15:00。',
   },
+  messages: [
+    {
+      id: 'message-1',
+      senderAccountId: 'peer-1',
+      recipientAccountId: 'me',
+      content: '只授权这一条评审消息',
+      createdAt: '2026-07-20T00:10:00.000Z',
+      readAt: null,
+      e2ee: true,
+    },
+    {
+      id: 'message-2',
+      senderAccountId: 'me',
+      recipientAccountId: 'peer-1',
+      content: '不要授权这一条',
+      createdAt: '2026-07-20T00:11:00.000Z',
+      readAt: null,
+      e2ee: true,
+    },
+  ],
 };
 
 describe('A2A 权限选择弹窗', () => {
@@ -48,10 +68,15 @@ describe('A2A 权限选择弹窗', () => {
 
     fireEvent.click(screen.getByRole('checkbox', { name: /当前聊天/ }));
     fireEvent.click(screen.getByRole('checkbox', { name: /日程/ }));
+    expect((screen.getByRole('button', {
+      name: '允许所选范围',
+    }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('checkbox', { name: /只授权这一条评审消息/ }));
     fireEvent.click(screen.getByRole('button', { name: '允许所选范围' }));
     expect(onDecision).toHaveBeenCalledWith({
       kind: 'allow',
       sources: ['current_chat', 'schedules'],
+      messageIds: ['message-1'],
     });
   });
 
@@ -60,11 +85,10 @@ describe('A2A 权限选择弹窗', () => {
     render(<AtoaPermissionDialog request={request} onDecision={onDecision} />);
 
     expect(screen.getByText(/不包括本机文件、模型密钥/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '允许全部可授权资料' }));
+    fireEvent.click(screen.getByRole('button', { name: '允许全部非私聊资料' }));
     expect(onDecision).toHaveBeenCalledWith({
       kind: 'allow',
       sources: [
-        'current_chat',
         'enterprise_knowledge',
         'work_logs',
         'schedules',

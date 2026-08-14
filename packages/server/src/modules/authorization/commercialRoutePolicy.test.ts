@@ -11,11 +11,17 @@ describe('commercial enterprise route policy', () => {
     ['/enterprise/atoa/inbox', 'atoa'],
     ['/enterprise/messages/unread', 'direct_messages'],
     ['/enterprise/message-attachments/file-1', 'direct_messages'],
+    ['/enterprise/attachments/inline', 'direct_messages'],
+    ['/enterprise/e2ee/mls/key-packages', 'direct_messages'],
     ['/enterprise/park/services/request', 'park_service'],
     ['/enterprise/park-statistics/inbox', 'park_service'],
+    ['/enterprise/park-settings', 'park_service'],
+    ['/enterprise/park-meeting-rooms', 'park_service'],
+    ['/enterprise/park-meeting-slots', 'park_service'],
     ['/enterprise/skills/leaderboard', 'skill_market'],
     ['/enterprise/knowledge/revisions', 'knowledge'],
     ['/enterprise/organization/departments', 'enterprise_tree'],
+    ['/enterprise/accounts/account-1', 'enterprise_tree'],
     ['/enterprise/platform/organizations/org-a', 'enterprise_tree'],
   ] as const)('maps %s to %s', (path, feature) => {
     expect(commercialFeatureForEnterpriseRoute(path)).toBe(feature);
@@ -34,9 +40,11 @@ describe('commercial enterprise route policy', () => {
     expect(commercialFeatureForEnterpriseRoute(path)).toBeNull();
   });
 
-  it('leaves the mixed enterprise and park ticket route to ticket-level policy', () => {
+  it('leaves mixed internal and park tickets to record-level policy', () => {
     expect(commercialFeatureForEnterpriseRoute('/enterprise/tickets')).toBeNull();
-    expect(commercialFeatureForEnterpriseRoute('/enterprise/tickets/ticket-1/action')).toBeNull();
+    expect(
+      commercialFeatureForEnterpriseRoute('/enterprise/tickets/ticket-1/action'),
+    ).toBeNull();
   });
 
   it('does not match similar unowned path prefixes', () => {

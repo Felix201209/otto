@@ -69,6 +69,18 @@ const EMPTY_SUMMARY: AttentionSummary = {
   items: [],
 };
 
+function isEnterpriseInboxSession(sessionId: string): boolean {
+  return sessionId.startsWith('enterprise:message:') ||
+    sessionId.startsWith('enterprise:federation:');
+}
+
+function enterpriseInboxIdentity(sessionId: string): string {
+  if (sessionId.startsWith('enterprise:federation:')) {
+    return sessionId.slice('enterprise:federation:'.length);
+  }
+  return sessionId.slice('enterprise:message:'.length);
+}
+
 /**
  * 把企业未读计数（enterpriseUnreadCounts）和会话未读（unreadSessions）
  * 与园区工单未读摘要合并成统一提醒视图。
@@ -123,10 +135,10 @@ export function computeAttentionSummary(params: {
 
   for (const [sessionId, count] of Object.entries(enterpriseUnreadCounts)) {
     if (count <= 0) continue;
-    if (!sessionId.startsWith('enterprise:message:')) continue;
+    if (!isEnterpriseInboxSession(sessionId)) continue;
     coveredSessionIds.add(sessionId);
 
-    const accountId = sessionId.slice('enterprise:message:'.length);
+    const accountId = enterpriseInboxIdentity(sessionId);
     const notification = notificationBySender.get(accountId);
     const preview = notification?.preview ?? '';
     const isAtoa =
@@ -213,7 +225,7 @@ export function computeNavBadgeCounts(
   unreadSessions?: string[],
 ): { inboxUnread: number; workUnread: number; globalUnread: number } {
   const inboxUnread = Object.entries(enterpriseUnreadCounts ?? {})
-    .filter(([key, count]) => key.startsWith('enterprise:message:') && count > 0)
+    .filter(([key, count]) => isEnterpriseInboxSession(key) && count > 0)
     .reduce((sum, [, count]) => sum + count, 0);
 
   const workUnread = parkTicketSummary

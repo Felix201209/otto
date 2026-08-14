@@ -21,8 +21,6 @@ import type {
   MeshNatSession,
   MeshPathReceipt,
 } from './meshContracts.js';
-import { validateSignedRendezvousRecord } from './meshCrypto.js';
-
 const NODE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/u;
 const SESSION_ID = /^mns_[A-Za-z0-9_-]{16,}$/u;
 const BASE64URL = /^[A-Za-z0-9_-]+$/u;

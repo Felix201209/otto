@@ -115,8 +115,7 @@ Desktop and server code communicate through the core library, which manages requ
 - **[Sandbox](./sandbox.md)** - Sandboxed execution environment
 
 ### 📖 Legal & Policies
-- **[Terms of Service & Privacy](./tos-privacy.md)** - Legal terms and privacy policy
-- **[Quota and Pricing](./quota-and-pricing.md)** - Usage limits and pricing
+- **[数据治理与合规实施基线](./compliance/data-governance.zh-CN.md)** - 工程与部署控制基线，不替代经法务确认的正式协议
 
 ### 🤝 Contributing
 - **[Contributing Guide](../CONTRIBUTING.md)** - How to contribute to Otto

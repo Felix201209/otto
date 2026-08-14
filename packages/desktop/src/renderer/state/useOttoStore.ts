@@ -46,8 +46,14 @@ export type FileAttachment = Extract<
   { type: 'file_reference' }
 >['value'];
 
-/** 附件统一类型（图片或文件）。 */
-export type Attachment = ImageAttachment | FileAttachment;
+/** 用户明确选择的目录引用；只发送规范目录路径，不在 renderer 递归读取。 */
+export type FolderAttachment = Extract<
+  OttoMessage['content'][number],
+  { type: 'folder_reference' }
+>['value'];
+
+/** 附件统一类型（图片、文件或目录）。 */
+export type Attachment = ImageAttachment | FileAttachment | FolderAttachment;
 
 export interface OttoState {
   connection: ConnectionState;
@@ -1171,6 +1177,8 @@ export function useOttoStore(
       for (const value of attachments) {
         if ('data' in value) {
           content.push({ type: 'image_reference', value: value as ImageAttachment });
+        } else if ('folderPath' in value) {
+          content.push({ type: 'folder_reference', value: value as FolderAttachment });
         } else {
           content.push({ type: 'file_reference', value: value as FileAttachment });
         }

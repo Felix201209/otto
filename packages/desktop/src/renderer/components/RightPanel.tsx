@@ -862,8 +862,8 @@ export function RightPanel({
           <div className="otto-documents-panel">
             <div className="otto-worklog-panel__head">
               <div>
-                <strong>Documents</strong>
-                <span>Open, edit, and export local files</span>
+                <strong>文档</strong>
+                <span>打开、编辑与导出本地文件</span>
               </div>
               <button type="button" disabled={documentsLoading} onClick={() => void selectDocumentFiles()}>
                 {documentsLoading ? '读取中' : '选择文件'}

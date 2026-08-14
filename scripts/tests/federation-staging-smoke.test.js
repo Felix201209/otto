@@ -32,11 +32,24 @@ describe('federation staging smoke configuration', () => {
       gatewayUrl: 'https://federation.test',
       serverAUrl: 'https://server-a.test',
       serverBUrl: 'https://server-b.test',
+      attachmentBytes: 12 * 1024 * 1024,
       sourceCommit: '1d8f944',
     });
     expect(() => parseFederationStagingSmokeConfig(environment({
       OTTO_FEDERATION_SMOKE_SERVER_A_URL: 'https://user:secret@server-a.test',
     }))).toThrow('without credentials');
+  });
+
+  it('validates the encrypted attachment acceptance size', () => {
+    expect(parseFederationStagingSmokeConfig(environment({
+      OTTO_FEDERATION_SMOKE_ATTACHMENT_BYTES: '12582913',
+    })).attachmentBytes).toBe(12 * 1024 * 1024 + 1);
+    expect(() => parseFederationStagingSmokeConfig(environment({
+      OTTO_FEDERATION_SMOKE_ATTACHMENT_BYTES: '0',
+    }))).toThrow('must be an integer');
+    expect(() => parseFederationStagingSmokeConfig(environment({
+      OTTO_FEDERATION_SMOKE_ATTACHMENT_BYTES: String(65 * 1024 * 1024),
+    }))).toThrow('must be an integer');
   });
 
   it('only permits HTTP for an explicitly enabled loopback test', () => {

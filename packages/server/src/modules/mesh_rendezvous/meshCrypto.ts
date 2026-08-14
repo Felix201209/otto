@@ -10,7 +10,6 @@ import {
   createHash,
   createPrivateKey,
   createPublicKey,
-  generateKeyPairSync,
   sign,
   verify,
   type KeyObject,
@@ -26,7 +25,6 @@ import {
   type MeshRendezvousRecord,
   type MeshRelayTicket,
   type SignedMeshRendezvousRecord,
-  type SignedMeshRelayTicket,
 } from './meshContracts.js';
 
 export const MESH_SIGNATURE_PREFIX = 'mesh_sig_v1:';

@@ -20,7 +20,6 @@ import {
   createControlCommandScheduler,
   type ControlCommandQueueStore,
   type ControlCommandOutboxStore,
-  type ControlCommandRunResult,
 } from './index.js';
 
 const NOW_MS = 1_700_000_000_000;
@@ -82,6 +81,15 @@ describe('control command outbox (CONTROL-12)', () => {
     expect(a.claimed).toBe(1);
     // 第二条已被标 delivering，不再可见
     expect(b.claimed).toBe(0);
+  });
+
+  it('不会重新领取已经达到重试上限的异常 pending 条目', () => {
+    const { db, outbox } = makeStores();
+    enqueueOutboxInRepository(outbox, 'a', NOW_MS);
+    db.prepare(
+      'UPDATE control_command_outbox SET delivery_attempts = ? WHERE command_id = ?',
+    ).run(5, 'a');
+    expect(claimReadyOutboxRows(outbox, NOW_MS, 10, 5).claimed).toBe(0);
   });
 
   it('失败按指数退避延后，超限走死信', () => {

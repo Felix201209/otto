@@ -74,4 +74,22 @@ describe('make-latest-json', () => {
       expect(asset.url).toBe(`https://updates.example.com/otto/${asset.name}`);
     }
   });
+
+  it('supports an explicit Windows-only transition manifest', async () => {
+    const { dir, notes, version } = await fixtureDir();
+    execFileSync(process.execPath, [scriptPath, version, notes, dir], {
+      env: {
+        ...process.env,
+        OTTO_UPDATE_REQUIRED_ASSETS: 'win-x64',
+      },
+      stdio: 'pipe',
+    });
+    const manifest = JSON.parse(
+      await readFile(path.join(dir, 'latest.json'), 'utf8'),
+    );
+    expect(Object.keys(manifest.assets)).toEqual(['win-x64']);
+    expect(manifest.assets['win-x64'].name).toBe(
+      `Otto-Setup-${version}-win-x64.exe`,
+    );
+  });
 });

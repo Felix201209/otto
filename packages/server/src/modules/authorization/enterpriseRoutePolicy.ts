@@ -59,10 +59,12 @@ const MEMBER_ROUTES = new Set([
   '/enterprise/presence/heartbeat',
   '/enterprise/organization/sync',
   '/enterprise/park/view',
+  '/enterprise/park/services/request',
   '/enterprise/messages/unread',
   '/enterprise/auth/join-organization',
   '/enterprise/park-resources',
   '/enterprise/park-statistics/inbox',
+  '/enterprise/park/services/request',
   '/enterprise/modules/updates/client',
   '/enterprise/deployment/update-policy',
   '/enterprise/account-sync',
@@ -92,6 +94,7 @@ export function isMemberRoute(path: string): boolean {
     path.startsWith('/enterprise/skills/') ||
     path.startsWith('/enterprise/knowledge/') ||
     path === '/enterprise/atoa/inbox' ||
+    path.startsWith('/enterprise/e2ee/') ||
     path.startsWith('/enterprise/messages/') ||
     path.startsWith('/enterprise/message-attachments/') ||
     (path.startsWith('/enterprise/federation/') &&
@@ -111,12 +114,11 @@ export function isPublicSimpleParkRoute(
     (path === '/enterprise/park/join' && method === 'POST') ||
     (path === '/enterprise/park/services' &&
       method === 'GET' &&
-      url.searchParams.has('parkId')) ||
-    (path === '/enterprise/park/services/request' && method === 'POST')
+      url.searchParams.has('parkId'))
   );
 }
 
-export function isLicenseMaintenanceRoute(path: string): boolean {
+export function isLicenseMaintenanceRoute(path: string, method?: string): boolean {
   return (
     path === '/enterprise/health' ||
     path === '/enterprise/export' ||
@@ -128,7 +130,7 @@ export function isLicenseMaintenanceRoute(path: string): boolean {
     path === '/enterprise/deployment/data-protection' ||
     path === '/enterprise/deployment/data-protection/backup' ||
     path === '/enterprise/deployment/diagnostics' ||
-    path === '/enterprise/account-sync' ||
+    (path === '/enterprise/account-sync' && method === 'GET') ||
     path === '/enterprise/privacy' ||
     path === '/enterprise/privacy/accept' ||
     path === '/enterprise/privacy/export' ||

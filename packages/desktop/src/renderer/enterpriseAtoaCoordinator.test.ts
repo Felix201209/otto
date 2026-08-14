@@ -85,7 +85,7 @@ describe('企业 A2A 请求协调器', () => {
     });
 
     expect(status).toBe('answered');
-    expect(collectContext).toHaveBeenCalledWith(['schedules']);
+    expect(collectContext).toHaveBeenCalledWith(['schedules'], []);
     expect(askOtto).toHaveBeenCalledWith({
       question: '协商明天的评审时间',
       workContext: '接收方日程：明天 16:00 后有空。',
@@ -112,6 +112,7 @@ describe('企业 A2A 请求协调器', () => {
       requestPermission: vi.fn(async () => ({
         kind: 'allow' as const,
         sources: ['current_chat' as const],
+        messageIds: ['message-authorized'],
       })),
       collectContext: vi.fn(async () => ({
         context: '聊天上下文',

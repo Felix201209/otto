@@ -24,8 +24,11 @@ const COMMERCIAL_ROUTE_RULES: readonly CommercialRouteRule[] = [
   { feature: 'atoa', matches: prefix('/enterprise/atoa') },
   { feature: 'direct_messages', matches: prefix('/enterprise/messages') },
   { feature: 'direct_messages', matches: prefix('/enterprise/message-attachments') },
+  { feature: 'direct_messages', matches: prefix('/enterprise/attachments') },
+  { feature: 'direct_messages', matches: prefix('/enterprise/e2ee') },
   { feature: 'direct_messages', matches: prefix('/enterprise/presence/heartbeat') },
   { feature: 'park_service', matches: prefix('/enterprise/park') },
+  { feature: 'park_service', matches: (path) => path.startsWith('/enterprise/park-') },
   { feature: 'park_service', matches: prefix('/enterprise/park-services') },
   { feature: 'park_service', matches: prefix('/enterprise/park-resources') },
   { feature: 'park_service', matches: prefix('/enterprise/park-statistics') },
@@ -33,6 +36,7 @@ const COMMERCIAL_ROUTE_RULES: readonly CommercialRouteRule[] = [
   { feature: 'knowledge', matches: prefix('/enterprise/knowledge') },
   { feature: 'enterprise_tree', matches: prefix('/enterprise/organization') },
   { feature: 'enterprise_tree', matches: prefix('/enterprise/organizations') },
+  { feature: 'enterprise_tree', matches: prefix('/enterprise/accounts') },
   { feature: 'enterprise_tree', matches: prefix('/enterprise/platform/organizations') },
 ] as const;
 

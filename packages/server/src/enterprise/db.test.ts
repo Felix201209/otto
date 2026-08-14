@@ -170,7 +170,7 @@ describe('旧账号会话迁移', () => {
     const db = await freshDb();
     expect(db.getDatabaseReadiness()).toEqual({
       ready: true,
-      schemaVersion: 19,
+      schemaVersion: 22,
     });
     const sessionColumns = db
       .getDB()
@@ -209,14 +209,16 @@ describe('数据库 readiness', () => {
     const db = await freshDb();
     expect(db.getDatabaseReadiness()).toEqual({
       ready: true,
-      schemaVersion: 19,
+      schemaVersion: 22,
     });
   });
 
   it('从 v10 升级时保留工单历史并允许记录物业报修转交', async () => {
     const first = await freshDb();
     const creator = first.createAccount({
-      username: 'ticket-migration-creator', password: 'ticket-migration-password', name: '迁移申请人',
+      username: 'ticket-migration-creator',
+      password: 'ticket-migration-password',
+      name: '迁移申请人',
     });
     first.createTicket({
       createdByAccountId: creator.id,
@@ -251,12 +253,27 @@ describe('数据库 readiness', () => {
 
     vi.resetModules();
     const reopened: DbModule = await import('./db.js');
-    expect(reopened.getDatabaseReadiness()).toEqual({ ready: true, schemaVersion: 19 });
-    const tableSql = (reopened.getDB().prepare(
-      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ticket_events'",
-    ).get() as { sql: string }).sql;
+    expect(reopened.getDatabaseReadiness()).toEqual({
+      ready: true,
+      schemaVersion: 22,
+    });
+    const tableSql = (
+      reopened
+        .getDB()
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ticket_events'",
+        )
+        .get() as { sql: string }
+    ).sql;
     expect(tableSql).toContain("'transfer'");
-    expect((reopened.getDB().prepare('SELECT COUNT(*) AS count FROM ticket_events').get() as { count: number }).count).toBe(1);
+    expect(
+      (
+        reopened
+          .getDB()
+          .prepare('SELECT COUNT(*) AS count FROM ticket_events')
+          .get() as { count: number }
+      ).count,
+    ).toBe(1);
   });
 
   it('从 v11 补齐既有园区申请单号并推进当日园区级序列', async () => {
@@ -309,7 +326,7 @@ describe('数据库 readiness', () => {
     try {
       expect(reopened.getDatabaseReadiness()).toEqual({
         ready: true,
-        schemaVersion: 19,
+        schemaVersion: 22,
       });
       const migrated = reopened.getTicketForAccount(
         legacyTicket.id,
@@ -317,10 +334,13 @@ describe('数据库 readiness', () => {
       );
       expect(migrated?.applicationNumber).toBe('20260729001');
       expect(
-        reopened.getDB().prepare(
-          `SELECT date_key, last_sequence FROM park_application_sequences
+        reopened
+          .getDB()
+          .prepare(
+            `SELECT date_key, last_sequence FROM park_application_sequences
            WHERE park_id = ?`,
-        ).get(park.id),
+          )
+          .get(park.id),
       ).toEqual({ date_key: '20260729', last_sequence: 1 });
     } finally {
       reopened.closeEnterpriseDatabase();
@@ -386,7 +406,7 @@ describe('数据库 readiness', () => {
     try {
       expect(reopened.getDatabaseReadiness()).toEqual({
         ready: true,
-        schemaVersion: 19,
+        schemaVersion: 22,
       });
       const organizationColumns = reopened
         .getDB()
@@ -533,12 +553,12 @@ describe('数据库 readiness', () => {
     future.exec(`
       CREATE TABLE future_only (id TEXT PRIMARY KEY);
       INSERT INTO future_only (id) VALUES ('preserve-me');
-      PRAGMA user_version = 20;
+      PRAGMA user_version = 23;
     `);
     future.close();
 
     const db = await freshDb();
-    expect(() => db.getDB()).toThrow(/schema version 20.*current version 19/i);
+    expect(() => db.getDB()).toThrow(/schema version 23.*current version 22/i);
 
     const reopened = new Database(path.join(tmpDir, 'data.db'));
     try {
@@ -548,7 +568,7 @@ describe('数据库 readiness', () => {
             user_version: number;
           }
         ).user_version,
-      ).toBe(20);
+      ).toBe(23);
       expect(
         (reopened.prepare('SELECT id FROM future_only').get() as { id: string })
           .id,
@@ -563,61 +583,103 @@ describe('园区服务表单价格归一化', () => {
   it('停车和网络电话按受理单计算本次金额与月度持续费用', async () => {
     const db = await freshDb();
     const common = {
-      company: '测试企业', roomNumber: '1203 室', contact: '张三', phone: '13800138000',
+      company: '测试企业',
+      roomNumber: '1203 室',
+      contact: '张三',
+      phone: '13800138000',
     };
-    expect(db.normalizeParkServiceFormData('parking', {
-      ...common, applicationType: 'underground-fixed', quantity: '2',
-    })).toMatchObject({
-      applicationType: '地下固定停车位', quantity: '2', pricing: '260元/月',
-      amountCny: '520', recurringMonthlyCny: '520',
+    expect(
+      db.normalizeParkServiceFormData('parking', {
+        ...common,
+        applicationType: 'underground-fixed',
+        quantity: '2',
+      }),
+    ).toMatchObject({
+      applicationType: '地下固定停车位',
+      quantity: '2',
+      pricing: '260元/月',
+      amountCny: '520',
+      recurringMonthlyCny: '520',
     });
-    expect(db.normalizeParkServiceFormData('network-phone', {
-      ...common, businessType: 'phone-open', quantity: '2', expectedDate: '2026-08-01',
-    })).toMatchObject({
-      quantity: '2', amountCny: '540', recurringMonthlyCny: '70', expectedDate: '2026-08-01',
+    expect(
+      db.normalizeParkServiceFormData('network-phone', {
+        ...common,
+        businessType: 'phone-open',
+        quantity: '2',
+        expectedDate: '2026-08-01',
+      }),
+    ).toMatchObject({
+      quantity: '2',
+      amountCny: '540',
+      recurringMonthlyCny: '70',
+      expectedDate: '2026-08-01',
     });
   });
 
   it('物业客服一次完成回复并转交工程部，工程完成说明回到原客服记录', async () => {
     const db = await freshDb();
-    const parkOrganization = db.createOrganization({ name: '测试园区方', slug: 'simple-repair-park' });
+    const parkOrganization = db.createOrganization({
+      name: '测试园区方',
+      slug: 'simple-repair-park',
+    });
     const parkAdmin = db.createAccount({
       organizationId: parkOrganization.id,
-      username: 'simple.repair.admin', password: 'simple-repair-admin-password',
-      name: '园区管理员', isAdmin: true,
+      username: 'simple.repair.admin',
+      password: 'simple-repair-admin-password',
+      name: '园区管理员',
+      isAdmin: true,
     });
     const specialist = db.createAccount({
       organizationId: parkOrganization.id,
-      username: 'simple.repair.service', password: 'simple-repair-service-password',
+      username: 'simple.repair.service',
+      password: 'simple-repair-service-password',
       name: '园区客服',
     });
     const engineer = db.createAccount({
       organizationId: parkOrganization.id,
-      username: 'simple.repair.engineer', password: 'simple-repair-engineer-password',
+      username: 'simple.repair.engineer',
+      password: 'simple-repair-engineer-password',
       name: '工程人员',
       department: '工程部',
     });
-    const tenant = db.createOrganization({ name: '测试入驻企业', slug: 'simple-repair-tenant' });
+    const tenant = db.createOrganization({
+      name: '测试入驻企业',
+      slug: 'simple-repair-tenant',
+    });
     const tenantAdmin = db.createAccount({
       organizationId: tenant.id,
-      username: 'simple.repair.tenant.admin', password: 'simple-repair-tenant-password',
-      name: '企业管理员', isAdmin: true,
+      username: 'simple.repair.tenant.admin',
+      password: 'simple-repair-tenant-password',
+      name: '企业管理员',
+      isAdmin: true,
     });
     const reporter = db.createAccount({
       organizationId: tenant.id,
-      username: 'simple.repair.reporter', password: 'simple-repair-reporter-password',
+      username: 'simple.repair.reporter',
+      password: 'simple-repair-reporter-password',
       name: '报修员工',
     });
     const park = db.createPark({
-      adminOrganizationId: parkOrganization.id, actorAccountId: parkAdmin.id, name: '测试产业园',
+      adminOrganizationId: parkOrganization.id,
+      actorAccountId: parkAdmin.id,
+      name: '测试产业园',
     });
-    const invite = db.issueParkInvite({ parkId: park.id, actorAccountId: parkAdmin.id });
+    const invite = db.issueParkInvite({
+      parkId: park.id,
+      actorAccountId: parkAdmin.id,
+    });
     db.joinOrganizationToPark({
-      organizationId: tenant.id, actorAccountId: tenantAdmin.id, code: invite.code,
-      address: 'A 座', roomNumber: '1203 室',
+      organizationId: tenant.id,
+      actorAccountId: tenantAdmin.id,
+      code: invite.code,
+      address: 'A 座',
+      roomNumber: '1203 室',
     });
     db.setParkServiceSpecialist({
-      parkId: park.id, actorAccountId: parkAdmin.id, serviceId: 'repair', accountId: specialist.id,
+      parkId: park.id,
+      actorAccountId: parkAdmin.id,
+      serviceId: 'repair',
+      accountId: specialist.id,
     });
     const ticket = db.createTicket({
       createdByAccountId: reporter.id,
@@ -625,8 +687,13 @@ describe('园区服务表单价格归一化', () => {
       title: '物业报修 · 灯具维修',
       description: '办公室灯具无法点亮',
       formData: {
-        company: tenant.name, roomNumber: '1203 室', contact: reporter.name, phone: '13800138000',
-        category: '灯具维修', issue: '办公室灯具无法点亮', urgency: '普通',
+        company: tenant.name,
+        roomNumber: '1203 室',
+        contact: reporter.name,
+        phone: '13800138000',
+        category: '灯具维修',
+        issue: '办公室灯具无法点亮',
+        urgency: '普通',
       },
     });
     const transferred = db.updateTicket({
@@ -639,26 +706,22 @@ describe('园区服务表单价格归一化', () => {
     });
     expect(transferred.status).toBe('已转交');
     expect(transferred.history.map((entry) => entry.action)).toEqual([
-      'created', 'respond', 'transfer',
+      'created',
+      'respond',
+      'transfer',
     ]);
-    expect(
-      db.getTicketForAccount(ticket.id, reporter.id),
-    ).toMatchObject({
+    expect(db.getTicketForAccount(ticket.id, reporter.id)).toMatchObject({
       creatorUpdateAt: expect.any(String),
       creatorUpdateReadAt: null,
     });
     db.closeEnterpriseDatabase();
     vi.resetModules();
     const reopened: DbModule = await import('./db.js');
-    expect(
-      reopened.getTicketForAccount(ticket.id, reporter.id),
-    ).toMatchObject({
+    expect(reopened.getTicketForAccount(ticket.id, reporter.id)).toMatchObject({
       creatorUpdateAt: expect.any(String),
       creatorUpdateReadAt: null,
     });
-    expect(
-      reopened.markTicketRead(ticket.id, reporter.id),
-    ).toMatchObject({
+    expect(reopened.markTicketRead(ticket.id, reporter.id)).toMatchObject({
       creatorUpdateAt: expect.any(String),
       creatorUpdateReadAt: expect.any(String),
     });
@@ -699,12 +762,14 @@ describe('账号数据恢复快照', () => {
     const payload = {
       schemaVersion: 1 as const,
       generatedAt: '2026-07-26T10:00:00.000Z',
-      files: [{
-        path: 'memory/global.md',
-        content: memoryContent,
-        modifiedAtMs: Date.parse('2026-07-26T10:00:00.000Z'),
-        sha256: createHash('sha256').update(memoryContent).digest('hex'),
-      }],
+      files: [
+        {
+          path: 'memory/global.md',
+          content: memoryContent,
+          modifiedAtMs: Date.parse('2026-07-26T10:00:00.000Z'),
+          sha256: createHash('sha256').update(memoryContent).digest('hex'),
+        },
+      ],
     };
 
     const stored = db.putAccountSyncSnapshot({
@@ -720,8 +785,11 @@ describe('账号数据恢复快照', () => {
       payload,
       deviceId: 'device-a',
     });
-    const raw = db.getDB()
-      .prepare('SELECT payload_ciphertext FROM account_sync_snapshots WHERE account_id = ?')
+    const raw = db
+      .getDB()
+      .prepare(
+        'SELECT payload_ciphertext FROM account_sync_snapshots WHERE account_id = ?',
+      )
       .get(first.id) as { payload_ciphertext: string };
     expect(raw.payload_ciphertext).not.toContain(secret);
     expect(db.listAccountSyncSnapshots(first.id)).toEqual([
@@ -739,7 +807,10 @@ describe('账号数据恢复快照', () => {
       throw new Error('expected account sync conflict');
     } catch (error) {
       expect(error).toBeInstanceOf(db.AccountSyncConflictError);
-      expect((error as InstanceType<typeof db.AccountSyncConflictError>).currentVersion).toBe(1);
+      expect(
+        (error as InstanceType<typeof db.AccountSyncConflictError>)
+          .currentVersion,
+      ).toBe(1);
     }
 
     db.closeEnterpriseDatabase();
@@ -949,9 +1020,7 @@ describe('企业组织结构与功能配置', () => {
       feishuOpenId: 'ou_shared_policy',
     });
 
-    expect(db.isFeishuAutoReplyEnabledForOpenId('ou_shared_policy')).toBe(
-      true,
-    );
+    expect(db.isFeishuAutoReplyEnabledForOpenId('ou_shared_policy')).toBe(true);
     db.updateOrganizationFeatures(other.id, { feishu_auto_reply: false });
     expect(db.isFeishuAutoReplyEnabledForOpenId('ou_shared_policy')).toBe(
       false,
@@ -1135,24 +1204,45 @@ describe('园区数据统计任务', () => {
   it('按企业隔离投递，支持分派、填报、审核、退回和催办', async () => {
     const db = await freshDb();
     const parkAdmin = db.createAccount({
-      username: 'park-statistics-admin', password: 'park-statistics-password', name: '园区管理员', isAdmin: true,
+      username: 'park-statistics-admin',
+      password: 'park-statistics-password',
+      name: '园区管理员',
+      isAdmin: true,
     });
     const park = db.createPark({
       adminOrganizationId: db.DEFAULT_ORGANIZATION_ID,
       actorAccountId: parkAdmin.id,
       name: '统计测试园区',
     });
-    const tenantOrg = db.createOrganization({ name: '入住企业甲', slug: 'statistics-tenant' });
+    const tenantOrg = db.createOrganization({
+      name: '入住企业甲',
+      slug: 'statistics-tenant',
+    });
     const ceo = db.createAccount({
       organizationId: tenantOrg.id,
-      username: 'statistics-ceo', password: 'statistics-ceo-password', name: '企业负责人', isAdmin: true,
+      username: 'statistics-ceo',
+      password: 'statistics-ceo-password',
+      name: '企业负责人',
+      isAdmin: true,
     });
     const employee = db.createAccount({
       organizationId: tenantOrg.id,
-      username: 'statistics-employee', password: 'statistics-employee-password', name: '填报员工', isAdmin: false,
+      username: 'statistics-employee',
+      password: 'statistics-employee-password',
+      name: '填报员工',
+      isAdmin: false,
     });
-    const invite = db.issueParkInvite({ parkId: park.id, actorAccountId: parkAdmin.id });
-    db.joinOrganizationToPark({ organizationId: tenantOrg.id, actorAccountId: ceo.id, code: invite.code, address: 'A 座 101', roomNumber: '101' });
+    const invite = db.issueParkInvite({
+      parkId: park.id,
+      actorAccountId: parkAdmin.id,
+    });
+    db.joinOrganizationToPark({
+      organizationId: tenantOrg.id,
+      actorAccountId: ceo.id,
+      code: invite.code,
+      address: 'A 座 101',
+      roomNumber: '101',
+    });
 
     const created = db.createParkDataStatisticsTask({
       createdByAccountId: parkAdmin.id,
@@ -1163,21 +1253,43 @@ describe('园区数据统计任务', () => {
       organizationIds: [tenantOrg.id],
     });
     expect(created.recipientCount).toBe(1);
-    expect(db.listParkDataStatisticsTasks(ceo.id)[0]?.assignments[0]).toMatchObject({
+    expect(
+      db.listParkDataStatisticsTasks(ceo.id)[0]?.assignments[0],
+    ).toMatchObject({
       organizationId: tenantOrg.id,
       ceoAccountId: ceo.id,
       status: 'pending',
     });
-    expect(db.listParkDataStatisticsTasks(parkAdmin.id)[0]?.assignments).toHaveLength(1);
+    expect(
+      db.listParkDataStatisticsTasks(parkAdmin.id)[0]?.assignments,
+    ).toHaveLength(1);
 
     db.delegateParkDataStatistics(created.task.id, ceo.id, employee.id);
-    db.submitParkDataStatisticsDraft(created.task.id, employee.id, { 营业收入: '100 万', 员工人数: '20' });
-    expect(db.listParkDataStatisticsTasks(ceo.id)[0]?.assignments[0]?.status).toBe('pending_review');
-    db.reviewParkDataStatistics(created.task.id, ceo.id, false, '请补充统计口径');
-    expect(db.listParkDataStatisticsTasks(employee.id)[0]?.assignments[0]?.status).toBe('returned');
-    db.submitParkDataStatisticsDraft(created.task.id, employee.id, { 营业收入: '100 万', 员工人数: '20', 统计口径: '含税' });
+    db.submitParkDataStatisticsDraft(created.task.id, employee.id, {
+      营业收入: '100 万',
+      员工人数: '20',
+    });
+    expect(
+      db.listParkDataStatisticsTasks(ceo.id)[0]?.assignments[0]?.status,
+    ).toBe('pending_review');
+    db.reviewParkDataStatistics(
+      created.task.id,
+      ceo.id,
+      false,
+      '请补充统计口径',
+    );
+    expect(
+      db.listParkDataStatisticsTasks(employee.id)[0]?.assignments[0]?.status,
+    ).toBe('returned');
+    db.submitParkDataStatisticsDraft(created.task.id, employee.id, {
+      营业收入: '100 万',
+      员工人数: '20',
+      统计口径: '含税',
+    });
     db.reviewParkDataStatistics(created.task.id, ceo.id, true);
-    expect(db.listParkDataStatisticsTasks(parkAdmin.id)[0]?.assignments[0]?.status).toBe('submitted');
+    expect(
+      db.listParkDataStatisticsTasks(parkAdmin.id)[0]?.assignments[0]?.status,
+    ).toBe('submitted');
     db.remindParkDataStatistics(created.task.id, parkAdmin.id);
   });
 });
@@ -1451,12 +1563,14 @@ describe('企业成员直聊', () => {
       senderAccountId: alice.id,
       recipientAccountId: bob.id,
       content: '',
-      attachments: [{
-        fileName: '项目说明.pdf',
-        mimeType: 'application/pdf',
-        size: file.length,
-        data: file.toString('base64'),
-      }],
+      attachments: [
+        {
+          fileName: '项目说明.pdf',
+          mimeType: 'application/pdf',
+          size: file.length,
+          data: file.toString('base64'),
+        },
+      ],
     });
 
     expect(message.content).toContain('项目说明.pdf');
@@ -1468,10 +1582,13 @@ describe('企业成员直聊', () => {
       }),
     ]);
     const attachmentId = message.attachments[0]!.id;
-    const stored = db.getDB().prepare(
-      `SELECT content, storage_backend, storage_key
+    const stored = db
+      .getDB()
+      .prepare(
+        `SELECT content, storage_backend, storage_key
        FROM direct_message_attachments WHERE id = ?`,
-    ).get(attachmentId) as {
+      )
+      .get(attachmentId) as {
       content: Uint8Array;
       storage_backend: string;
       storage_key: string;
@@ -1482,19 +1599,23 @@ describe('企业成员直聊', () => {
       path.join(tmpDir, 'attachments', ...stored.storage_key.split('/')),
     );
     expect(encryptedFile.includes(file)).toBe(false);
-    expect(db.getDirectMessageAttachment({
-      organizationId: db.DEFAULT_ORGANIZATION_ID,
-      accountId: bob.id,
-      attachmentId,
-    })).toMatchObject({
+    expect(
+      db.getDirectMessageAttachment({
+        organizationId: db.DEFAULT_ORGANIZATION_ID,
+        accountId: bob.id,
+        attachmentId,
+      }),
+    ).toMatchObject({
       id: attachmentId,
       data: file.toString('base64'),
     });
-    expect(() => db.getDirectMessageAttachment({
-      organizationId: db.DEFAULT_ORGANIZATION_ID,
-      accountId: charlie.id,
-      attachmentId,
-    })).toThrow('附件不存在或无权访问');
+    expect(() =>
+      db.getDirectMessageAttachment({
+        organizationId: db.DEFAULT_ORGANIZATION_ID,
+        accountId: charlie.id,
+        attachmentId,
+      }),
+    ).toThrow('附件不存在或无权访问');
   });
 
   it('拒绝给自己、跨企业或停用成员发送消息', async () => {

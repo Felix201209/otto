@@ -1014,6 +1014,39 @@ describe('deleteSession / renameSession actions（发帧）', () => {
   });
 });
 
+describe('目录附件发送', () => {
+  it('把 Composer 的目录附件转换成 folder_reference 协议片段', () => {
+    const { view, push } = setup();
+    push({
+      type: 'session_upsert',
+      payload: { session: makeSession({ sessionId: 'folder-session' }) },
+    });
+    act(() => view.result.current.actions.selectSession('folder-session'));
+    sendSpy.mockClear();
+
+    act(() => {
+      view.result.current.actions.sendMessage('', 'local', [{
+        folderName: '客户资料',
+        folderPath: 'C:\\Users\\tester\\Documents\\客户资料',
+      }]);
+    });
+
+    expect(sendSpy).toHaveBeenCalledWith({
+      type: 'send_user_message',
+      payload: expect.objectContaining({
+        sessionId: 'folder-session',
+        content: [{
+          type: 'folder_reference',
+          value: {
+            folderName: '客户资料',
+            folderPath: 'C:\\Users\\tester\\Documents\\客户资料',
+          },
+        }],
+      }),
+    });
+  });
+});
+
 describe('Agent profile 启动动作', () => {
   it('A2A 本地协助会话在服务端确认后才发送一次任务提示', async () => {
     const { view, push } = setup();

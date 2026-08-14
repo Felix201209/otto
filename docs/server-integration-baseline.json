@@ -1,0 +1,235 @@
+{
+  "schemaVersion": 2,
+  "authority": {
+    "repository": "Felix201209/otto",
+    "branch": "internal",
+    "baselineCommit": "1874681db2f108aa6a9b6d47ee62578d4ce37ac2",
+    "cataloguedAt": "2026-08-14T06:20:00Z",
+    "releaseRule": "The latest origin/internal commit must be an ancestor of a release source. Additional commits are allowed only on reviewed release branches or version tags.",
+    "integratedSources": [
+      {
+        "name": "origin/codex/sqlcipher",
+        "tip": "c625bc8672875d8b17d2f7b8db131b06c7c34eda",
+        "disposition": "integrated",
+        "integrationCommits": ["3f7ce0e43a464bc39b97128580f7750117228e7f"],
+        "capabilities": [
+          "SQLCipher lifecycle",
+          "PostgreSQL authority and importer",
+          "S3 and Redis topology",
+          "KMS envelope boundary",
+          "MLS transport and device trust"
+        ],
+        "reason": "Merged into the latest internal descendant through the reviewed PR #233 integration commit; the source branch is no longer a release authority."
+      },
+      {
+        "name": "origin/felixypz/mls-attachments-279",
+        "tip": "f17c38dd533194f35545dae7c0c6f6177db79350",
+        "disposition": "rewritten",
+        "integrationCommits": ["05dfc8a4927ee54be066ba4788c5658981ac081e"],
+        "capabilities": [
+          "MLS private-message attachment encryption",
+          "multipart resume",
+          "attachment authorization"
+        ],
+        "reason": "The attachment behavior was replayed on the integrated security baseline without restoring the obsolete login-page patch."
+      },
+      {
+        "name": "origin/felixypz/macos-integration-1.10.1",
+        "tip": "d645a78ce72d46e3683549081b895f6bf7d6b253",
+        "disposition": "integrated",
+        "integrationCommits": ["d645a78ce72d46e3683549081b895f6bf7d6b253"],
+        "capabilities": [
+          "SQLCipher packaged runtime custody",
+          "macOS release integration",
+          "enterprise login compatibility"
+        ],
+        "reason": "This internal descendant is the security integration parent of the authoritative candidate, not an independent release line."
+      },
+      {
+        "name": "release/1.9.11-transition",
+        "tip": "9fd820d25552f90d54f3c52899d9a2ac63922ce9",
+        "disposition": "rewritten",
+        "integrationCommits": [
+          "1aaa45950ed06f2dee9c96b12172a3a04e59d450",
+          "1f0b78abaf674878f5ee861cd177fdf209d9ada4",
+          "5c99baed97c2343ad2d0a2990b1cd64d4505990b",
+          "d031e20c2a1066e3a263328076e399836809b098",
+          "dccafb929e8af3dfac28b86fc541ece13d7993aa",
+          "a0cd62f2a2304ed3f38451b0a63e583c333ef0b2",
+          "405e1a54725d66a4d984cf5e3e9da12465762ef7",
+          "6837c0b5e78c860df8e59732898530099b5193a8",
+          "fbdc4e53bf2649ebc2f27fe59a808d4172a68e26"
+        ],
+        "capabilities": [
+          "portable enterprise package",
+          "legacy upgrade compatibility",
+          "redacted health verification",
+          "database cutover write guard",
+          "conversational and work UI modes",
+          "desktop coverage gate"
+        ],
+        "reason": "All nine release commits were replayed individually. Conflicts preserve version 1.10.1, signed artifact verification, security composition roots and tenant-bound park requests."
+      },
+      {
+        "name": "origin/felixypz/server-integration-20260803",
+        "tip": "f722dffaec84cca3a659e9275d1530985847c35b",
+        "disposition": "rewritten",
+        "integrationCommits": [
+          "b4e94e83f8d9717d349fa8cb8c719f1d6a7dc51f",
+          "00553d2272aba46c9c9fc0d56b00a95a1f4638c0",
+          "52cd979cfeab45b7c4b3f2ca07e82fda5ba77181"
+        ],
+        "capabilities": [
+          "machine-readable capability ledger",
+          "version and schema drift gate",
+          "release-source policy gate"
+        ],
+        "reason": "The original ledger tooling was retained and upgraded for the current schema and descendant release policy."
+      },
+      {
+        "name": "origin/codex/e2ee-openmls",
+        "tip": "61f55a61f8d9def1ad983ada00c815ff4a575b11",
+        "disposition": "retired",
+        "integrationCommits": ["3f7ce0e43a464bc39b97128580f7750117228e7f"],
+        "capabilities": ["OpenMLS prototype and trust invariants"],
+        "reason": "Superseded by the integrated MLS authority. It must not be merged again or published independently."
+      },
+      {
+        "name": "origin/agent/e2ee-internal",
+        "tip": "50493b24883f46a0505bb8c6b2a6c6df79e8cd53",
+        "disposition": "retired",
+        "integrationCommits": ["3f7ce0e43a464bc39b97128580f7750117228e7f"],
+        "capabilities": ["legacy device-trust UI and APIs"],
+        "reason": "Superseded by the integrated collaboration and MLS implementation. It must not create a second secure-messaging authority."
+      }
+    ]
+  },
+  "release": {
+    "clientVersion": "1.10.1",
+    "serverVersion": "1.10.1",
+    "serverPackageVersion": "0.1.0",
+    "apiVersion": 4,
+    "enterpriseSchemaVersion": 22,
+    "databaseMigration": {
+      "source": "scripts/enterprise-release-contract.mjs",
+      "supportedSchemaFrom": [
+        2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+        22
+      ],
+      "schemaTo": 22
+    },
+    "capabilities": [
+      "password_auth",
+      "sms_login",
+      "sms_registration",
+      "personal_registration",
+      "personal_enterprise_upgrade",
+      "organization_invites",
+      "usage_summary",
+      "admin_console",
+      "account_deletion",
+      "data_governance_v1",
+      "privacy_self_service",
+      "multi_organization",
+      "direct_messages",
+      "federation_chat_v1",
+      "e2ee_private_messages_v1",
+      "e2ee_device_trust_v1",
+      "e2ee_mls_transport_v1",
+      "e2ee_mls_resource_governance_v1",
+      "e2ee_mls_transport_session_reset_v1",
+      "direct_message_attachments_v1",
+      "encrypted_attachment_storage_v1",
+      "encrypted_message_storage_v1",
+      "atoa",
+      "position_invites",
+      "park_service_push",
+      "park_repair_v1",
+      "park_services_v2",
+      "organization_structure_v1",
+      "organization_feature_switches_v1",
+      "park_membership_v1",
+      "park_specialist_routing_v1",
+      "unread_message_notifications_v1",
+      "account_presence_v1",
+      "park_tenants_v1",
+      "park_tenant_profiles_v1",
+      "park_service_statistics_v1",
+      "private_deployment_v1",
+      "license_enforcement_v1",
+      "encrypted_telemetry_queue_v1",
+      "signed_telemetry_transport_v1",
+      "diagnostic_bundle_v1",
+      "data_protection_v1",
+      "park_resources_v1",
+      "park_meeting_slots_v1",
+      "modular_update_push_v1",
+      "signed_update_policy_v1",
+      "control_command_queue_v1",
+      "account_data_sync_v1",
+      "enterprise_skill_market_v1",
+      "federation_gateway_v1"
+    ],
+    "productModules": [
+      "agent_runtime",
+      "model_gateway",
+      "tool_skill_platform",
+      "personal_intelligence",
+      "document_experts",
+      "identity_organization",
+      "authorization",
+      "collaboration",
+      "enterprise_knowledge",
+      "enterprise_skill_market",
+      "park_services",
+      "data_platform",
+      "commercial_control",
+      "federation_gateway",
+      "mesh_rendezvous",
+      "data_governance",
+      "desktop_shell",
+      "integration_adapters"
+    ]
+  },
+  "acceptance": [
+    {
+      "id": "latest_internal_parent",
+      "status": "verified",
+      "evidence": [
+        "The candidate contains the fetched origin/internal tip cfc17d3fa434b0265b8803dd6b51436b2cc6d1af as an ancestor; authority baseline 1874681db2f108aa6a9b6d47ee62578d4ce37ac2 remains the historical integration anchor."
+      ]
+    },
+    {
+      "id": "security_and_release_sources_integrated",
+      "status": "verified",
+      "evidence": [
+        "PR #233 security integration, MLS attachments and all nine 1.9.11 transition commits are ancestors of the candidate through the integration commits recorded above."
+      ]
+    },
+    {
+      "id": "version_schema_capability_mapping",
+      "status": "verified",
+      "evidence": [
+        "The validator binds product version 1.10.1, Enterprise API 4, schema 22, capabilities and product modules to source constants."
+      ]
+    },
+    {
+      "id": "automated_candidate_verification",
+      "status": "verified",
+      "evidence": [
+        "2026-08-14 candidate merge 7fff2c785e08842bdcbac4e6ef0e03acd72edbec passed live integration-baseline verification, module boundaries, doctor, lint, typecheck, root and desktop production builds, script tests and the E2EE candidate gate.",
+        "Full Windows test execution passed outside the filesystem sandbox: core 2725 passed / 24 skipped, server 1334 passed / 1 skipped, desktop 886 passed, for 4945 passing tests in total."
+      ]
+    },
+    {
+      "id": "real_release_artifact_acceptance",
+      "status": "planned",
+      "evidence": []
+    },
+    {
+      "id": "external_e2ee_audit_and_platform_signing",
+      "status": "blocked_external_evidence",
+      "evidence": []
+    }
+  ]
+}

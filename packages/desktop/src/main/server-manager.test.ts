@@ -5,6 +5,7 @@
  */
 
 import { EventEmitter } from 'node:events';
+import * as fsSync from 'node:fs';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -12,6 +13,7 @@ import type { Server as HttpServer } from 'node:http';
 import { describe, expect, it, vi } from 'vitest';
 import type { ServerEndpoint } from 'otto-server';
 import {
+  prepareDesktopSqlCipherRuntime,
   ServerManager,
   type ServerManagerDependencies,
 } from './server-manager.js';
@@ -39,6 +41,68 @@ const ENTERPRISE_ACCOUNT = {
   positionTitle: '工程师',
   leaseExpiresAt: '2026-07-19T12:00:00.000Z',
 };
+
+describe('desktop SQLCipher runtime custody', () => {
+  it('creates one permission-restricted key and configures the packaged native binding', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-desktop-custody-'));
+    const userDir = path.join(root, 'otto-user');
+    const resourcesPath = path.join(root, 'Otto.app', 'Contents', 'Resources');
+    const packagedBinding = path.join(resourcesPath, 'sqlcipher', 'better_sqlite3.node');
+    const environment: NodeJS.ProcessEnv = { OTTO_USER_DIR: userDir };
+    try {
+      await fs.mkdir(path.dirname(packagedBinding), { recursive: true });
+      await fs.writeFile(packagedBinding, 'native-binding-probe');
+      const first = prepareDesktopSqlCipherRuntime(environment, {
+        homeDirectory: root,
+        resourcesPath,
+      });
+      const firstKey = fsSync.readFileSync(first.keyPath!);
+
+      expect(firstKey).toHaveLength(32);
+      expect(environment.OTTO_DATABASE_ENCRYPTION_KEY_FILE).toBe(first.keyPath);
+      expect(environment.OTTO_SQLCIPHER_NATIVE_BINDING).toBe(
+        packagedBinding,
+      );
+      if (process.platform !== 'win32') {
+        expect(fsSync.statSync(first.keyPath!).mode & 0o777).toBe(0o600);
+      }
+
+      const second = prepareDesktopSqlCipherRuntime(environment, {
+        homeDirectory: root,
+        resourcesPath,
+      });
+      expect(second.keyPath).toBe(first.keyPath);
+      expect(fsSync.readFileSync(second.keyPath!)).toEqual(firstKey);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves explicit operator custody and does nothing when SQLCipher is disabled', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-desktop-custody-'));
+    try {
+      const operatorKey = path.join(root, 'operator.key');
+      const explicit: NodeJS.ProcessEnv = {
+        OTTO_USER_DIR: path.join(root, 'explicit-user'),
+        OTTO_DATABASE_ENCRYPTION_KEY_FILE: operatorKey,
+        OTTO_SQLCIPHER_NATIVE_BINDING: '/operator/better_sqlite3.node',
+      };
+      expect(prepareDesktopSqlCipherRuntime(explicit, { homeDirectory: root }))
+        .toEqual({ keyPath: operatorKey, nativeBindingPath: '/operator/better_sqlite3.node' });
+      expect(fsSync.existsSync(path.join(explicit.OTTO_USER_DIR!, 'custody'))).toBe(false);
+
+      const disabled: NodeJS.ProcessEnv = {
+        OTTO_USER_DIR: path.join(root, 'disabled-user'),
+        OTTO_DATABASE_ENCRYPTION: 'disabled',
+      };
+      expect(prepareDesktopSqlCipherRuntime(disabled, { homeDirectory: root }))
+        .toEqual({ keyPath: null, nativeBindingPath: null });
+      expect(fsSync.existsSync(path.join(disabled.OTTO_USER_DIR!, 'custody'))).toBe(false);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});
 
 function discoveredMainModule() {
   return {
