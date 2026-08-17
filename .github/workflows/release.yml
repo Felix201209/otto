@@ -339,6 +339,10 @@ jobs:
             echo
             echo "Source commit: \`${GITHUB_SHA}\`"
             echo
+            if [ "${{ inputs.release_channel || 'stable' }}" = "transition" ]; then
+              echo "This is a short transition release, not an LTS/LSTC release."
+              echo
+            fi
             echo "### Windows no-proxy download"
             echo
             echo "[Download Windows x64 installer from the Otto mirror](${UPDATE_MIRROR_ASSET_BASE_URL}/Otto-Setup-${VERSION}-win-x64.exe)"

@@ -3,12 +3,16 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DEFAULT_UPDATE_ASSET_BASE_URL } from './update-mirror-config.mjs';
 import { verifyUpdateManifest } from './verify-update-manifest.mjs';
 
 const tempDirs = [];
-const scriptPath = path.resolve(process.cwd(), 'scripts/verify-update-manifest.mjs');
+const scriptPath = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  'verify-update-manifest.mjs',
+);
 
 afterEach(async () => {
   await Promise.all(

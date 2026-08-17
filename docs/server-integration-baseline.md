@@ -13,15 +13,16 @@ branches are never direct release sources.
 The current integration candidate contains the fetched `origin/internal` tip
 `cfc17d3fa434b0265b8803dd6b51436b2cc6d1af`. Historical integration anchor
 `1874681db2f108aa6a9b6d47ee62578d4ce37ac2` remains in the ledger so earlier
-source dispositions stay auditable. The candidate preserves product version
-`1.10.1` and integrates the reviewed SQLCipher/E2EE work, MLS attachments,
-macOS packaging fixes and the nine 1.9.11 transition release changes without
-downgrading the product version.
+source dispositions stay auditable. This reviewed short-lived release branch
+maps the integrated candidate to product version `1.9.12`; `internal` remains
+on its independent 1.10.x development line. The candidate includes the reviewed
+SQLCipher/E2EE work, MLS attachments, macOS packaging fixes and the nine 1.9.11
+transition release changes.
 
 | Contract                          | Authoritative value | Source                                     |
 | --------------------------------- | ------------------- | ------------------------------------------ |
-| Desktop/client version            | `1.10.1`            | `packages/desktop/package.json`            |
-| Enterprise server product version | `1.10.1`            | root `package.json`                        |
+| Desktop/client version            | `1.9.12`            | `packages/desktop/package.json`            |
+| Enterprise server product version | `1.9.12`            | root `package.json`                        |
 | Internal server package version   | `0.1.0`             | `packages/server/package.json`             |
 | Enterprise HTTP API               | `4`                 | `packages/server/src/enterprise/server.ts` |
 | Enterprise schema                 | `22`                | `packages/server/src/enterprise/db.ts`     |
