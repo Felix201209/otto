@@ -91,6 +91,13 @@ Otto 的发布链路分成三段：先检查异常，再构建 GitHub Release �
 - `OTTO_LICENSE_PUBLIC_KEYS`（JSON 数组或单个 Ed25519 SPKI 公钥；私钥不得进入仓库或客户服务器）
 - `OTTO_RELEASES_TOKEN`
 
+短期过渡版可在手动运行 `Release Build` 时同时选择：
+
+- `release_channel=transition`
+- `unsigned_transition=true`
+
+该例外只允许生成未签名的 Windows、macOS 和企业过渡产物；稳定版仍会强制要求上述代码签名、notarization 和企业 Ed25519 密钥。未签名过渡版仍必须通过 SQLCipher 构建证明、SHA-256、更新清单、安装后原生库加载以及服务器升级 canary。
+
 部署服务器：
 
 - `DEPLOY_HOST`
@@ -103,7 +110,7 @@ Otto 的发布链路分成三段：先检查异常，再构建 GitHub Release �
 - `DEPLOY_PORT`，默认 `22`
 - `DEPLOY_CONFIG_PATH`，默认 `/etc/otto-enterprise/enterprise.env`
 
-Release 默认使用当前仓库的 `GITHUB_TOKEN`。如果未来要发布到独立 release 仓库，需要同时修改 workflow 的 `RELEASES_REPO` 和 token。
+`OTTO_RELEASES_TOKEN` 仅用于从源码仓库自动发布到独立的 `Felix201209/otto-releases`。如果当前协作者只有仓库写权限、无权管理 Secret，工作流会保留完整构建产物并继续执行服务器与更新镜像验收，随后由已登录且有 `otto-releases` 写权限的维护者下载 Actions 产物并一次性上传；不应把个人 GitHub Token 持久化到脚本、日志或仓库文件。
 
 ## Manual Release
 
