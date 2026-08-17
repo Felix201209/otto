@@ -49,7 +49,7 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "css-loader": "^7.1.2",
-    "electron": "^43.1.0",
+    "electron": "43.2.0",
     "electron-builder": "26.15.3",
     "html-webpack-plugin": "^5.6.3",
     "jsdom": "^26.1.0",
@@ -79,7 +79,7 @@
         ]
       }
     ],
-    "electronVersion": "43.1.0",
+    "electronVersion": "43.2.0",
     "afterPack": "scripts/after-pack.cjs",
     "directories": {
       "output": "release",
