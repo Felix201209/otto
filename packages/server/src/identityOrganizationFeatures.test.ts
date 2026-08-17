@@ -61,6 +61,7 @@ describe('identity_organization feature configuration kernel', () => {
 
     try {
       expect(features.getConfiguredOrganizationFeatures('org-a')).toEqual({
+        model_gateway: true,
         enterprise_tree: true,
         park_service: true,
         feishu_auto_reply: true,
@@ -168,6 +169,7 @@ describe('authorization organization feature access policy', () => {
 
     try {
       expect(access.getOrganizationFeatures('org-a')).toEqual({
+        model_gateway: false,
         enterprise_tree: true,
         park_service: false,
         feishu_auto_reply: false,
