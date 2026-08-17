@@ -333,7 +333,7 @@ export function SetupPanel({
           <div className="otto-setup__titles">
             <h2 className="otto-setup__title">配置你的模型</h2>
             <p className="otto-setup__subtitle">
-              Otto 自带密钥（BYO-key）：选供应商、粘贴 API key、填模型即可。
+              用户自带密钥（BYO-key）：选供应商、粘贴 API key、填模型即可。
             </p>
           </div>
           <button
@@ -358,17 +358,19 @@ export function SetupPanel({
                 <span className="otto-setup__modelname">{m.displayName}</span>
                 {/* 厂商按接入域名识别；provider 只是协议名（全是 openai 的观感问题）。 */}
                 <span className="otto-setup__modelvendor">
-                  {vendorFromBaseUrl(m.baseUrl, m.provider)}
+                  {m.managed ? '企业托管' : vendorFromBaseUrl(m.baseUrl, m.provider)}
                 </span>
-                <button
-                  type="button"
-                  className="otto-setup__modeledit"
-                  aria-label={`编辑 ${m.displayName}`}
-                  onClick={() => startEdit(m)}
-                >
-                  编辑
-                </button>
-                {onDeleteModel ? (
+                {!m.managed ? (
+                  <button
+                    type="button"
+                    className="otto-setup__modeledit"
+                    aria-label={`编辑 ${m.displayName}`}
+                    onClick={() => startEdit(m)}
+                  >
+                    编辑
+                  </button>
+                ) : null}
+                {!m.managed && onDeleteModel ? (
                   <button
                     type="button"
                     className={

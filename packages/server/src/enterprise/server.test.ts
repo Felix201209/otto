@@ -883,6 +883,21 @@ describe('受保护 vs 公开路由边界', () => {
       feature: 'park_service',
     });
 
+    const blockedManagedModels = await fetch(
+      `${base}/enterprise/model-gateway/access-token`,
+      {
+        method: 'POST',
+        headers: { ...memberHeaders, 'content-type': 'application/json' },
+        body: '{}',
+      },
+    );
+    expect(blockedManagedModels.status).toBe(402);
+    await expect(blockedManagedModels.json()).resolves.toEqual({
+      error: 'commercial module is not entitled',
+      code: 'commercial_module_not_entitled',
+      feature: 'model_gateway',
+    });
+
     const entitledMessages = await fetch(`${base}/enterprise/messages/unread`, {
       headers: memberHeaders,
     });

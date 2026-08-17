@@ -1052,6 +1052,16 @@ export interface DeploymentUpdatePolicyCredentials {
   leaseToken: string;
 }
 
+export interface DeploymentEdgeGatewayCredentials {
+  licenseId: string;
+  deploymentId: string;
+  organizationId: string;
+  machineFingerprint: string;
+  leaseEndpoint: string;
+  leaseToken: string;
+  edgeGatewayUrl: string;
+}
+
 /** Returns decrypted credentials only to the in-process commercial control composition. */
 export function getDeploymentUpdatePolicyCredentials(
   store: DeploymentRepositoryStore,
@@ -1069,6 +1079,49 @@ export function getDeploymentUpdatePolicyCredentials(
     machineFingerprint: getMachineFingerprint(),
     leaseEndpoint: license.lease.endpoint,
     leaseToken,
+  };
+}
+
+/**
+ * Returns deployment-scoped secrets only to the in-process model gateway
+ * broker. Neither the account client nor the local Agent receives leaseToken.
+ */
+export function getDeploymentEdgeGatewayCredentials(
+  store: DeploymentRepositoryStore,
+): DeploymentEdgeGatewayCredentials | null {
+  const license = getDeploymentLicense(store);
+  if (
+    license.id === 'unlicensed' ||
+    license.offline ||
+    !license.organizationId ||
+    !license.lease.endpoint ||
+    license.lease.status !== 'active' ||
+    ['missing', 'invalid', 'revoked', 'expired'].includes(license.status)
+  ) {
+    return null;
+  }
+  const payload = latestLicensePayload(store);
+  const leaseToken = payload.leaseToken;
+  const edgeGatewayUrl =
+    process.env.OTTO_EDGE_GATEWAY_URL?.trim() ||
+    (typeof payload.edgeGatewayUrl === 'string'
+      ? payload.edgeGatewayUrl.trim()
+      : '');
+  if (
+    typeof leaseToken !== 'string' ||
+    leaseToken.length < 32 ||
+    !edgeGatewayUrl
+  ) {
+    return null;
+  }
+  return {
+    licenseId: license.id,
+    deploymentId: license.deploymentId,
+    organizationId: license.organizationId,
+    machineFingerprint: getMachineFingerprint(),
+    leaseEndpoint: license.lease.endpoint,
+    leaseToken,
+    edgeGatewayUrl,
   };
 }
 

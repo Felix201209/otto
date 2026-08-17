@@ -69,6 +69,7 @@ import {
   ENTERPRISE_IDENTITY_RECOVERING_MESSAGE,
   ProductWorkspaceStore,
   type AuthenticatedEnterpriseAccount,
+  type AuthenticatedManagedModelGateway,
   type ProductWorkspaceSnapshot,
 } from './productWorkspaceStore.js';
 import {
@@ -97,6 +98,11 @@ import {
 } from './feishu/vendor/credentials.js';
 import { createCoreConfig, resolveDefaultCwd } from './coreConfig.js';
 import { createCoreSessionRuntime } from './runtime.js';
+import {
+  createManagedModelConfig,
+  ManagedModelUnavailableError,
+} from './managedModelGateway.js';
+import { loadEnterpriseModelCatalog } from './modelCatalog.js';
 import { executeSlashCommand, listSlashCommands } from './commands/index.js';
 import {
   deleteCustomModel,
@@ -208,18 +214,22 @@ export type RuntimeFactory = (
   model: string | undefined,
   workspaceContext?: string,
   documentIdentity?: DocumentIdentity,
+  managedModelAccess?: () => AuthenticatedManagedModelGateway | null,
 ) => Promise<SessionRuntime>;
 
 /**
- * 内部测试阶段个人版与企业版都使用成员自己的 BYOK 模型。
- * `otto:*` 仍是未上线的托管模型占位符，只能回退到当前个人模型。
+ * 托管模型只有在企业身份携带有效短令牌时才能进入运行时；旧服务端、
+ * 未授权企业和令牌恢复期间继续使用成员自己的 BYOK 模型。
  */
 export function resolveSessionRuntimeModel(
   productEdition: SessionSummary['productEdition'],
   model: string | undefined,
+  managedGatewayAvailable = false,
 ): string | undefined {
   void productEdition;
-  return model?.startsWith('otto:') ? undefined : model;
+  return model?.startsWith('otto:') && !managedGatewayAvailable
+    ? undefined
+    : model;
 }
 
 /** 默认运行时工厂：构造 headless core Config 并包进 CoreSessionRuntime。 */
@@ -229,6 +239,7 @@ const defaultRuntimeFactory: RuntimeFactory = async (
   model,
   workspaceContext,
   documentIdentity,
+  managedModelAccess,
 ) => {
   const summary = store.getSession(sessionId);
   const profile = resolveAgentProfile(summary?.agentProfileId);
@@ -242,11 +253,23 @@ const defaultRuntimeFactory: RuntimeFactory = async (
   if (workspaceContext && !profile?.toolFree) {
     userRules = userRules ? `${userRules}\n\n${workspaceContext}` : workspaceContext;
   }
+  const managedModelConfig = model?.startsWith('otto:')
+    ? managedModelAccess
+      ? createManagedModelConfig(model, managedModelAccess)
+      : (() => {
+          throw new ManagedModelUnavailableError();
+        })()
+    : undefined;
   const config = createCoreConfig({
     sessionId,
-    // 内部测试阶段一律 BYOK。旧企业会话可能持有 otto:*，交给 coreConfig
-    // 回退到 preferred/首个个人模型，不能再进入尚未上线的中转站路径。
-    model: resolveSessionRuntimeModel(summary?.productEdition, model),
+    // 旧企业会话可能持有 otto:*。没有可信短令牌时必须 fail closed，
+    // 不能把托管模型静默改走成员 BYOK，也不能把企业租约凭据传入 core。
+    model: resolveSessionRuntimeModel(
+      summary?.productEdition,
+      model,
+      Boolean(managedModelConfig),
+    ),
+    ...(managedModelConfig ? { customModels: [managedModelConfig] } : {}),
     feishuMode: Boolean(summary?.feishuChatId),
     ...(userRules ? { userRules } : {}),
     documentIdentity,
@@ -1041,10 +1064,35 @@ export class OttoServer {
     };
   }
 
-  /** 内部测试阶段所有身份都只列成员自己的 BYOK 模型。 */
+  /**
+   * BYOK 始终属于成员本人；Otto 托管目录只在当前企业短令牌允许时出现。
+   * 目录不携带上游 endpoint 或供应商密钥，旧客户端可忽略 managed 字段。
+   */
   private modelInfos(): ModelInfo[] {
     try {
-      return listModelInfos();
+      const byok = listModelInfos();
+      const identity = this.productWorkspace.enterpriseIdentityState();
+      if (identity.status !== 'active') return byok;
+      const gateway = identity.account.managedModelGateway;
+      if (!gateway || Date.parse(gateway.expiresAt) <= Date.now()) return byok;
+      const allowed = new Set(gateway.allowedModels);
+      const existingIds = new Set(byok.map((model) => model.id));
+      const managed = loadEnterpriseModelCatalog()
+        .filter((model) => allowed.has(model.id) && !existingIds.has(model.id))
+        .map<ModelInfo>((model) => ({
+          id: model.id,
+          displayName: model.displayName,
+          provider: model.vendor,
+          enabled: true,
+          source: 'otto',
+          managed: true,
+          creditMultiplier: model.creditMultiplier,
+          inputCreditsPerMTok: model.inputCreditsPerMTok,
+          outputCreditsPerMTok: model.outputCreditsPerMTok,
+          tier: model.tier,
+          pricingStatus: model.pricingStatus,
+        }));
+      return [...byok, ...managed];
     } catch {
       return [];
     }
@@ -3578,6 +3626,12 @@ export class OttoServer {
           model,
           workspaceContext,
           documentIdentity,
+          () => {
+            const identity = this.productWorkspace.enterpriseIdentityState();
+            return identity.status === 'active'
+              ? identity.account.managedModelGateway ?? null
+              : null;
+          },
         );
         const latestSummary = this.store.getSession(sessionId);
         const denied = latestSummary
@@ -3615,7 +3669,10 @@ export class OttoServer {
           type: 'error',
           payload: {
             sessionId,
-            code: 'runtime_init_failed',
+            code:
+              e instanceof ManagedModelUnavailableError
+                ? e.code
+                : 'runtime_init_failed',
             message: `会话运行时初始化失败：${message}`,
           },
         });
@@ -4303,6 +4360,41 @@ function parseEnterpriseIdentitySyncBody(
   ) {
     return { ok: false, error: 'account.tags 必须是字符串数组' };
   }
+  let managedModelGateway:
+    | NonNullable<AuthenticatedEnterpriseAccount['managedModelGateway']>
+    | undefined;
+  if (input.managedModelGateway !== undefined) {
+    if (
+      typeof input.managedModelGateway !== 'object' ||
+      input.managedModelGateway === null ||
+      Array.isArray(input.managedModelGateway)
+    ) {
+      return {
+        ok: false,
+        error: 'account.managedModelGateway 必须是对象',
+      };
+    }
+    const gateway = input.managedModelGateway as Record<string, unknown>;
+    if (
+      typeof gateway.baseUrl !== 'string' ||
+      typeof gateway.accessToken !== 'string' ||
+      typeof gateway.expiresAt !== 'string' ||
+      !Array.isArray(gateway.allowedModels) ||
+      gateway.allowedModels.some((model) => typeof model !== 'string')
+    ) {
+      return {
+        ok: false,
+        error:
+          'account.managedModelGateway 必须包含有效的 baseUrl、accessToken、expiresAt 和 allowedModels',
+      };
+    }
+    managedModelGateway = {
+      baseUrl: gateway.baseUrl,
+      accessToken: gateway.accessToken,
+      expiresAt: gateway.expiresAt,
+      allowedModels: [...gateway.allowedModels] as string[],
+    };
+  }
   let organizationMembers:
     | NonNullable<AuthenticatedEnterpriseAccount['organizationMembers']>
     | undefined;
@@ -4426,6 +4518,7 @@ function parseEnterpriseIdentitySyncBody(
         ? { positionTitle: input.positionTitle }
         : {}),
       ...(organizationMembers !== undefined ? { organizationMembers } : {}),
+      ...(managedModelGateway !== undefined ? { managedModelGateway } : {}),
     },
   };
 }
