@@ -68,7 +68,7 @@
           "conversational and work UI modes",
           "desktop coverage gate"
         ],
-        "reason": "All nine release commits were replayed individually. Conflicts preserve version 1.10.1, signed artifact verification, security composition roots and tenant-bound park requests."
+        "reason": "All nine release commits were replayed individually. Conflicts preserve signed artifact verification, security composition roots and tenant-bound park requests; the short-lived 1.9.12 release branch maps the integrated code to its transition version without changing internal authority."
       },
       {
         "name": "origin/felixypz/server-integration-20260803",
@@ -105,8 +105,8 @@
     ]
   },
   "release": {
-    "clientVersion": "1.10.1",
-    "serverVersion": "1.10.1",
+    "clientVersion": "1.9.12",
+    "serverVersion": "1.9.12",
     "serverPackageVersion": "0.1.0",
     "apiVersion": 4,
     "enterpriseSchemaVersion": 22,
@@ -165,6 +165,7 @@
       "park_meeting_slots_v1",
       "modular_update_push_v1",
       "signed_update_policy_v1",
+      "managed_model_gateway_v1",
       "control_command_queue_v1",
       "account_data_sync_v1",
       "enterprise_skill_market_v1",
@@ -210,7 +211,7 @@
       "id": "version_schema_capability_mapping",
       "status": "verified",
       "evidence": [
-        "The validator binds product version 1.10.1, Enterprise API 4, schema 22, capabilities and product modules to source constants."
+        "The validator binds product version 1.9.12, Enterprise API 4, schema 22, capabilities and product modules to source constants."
       ]
     },
     {
