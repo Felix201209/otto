@@ -29,6 +29,32 @@ import { addFunctionCallsGetter } from './providerConverters/shared.js';
 
 type OpenAIRequest = Record<string, unknown>;
 
+async function resolveAttemptApiKey(
+  modelConfig: CustomModelConfig,
+  staticApiKey: string,
+): Promise<string> {
+  if (!modelConfig.apiKeyProvider) {
+    return staticApiKey;
+  }
+
+  const runtimeToken = await modelConfig.apiKeyProvider();
+  if (typeof runtimeToken !== 'string' || runtimeToken.trim().length === 0) {
+    throw new Error('Runtime API token provider returned an empty token');
+  }
+  return runtimeToken.trim();
+}
+
+async function resolveAttemptAuthHeaders(
+  modelConfig: CustomModelConfig,
+  staticApiKey: string,
+): Promise<Record<string, string>> {
+  const attemptApiKey = await resolveAttemptApiKey(modelConfig, staticApiKey);
+  if (modelConfig.apiKeyProvider) {
+    return { Authorization: `Bearer ${attemptApiKey}` };
+  }
+  return resolveAuthHeaders(modelConfig, attemptApiKey);
+}
+
 /**
  * OpenAI 兼容模型单次调用
  * 使用指数退避重试策略处理 429 和 5xx 错误
@@ -54,11 +80,12 @@ export async function callOpenAICompatibleModel(
   // 使用指数退避重试包装 API 调用
   return retryWithBackoff(
     async () => {
+      const authHeaders = await resolveAttemptAuthHeaders(modelConfig, apiKey);
       const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
+          ...authHeaders,
           ...modelConfig.headers,
         },
         body: JSON.stringify(requestBody),
@@ -103,12 +130,12 @@ export async function callOpenAIResponsesModel(
     systemText,
     maxOutputTokens: resolveOutputTokens(modelConfig),
     stream: false,
-    codexAuth: isCodexAuth(modelConfig, apiKey),
+    codexAuth: !modelConfig.apiKeyProvider && isCodexAuth(modelConfig, apiKey),
   });
 
   return retryWithBackoff(
     async () => {
-      const authHeaders = await resolveAuthHeaders(modelConfig, apiKey);
+      const authHeaders = await resolveAttemptAuthHeaders(modelConfig, apiKey);
       const response = await fetch(url, {
         method: 'POST',
         headers: {
@@ -157,16 +184,17 @@ export async function* callOpenAIResponsesModelStream(
     systemText,
     maxOutputTokens: resolveOutputTokens(modelConfig),
     stream: true,
-    codexAuth: isCodexAuth(modelConfig, apiKey),
+    codexAuth: !modelConfig.apiKeyProvider && isCodexAuth(modelConfig, apiKey),
   });
 
   const response = await retryWithBackoff(
     async () => {
+      const authHeaders = await resolveAttemptAuthHeaders(modelConfig, apiKey);
       const res = await fetch(`${baseUrl}/responses`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(await resolveAuthHeaders(modelConfig, apiKey)),
+          ...authHeaders,
           ...modelConfig.headers,
         },
         body: JSON.stringify(requestBody),
@@ -405,11 +433,12 @@ export async function* callOpenAICompatibleModelStream(
   // 使用指数退避重试包装初始连接
   const response = await retryWithBackoff(
     async () => {
+      const authHeaders = await resolveAttemptAuthHeaders(modelConfig, apiKey);
       const res = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
+          ...authHeaders,
           ...modelConfig.headers,
         },
         body: JSON.stringify(requestBody),
