@@ -16,6 +16,12 @@ const ledger = JSON.parse(
     'utf8',
   ),
 );
+const currentClientVersion = JSON.parse(
+  readFileSync(
+    path.join(rootDir, 'packages/desktop/package.json'),
+    'utf8',
+  ),
+).version;
 const fetchedInternalTip = execFileSync(
   'git',
   ['rev-parse', '--verify', 'origin/internal'],
@@ -39,7 +45,7 @@ describe('server integration baseline', () => {
     expect(
       validateServerIntegrationBaseline({ rootDir, ledger: changed }),
     ).toContain(
-      'release.clientVersion=99.0.0 does not match packages/desktop/package.json=1.10.1',
+      `release.clientVersion=99.0.0 does not match packages/desktop/package.json=${currentClientVersion}`,
     );
   });
 
