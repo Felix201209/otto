@@ -458,6 +458,8 @@ export function getOperationsSecurityStatus() {
 export const getDatabaseReadiness = dataPlatform.getReadiness;
 export const getDatabaseEncryptionStatus =
   dataPlatform.getDatabaseEncryptionStatus;
+export const createEnterpriseDatabaseSnapshot =
+  dataPlatform.createDatabaseSnapshot;
 export const rotateDatabaseEncryptionKey = dataPlatform.rotateDatabaseKey;
 
 export const getDataProtectionStatus = dataProtection.getStatus;

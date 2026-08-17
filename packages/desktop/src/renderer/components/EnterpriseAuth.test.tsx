@@ -258,14 +258,16 @@ describe('专业登录入口', () => {
       />,
     );
     fireEvent.click(screen.getByRole('button', { name: '使用邀请码加入企业' }));
-    fireEvent.change(screen.getByLabelText('企业邀请码'), { target: { value: 'Ab3D-k9Pq-Z7xY' } });
+    fireEvent.change(screen.getByLabelText('企业邀请码'), { target: { value: 'aB3d-k9pq-Z7xY' } });
     fireEvent.change(screen.getByLabelText('手机号'), { target: { value: '13800138000' } });
-    fireEvent.click(screen.getByRole('button', { name: '获取验证码' }));
+    const requestCodeButton = screen.getByRole('button', { name: '获取验证码' }) as HTMLButtonElement;
+    expect(requestCodeButton.disabled).toBe(false);
+    fireEvent.click(requestCodeButton);
 
     await waitFor(() => expect(onRequestRegistrationCode).toHaveBeenCalledWith({
       serverUrl: 'https://enterprise.otto.test',
       phone: '13800138000',
-      inviteCode: 'Ab3D-k9Pq-Z7xY',
+      inviteCode: 'aB3d-k9pq-Z7xY',
     }));
     expect(await screen.findByText('将加入「星河科技」')).toBeTruthy();
 

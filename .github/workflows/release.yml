@@ -109,6 +109,12 @@ jobs:
           name: sqlcipher-native-matrix
           path: native/sqlcipher
 
+      - name: Download verified enterprise Node.js SQLCipher matrix
+        uses: actions/download-artifact@v7
+        with:
+          name: sqlcipher-node-native-matrix
+          path: native/sqlcipher-node
+
       - name: Verify SQLCipher native matrix before packaging
         shell: bash
         env:
@@ -124,6 +130,18 @@ jobs:
             gh attestation verify "$binding" --repo "$GITHUB_REPOSITORY"
           done < <(find native/sqlcipher -type f -name better_sqlite3.node -print0)
           gh attestation verify native/sqlcipher/matrix-manifest.json \
+            --repo "$GITHUB_REPOSITORY"
+          node scripts/verify-sqlcipher-native-assets.mjs \
+            --root native/sqlcipher-node \
+            --runtime node \
+            --expected-build-commit "$GITHUB_SHA" \
+            --expected-source-revision "$SQLCIPHER_SOURCE_REVISION" \
+            --expected-runtime-version "$NODE_VERSION" \
+            --require-matrix-manifest
+          while IFS= read -r -d '' binding; do
+            gh attestation verify "$binding" --repo "$GITHUB_REPOSITORY"
+          done < <(find native/sqlcipher-node -type f -name better_sqlite3.node -print0)
+          gh attestation verify native/sqlcipher-node/matrix-manifest.json \
             --repo "$GITHUB_REPOSITORY"
 
       - name: Resolve release version

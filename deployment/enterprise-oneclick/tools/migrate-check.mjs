@@ -11,8 +11,23 @@ function fail(message) {
 
 const releaseDir = path.resolve(process.argv[2] || '');
 const dataDir = path.resolve(process.argv[3] || '');
+const options = process.argv.slice(4);
+let baselineInspectionPath = null;
+let snapshotOutputPath = null;
+while (options.length > 0) {
+  const option = options.shift();
+  if (option === '--baseline' && options[0]) {
+    baselineInspectionPath = path.resolve(options.shift());
+  } else if (option === '--snapshot' && options[0]) {
+    snapshotOutputPath = path.resolve(options.shift());
+  } else {
+    fail(`不支持的迁移检查参数：${option || 'empty'}`);
+  }
+}
 if (!process.argv[2] || !process.argv[3]) {
-  fail('用法：migrate-check.mjs <release-dir> <isolated-data-dir>');
+  fail(
+    '用法：migrate-check.mjs <release-dir> <isolated-data-dir> [--baseline inspection.json] [--snapshot output.db]',
+  );
 }
 process.env.OTTO_ENTERPRISE_DIR = dataDir;
 const manifest = JSON.parse(
@@ -36,7 +51,83 @@ try {
   ) {
     fail(`迁移后 readiness 不正确：${JSON.stringify(readiness)}`);
   }
-  process.stdout.write(`${JSON.stringify(readiness)}\n`);
+  const handle = database.getDB();
+  const quickCheck = handle.prepare('PRAGMA quick_check').all();
+  if (
+    quickCheck.length !== 1 ||
+    String(quickCheck[0]?.quick_check ?? '') !== 'ok'
+  ) {
+    fail('SQLCipher PRAGMA quick_check failed');
+  }
+  const foreignKeyProblems = handle.prepare('PRAGMA foreign_key_check').all();
+  if (foreignKeyProblems.length > 0) {
+    fail(
+      `SQLCipher foreign_key_check found ${foreignKeyProblems.length} problem(s)`,
+    );
+  }
+  const tables = handle
+    .prepare(
+      `
+      SELECT name
+      FROM sqlite_schema
+      WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+      ORDER BY name
+    `,
+    )
+    .all()
+    .map((row) => String(row.name));
+  const rowCounts = {};
+  for (const table of tables) {
+    const quotedTable = `"${table.replaceAll('"', '""')}"`;
+    rowCounts[table] = Number(
+      handle.prepare(`SELECT COUNT(*) AS count FROM ${quotedTable}`).get()
+        ?.count ?? 0,
+    );
+  }
+  if (baselineInspectionPath) {
+    const baseline = JSON.parse(await readFile(baselineInspectionPath, 'utf8'));
+    if (
+      ![
+        'otto-enterprise-sqlite-inspection-v1',
+        'otto-enterprise-sqlcipher-inspection-v1',
+      ].includes(baseline?.format) ||
+      !baseline.rowCounts ||
+      typeof baseline.rowCounts !== 'object'
+    ) {
+      fail('baseline database inspection is invalid');
+    }
+    const regressions = Object.entries(baseline.rowCounts).flatMap(
+      ([table, count]) => {
+        if (!(table in rowCounts)) return [`${table}: missing after migration`];
+        if (rowCounts[table] < Number(count)) {
+          return [`${table}: ${count} -> ${rowCounts[table]}`];
+        }
+        return [];
+      },
+    );
+    if (regressions.length > 0) {
+      fail(
+        `migration row-count reconciliation failed: ${regressions.join(', ')}`,
+      );
+    }
+  }
+  if (snapshotOutputPath) {
+    if (typeof database.createEnterpriseDatabaseSnapshot !== 'function') {
+      fail('current release does not support SQLCipher snapshots');
+    }
+    database.createEnterpriseDatabaseSnapshot(snapshotOutputPath);
+  }
+  process.stdout.write(
+    `${JSON.stringify({
+      format: 'otto-enterprise-sqlcipher-inspection-v1',
+      ...readiness,
+      quickCheck: 'ok',
+      foreignKeyCheck: 'ok',
+      tables,
+      rowCounts,
+      ...(snapshotOutputPath ? { snapshotCreated: true } : {}),
+    })}\n`,
+  );
 } finally {
   database?.closeEnterpriseDatabase?.();
 }
