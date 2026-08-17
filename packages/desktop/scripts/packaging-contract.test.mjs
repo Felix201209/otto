@@ -174,9 +174,16 @@ describe('desktop packaging contract', () => {
     expect(script).toContain("'--config.mac.notarize=false'");
     expect(script).toContain("'--config.dmg.sign=false'");
     expect(script).toContain("CSC_IDENTITY_AUTO_DISCOVERY: 'false'");
-    expect(workflow).toContain('unsigned_mac_transition:');
+    expect(workflow).toContain('unsigned_transition:');
     expect(workflow).toContain(
-      "OTTO_ALLOW_UNSIGNED_MAC: ${{ inputs.unsigned_mac_transition && '1' || '0' }}",
+      "OTTO_ALLOW_UNSIGNED_MAC: ${{ inputs.unsigned_transition && '1' || '0' }}",
+    );
+    expect(workflow).toContain(
+      "OTTO_ALLOW_UNSIGNED_ENTERPRISE_PACKAGE: ${{ inputs.unsigned_transition && '1' || '0' }}",
+    );
+    expect(workflow).toContain('if: ${{ inputs.unsigned_transition != true }}');
+    expect(workflow).toContain(
+      'Unsigned artifacts are permitted only for the transition release channel.',
     );
   });
 
@@ -220,7 +227,10 @@ describe('desktop packaging contract', () => {
       workflow.indexOf('name: Create draft GitHub release'),
     );
     expect(workflow).toContain("if: github.repository == 'Felix201209/otto'");
-    expect(workflow).toContain('token: ${{ secrets.OTTO_RELEASES_TOKEN }}');
+    expect(workflow).toContain(
+      'OTTO_RELEASES_TOKEN: ${{ secrets.OTTO_RELEASES_TOKEN }}',
+    );
+    expect(workflow).toContain('token: ${{ env.OTTO_RELEASES_TOKEN }}');
     expect(workflow).not.toContain(
       'secrets.OTTO_RELEASES_TOKEN || secrets.GITHUB_TOKEN',
     );
@@ -234,8 +244,9 @@ describe('desktop packaging contract', () => {
       "needs.verify-windows-signature.result == 'success'",
     );
     expect(deliveryScript).toContain("['stapler', 'validate', appPath]");
-    expect(workflow).not.toContain('This release is unsigned');
-    expect(workflow).not.toContain('OTTO_ALLOW_UNSIGNED_ENTERPRISE_PACKAGE');
+    expect(workflow).toContain(
+      'This transition release uses unsigned Windows, macOS, and enterprise artifacts.',
+    );
     expect(workflow).toContain(
       'node scripts/verify-enterprise-package-signature.mjs',
     );
