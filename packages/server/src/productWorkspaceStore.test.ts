@@ -265,6 +265,78 @@ describe('ProductWorkspaceStore', () => {
     expect(store.enterpriseIdentityState().fingerprint).not.toBe(first);
   });
 
+  it('短期模型网关凭据只保存在内存且不会进入 renderer 或磁盘快照', () => {
+    const store = new ProductWorkspaceStore({ rootDir });
+    const accessToken = 'edge-short-token-at-least-thirty-two-characters';
+    store.setAuthenticatedEnterpriseAccount(
+      authenticatedAccount({
+        managedModelGateway: {
+          baseUrl: 'https://edge.otto.test/v1/',
+          accessToken,
+          expiresAt: '2099-01-01T00:05:00.000Z',
+          allowedModels: ['otto:deepseek', 'otto:qwen'],
+        },
+      }),
+    );
+
+    expect(store.enterpriseIdentityState()).toMatchObject({
+      status: 'active',
+      account: {
+        managedModelGateway: {
+          baseUrl: 'https://edge.otto.test/v1',
+          accessToken,
+          allowedModels: ['otto:deepseek', 'otto:qwen'],
+        },
+      },
+    });
+    expect(JSON.stringify(store.snapshot())).not.toContain(accessToken);
+    expect(
+      fs.readFileSync(path.join(rootDir, 'product-workspace.json'), 'utf8'),
+    ).not.toContain(accessToken);
+  });
+
+  it('拒绝过期、非 HTTPS 或越界的模型网关凭据', () => {
+    const store = new ProductWorkspaceStore({ rootDir });
+    const validToken = 'edge-short-token-at-least-thirty-two-characters';
+
+    expect(() =>
+      store.setAuthenticatedEnterpriseAccount(
+        authenticatedAccount({
+          managedModelGateway: {
+            baseUrl: 'http://edge.otto.test/v1',
+            accessToken: validToken,
+            expiresAt: '2099-01-01T00:05:00.000Z',
+            allowedModels: ['otto:deepseek'],
+          },
+        }),
+      ),
+    ).toThrow(/安全要求/);
+    expect(() =>
+      store.setAuthenticatedEnterpriseAccount(
+        authenticatedAccount({
+          managedModelGateway: {
+            baseUrl: 'https://edge.otto.test/v1',
+            accessToken: validToken,
+            expiresAt: '2000-01-01T00:00:00.000Z',
+            allowedModels: ['otto:deepseek'],
+          },
+        }),
+      ),
+    ).toThrow(/已过期/);
+    expect(() =>
+      store.setAuthenticatedEnterpriseAccount(
+        authenticatedAccount({
+          managedModelGateway: {
+            baseUrl: 'https://edge.otto.test/v1',
+            accessToken: validToken,
+            expiresAt: '2099-01-01T00:05:00.000Z',
+            allowedModels: ['custom:openai:attacker'],
+          },
+        }),
+      ),
+    ).toThrow(/无效/);
+  });
+
   it('中心认证身份存在时拒绝所有本机企业身份变更', () => {
     const store = new ProductWorkspaceStore({ rootDir });
     store.setAuthenticatedEnterpriseAccount(authenticatedAccount());

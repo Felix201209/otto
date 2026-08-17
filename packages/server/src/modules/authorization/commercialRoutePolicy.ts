@@ -21,6 +21,10 @@ const prefix = (value: string) => (path: string): boolean =>
  * export its data.
  */
 const COMMERCIAL_ROUTE_RULES: readonly CommercialRouteRule[] = [
+  {
+    feature: 'model_gateway',
+    matches: prefix('/enterprise/model-gateway'),
+  },
   { feature: 'atoa', matches: prefix('/enterprise/atoa') },
   { feature: 'direct_messages', matches: prefix('/enterprise/messages') },
   { feature: 'direct_messages', matches: prefix('/enterprise/message-attachments') },

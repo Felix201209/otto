@@ -59,6 +59,32 @@ describe('SetupPanel 复制路径', () => {
 });
 
 describe('SetupPanel 编辑模型', () => {
+  it('企业托管模型只展示授权来源，不允许本地编辑或删除', () => {
+    const onDeleteModel = vi.fn();
+    const { getByText, queryByRole } = render(
+      <SetupPanel
+        models={[{
+          id: 'otto:deepseek',
+          displayName: '企业 DeepSeek',
+          provider: 'openai',
+          baseUrl: '',
+          modelId: 'deepseek-chat',
+          maxTokens: 64000,
+          enabled: true,
+          managed: true,
+        }]}
+        onClose={() => {}}
+        onSave={() => {}}
+        onDeleteModel={onDeleteModel}
+      />,
+    );
+
+    expect(getByText('企业托管')).toBeTruthy();
+    expect(queryByRole('button', { name: '编辑 企业 DeepSeek' })).toBeNull();
+    expect(queryByRole('button', { name: '删除' })).toBeNull();
+    expect(onDeleteModel).not.toHaveBeenCalled();
+  });
+
   it('编辑时预填全部非敏感字段，key 留空，并发 replaceId', () => {
     const onSave = vi.fn();
     const { getByRole, getByDisplayValue, getByPlaceholderText, getByText } = render(

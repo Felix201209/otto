@@ -12,6 +12,7 @@ import {
   flushTelemetryQueue as flushTelemetryQueueInRepository,
   createDeploymentBillingUsageStore,
   getDeploymentId as getDeploymentIdFromRepository,
+  getDeploymentEdgeGatewayCredentials as getDeploymentEdgeGatewayCredentialsFromRepository,
   getDeploymentLicense as getDeploymentLicenseFromRepository,
   getDeploymentUpdatePolicyCredentials,
   getMachineFingerprint as getMachineFingerprintFromRepository,
@@ -126,6 +127,8 @@ export function createCommercialControlComposition(
     getMachineFingerprint: getMachineFingerprintFromRepository,
     getDeploymentLicense: () =>
       getDeploymentLicenseFromRepository(deploymentStore),
+    getDeploymentEdgeGatewayCredentials: () =>
+      getDeploymentEdgeGatewayCredentialsFromRepository(deploymentStore),
     importDeploymentLicense: (raw: unknown) =>
       importDeploymentLicenseIntoRepository(deploymentStore, raw),
     importDeploymentLicenseLease: (raw: unknown) =>

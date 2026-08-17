@@ -8,3 +8,4 @@ export * from './modelUsageTypes.js';
 export * from './modelGatewaySchema.js';
 export * from './modelGatewayComposition.js';
 export * from './modelCostEstimator.js';
+export * from './edgeAccessTokenClient.js';

@@ -151,6 +151,12 @@ License 暂停时执行层关闭对应功能但不删除配置，授权恢复后
 `enterprise/db.ts` 只注入 SQLite、账号、企业和 ID 生成能力；`model_gateway` 对持久化的依赖通过 `data_platform`
 公共契约显式声明，既有 HTTP 路径与响应结构保持兼容。
 
+托管模型执行链由 `model_gateway` 的第二个边界承担：企业 Server 只凭当前在线 License
+租约向 Otto Control 换取账号绑定、模型白名单绑定且最长五分钟的 Edge 短令牌；桌面主进程
+把短令牌同步到本地 Server 内存，renderer、磁盘快照和日志均不接触令牌。Control 只下发
+企业策略允许的请求模型交集，License、组织开关或短令牌任一失效即 fail closed；BYOK 配置
+继续独立存储和执行，不会被托管模型失败路径替代。
+
 第二十四阶段建立 `personal_intelligence` 的首个服务端物理内核，将企业工作日志、可披露估算口径和人效报表迁入
 独立的 Types、Estimates、Analytics、Repository 与 Facade。非默认企业写入必须携带企业上下文，企业和员工均须
 处于 active 状态；日志与审计在同一即时事务提交，失败不留孤儿记录。历史和报表按企业隔离，通过身份模块注入的

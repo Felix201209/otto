@@ -8,6 +8,7 @@ import { commercialFeatureForEnterpriseRoute } from './commercialRoutePolicy.js'
 
 describe('commercial enterprise route policy', () => {
   it.each([
+    ['/enterprise/model-gateway/access-token', 'model_gateway'],
     ['/enterprise/atoa/inbox', 'atoa'],
     ['/enterprise/messages/unread', 'direct_messages'],
     ['/enterprise/message-attachments/file-1', 'direct_messages'],

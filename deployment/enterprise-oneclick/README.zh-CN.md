@@ -134,6 +134,11 @@ chmod 600 ./enterprise.env
 
 未启用联邦时应保留 `OTTO_FEDERATION_ENABLED=0`。安装和升级会原样保存上述配置，但不会自动生成签名私钥，也不会绕过 Control 的部署注册与吊销检查。
 
+企业购买 Otto 托管模型时，可配置 `OTTO_EDGE_GATEWAY_URL` 指向 Otto Control 的 HTTPS
+Edge Gateway。企业 Server 使用当前在线 License 租约为已登录账号换取五分钟短令牌，
+桌面端只保存于内存；未授权、租约过期、网关不可达或模型不在策略中均会 fail closed，
+不会回退到其他企业或用户的 API Key。未购买该模块时保持为空，不影响 BYOK 模型。
+
 `OTTO_ENTERPRISE_ADMIN_TOKEN=auto` 会生成不输出到日志的随机平台令牌。迁移库已有管理员账号时不会重建账号；空库会生成一次性管理员密码，安装结束后只写到 `/root/otto-enterprise-bootstrap-*.txt`。
 
 `external` 表示你自行管理 Nginx/Caddy/负载均衡器。安装器不会验证外置证书、公网 health 或 404 屏蔽规则，完成提示也会明确标为“待外置代理验收”。

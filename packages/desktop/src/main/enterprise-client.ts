@@ -178,6 +178,13 @@ export interface TokenUsageRecordInput {
   totalTokens: number;
 }
 
+export interface ManagedModelGatewayAccess {
+  baseUrl: string;
+  accessToken: string;
+  expiresAt: string;
+  allowedModels: string[];
+}
+
 export interface EnterpriseKnowledgeRecordInput {
   sourceId: string;
   title?: string;
@@ -2023,6 +2030,64 @@ export class EnterpriseClient {
     return this.currentAccount
       ? (JSON.parse(JSON.stringify(this.currentAccount)) as EnterpriseAccount)
       : null;
+  }
+
+  /**
+   * 取得绑定当前企业账号的短期 Edge 凭据。Control 与企业服务器只参与换取
+   * 凭据，不接收聊天正文；企业登录 token 不会离开 Electron main。
+   */
+  async getManagedModelGatewayAccess(): Promise<ManagedModelGatewayAccess> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, [
+      'managed_model_gateway_v1',
+    ]);
+    const response = await this.request<{
+      gateway?: Partial<ManagedModelGatewayAccess>;
+    }>('/enterprise/model-gateway/access-token', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    const gateway = response.gateway;
+    const expiresAtMs = Date.parse(gateway?.expiresAt ?? '');
+    if (
+      typeof gateway?.baseUrl !== 'string' ||
+      typeof gateway.accessToken !== 'string' ||
+      gateway.accessToken.length < 32 ||
+      !Number.isFinite(expiresAtMs) ||
+      expiresAtMs <= Date.now() ||
+      !Array.isArray(gateway.allowedModels) ||
+      gateway.allowedModels.length < 1 ||
+      gateway.allowedModels.some(
+        (model) => typeof model !== 'string' || !model.startsWith('otto:'),
+      )
+    ) {
+      throw new Error('企业模型网关返回了无效的短期凭据');
+    }
+    let endpoint: URL;
+    try {
+      endpoint = new URL(gateway.baseUrl);
+    } catch {
+      throw new Error('企业模型网关地址无效');
+    }
+    const loopback =
+      endpoint.protocol === 'http:' &&
+      ['127.0.0.1', '::1', 'localhost'].includes(endpoint.hostname);
+    if (
+      (endpoint.protocol !== 'https:' && !loopback) ||
+      endpoint.username ||
+      endpoint.password ||
+      endpoint.search ||
+      endpoint.hash ||
+      !/^\/v1\/?$/u.test(endpoint.pathname)
+    ) {
+      throw new Error('企业模型网关地址不符合安全要求');
+    }
+    return {
+      baseUrl: `${endpoint.origin}/v1`,
+      accessToken: gateway.accessToken,
+      expiresAt: new Date(expiresAtMs).toISOString(),
+      allowedModels: [...new Set(gateway.allowedModels)],
+    };
   }
 
   private async request<T>(

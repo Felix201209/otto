@@ -33,6 +33,7 @@ import type { SessionRuntime } from './sessions.js';
 import type {
   ApiResponse,
   HealthInfo,
+  ModelInfo,
   ServerToClient,
   SessionSummary,
   OttoMessage,
@@ -135,6 +136,9 @@ describe('会话运行时模型边界', () => {
     expect(resolveSessionRuntimeModel('enterprise', customModel)).toBe(customModel);
     expect(resolveSessionRuntimeModel('personal', customModel)).toBe(customModel);
     expect(resolveSessionRuntimeModel('enterprise', 'otto:managed')).toBeUndefined();
+    expect(
+      resolveSessionRuntimeModel('enterprise', 'otto:deepseek', true),
+    ).toBe('otto:deepseek');
   });
 });
 
@@ -223,6 +227,45 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
     expect(models.payload.models[0].managed).not.toBe(true);
     expect(models.payload.current).toBe(models.payload.models[0].id);
     client.close();
+  });
+
+  it('仅向持有有效企业短令牌的账号展示网关允许的托管模型', async () => {
+    const synced = await fetch(`${baseUrl}/internal/enterprise-identity`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${server.controlToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        account: authenticatedAccount({
+          managedModelGateway: {
+            baseUrl: 'https://edge.otto.test/v1',
+            accessToken: 'edge-short-token-at-least-thirty-two-characters',
+            expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+            allowedModels: ['otto:deepseek'],
+          },
+        }),
+      }),
+    });
+    expect(synced.status).toBe(200);
+
+    const models = await getJson<ModelInfo[]>(`${baseUrl}/models`);
+    expect(models.status).toBe(200);
+    expect(models.body.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'otto:deepseek',
+          source: 'otto',
+          managed: true,
+          enabled: true,
+        }),
+      ]),
+    );
+    expect(models.body.data).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'otto:qwen' }),
+      ]),
+    );
   });
 
   it('企业视图下仍允许内部成员保存和删除个人 BYOK 模型', async () => {

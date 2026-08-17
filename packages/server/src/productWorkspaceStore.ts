@@ -125,6 +125,13 @@ export interface AuthenticatedEnterpriseOrganizationMember {
   status: 'active' | 'disabled';
 }
 
+export interface AuthenticatedManagedModelGateway {
+  baseUrl: string;
+  accessToken: string;
+  expiresAt: string;
+  allowedModels: string[];
+}
+
 /**
  * 已由中心企业服务认证的账号。role/tags 仅保留作输入兼容，绝不参与
  * 本地授权；授权唯一依据是中心服务签发的 isAdmin。
@@ -146,6 +153,8 @@ export interface AuthenticatedEnterpriseAccount {
   positionId?: string | null;
   positionTitle?: string | null;
   organizationMembers?: AuthenticatedEnterpriseOrganizationMember[];
+  /** 短期 Edge 凭据，仅保存在本机 server 内存，绝不进入 workspace 快照。 */
+  managedModelGateway?: AuthenticatedManagedModelGateway;
 }
 
 export type EnterpriseIdentityState =
@@ -197,6 +206,63 @@ function cleanNullableDirectoryText(
 ): string | null {
   if (value === null) return null;
   return cleanBoundedDirectoryText(value, label, maxLength);
+}
+
+function normalizeManagedModelGateway(
+  value: unknown,
+  nowMs: number,
+): AuthenticatedManagedModelGateway | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('托管模型网关凭据格式无效');
+  }
+  const candidate = value as Record<string, unknown>;
+  const accessToken =
+    typeof candidate.accessToken === 'string' ? candidate.accessToken : '';
+  const expiresAtMs = Date.parse(String(candidate.expiresAt ?? ''));
+  const allowedModels = Array.isArray(candidate.allowedModels)
+    ? candidate.allowedModels
+    : [];
+  if (
+    accessToken.length < 32 ||
+    !Number.isFinite(expiresAtMs) ||
+    expiresAtMs <= nowMs ||
+    allowedModels.length < 1 ||
+    allowedModels.length > 64 ||
+    allowedModels.some(
+      (model) =>
+        typeof model !== 'string' ||
+        !/^otto:[a-z0-9][a-z0-9-]{0,79}$/u.test(model),
+    ) ||
+    new Set(allowedModels).size !== allowedModels.length
+  ) {
+    throw new Error('托管模型网关短期凭据无效或已过期');
+  }
+  let endpoint: URL;
+  try {
+    endpoint = new URL(String(candidate.baseUrl ?? ''));
+  } catch {
+    throw new Error('托管模型网关地址无效');
+  }
+  const loopback =
+    endpoint.protocol === 'http:' &&
+    ['127.0.0.1', '::1', 'localhost'].includes(endpoint.hostname);
+  if (
+    (endpoint.protocol !== 'https:' && !loopback) ||
+    endpoint.username ||
+    endpoint.password ||
+    endpoint.search ||
+    endpoint.hash ||
+    !/^\/v1\/?$/u.test(endpoint.pathname)
+  ) {
+    throw new Error('托管模型网关地址不符合安全要求');
+  }
+  return {
+    baseUrl: `${endpoint.origin}/v1`,
+    accessToken,
+    expiresAt: new Date(expiresAtMs).toISOString(),
+    allowedModels: [...allowedModels] as string[],
+  };
 }
 
 function normalizeAuthenticatedOrganizationMembers(
@@ -435,6 +501,14 @@ export class ProductWorkspaceStore {
             ),
           }
         : {}),
+      ...(account.managedModelGateway !== undefined
+        ? {
+            managedModelGateway: normalizeManagedModelGateway(
+              account.managedModelGateway,
+              this.now().getTime(),
+            ),
+          }
+        : {}),
     };
     return this.snapshot();
   }
@@ -481,6 +555,13 @@ export class ProductWorkspaceStore {
             isAdmin: member.isAdmin,
             status: member.status,
           })),
+        managedModelGateway: account.managedModelGateway
+          ? {
+              baseUrl: account.managedModelGateway.baseUrl,
+              allowedModels: [...account.managedModelGateway.allowedModels]
+                .sort(),
+            }
+          : null,
       }),
     };
   }

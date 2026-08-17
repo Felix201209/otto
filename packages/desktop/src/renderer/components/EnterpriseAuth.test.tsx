@@ -7,6 +7,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import {
   advanceTypewriterFrame,
   EnterpriseLoginPage,
+  isCompleteOrganizationInviteCode,
   isRegistrationReady,
   sanitizeOrganizationInviteCode,
   sanitizeSmsCode,
@@ -30,6 +31,8 @@ describe('企业首次注册输入规则', () => {
   it('普通注册不需要邀请码，加入企业时才校验邀请码', () => {
     expect(sanitizeSmsCode('04a27 319')).toBe('042731');
     expect(sanitizeOrganizationInviteCode('ab3D k9Pq z7xY<script>')).toBe('ab3D-k9Pq-z7xY');
+    expect(isCompleteOrganizationInviteCode('Ab3D-k9Pq-Z7xY')).toBe(true);
+    expect(isCompleteOrganizationInviteCode('AB3D-K9PQ')).toBe(false);
     expect(isRegistrationReady({ inviteCode: '', name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731', legalConsent: true, legalDocuments: LEGAL_DOCUMENTS })).toBe(true);
     expect(isRegistrationReady({ inviteCode: '', name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731', legalConsent: false, legalDocuments: LEGAL_DOCUMENTS })).toBe(false);
     expect(isRegistrationReady({ inviteCode: '', inviteRequired: true, name: '小明', password: 'password-1', confirmPassword: 'password-1', challengeId: 'sms_1', code: '042731', legalConsent: true, legalDocuments: LEGAL_DOCUMENTS })).toBe(false);

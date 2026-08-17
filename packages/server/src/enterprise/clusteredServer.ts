@@ -53,6 +53,11 @@ import {
   type createAttachmentStorageService,
   type PostgresDatabaseReadiness,
 } from '../modules/data_platform/index.js';
+import {
+  EdgeGatewayAccessTokenError,
+  requestEdgeGatewayAccessToken,
+} from '../modules/model_gateway/index.js';
+import { loadEnterpriseModelCatalog } from '../modelCatalog.js';
 import { createClusteredAttachmentMaintenance } from './clusteredAttachmentMaintenance.js';
 import { handleClusteredBusinessRoute } from './clusteredBusinessRoutes.js';
 import { createClusteredMlsMaintenance } from './clusteredMlsMaintenance.js';
@@ -102,6 +107,10 @@ export interface ClusteredEnterpriseServerOptions {
     password: string;
     name: string;
   };
+  /** Secret-provider seam; production must mount this value outside PostgreSQL. */
+  edgeGatewayLeaseToken?: string;
+  edgeGatewayUrl?: string;
+  edgeGatewayFetch?: typeof fetch;
 }
 
 export interface ClusteredEnterpriseSmsSender {
@@ -542,6 +551,9 @@ export function createClusteredEnterpriseServer(
     smsSender?: ClusteredEnterpriseSmsSender | null;
     licensePublicKeys?: readonly string[];
     startedAt?: string;
+    edgeGatewayLeaseToken?: string;
+    edgeGatewayUrl?: string;
+    edgeGatewayFetch?: typeof fetch;
   } = {},
 ): {
   server: Server;
@@ -667,6 +679,7 @@ export function createClusteredEnterpriseServer(
             'enterprise_park_services_v1',
             'enterprise_ticketing_v1',
             'commercial_control_v1',
+            'managed_model_gateway_v1',
             'modular_update_push_v1',
             'signed_update_policy_v1',
             'privacy_export_delete_v1',
@@ -1060,6 +1073,137 @@ export function createClusteredEnterpriseServer(
         if (options.sharedState) await options.sharedState.revokeSession(token);
         else await repository.revokeAuthSession(token);
         sendJson(res, 200, { status: 'logged_out' });
+        return;
+      }
+
+      if (
+        path === '/enterprise/model-gateway/access-token' &&
+        method === 'POST'
+      ) {
+        const account = await requireMember(
+          repository,
+          req,
+          res,
+          options.sharedState,
+        );
+        if (!account) return;
+        const body = await readJsonBody(req);
+        if (Object.keys(body).length > 0) {
+          sendJson(res, 400, {
+            error:
+              'model gateway access is derived from the authenticated account',
+            code: 'managed_model_request_invalid',
+          });
+          return;
+        }
+        const decision = await requireClusteredLicense({
+          repository,
+          organizationId: account.organizationId,
+          actorAccountId: account.id,
+          actorEmployeeId: account.employeeId,
+          res,
+          deploymentId,
+          publicKeys: licensePublicKeys,
+          requiredFeature: 'model_gateway',
+        });
+        if (!decision?.allowed) return;
+        const stored = await repository.getBusinessRecord<
+          Record<string, unknown>
+        >({
+          organizationId: account.organizationId,
+          domain: 'commercial_control',
+          resourceType: 'license',
+          resourceId: 'current',
+        });
+        const signedEnvelope = stored?.payload.signedEnvelope as
+          | { payload?: Record<string, unknown> }
+          | undefined;
+        const claims = signedEnvelope?.payload;
+        const leaseToken =
+          options.edgeGatewayLeaseToken ??
+          process.env.OTTO_CONTROL_LEASE_TOKEN?.trim() ??
+          '';
+        const edgeGatewayUrl =
+          options.edgeGatewayUrl ??
+          process.env.OTTO_EDGE_GATEWAY_URL?.trim() ??
+          '';
+        const leaseEndpoint =
+          typeof claims?.leaseEndpoint === 'string'
+            ? claims.leaseEndpoint
+            : '';
+        const machineFingerprint =
+          typeof claims?.machineFingerprint === 'string'
+            ? claims.machineFingerprint
+            : '';
+        const licenseId =
+          typeof claims?.id === 'string' ? claims.id : decision.summary.id;
+        if (
+          !licenseId ||
+          leaseToken.length < 32 ||
+          !leaseEndpoint ||
+          !machineFingerprint ||
+          !edgeGatewayUrl
+        ) {
+          sendJson(res, 503, {
+            error: 'managed model gateway is not configured',
+            code: 'managed_model_gateway_unavailable',
+          });
+          return;
+        }
+        try {
+          const grant = await requestEdgeGatewayAccessToken({
+            credentials: {
+              licenseId,
+              deploymentId,
+              organizationId: account.organizationId,
+              machineFingerprint,
+              leaseToken,
+              leaseEndpoint,
+              edgeGatewayUrl,
+            },
+            subjectId: account.id,
+            allowedModels: loadEnterpriseModelCatalog().map(
+              (model) => model.id,
+            ),
+            fetchImpl: options.edgeGatewayFetch,
+          });
+          await repository.logAudit(
+            'managed_model_gateway_token_issued',
+            account.organizationId,
+            account.employeeId,
+            {
+              subjectId: account.id,
+              modelCount: grant.allowedModels.length,
+              expiresAt: new Date(grant.expiresAtMs).toISOString(),
+            },
+          );
+          res.setHeader('Cache-Control', 'no-store');
+          sendJson(res, 201, {
+            gateway: {
+              baseUrl: grant.baseUrl,
+              accessToken: grant.accessToken,
+              expiresAt: new Date(grant.expiresAtMs).toISOString(),
+              allowedModels: grant.allowedModels,
+            },
+          });
+        } catch (error) {
+          await repository.logAudit(
+            'managed_model_gateway_token_failed',
+            account.organizationId,
+            account.employeeId,
+            {
+              subjectId: account.id,
+              reason:
+                error instanceof EdgeGatewayAccessTokenError
+                  ? 'control_rejected'
+                  : 'internal_error',
+            },
+          );
+          sendJson(res, 503, {
+            error: 'managed model gateway is temporarily unavailable',
+            code: 'managed_model_gateway_unavailable',
+          });
+        }
         return;
       }
 
@@ -2426,6 +2570,9 @@ export async function startClusteredEnterpriseServer(
       attachmentStorage: infrastructure.attachmentStorage,
       publicUrl: options.publicUrl ?? process.env.OTTO_ENTERPRISE_PUBLIC_URL,
       licensePublicKeys: options.licensePublicKeys,
+      edgeGatewayLeaseToken: options.edgeGatewayLeaseToken,
+      edgeGatewayUrl: options.edgeGatewayUrl,
+      edgeGatewayFetch: options.edgeGatewayFetch,
       smsSender:
         options.smsSender !== undefined
           ? options.smsSender

@@ -42,6 +42,7 @@ describe('product module registry', () => {
   it('publishes canonical license capabilities and keeps legacy aliases read-compatible', () => {
     const catalog = getLicenseCapabilityCatalog();
     expect(catalog.map((entry) => entry.module)).toEqual([
+      'model_gateway',
       'enterprise_tree',
       'direct_messages',
       'atoa',

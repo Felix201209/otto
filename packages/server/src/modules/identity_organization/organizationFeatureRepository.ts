@@ -11,6 +11,7 @@ import type { Database } from '../data_platform/index.js';
 export type OrganizationFeatures = Record<OrganizationFeatureKey, boolean>;
 
 export const DEFAULT_ORGANIZATION_FEATURES: Readonly<OrganizationFeatures> = {
+  model_gateway: true,
   enterprise_tree: true,
   park_service: true,
   feishu_auto_reply: true,

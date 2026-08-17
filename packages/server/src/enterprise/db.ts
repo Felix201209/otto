@@ -488,6 +488,7 @@ export const {
   getDeploymentId,
   getMachineFingerprint,
   getDeploymentLicense,
+  getDeploymentEdgeGatewayCredentials,
   importDeploymentLicense,
   importDeploymentLicenseLease,
   refreshDeploymentLicenseLease,
@@ -1134,6 +1135,14 @@ const modelGateway = createModelGatewayComposition({
   createId: randomUUID,
   onRecordedUsage(input) {
     if (input.totalTokens < 1) return;
+    // Otto 托管模型由 Edge 的签名 ExecutionReceipt 唯一结算。客户端上报只保留
+    // 企业用量统计，不能再次进入 billing outbox，避免重复扣费。
+    if (
+      input.model?.startsWith('otto:') ||
+      input.model?.startsWith('custom:openai:otto:')
+    ) {
+      return;
+    }
     const digest = createHash('sha256')
       .update(
         [getDeploymentId(), input.organizationId, input.messageId].join('\0'),

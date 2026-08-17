@@ -683,6 +683,7 @@ describe('enterprise one-click runtime configuration contract', () => {
       'OTTO_FEDERATION_DISPLAY_NAME',
       'OTTO_FEDERATION_POLL_INTERVAL_MS',
       'OTTO_FEDERATION_SIGNING_KEY_FILE',
+      'OTTO_EDGE_GATEWAY_URL',
       'OTTO_DATA_CONTROLLER_NAME',
       'OTTO_PRIVACY_CONTACT',
       'OTTO_LEGAL_DOCUMENTS_APPROVED',

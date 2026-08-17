@@ -75,6 +75,7 @@ function activeLicenseRecord(
     expiresAt: '2099-08-01T00:00:00.000Z',
     seatLimit: 10,
     modules: [
+      'model_gateway',
       'enterprise_tree',
       'direct_messages',
       'atoa',
@@ -339,6 +340,121 @@ describe('clustered PostgreSQL enterprise server', () => {
       'correct-password',
     );
     expect(repo.clearLoginFailures).toHaveBeenCalledWith('admin');
+  });
+
+  it('issues account-bound managed model access without storing the deployment lease in PostgreSQL', async () => {
+    const onlineLicense = activeLicenseRecord({
+      offline: false,
+      leaseEndpoint: 'https://control.otto.test/v1/licenses/lease',
+      machineFingerprint: 'a'.repeat(64),
+    });
+    const edgeGatewayFetch = vi.fn(
+      async (_url: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        const now = Date.now();
+        const envelope = {
+          token: {
+            version: 1,
+            tokenId: 'edge-token-clustered',
+            deploymentId: body.deploymentId,
+            organizationId: body.organizationId,
+            subjectId: body.subjectId,
+            scope: 'model_gateway',
+            policyVersion: 'policy-v1',
+            allowedModels: body.allowedModels,
+            issuedAtMs: now,
+            expiresAtMs: now + 5 * 60_000,
+          },
+          signingKeyId: 'signing-key-1',
+          signature: `ed25519:${'A'.repeat(86)}`,
+        };
+        return new Response(
+          JSON.stringify({
+            envelope,
+            encodedToken: Buffer.from(JSON.stringify(envelope)).toString(
+              'base64url',
+            ),
+          }),
+          { status: 201, headers: { 'content-type': 'application/json' } },
+        );
+      },
+    ) as typeof fetch;
+    const repo = repository(onlineLicense);
+    const { baseUrl } = await listen(repo, {
+      edgeGatewayLeaseToken:
+        'lease-token-clustered-at-least-thirty-two-characters',
+      edgeGatewayUrl: 'https://edge.otto.test',
+      edgeGatewayFetch,
+    });
+
+    const response = await fetch(
+      `${baseUrl}/enterprise/model-gateway/access-token`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer clustered-session-token',
+          'content-type': 'application/json',
+        },
+        body: '{}',
+      },
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      gateway: {
+        baseUrl: 'https://edge.otto.test/v1',
+        allowedModels: expect.arrayContaining(['otto:deepseek']),
+      },
+    });
+    expect(edgeGatewayFetch).toHaveBeenCalledOnce();
+    expect(JSON.stringify(onlineLicense)).not.toContain(
+      'lease-token-clustered-at-least-thirty-two-characters',
+    );
+    expect(repo.logAudit).toHaveBeenCalledWith(
+      'managed_model_gateway_token_issued',
+      account.organizationId,
+      account.employeeId,
+      expect.objectContaining({ subjectId: account.id }),
+    );
+  });
+
+  it('does not contact the managed model gateway when the clustered license lacks the module', async () => {
+    const modulesWithoutGateway = activeLicenseRecord({
+      modules: [
+        'enterprise_tree',
+        'direct_messages',
+        'atoa',
+        'knowledge',
+        'skill_market',
+        'park_service',
+      ],
+    });
+    const edgeGatewayFetch = vi.fn() as unknown as typeof fetch;
+    const { baseUrl } = await listen(repository(modulesWithoutGateway), {
+      edgeGatewayLeaseToken:
+        'lease-token-clustered-at-least-thirty-two-characters',
+      edgeGatewayUrl: 'https://edge.otto.test',
+      edgeGatewayFetch,
+    });
+
+    const response = await fetch(
+      `${baseUrl}/enterprise/model-gateway/access-token`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer clustered-session-token',
+          'content-type': 'application/json',
+        },
+        body: '{}',
+      },
+    );
+
+    expect(response.status).toBe(402);
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'commercial_module_not_entitled',
+      feature: 'model_gateway',
+    });
+    expect(edgeGatewayFetch).not.toHaveBeenCalled();
   });
 
   it('fails closed for missing, expired, unlicensed, and over-seat business execution', async () => {
