@@ -207,6 +207,7 @@ describe('enterprise one-click schema contract', () => {
       'signed_telemetry_transport_v1',
       'data_governance_v1',
       'privacy_self_service',
+      'managed_model_gateway_v1',
     ];
     const adminToken = 'health-check-admin-token-at-least-32-characters';
     const fixture = spawn(
@@ -227,7 +228,19 @@ describe('enterprise one-click schema contract', () => {
               request.url === '/enterprise/deployment/status'
               && request.headers['x-otto-admin-token'] === process.env.ADMIN_TOKEN
             ) {
-              response.end(JSON.stringify({ license: { enforce: true } }));
+              response.end(JSON.stringify({
+                license: { enforce: true },
+                runtime: {
+                  version: '1.9.11',
+                  buildCommit: 'a'.repeat(40),
+                  database: {
+                    ready: true,
+                    schemaVersion: ${ENTERPRISE_SCHEMA_VERSION},
+                  },
+                  smsConfigured: false,
+                },
+                operationsSecurity: { sqlCipher: { state: 'active' } },
+              }));
               return;
             }
             response.statusCode = 401;
@@ -281,11 +294,10 @@ describe('enterprise one-click schema contract', () => {
       expect(result.status, result.stderr).toBe(0);
       expect(JSON.parse(result.stdout)).toMatchObject({
         ok: true,
-        health: { version: '1.9.11' },
-        database: {
-          schemaVersion: ENTERPRISE_SCHEMA_VERSION,
-          quickCheck: 'ok',
-        },
+        service: 'otto-enterprise',
+        version: '1.9.11',
+        schemaVersion: ENTERPRISE_SCHEMA_VERSION,
+        sqlCipher: 'active',
         licenseEnforced: true,
       });
     } finally {
@@ -325,10 +337,15 @@ describe('enterprise one-click schema contract', () => {
       'readiness.schemaVersion !== expectedSchemaVersion',
     );
     expect(healthCheck).toContain('publicHealth.apiVersion !== 4');
-    expect(healthCheck).toContain("database.prepare('PRAGMA user_version')");
-    expect(healthCheck).toContain("database.prepare('PRAGMA quick_check')");
+    expect(migrationCheck).toContain("handle.prepare('PRAGMA quick_check')");
+    expect(migrationCheck).toContain(
+      "handle.prepare('PRAGMA foreign_key_check')",
+    );
     expect(healthCheck).toContain(
-      "database.prepare('PRAGMA foreign_key_check')",
+      'runtime?.database?.schemaVersion !== expectedSchema',
+    );
+    expect(healthCheck).toContain(
+      "operationsSecurity?.sqlCipher?.state !== 'active'",
     );
     expect(healthCheck).toContain('/enterprise/deployment/status');
     expect(healthCheck).toContain("'x-otto-admin-token': adminToken");
@@ -474,6 +491,10 @@ describe('enterprise one-click schema contract', () => {
           schemaFrom: SUPPORTED_SCHEMA_VERSIONS,
           schemaTo: ENTERPRISE_SCHEMA_VERSION,
           futureSchemaPolicy: 'reject',
+          encryption: 'sqlcipher-required',
+          nativeRuntime: 'node',
+          nativeRuntimeVersion: '22.23.1',
+          nativeTargets: ['linux-x64', 'linux-arm64'],
         },
         files: {},
       };
@@ -520,6 +541,26 @@ describe('enterprise one-click schema contract', () => {
 
       manifest.releaseChannel = 'transition';
 
+      const sqlCipherContract = { ...manifest.database };
+      delete manifest.database.encryption;
+      delete manifest.database.nativeRuntime;
+      delete manifest.database.nativeRuntimeVersion;
+      delete manifest.database.nativeTargets;
+      writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
+      const plaintextByDefault = spawnSync(
+        process.execPath,
+        [VERIFY_RELEASE, sandbox],
+        { encoding: 'utf8' },
+      );
+      expect(plaintextByDefault.status).toBe(3);
+      const plaintextUpgrade = spawnSync(
+        process.execPath,
+        [VERIFY_RELEASE, sandbox, '--allow-legacy-sqlite'],
+        { encoding: 'utf8' },
+      );
+      expect(plaintextUpgrade.status, plaintextUpgrade.stderr).toBe(0);
+      manifest.database = sqlCipherContract;
+
       manifest.database.schemaFrom = [2, 3, 4];
       writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
       const stale = spawnSync(process.execPath, [VERIFY_RELEASE, sandbox], {
@@ -564,6 +605,7 @@ describe('enterprise one-click schema contract', () => {
           databaseModule,
           [
             `export const getDatabaseReadiness = () => ({ ready: true, schemaVersion: ${schemaVersion} });`,
+            `export const getDB = () => ({ prepare(sql) { return { all() { if (sql.includes('quick_check')) return [{ quick_check: 'ok' }]; if (sql.includes('foreign_key_check')) return []; if (sql.includes('sqlite_schema')) return [{ name: 'accounts' }]; return []; }, get() { return { count: 2 }; } }; } });`,
             'export const closeEnterpriseDatabase = () => {};',
             '',
           ].join('\n'),
@@ -578,8 +620,13 @@ describe('enterprise one-click schema contract', () => {
       );
       expect(ready.status, ready.stderr).toBe(0);
       expect(JSON.parse(ready.stdout)).toEqual({
+        format: 'otto-enterprise-sqlcipher-inspection-v1',
         ready: true,
         schemaVersion: ENTERPRISE_SCHEMA_VERSION,
+        quickCheck: 'ok',
+        foreignKeyCheck: 'ok',
+        tables: ['accounts'],
+        rowCounts: { accounts: 2 },
       });
 
       writeDatabaseModule(3);
@@ -600,20 +647,18 @@ describe('enterprise one-click schema contract', () => {
     const stageCopy = installer.indexOf(
       'cp "$MIGRATION_DB" "${CANARY_DIR}/data.db"',
     );
-    const migration = installer.indexOf(
-      '"${SCRIPT_DIR}/tools/migrate-check.mjs"',
-    );
     const rowComparison = installer.indexOf(
-      'compare "$MIGRATION_DB" "${CANARY_DIR}/data.db"',
+      'MIGRATION_CHECK_ARGS+=(--baseline "$IMPORT_INSPECTION")',
     );
+    const migration = installer.indexOf('MIGRATED_INFO="$(');
     const finalInstall = installer.indexOf(
       '"${CANARY_DIR}/data.db" "${DATA_DIR}/data.db"',
     );
 
     expect(stageCopy).toBeGreaterThan(-1);
-    expect(migration).toBeGreaterThan(stageCopy);
-    expect(rowComparison).toBeGreaterThan(migration);
-    expect(finalInstall).toBeGreaterThan(rowComparison);
+    expect(rowComparison).toBeGreaterThan(stageCopy);
+    expect(migration).toBeGreaterThan(rowComparison);
+    expect(finalInstall).toBeGreaterThan(migration);
   });
 
   it('takes a consistent database snapshot before a formal cutover', () => {
@@ -676,6 +721,7 @@ describe('enterprise one-click runtime configuration contract', () => {
       'OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE',
       'OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE',
       'OTTO_FIELD_ENCRYPTION_KEY_FILE',
+      'OTTO_DATABASE_ENCRYPTION_KEY_FILE',
       'OTTO_TELEMETRY_ENDPOINT',
       'OTTO_TELEMETRY_RETENTION_DAYS',
       'OTTO_FEDERATION_ENABLED',
@@ -709,6 +755,54 @@ describe('enterprise one-click runtime configuration contract', () => {
     );
     expect(installer).toContain('独立备份恢复密钥与当前归档密钥不一致');
     expect(installer).toContain('服务账号无法读取独立备份恢复密钥');
+  });
+
+  it('packages the pinned Linux SQLCipher runtime and persists fail-closed custody settings', () => {
+    const bundle = readFileSync(BUNDLE_SCRIPT, 'utf8');
+    const common = readFileSync(COMMON_SH, 'utf8');
+    const installer = readFileSync(INSTALL_SH, 'utf8');
+    const migrationCheck = readFileSync(MIGRATE_CHECK, 'utf8');
+
+    expect(bundle).toContain('verifySqlCipherNativeAssets(');
+    expect(bundle).toContain("'native', 'sqlcipher-node'");
+    expect(bundle).toContain('const betterSqliteTarget = path.join(');
+    expect(bundle).toContain("'better-sqlite3',");
+    expect(installer).toContain('export OTTO_DATABASE_ENCRYPTION="required"');
+    expect(installer).toContain('database-sqlcipher.key');
+    expect(installer).toContain('OTTO_DATABASE_ENCRYPTION_KEY_READONLY "true"');
+    expect(installer).toContain(
+      'native/sqlcipher/linux-${RUNTIME_ARCH}/better_sqlite3.node',
+    );
+    expect(common).toContain('OTTO_SQLCIPHER_NATIVE_BINDING');
+    expect(migrationCheck).toContain(
+      "'otto-enterprise-sqlcipher-inspection-v1'",
+    );
+    expect(migrationCheck).toContain(
+      'migration row-count reconciliation failed',
+    );
+  });
+
+  it('upgrades plaintext and encrypted databases without overwriting custody or allowing downgrade', () => {
+    const upgrade = readFileSync(UPGRADE_SH, 'utf8');
+    const releaseVerifier = readFileSync(VERIFY_RELEASE, 'utf8');
+
+    expect(upgrade).toContain(
+      '"$CURRENT_REAL" --allow-legacy-lstc --allow-legacy-sqlite',
+    );
+    expect(releaseVerifier).toContain(
+      "options.delete('--allow-legacy-sqlite')",
+    );
+    expect(upgrade).toContain('otto_version_at_least "$RELEASE_VERSION"');
+    expect(upgrade).toContain('拒绝将服务器从 v${CURRENT_VERSION} 降级');
+    expect(upgrade).toContain('export OTTO_DATABASE_ENCRYPTION="required"');
+    expect(upgrade).toContain('--snapshot "$OLD_DATA_BACKUP"');
+    expect(upgrade).toContain('--baseline "$BASELINE_INSPECTION"');
+    expect(upgrade).toContain('enterprise.env.before');
+    expect(upgrade).toContain(
+      'install -o root -g root -m 0600 "$CONFIG_BACKUP" "$CONFIG_PATH"',
+    );
+    expect(upgrade).toContain('rm -f "$MANAGED_DATABASE_KEY_PATH"');
+    expect(upgrade).toContain('拒绝覆盖');
   });
 
   it('preserves repair notification and Feishu configuration through installation', () => {
@@ -755,6 +849,28 @@ describe('enterprise one-click health contract', () => {
       expect(healthCheck).toContain(`  '${capability}',`);
       expect(readme).toContain(`\`${capability}\``);
     }
+  });
+
+  it('keeps public health minimal and verifies protected runtime identity', () => {
+    const healthCheck = readFileSync(HEALTH_CHECK, 'utf8');
+    const verifier = readFileSync(
+      path.resolve('deployment/enterprise-oneclick/verify.sh'),
+      'utf8',
+    );
+
+    expect(healthCheck).toContain('/enterprise/health');
+    expect(healthCheck).toContain('/enterprise/deployment/status');
+    expect(healthCheck).toContain("'x-otto-admin-token': adminToken");
+    expect(healthCheck).toContain('runtime?.buildCommit !== expectedBuild');
+    expect(healthCheck).toContain(
+      'runtime?.database?.schemaVersion !== expectedSchema',
+    );
+    expect(healthCheck).toContain(
+      "operationsSecurity?.sqlCipher?.state !== 'active'",
+    );
+    expect(verifier).toContain('otto_load_config "$CONFIG_PATH"');
+    expect(verifier).toContain('"$OTTO_ENTERPRISE_ADMIN_TOKEN"');
+    expect(verifier).not.toContain('db-tool.mjs" inspect "$DATA_DB"');
   });
 });
 

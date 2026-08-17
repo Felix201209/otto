@@ -23,6 +23,11 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { supportedEnterpriseSchemaVersions } from './enterprise-release-contract.mjs';
+import {
+  REQUIRED_SQLCIPHER_NODE_TARGETS,
+  verifySqlCipherMatrixManifest,
+  verifySqlCipherNativeAssets,
+} from './verify-sqlcipher-native-assets.mjs';
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -226,6 +231,18 @@ run(npmCommand, ['run', 'build', '--workspace', 'otto-server'], {
 });
 
 const sourceCommit = run('git', ['rev-parse', 'HEAD'], { capture: true });
+const sqlCipherNodeRoot = path.join(repoRoot, 'native', 'sqlcipher-node');
+const verifiedSqlCipherNodeAssets = verifySqlCipherNativeAssets(
+  sqlCipherNodeRoot,
+  REQUIRED_SQLCIPHER_NODE_TARGETS,
+  {
+    runtime: 'node',
+    expectedBuildCommit: sourceCommit,
+    expectedSourceRevision: process.env.SQLCIPHER_SOURCE_REVISION,
+    expectedRuntimeVersion: '22.23.1',
+  },
+);
+verifySqlCipherMatrixManifest(sqlCipherNodeRoot, verifiedSqlCipherNodeAssets);
 const sourceScope = [
   'package.json',
   'package-lock.json',
@@ -239,8 +256,10 @@ const sourceScope = [
   'packages/core/tsconfig.json',
   'packages/core/src/services/aliyunSmsSender.ts',
   'deployment/enterprise-oneclick',
+  'native/sqlcipher-node',
   'scripts/build-enterprise-oneclick.mjs',
   'scripts/verify-enterprise-package-signature.mjs',
+  'scripts/verify-sqlcipher-native-assets.mjs',
 ];
 const sourceStatus = run(
   'git',
@@ -264,6 +283,10 @@ const sourceInputFiles = [
   'packages/core/src/services/aliyunSmsSender.ts',
   'scripts/build-enterprise-oneclick.mjs',
   'scripts/verify-enterprise-package-signature.mjs',
+  'scripts/verify-sqlcipher-native-assets.mjs',
+  ...filesBelow(sqlCipherNodeRoot).map((relative) =>
+    path.join('native/sqlcipher-node', relative),
+  ),
   ...filesBelow(sourceDir).map((relative) =>
     path.join('deployment/enterprise-oneclick', relative),
   ),
@@ -437,6 +460,26 @@ export class FeatureFlagManager {
       2,
     )}\n`,
   );
+  const betterSqliteSource = path.join(
+    repoRoot,
+    'node_modules',
+    'better-sqlite3',
+  );
+  const betterSqliteTarget = path.join(
+    releaseRoot,
+    'node_modules',
+    'better-sqlite3',
+  );
+  mkdirSync(betterSqliteTarget, { recursive: true });
+  cpSync(
+    path.join(betterSqliteSource, 'lib'),
+    path.join(betterSqliteTarget, 'lib'),
+    { recursive: true },
+  );
+  cpSync(
+    path.join(betterSqliteSource, 'package.json'),
+    path.join(betterSqliteTarget, 'package.json'),
+  );
   writeFileSync(
     path.join(releaseRoot, 'package.json'),
     `${JSON.stringify(
@@ -456,6 +499,19 @@ export class FeatureFlagManager {
     path.join(releaseRoot, 'run.mjs'),
   );
   chmodSync(path.join(releaseRoot, 'run.mjs'), 0o755);
+  const releaseSqlCipherRoot = path.join(releaseRoot, 'native', 'sqlcipher');
+  mkdirSync(releaseSqlCipherRoot, { recursive: true });
+  for (const target of REQUIRED_SQLCIPHER_NODE_TARGETS) {
+    cpSync(
+      path.join(sqlCipherNodeRoot, target),
+      path.join(releaseSqlCipherRoot, target),
+      { recursive: true },
+    );
+  }
+  cpSync(
+    path.join(sqlCipherNodeRoot, 'matrix-manifest.json'),
+    path.join(releaseSqlCipherRoot, 'matrix-manifest.json'),
+  );
   writeFileSync(
     path.join(releaseRoot, 'license-public-keys.json'),
     `${JSON.stringify(licensePublicKeys, null, 2)}\n`,
@@ -475,6 +531,9 @@ export class FeatureFlagManager {
       env: {
         ...process.env,
         OTTO_ENTERPRISE_DIR: smokeDataRoot,
+        // Signed Linux bindings cannot load on a non-Linux release host. The
+        // Ubuntu installation canary is the fail-closed SQLCipher proof.
+        OTTO_DATABASE_ENCRYPTION: 'disabled',
       },
     },
   );
@@ -512,6 +571,10 @@ export class FeatureFlagManager {
       schemaFrom: supportedSchemaFrom,
       schemaTo: schemaVersion,
       futureSchemaPolicy: 'reject',
+      encryption: 'sqlcipher-required',
+      nativeRuntime: 'node',
+      nativeRuntimeVersion: '22.23.1',
+      nativeTargets: [...REQUIRED_SQLCIPHER_NODE_TARGETS],
     },
     files: fileHashes,
   };

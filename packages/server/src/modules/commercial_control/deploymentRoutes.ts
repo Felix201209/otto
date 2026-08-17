@@ -66,6 +66,12 @@ export interface DeploymentRouteDeps {
   url: URL;
   principal: DeploymentRoutePrincipal | null;
   memberPrincipal?: DeploymentRoutePrincipal | null;
+  getRuntimeReadiness(): {
+    version: string;
+    buildCommit: string;
+    database: { ready: true; schemaVersion: number };
+    smsConfigured: boolean;
+  };
   services: DeploymentRouteServices;
   readBody(req: IncomingMessage): Promise<Record<string, unknown>>;
   sendJSON(res: ServerResponse, status: number, data: unknown): void;
@@ -79,6 +85,7 @@ export async function handleDeploymentRoute({
   url,
   principal,
   memberPrincipal,
+  getRuntimeReadiness,
   services,
   readBody,
   sendJSON,
@@ -106,6 +113,7 @@ export async function handleDeploymentRoute({
   if (path === '/enterprise/deployment/status' && method === 'GET') {
     sendJSON(res, 200, {
       ...services.getPrivateDeploymentStatus(),
+      runtime: getRuntimeReadiness(),
       dataProtection: services.getDataProtectionStatus(),
       operationsSecurity: services.getOperationsSecurityStatus(),
     });

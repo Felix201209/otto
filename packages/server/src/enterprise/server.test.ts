@@ -771,6 +771,10 @@ describe('受保护 vs 公开路由边界', () => {
         includesMeetingAudio: false,
       },
       dataProtection: { enabled: true, retentionDays: 30, minimumRetained: 3 },
+      runtime: {
+        database: { ready: true, schemaVersion: 22 },
+        smsConfigured: false,
+      },
     });
 
     const backup = await fetch(
