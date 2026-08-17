@@ -351,6 +351,15 @@ export interface CustomModelConfig {
   /** API密钥，支持环境变量替换（如 ${OPENAI_API_KEY}） */
   apiKey: string;
 
+  /**
+   * 运行时短期 API token 提供器，仅供 Otto 托管模型网关使用。
+   *
+   * 该函数和它返回的 token 都属于运行时秘密，不得写入配置文件、
+   * 数据库、日志、诊断包或任何可持久化快照。OpenAI 兼容客户端会在
+   * 每次实际 HTTP 尝试前调用它，使重试能够取得刷新后的短期 token。
+   */
+  apiKeyProvider?: () => Promise<string>;
+
   /** 模型ID（传递给API的实际模型名称） */
   modelId: string;
 
