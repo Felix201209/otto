@@ -461,11 +461,28 @@ describe('模型菜单 provider 分组与勾选', () => {
 });
 
 describe('语音录音配件', () => {
-  it('输入栏不再展示语音输入图标入口', () => {
-    render(
+  it('输入栏不暴露或初始化麦克风采集', () => {
+    const mediaDevicesDescriptor = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices');
+    const getUserMedia = vi.fn();
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    try {
+      const { unmount } = render(
       <Composer models={[]} currentModel={null} sessionId="s1" onSend={vi.fn()} onSetModel={vi.fn()} />,
-    );
-    expect(screen.queryByRole('button', { name: '语音输入' })).toBeNull();
+      );
+      expect(screen.queryByRole('button', { name: '语音输入' })).toBeNull();
+      expect(getUserMedia).not.toHaveBeenCalled();
+      unmount();
+      expect(getUserMedia).not.toHaveBeenCalled();
+    } finally {
+      if (mediaDevicesDescriptor) {
+        Object.defineProperty(navigator, 'mediaDevices', mediaDevicesDescriptor);
+      } else {
+        delete (navigator as unknown as { mediaDevices?: MediaDevices }).mediaDevices;
+      }
+    }
   });
 });
 
