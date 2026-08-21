@@ -162,6 +162,29 @@ describe('enterprise one-click service layout', () => {
     expect(serviceStart).toBeGreaterThan(hardening);
   });
 
+  it('transactionally replaces an expired deployment enrollment secret', () => {
+    const installer = readFileSync(INSTALL_SH, 'utf8');
+    const backup = installer.indexOf(
+      'BOOTSTRAP_SECRET_BACKUP="${TXN_DIR}/previous-deployment-bootstrap-secret"',
+    );
+    const replacement = installer.indexOf(
+      'install -o otto-enterprise -g otto-enterprise -m 0600 \\\n    "$BOOTSTRAP_SECRET_STAGED" "$BOOTSTRAP_SECRET_TARGET"',
+    );
+    const rollback = installer.indexOf(
+      '"$BOOTSTRAP_SECRET_BACKUP" "$BOOTSTRAP_SECRET_TARGET"',
+    );
+    const successfulCleanup = installer.lastIndexOf(
+      'rm -f "$BOOTSTRAP_SECRET_BACKUP"',
+    );
+    const commitMarker = installer.indexOf('rm -f "$TRANSACTION_MARKER"');
+
+    expect(backup).toBeGreaterThan(-1);
+    expect(replacement).toBeGreaterThan(backup);
+    expect(rollback).toBeGreaterThan(-1);
+    expect(successfulCleanup).toBeGreaterThan(replacement);
+    expect(commitMarker).toBeGreaterThan(successfulCleanup);
+    expect(installer).toContain('已有部署登记密钥不是普通文件，拒绝替换');
+  });
   it('loads License trust only from the signed release and enforces it in production', () => {
     const bundle = readFileSync(BUNDLE_SCRIPT, 'utf8');
     const runtime = readFileSync(RUNTIME_ENTRY, 'utf8');
@@ -231,7 +254,26 @@ describe('enterprise one-click schema contract', () => {
               request.url === '/enterprise/deployment/status'
               && request.headers['x-otto-admin-token'] === process.env.ADMIN_TOKEN
             ) {
-              response.end(JSON.stringify({ license: { enforce: true } }));
+              response.end(JSON.stringify({
+                license: {
+                  enforce: true,
+                  status: 'active',
+                  lease: { required: false, status: 'not_required' },
+                },
+              }));
+              return;
+            }
+            if (
+              request.url === '/enterprise/bootstrap/prepare'
+              && request.method === 'POST'
+            ) {
+              response.end(JSON.stringify({
+                readiness: {
+                  state: 'ready_for_identity',
+                  canAuthenticate: true,
+                  canUseLicensedFeatures: true,
+                },
+              }));
               return;
             }
             response.statusCode = 401;
@@ -291,6 +333,7 @@ describe('enterprise one-click schema contract', () => {
           quickCheck: 'ok',
         },
         licenseEnforced: true,
+        deploymentReady: true,
       });
     } finally {
       fixture.kill('SIGTERM');

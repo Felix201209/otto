@@ -8,10 +8,11 @@ function fail(message) {
   process.exit(5);
 }
 
-async function fetchJson(url, headers = undefined) {
+async function fetchJson(url, headers = undefined, method = 'GET') {
   try {
     const response = await fetch(url, {
       headers,
+      method,
       signal: AbortSignal.timeout(10_000),
     });
     const body = await response.json();
@@ -33,6 +34,8 @@ const expectedVersion = process.argv[3];
 const expectedBuild = process.argv[4];
 const expectedSchema = Number(process.argv[5]);
 const requireSms = process.argv[6] !== 'allow-sms-disabled';
+const requireDeploymentActivation =
+  process.argv[7] !== 'allow-unactivated-deployment';
 if (
   !baseUrl ||
   !expectedVersion ||
@@ -40,7 +43,7 @@ if (
   !Number.isInteger(expectedSchema)
 ) {
   fail(
-    'usage: health-check.mjs <base-url> <version> <build-id> <schema> [allow-sms-disabled]',
+    'usage: health-check.mjs <base-url> <version> <build-id> <schema> [allow-sms-disabled] [allow-unactivated-deployment]',
   );
 }
 
@@ -151,6 +154,34 @@ const deploymentStatus = await fetchJson(
 if (deploymentStatus.license?.enforce !== true) {
   fail('deployment License enforcement is not active');
 }
+let deploymentReady = false;
+if (requireDeploymentActivation) {
+  const usableLicenseStates = new Set(['active', 'expiring', 'grace']);
+  if (
+    !usableLicenseStates.has(deploymentStatus.license?.status) ||
+    (deploymentStatus.license?.lease?.required === true &&
+      deploymentStatus.license?.lease?.status !== 'active')
+  ) {
+    fail('deployment License is not usable');
+  }
+  const bootstrap = await fetchJson(
+    `${baseUrl}/enterprise/bootstrap/prepare`,
+    undefined,
+    'POST',
+  );
+  if (
+    bootstrap.readiness?.canAuthenticate !== true ||
+    bootstrap.readiness?.canUseLicensedFeatures !== true ||
+    !['ready', 'ready_for_identity', 'degraded'].includes(
+      bootstrap.readiness?.state,
+    )
+  ) {
+    fail(
+      `private deployment bootstrap is not ready: ${JSON.stringify(bootstrap)}`,
+    );
+  }
+  deploymentReady = true;
+}
 
 if (requireSms) {
   const missingSmsConfiguration = [
@@ -172,6 +203,7 @@ process.stdout.write(
     health: publicHealth,
     database: { schemaVersion: expectedSchema, quickCheck: 'ok' },
     licenseEnforced: true,
+    deploymentReady,
     smsRequired: requireSms,
   })}\n`,
 );

@@ -177,6 +177,7 @@ for _ in $(seq 1 30); do
     http://127.0.0.1:17777 "$RELEASE_VERSION" "$BUILD_ID" \
     "$RELEASE_SCHEMA_TO" \
     "$([ "$OTTO_ALLOW_SMS_DISABLED" = "1" ] && printf 'allow-sms-disabled' || printf 'require-sms')" \
+    allow-unactivated-deployment \
     >/dev/null 2>&1; then
     CANARY_OK=1
     break

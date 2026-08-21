@@ -7,7 +7,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { privateDeploymentBootstrapConfigFromEnvironment } from './privateDeploymentBootstrapIntegration.js';
+import {
+  consumePrivateDeploymentBootstrapSecretFile,
+  privateDeploymentBootstrapConfigFromEnvironment,
+} from './privateDeploymentBootstrapIntegration.js';
 
 const temporaryDirectories: string[] = [];
 
@@ -41,6 +44,42 @@ describe('private deployment bootstrap environment', () => {
     });
   });
 
+  it('treats an already consumed secret file as not configured', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-bootstrap-'));
+    temporaryDirectories.push(directory);
+    const secretFile = path.join(directory, 'already-consumed-secret');
+
+    expect(
+      privateDeploymentBootstrapConfigFromEnvironment({
+        appVersion: '1.10.2',
+        buildCommit: 'a'.repeat(40),
+        publicOrigin: 'https://customer.otto.example',
+        environment: {
+          NODE_ENV: 'production',
+          OTTO_CONTROL_URL: 'https://control.otto.example',
+          OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE: secretFile,
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it('consumes a successful one-time secret file idempotently', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-bootstrap-'));
+    temporaryDirectories.push(directory);
+    const secretFile = path.join(directory, 'bootstrap-secret');
+    fs.writeFileSync(secretFile, 'x'.repeat(48), { mode: 0o600 });
+    const environment: NodeJS.ProcessEnv = {
+      OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE: secretFile,
+    };
+
+    consumePrivateDeploymentBootstrapSecretFile(environment);
+
+    expect(fs.existsSync(secretFile)).toBe(false);
+    expect(environment.OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE).toBeUndefined();
+    expect(() =>
+      consumePrivateDeploymentBootstrapSecretFile(environment),
+    ).not.toThrow();
+  });
   it('does not configure Control when either endpoint or secret is absent', () => {
     expect(privateDeploymentBootstrapConfigFromEnvironment({
       appVersion: '1.10.2',
