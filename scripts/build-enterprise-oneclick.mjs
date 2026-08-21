@@ -29,6 +29,18 @@ const repoRoot = path.resolve(
   '..',
 );
 const sourceDir = path.join(repoRoot, 'deployment', 'enterprise-oneclick');
+const enrollmentSecretPrefix = 'config/deployment-enrollment-secret';
+
+function isEnrollmentSecretArtifact(candidate) {
+  const relative = path
+    .relative(sourceDir, candidate)
+    .split(path.sep)
+    .join('/');
+  return (
+    relative === enrollmentSecretPrefix ||
+    relative.startsWith(`${enrollmentSecretPrefix}.`)
+  );
+}
 const outputDir = path.join(repoRoot, 'deliverables');
 const rootPackage = JSON.parse(
   readFileSync(path.join(repoRoot, 'package.json'), 'utf8'),
@@ -264,9 +276,13 @@ const sourceInputFiles = [
   'packages/core/src/services/aliyunSmsSender.ts',
   'scripts/build-enterprise-oneclick.mjs',
   'scripts/verify-enterprise-package-signature.mjs',
-  ...filesBelow(sourceDir).map((relative) =>
-    path.join('deployment/enterprise-oneclick', relative),
-  ),
+  ...filesBelow(sourceDir)
+    .filter((relative) =>
+      !isEnrollmentSecretArtifact(path.join(sourceDir, relative)),
+    )
+    .map((relative) =>
+      path.join('deployment/enterprise-oneclick', relative),
+    ),
 ].sort();
 const sourceInputHashes = Object.fromEntries(
   sourceInputFiles.map((relative) => [
@@ -287,7 +303,9 @@ try {
   const packageRoot = path.join(temporaryRoot, packageNameBase);
   cpSync(sourceDir, packageRoot, {
     recursive: true,
-    filter: (source) => path.basename(source) !== 'release',
+    filter: (source) =>
+      path.basename(source) !== 'release' &&
+      !isEnrollmentSecretArtifact(source),
   });
   const releaseRoot = path.join(packageRoot, 'release');
   mkdirSync(path.join(releaseRoot, 'src', 'enterprise', 'public'), {

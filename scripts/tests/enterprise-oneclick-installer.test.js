@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import {
   chmodSync,
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -20,6 +21,9 @@ import { describe, expect, it } from 'vitest';
 
 const COMMON_SH = path.resolve('deployment/enterprise-oneclick/lib/common.sh');
 const INSTALL_SH = path.resolve('deployment/enterprise-oneclick/install.sh');
+const STAGE_ENROLLMENT_SECRET = path.resolve(
+  'deployment/enterprise-oneclick/tools/stage-enrollment-secret.mjs',
+);
 const EXPORT_MIGRATION_SH = path.resolve(
   'deployment/enterprise-oneclick/export-migration.sh',
 );
@@ -643,6 +647,81 @@ describe('enterprise one-click schema contract', () => {
 });
 
 describe('enterprise one-click runtime configuration contract', () => {
+  it('stages a valid enrollment secret without printing it', () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-enrollment-secret-'));
+    const source = path.join(sandbox, 'source.secret');
+    const target = path.join(sandbox, 'staged.secret');
+    const secret = `enrollment_${'a'.repeat(48)}`;
+
+    try {
+      writeFileSync(source, `${secret}\n`, { mode: 0o600 });
+      chmodSync(source, 0o600);
+      const result = spawnSync(
+        process.execPath,
+        [STAGE_ENROLLMENT_SECRET, source, target],
+        { encoding: 'utf8' },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe('');
+      expect(result.stderr).toBe('');
+      expect(readFileSync(target, 'utf8')).toBe(`${secret}\n`);
+      if (process.platform !== 'win32') expect(mode(target)).toBe(0o600);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects malformed enrollment secrets without leaking their content', () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-enrollment-secret-'));
+    const source = path.join(sandbox, 'source.secret');
+    const target = path.join(sandbox, 'staged.secret');
+    const sentinel = `do-not-log-${'b'.repeat(40)}`;
+
+    try {
+      writeFileSync(source, `${sentinel}\nsecond-line\n`, { mode: 0o600 });
+      chmodSync(source, 0o600);
+      const result = spawnSync(
+        process.execPath,
+        [STAGE_ENROLLMENT_SECRET, source, target],
+        { encoding: 'utf8' },
+      );
+
+      expect(result.status).toBe(3);
+      expect(result.stdout).toBe('');
+      expect(result.stderr).not.toContain(sentinel);
+      expect(existsSync(target)).toBe(false);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'rejects an enrollment secret readable by group or others',
+    () => {
+      const sandbox = mkdtempSync(
+        path.join(tmpdir(), 'otto-enrollment-secret-'),
+      );
+      const source = path.join(sandbox, 'source.secret');
+      const target = path.join(sandbox, 'staged.secret');
+
+      try {
+        writeFileSync(source, `${'c'.repeat(48)}\n`, { mode: 0o644 });
+        chmodSync(source, 0o644);
+        const result = spawnSync(
+          process.execPath,
+          [STAGE_ENROLLMENT_SECRET, source, target],
+          { encoding: 'utf8' },
+        );
+
+        expect(result.status).toBe(3);
+        expect(result.stderr).toContain('group/others');
+        expect(existsSync(target)).toBe(false);
+      } finally {
+        rmSync(sandbox, { recursive: true, force: true });
+      }
+    },
+  );
   it('accepts every runtime key emitted by the installer during upgrades', () => {
     const common = readFileSync(COMMON_SH, 'utf8');
     const installer = readFileSync(INSTALL_SH, 'utf8');
@@ -725,11 +804,14 @@ describe('enterprise one-click runtime configuration contract', () => {
     }
   });
 
-  it('moves the one-time Control enrollment secret into a service-only file', () => {
+  it('keeps enrollment secrets out of ordinary config, diagnostics and canaries', () => {
     const envExample = readFileSync(ENV_EXAMPLE, 'utf8');
     const common = readFileSync(COMMON_SH, 'utf8');
     const installer = readFileSync(INSTALL_SH, 'utf8');
+    const upgrader = readFileSync(UPGRADE_SH, 'utf8');
     const readme = readFileSync(README, 'utf8');
+    const gitignore = readFileSync(path.resolve('.gitignore'), 'utf8');
+    const stagingTool = readFileSync(STAGE_ENROLLMENT_SECRET, 'utf8');
     const allowlist =
       common.match(/case "\$key" in([\s\S]*?)\n\s*\*\)/)?.[1] ?? '';
     const runtimeEnv =
@@ -739,7 +821,6 @@ describe('enterprise one-click runtime configuration contract', () => {
 
     for (const key of [
       'OTTO_CONTROL_URL',
-      'OTTO_DEPLOYMENT_BOOTSTRAP_SECRET',
       'OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE',
       'OTTO_DEPLOYMENT_KIND',
     ]) {
@@ -747,18 +828,28 @@ describe('enterprise one-click runtime configuration contract', () => {
       expect(allowlist).toContain(key);
       expect(readme).toContain(`\`${key}\``);
     }
+    expect(envExample).not.toMatch(/^OTTO_DEPLOYMENT_BOOTSTRAP_SECRET=/m);
+    expect(allowlist).not.toMatch(/OTTO_DEPLOYMENT_BOOTSTRAP_SECRET\|/);
+    expect(readme).not.toContain('`OTTO_DEPLOYMENT_BOOTSTRAP_SECRET`');
     expect(runtimeEnv).toContain('OTTO_CONTROL_URL "$OTTO_CONTROL_URL"');
     expect(runtimeEnv).toContain(
       'OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE "$BOOTSTRAP_SECRET_TARGET"',
     );
-    expect(runtimeEnv).not.toContain(
-      'OTTO_DEPLOYMENT_BOOTSTRAP_SECRET "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET"',
+    expect(installer).toContain('tools/stage-enrollment-secret.mjs');
+    expect(installer).toContain('rm -f "$BOOTSTRAP_SECRET_TARGET"');
+    expect(installer).not.toContain('failed-deployment-bootstrap-secret');
+    expect(stagingTool).toContain('constants.O_NOFOLLOW');
+    expect(stagingTool).not.toContain('console.log');
+    expect(upgrader).toContain('-u OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE');
+    expect(gitignore).toContain(
+      'deployment/enterprise-oneclick/config/deployment-enrollment-secret*',
     );
-    expect(installer).toContain(
-      'install -o otto-enterprise -g otto-enterprise -m 0600',
+    const bundle = readFileSync(BUNDLE_SCRIPT, 'utf8');
+    expect(bundle).toContain('function isEnrollmentSecretArtifact(candidate)');
+    expect(bundle).toContain('!isEnrollmentSecretArtifact(source)');
+    expect(bundle).toContain(
+      '!isEnrollmentSecretArtifact(path.join(sourceDir, relative))',
     );
-    expect(installer).toContain('-u OTTO_DEPLOYMENT_BOOTSTRAP_SECRET');
-    expect(installer).toContain('-u OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE');
   });
 });
 

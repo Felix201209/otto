@@ -82,7 +82,6 @@ OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE="${OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE:-
 OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE="${OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE:-}"
 OTTO_FIELD_ENCRYPTION_KEY_FILE="${OTTO_FIELD_ENCRYPTION_KEY_FILE:-}"
 OTTO_CONTROL_URL="${OTTO_CONTROL_URL:-}"
-OTTO_DEPLOYMENT_BOOTSTRAP_SECRET="${OTTO_DEPLOYMENT_BOOTSTRAP_SECRET:-}"
 OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE="${OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE:-}"
 OTTO_DEPLOYMENT_KIND="${OTTO_DEPLOYMENT_KIND:-self-hosted}"
 OTTO_TELEMETRY_ENDPOINT="${OTTO_TELEMETRY_ENDPOINT:-}"
@@ -186,27 +185,18 @@ case "$OTTO_CONTROL_URL" in
   ""|https://*) ;;
   *) otto_die "OTTO_CONTROL_URL 必须为空或使用 HTTPS" ;;
 esac
-if [ -n "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET" ] \
-  && [ -n "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE" ]; then
-  otto_die "部署登记密钥只能通过值或文件提供一种"
+if [ -n "${OTTO_DEPLOYMENT_BOOTSTRAP_SECRET:-}" ]; then
+  otto_die "不再接受内联部署登记密钥；请使用权限受限的 OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE"
 fi
-if [ -n "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET" ] \
-  && [ "${#OTTO_DEPLOYMENT_BOOTSTRAP_SECRET}" -lt 32 ]; then
-  otto_die "OTTO_DEPLOYMENT_BOOTSTRAP_SECRET 至少需要 32 个字符"
-fi
+unset OTTO_DEPLOYMENT_BOOTSTRAP_SECRET
 if [ -n "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE" ]; then
   [[ "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE" = /* ]] \
     || otto_die "OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE 必须使用绝对路径"
   [ -f "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE" ] \
     && [ ! -L "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE" ] \
     || otto_die "部署登记密钥文件必须是普通文件且不能是符号链接"
-  [ "$(wc -c < "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE")" -le 4096 ] \
-    || otto_die "部署登记密钥文件不能超过 4096 字节"
-fi
-if { [ -n "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET" ] \
-    || [ -n "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE" ]; } \
-  && [ -z "$OTTO_CONTROL_URL" ]; then
-  otto_die "提供部署登记密钥时必须同时配置 OTTO_CONTROL_URL"
+  [ -n "$OTTO_CONTROL_URL" ] \
+    || otto_die "提供部署登记密钥文件时必须同时配置 OTTO_CONTROL_URL"
 fi
 for key_variable in \
   OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE \
@@ -335,6 +325,8 @@ CURRENT_CREATED=0
 DATA_CREATED=0
 CONFIG_CREATED=0
 BOOTSTRAP_SECRET_CREATED=0
+BOOTSTRAP_SECRET_STAGED=""
+BOOTSTRAP_SECRET_TARGET=""
 RUNTIME_LINK_CREATED=0
 RUNTIME_DIR_CREATED=0
 TRANSACTION_MARKER_CREATED=0
@@ -377,9 +369,8 @@ cleanup() {
       mv "${CONFIG_DIR}/enterprise.env" "${TXN_DIR}/failed-enterprise.env"
     fi
     if [ "$BOOTSTRAP_SECRET_CREATED" -eq 1 ] \
-      && [ -f "${CONFIG_DIR}/deployment-bootstrap-secret" ]; then
-      mv "${CONFIG_DIR}/deployment-bootstrap-secret" \
-        "${TXN_DIR}/failed-deployment-bootstrap-secret"
+      && [ -f "$BOOTSTRAP_SECRET_TARGET" ]; then
+      rm -f "$BOOTSTRAP_SECRET_TARGET"
     fi
     if [ "$RUNTIME_LINK_CREATED" -eq 1 ] && [ -L "${INSTALL_ROOT}/runtime/current" ]; then
       mv "${INSTALL_ROOT}/runtime/current" "${TXN_DIR}/failed-runtime-link"
@@ -411,6 +402,9 @@ cleanup() {
   elif [ "$status" -eq 0 ]; then
     rm -rf "$TXN_DIR"
   fi
+  if [ -n "$BOOTSTRAP_SECRET_STAGED" ]; then
+    rm -f "$BOOTSTRAP_SECRET_STAGED"
+  fi
 }
 trap cleanup EXIT
 
@@ -430,6 +424,12 @@ if ! NODE_PATH="$(otto_resolve_node "$PREFERRED_NODE")"; then
       ca-certificates curl
   fi
   NODE_PATH="$(otto_install_node_runtime "${TXN_DIR}/runtime")"
+fi
+
+if [ -n "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE" ]; then
+  BOOTSTRAP_SECRET_STAGED="${TXN_DIR}/deployment-enrollment-secret"
+  "$NODE_PATH" "${SCRIPT_DIR}/tools/stage-enrollment-secret.mjs" \
+    "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE" "$BOOTSTRAP_SECRET_STAGED"
 fi
 
 RELEASE_INFO="$("$NODE_PATH" "${SCRIPT_DIR}/tools/verify-release.mjs" "${SCRIPT_DIR}/release")"
@@ -677,7 +677,6 @@ otto_log "启动 127.0.0.1:17777 隔离 canary"
 env \
   -u OTTO_CONTROL_URL \
   -u OTTO_CONTROL_ORIGIN \
-  -u OTTO_DEPLOYMENT_BOOTSTRAP_SECRET \
   -u OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE \
   "$NODE_PATH" "${TARGET_RELEASE}/run.mjs" >"${TXN_DIR}/canary.log" 2>&1 &
 CANARY_PID=$!
@@ -730,21 +729,15 @@ install -o otto-enterprise -g otto-enterprise -m 0600 \
   "${CANARY_DIR}/data.db" "${DATA_DIR}/data.db"
 DATA_CREATED=1
 
-BOOTSTRAP_SECRET_TARGET=""
-if [ -n "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET" ] \
-  || [ -n "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE" ]; then
-  BOOTSTRAP_SECRET_TEMP="${TXN_DIR}/deployment-bootstrap-secret"
-  if [ -n "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET" ]; then
-    printf '%s\n' "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET" > "$BOOTSTRAP_SECRET_TEMP"
-  else
-    install -m 0600 "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE" \
-      "$BOOTSTRAP_SECRET_TEMP"
-  fi
-  chmod 0600 "$BOOTSTRAP_SECRET_TEMP"
+if [ -n "$BOOTSTRAP_SECRET_STAGED" ]; then
   BOOTSTRAP_SECRET_TARGET="${CONFIG_DIR}/deployment-bootstrap-secret"
+  [ ! -e "$BOOTSTRAP_SECRET_TARGET" ] && [ ! -L "$BOOTSTRAP_SECRET_TARGET" ] \
+    || otto_die "部署登记密钥目标已存在，拒绝覆盖"
   install -o otto-enterprise -g otto-enterprise -m 0600 \
-    "$BOOTSTRAP_SECRET_TEMP" "$BOOTSTRAP_SECRET_TARGET"
+    "$BOOTSTRAP_SECRET_STAGED" "$BOOTSTRAP_SECRET_TARGET"
   BOOTSTRAP_SECRET_CREATED=1
+  rm -f "$BOOTSTRAP_SECRET_STAGED"
+  BOOTSTRAP_SECRET_STAGED=""
 fi
 
 write_env() {

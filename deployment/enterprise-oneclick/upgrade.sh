@@ -164,7 +164,12 @@ export OTTO_LICENSE_TRUST_FILE="${SCRIPT_DIR}/release/license-public-keys.json"
 
 "$NODE_PATH" "${SCRIPT_DIR}/tools/migrate-check.mjs" "${SCRIPT_DIR}/release" "$CANARY_DIR" >/dev/null
 otto_log "启动 127.0.0.1:17777 升级 canary"
-"$NODE_PATH" "${SCRIPT_DIR}/release/run.mjs" >"${TXN_DIR}/canary.log" 2>&1 &
+env \
+  -u OTTO_CONTROL_URL \
+  -u OTTO_CONTROL_ORIGIN \
+  -u OTTO_DEPLOYMENT_BOOTSTRAP_SECRET \
+  -u OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE \
+  "$NODE_PATH" "${SCRIPT_DIR}/release/run.mjs" >"${TXN_DIR}/canary.log" 2>&1 &
 CANARY_PID=$!
 CANARY_OK=0
 for _ in $(seq 1 30); do
