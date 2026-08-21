@@ -127,10 +127,12 @@ chmod 600 ./enterprise.env
 部署中心自动登记为推荐配置：
 
 - `OTTO_CONTROL_URL`：Otto Control 的 HTTPS 地址；
-- `OTTO_DEPLOYMENT_BOOTSTRAP_SECRET` 或 `OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE`：部署中心签发的一次性登记密钥，只能二选一；
+- `OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE`：部署中心签发的一次性登记密钥文件的绝对路径；
 - `OTTO_DEPLOYMENT_KIND`：发行/部署类型，默认 `self-hosted`。
 
-安装器不会把密钥值写进 `enterprise.env`，而是复制到仅 `otto-enterprise` 服务账号可读的 `/etc/otto-enterprise/deployment-bootstrap-secret`。服务器随后自动完成部署身份、License、套餐模块、模型积分网关、联邦网关、更新通道和遥测配置；桌面客户端只需填写服务器地址，不能读取或提交该密钥。手工离线授权可留空这些字段。
+Control 或云部署编排必须先把密钥写入仓库和镜像构建上下文之外的普通文件（推荐 `/run/otto-enterprise/deployment-enrollment-secret`），文件只能由所有者读取和写入，内容只能是一行 32-512 字符的 base64url token。不要把密钥值写入 `enterprise.env`、shell 参数、cloud-init 日志、容器镜像层或 Git；普通配置中只填写上述文件路径。
+
+安装器通过无符号链接打开方式读取源文件，把规范化后的值暂存于 0700 安装事务目录，并复制到仅 `otto-enterprise` 服务账号可读的 `/etc/otto-enterprise/deployment-bootstrap-secret`。成功或失败后都会删除事务目录中的暂存副本；失败时还会删除服务目标副本，不把密钥移入故障诊断目录。最终 `enterprise.env` 只保存 `OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE` 的目标路径。服务器随后自动完成部署身份、License、套餐模块、模型积分网关、联邦网关、更新通道和遥测配置；桌面客户端只需填写服务器地址，不能读取或提交该密钥。手工离线授权可留空这些字段。
 
 跨私有服务器联邦为可选配置：
 
