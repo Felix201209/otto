@@ -153,6 +153,8 @@ export function App(): React.JSX.Element {
       <EnterpriseLoginPage
         initialServerUrl={auth.state.serverUrl}
         initialInviteCode={auth.state.registrationIntent?.inviteCode}
+        preparation={auth.state.preparation}
+        onPrepareServer={auth.actions.prepareServer}
         busy={auth.state.busy}
         error={auth.state.error}
         onPasswordLogin={auth.actions.loginWithPassword}

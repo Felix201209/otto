@@ -724,6 +724,42 @@ describe('enterprise one-click runtime configuration contract', () => {
       expect(readme).toContain(`\`${key}\``);
     }
   });
+
+  it('moves the one-time Control enrollment secret into a service-only file', () => {
+    const envExample = readFileSync(ENV_EXAMPLE, 'utf8');
+    const common = readFileSync(COMMON_SH, 'utf8');
+    const installer = readFileSync(INSTALL_SH, 'utf8');
+    const readme = readFileSync(README, 'utf8');
+    const allowlist =
+      common.match(/case "\$key" in([\s\S]*?)\n\s*\*\)/)?.[1] ?? '';
+    const runtimeEnv =
+      installer.match(
+        /write_env "\$ENV_TEMP" \\\n([\s\S]*?)\ninstall -o root/,
+      )?.[1] ?? '';
+
+    for (const key of [
+      'OTTO_CONTROL_URL',
+      'OTTO_DEPLOYMENT_BOOTSTRAP_SECRET',
+      'OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE',
+      'OTTO_DEPLOYMENT_KIND',
+    ]) {
+      expect(envExample).toMatch(new RegExp(`^${key}=`, 'm'));
+      expect(allowlist).toContain(key);
+      expect(readme).toContain(`\`${key}\``);
+    }
+    expect(runtimeEnv).toContain('OTTO_CONTROL_URL "$OTTO_CONTROL_URL"');
+    expect(runtimeEnv).toContain(
+      'OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE "$BOOTSTRAP_SECRET_TARGET"',
+    );
+    expect(runtimeEnv).not.toContain(
+      'OTTO_DEPLOYMENT_BOOTSTRAP_SECRET "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET"',
+    );
+    expect(installer).toContain(
+      'install -o otto-enterprise -g otto-enterprise -m 0600',
+    );
+    expect(installer).toContain('-u OTTO_DEPLOYMENT_BOOTSTRAP_SECRET');
+    expect(installer).toContain('-u OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE');
+  });
 });
 
 describe('enterprise one-click health contract', () => {

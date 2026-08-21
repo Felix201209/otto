@@ -3,7 +3,10 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import type { EnterpriseLegalDocumentReference } from '../../preload/index.js';
+import type {
+  EnterpriseLegalDocumentReference,
+  EnterpriseServerPreparationResult,
+} from '../../preload/index.js';
 import { OttoPetStage } from './OttoPetStage.js';
 
 type LoginMode = 'login' | 'register' | 'join';
@@ -150,11 +153,17 @@ export function EnterpriseLoginPage({
   onRequestRegistrationCode,
   onRegister,
   onClearError,
+  preparation,
+  onPrepareServer,
 }: {
   initialServerUrl: string;
   initialInviteCode?: string;
   busy: boolean;
   error: string | null;
+  preparation: EnterpriseServerPreparationResult | null;
+  onPrepareServer: (input: {
+    serverUrl: string;
+  }) => Promise<EnterpriseServerPreparationResult>;
   onPasswordLogin: (input: { serverUrl: string; identifier: string; password: string }) => Promise<void>;
   onRequestLoginCode?: (input: { serverUrl: string; phone: string }) => Promise<{
     challengeId: string;
@@ -192,7 +201,7 @@ export function EnterpriseLoginPage({
   const [loginNotice, setLoginNotice] = useState('');
   const [loginCountdown, setLoginCountdown] = useState(0);
   const [loginRequesting, setLoginRequesting] = useState(false);
-  const serverUrl = initialServerUrl;
+  const [serverUrl, setServerUrl] = useState(initialServerUrl);
   const [name, setName] = useState('');
   const [registrationPassword, setRegistrationPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -213,6 +222,17 @@ export function EnterpriseLoginPage({
   const submitLockedRef = useRef(false);
   const formPending = busy || submitting;
   const legalUrl = enterpriseLegalUrl(serverUrl);
+
+  const preparationMatches =
+    preparation?.serverUrl === serverUrl.trim().replace(/\/+$/u, '');
+  const serverReady = Boolean(
+    preparationMatches &&
+      (preparation?.legacy || preparation?.readiness?.canAuthenticate),
+  );
+
+  useEffect(() => {
+    setServerUrl(initialServerUrl);
+  }, [initialServerUrl]);
 
   useEffect(() => {
     if (!initialInviteCode) return;
@@ -244,8 +264,19 @@ export function EnterpriseLoginPage({
     return () => window.clearInterval(timer);
   }, [loginCountdown]);
 
+  const prepareDeployment = async (): Promise<void> => {
+    if (formPending || !serverUrl.trim()) return;
+    onClearError();
+    try {
+      const result = await onPrepareServer({ serverUrl: serverUrl.trim() });
+      setServerUrl(result.serverUrl);
+    } catch {
+      // useEnterpriseAuth owns the user-facing error.
+    }
+  };
+
   const requestCode = async (): Promise<void> => {
-    if (formPending || requesting || countdown > 0) return;
+    if (!serverReady || formPending || requesting || countdown > 0) return;
     const requestEpoch = requestEpochRef.current + 1;
     requestEpochRef.current = requestEpoch;
     setRequesting(true);
@@ -329,7 +360,7 @@ export function EnterpriseLoginPage({
 
   const submitAuth = async (): Promise<void> => {
     if (formPending || requesting || loginRequesting || submitLockedRef.current) return;
-    if (!serverUrl.trim()) return;
+    if (!serverUrl.trim() || !serverReady) return;
     if ((mode === 'register' || mode === 'join') && !isRegistrationReady({
       inviteCode,
       inviteRequired: mode === 'join',
@@ -431,6 +462,48 @@ export function EnterpriseLoginPage({
               : mode === 'join' ? '企业成员加入' : '创建个人 Otto 账号'}
           </div>
 
+          <div className="otto-auth-server">
+            <label htmlFor="otto-enterprise-server">企业服务器</label>
+            <input
+              id="otto-enterprise-server"
+              type="url"
+              inputMode="url"
+              autoComplete="url"
+              spellCheck={false}
+              placeholder="https://otto.example.com"
+              value={serverUrl}
+              disabled={formPending}
+              onChange={(event) => {
+                setServerUrl(event.target.value);
+                onClearError();
+              }}
+            />
+            <button
+              type="button"
+              disabled={formPending || !serverUrl.trim()}
+              onClick={() => void prepareDeployment()}
+            >
+              {busy ? '正在准备…' : serverReady ? '重新检查' : '连接并自动准备'}
+            </button>
+          </div>
+          {preparationMatches && preparation ? (
+            <div className="otto-auth-readiness" data-state={
+              preparation.legacy ? 'legacy' : preparation.readiness?.state
+            }>
+              <strong>
+                {preparation.legacy
+                  ? '兼容旧版服务器'
+                  : preparation.readiness?.canAuthenticate
+                    ? '服务器已可使用'
+                    : '服务器需要管理员处理'}
+              </strong>
+              {preparation.readiness?.steps.map((item) => (
+                <span key={item.id} data-step-state={item.state}>
+                  <i aria-hidden />{item.message}
+                </span>
+              ))}
+            </div>
+          ) : null}
           {mode === 'register' || mode === 'join' ? (
             <>
               <h2>{mode === 'join' ? '加入企业' : '创建 Otto 账号'}</h2>
@@ -725,7 +798,7 @@ export function EnterpriseLoginPage({
           <button
             className="otto-auth-submit"
             type="submit"
-            disabled={formPending || requesting || loginRequesting
+            disabled={!serverReady || formPending || requesting || loginRequesting
               || (mode === 'login' && (
                 loginMethod === 'password'
                   ? (!identifier.trim() || !loginPassword)

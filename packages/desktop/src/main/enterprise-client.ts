@@ -1047,6 +1047,51 @@ interface EnterpriseServerHealth {
   capabilities?: unknown;
 }
 
+export type EnterprisePrivateDeploymentStepId =
+  | 'deployment_identity'
+  | 'license'
+  | 'modules'
+  | 'model_and_credits'
+  | 'storage'
+  | 'federation'
+  | 'updates'
+  | 'telemetry'
+  | 'account_identity';
+
+export interface EnterprisePrivateDeploymentReadiness {
+  state:
+    | 'ready'
+    | 'ready_for_identity'
+    | 'configuring'
+    | 'degraded'
+    | 'blocked';
+  canAuthenticate: boolean;
+  canUseLicensedFeatures: boolean;
+  bootstrap: {
+    phase: 'idle' | 'not_configured' | 'claiming' | 'activated' | 'failed';
+    lastAttemptAt: string | null;
+    lastSuccessAt: string | null;
+    errorCode: string | null;
+  };
+  steps: Array<{
+    id: EnterprisePrivateDeploymentStepId;
+    state:
+      | 'ready'
+      | 'configuring'
+      | 'waiting_for_user'
+      | 'action_required'
+      | 'disabled';
+    required: boolean;
+    message: string;
+  }>;
+}
+
+export interface EnterpriseServerPreparationResult {
+  serverUrl: string;
+  legacy: boolean;
+  readiness: EnterprisePrivateDeploymentReadiness | null;
+}
+
 interface EnterpriseRequestBehavior {
   omitAuthorization?: boolean;
   preserveSessionOnUnauthorized?: boolean;
@@ -1184,6 +1229,7 @@ function e2eeProtocolMetadata(content: string): {
         return {
           contentType: 'atoa_response',
           inReplyToMessageId: (parsed as Record<string, string>).requestId,
+
         };
       }
     } catch {
@@ -1227,6 +1273,61 @@ export class EnterpriseClient {
 
   snapshot(): StoredSession {
     return { serverUrl: this.serverUrl, token: this.token };
+  }
+
+  async prepareServer(
+    serverUrl: string,
+  ): Promise<EnterpriseServerPreparationResult> {
+    const targetServerUrl = normalizeServerUrl(serverUrl);
+    const generation = this.beginAuthOperation(targetServerUrl);
+    const health = await this.request<EnterpriseServerHealth>(
+      '/enterprise/health',
+      {},
+      {
+        omitAuthorization: true,
+        preserveSessionOnUnauthorized: true,
+        serverUrl: targetServerUrl,
+        authorizationToken: null,
+      },
+    );
+    this.assertAuthOperationCurrent(generation, targetServerUrl);
+    const capabilities =
+      Array.isArray(health.capabilities) &&
+      health.capabilities.every((item) => typeof item === 'string')
+        ? new Set(health.capabilities as string[])
+        : null;
+    if (
+      health.status !== 'ok' ||
+      typeof health.apiVersion !== 'number' ||
+      health.apiVersion < 2 ||
+      capabilities === null
+    ) {
+      throw new Error(ENTERPRISE_SERVER_UPGRADE_ERROR);
+    }
+    this.compatibleServerUrl = targetServerUrl;
+    this.compatibleCapabilities = capabilities;
+    if (!capabilities.has('private_deployment_bootstrap_v1')) {
+      return { serverUrl: targetServerUrl, legacy: true, readiness: null };
+    }
+    const result = await this.request<{
+      readiness: EnterprisePrivateDeploymentReadiness;
+    }>(
+      '/enterprise/bootstrap/prepare',
+      { method: 'POST', body: '{}' },
+      {
+        omitAuthorization: true,
+        preserveSessionOnUnauthorized: true,
+        serverUrl: targetServerUrl,
+        authorizationToken: null,
+        timeoutMs: 30_000,
+      },
+    );
+    this.assertAuthOperationCurrent(generation, targetServerUrl);
+    return {
+      serverUrl: targetServerUrl,
+      legacy: false,
+      readiness: result.readiness,
+    };
   }
 
   supportsMlsPrivateMessages(): boolean {
