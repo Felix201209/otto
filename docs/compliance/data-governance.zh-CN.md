@@ -44,6 +44,8 @@
 - 业务字段、附件对象、账号同步和备份使用不同密钥，备份归档会保存恢复所需的业务密钥，并由独立的备份密钥再次加密。
 - 可通过 `OTTO_FIELD_ENCRYPTION_KEY_FILE`、`OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE` 和 `OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE` 把 32 字节原始密钥挂载到数据目录之外；客户托管密钥恢复时必须与备份内密钥一致，程序不会覆盖外部密钥。
 - `OTTO_BACKUP_ENCRYPTION_KEY_FILE` 使用 32 字节 Base64 或 64 位十六进制密钥，应由客户与交付方按合同离线托管。丢失备份密钥或业务密钥都将导致对应数据不可恢复。
+- 异地备份必须同时配置 `OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE`，指向独立密钥托管卷或 Secret；备份副本不携带明文密钥，托管路径不能位于数据、备份或副本目录。
+- 已有备份时若归档密钥缺失、变更或无法认证最新历史归档，备份任务会 fail closed，不会自动生成新密钥并报告成功。
 - 密钥文件必须是普通文件，不允许符号链接，并只向 Otto 服务账号授予读取权限。生产环境需要制定生成、备份、轮换、吊销和双人恢复流程。
 
 ## 权限与越权控制

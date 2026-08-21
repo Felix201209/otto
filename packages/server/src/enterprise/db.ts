@@ -385,6 +385,8 @@ const dataProtection = createDataProtectionService({
   encryptionKey: process.env.OTTO_BACKUP_ENCRYPTION_KEY,
   encryptionKeyPath: process.env.OTTO_BACKUP_ENCRYPTION_KEY_FILE,
   intervalHours: Number(process.env.OTTO_BACKUP_INTERVAL_HOURS || 24),
+  encryptionKeyRecoveryPath:
+    process.env.OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE,
   retentionDays: Number(process.env.OTTO_BACKUP_RETENTION_DAYS || 30),
   minimumRetained: Number(process.env.OTTO_BACKUP_MINIMUM_RETAINED || 3),
   minimumFreeBytes:
