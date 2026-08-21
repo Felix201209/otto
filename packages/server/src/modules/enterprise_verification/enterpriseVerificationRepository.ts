@@ -16,7 +16,6 @@ import {
   type CancelEnterpriseVerificationApplicationInput,
   type EnterpriseVerificationApplicantIdentity,
   type EnterpriseVerificationApplicationView,
-  type EnterpriseVerificationEvidenceInput,
   type EnterpriseVerificationEvidencePurpose,
   type EnterpriseVerificationErrorCode,
   type EnterpriseVerificationStatus,
@@ -36,8 +35,11 @@ const CREDIT_CODE_CHARSET = '0123456789ABCDEFGHJKLMNPQRTUWXY';
 const CREDIT_CODE_WEIGHTS = [
   1, 3, 9, 27, 19, 26, 16, 17, 20, 29, 25, 13, 8, 24, 10, 30, 28,
 ] as const;
-const SHA256_PATTERN = /^[a-f0-9]{64}$/iu;
 const SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u;
+const SELF_SERVICE_CODE_PREFIX = 'OTTO-SELF-SERVICE:';
+const SELF_SERVICE_REVIEWER_ID = 'self-service';
+const SELF_SERVICE_REVIEW_NOTE =
+  '手机号已验证的账号自助创建企业；未进行权威工商主体认证';
 const MAX_EVIDENCE_BYTES = 8 * 1024 * 1024;
 const EVIDENCE_CONTENT_TYPES = new Set([
   'application/pdf',
@@ -115,11 +117,6 @@ interface NormalizedSubmission {
   applicantAccountId: string;
   sourceOrganizationId: string;
   enterpriseName: string;
-  unifiedSocialCreditCode: string;
-  legalRepresentativeName: string;
-  applicantIdentity: EnterpriseVerificationApplicantIdentity;
-  businessLicense: EnterpriseVerificationEvidenceInput;
-  authorizationLetter: EnterpriseVerificationEvidenceInput | null;
 }
 
 function verificationError(
@@ -155,27 +152,6 @@ function normalizeId(value: string, label: string): string {
   return normalized;
 }
 
-function normalizeEvidence(
-  evidence: EnterpriseVerificationEvidenceInput,
-  label: string,
-): EnterpriseVerificationEvidenceInput {
-  if (!evidence || typeof evidence !== 'object') {
-    throw verificationError('invalid_input', `${label}不能为空`);
-  }
-  const evidenceReference = normalizeRequiredText(
-    evidence.evidenceReference,
-    `${label}引用`,
-    160,
-  );
-  const evidenceSha256 = evidence.evidenceSha256
-    .trim()
-    .toLocaleLowerCase('en-US');
-  if (!SHA256_PATTERN.test(evidenceSha256)) {
-    throw verificationError('invalid_input', `${label} SHA-256 格式不正确`);
-  }
-  return { evidenceReference, evidenceSha256 };
-}
-
 /** Uses the official 31-character set and 17-position weighting algorithm. */
 export function normalizeAndValidateUnifiedSocialCreditCode(value: string): string {
   const normalized = value.trim().toLocaleUpperCase('en-US');
@@ -203,33 +179,10 @@ export function normalizeAndValidateUnifiedSocialCreditCode(value: string): stri
 function normalizeSubmission(
   input: SubmitEnterpriseVerificationApplicationInput,
 ): NormalizedSubmission {
-  if (
-    input.applicantIdentity !== 'legal_representative' &&
-    input.applicantIdentity !== 'authorized_agent'
-  ) {
-    throw verificationError('invalid_input', '申请人身份不正确');
-  }
-  const authorizationLetter = input.authorizationLetter
-    ? normalizeEvidence(input.authorizationLetter, '授权书')
-    : null;
-  if (input.applicantIdentity === 'authorized_agent' && !authorizationLetter) {
-    throw verificationError('invalid_input', '受托申请人必须提交授权书');
-  }
   return {
     applicantAccountId: normalizeId(input.applicantAccountId, '申请账号 ID'),
     sourceOrganizationId: normalizeId(input.sourceOrganizationId, '来源组织 ID'),
     enterpriseName: normalizeRequiredText(input.enterpriseName, '企业名称', 80),
-    unifiedSocialCreditCode: normalizeAndValidateUnifiedSocialCreditCode(
-      input.unifiedSocialCreditCode,
-    ),
-    legalRepresentativeName: normalizeRequiredText(
-      input.legalRepresentativeName,
-      '法定代表人姓名',
-      80,
-    ),
-    applicantIdentity: input.applicantIdentity,
-    businessLicense: normalizeEvidence(input.businessLicense, '营业执照'),
-    authorizationLetter,
   };
 }
 
@@ -259,27 +212,40 @@ function encryptedValueFromRow(
   return { ciphertext, iv, authTag, keyVersion };
 }
 
-function decryptRequiredField(
-  store: EnterpriseVerificationRepositoryStore,
-  row: EnterpriseVerificationRow,
-  prefix: 'legal_representative_name' | 'business_license_reference',
-): string {
-  const encrypted = encryptedValueFromRow(row, prefix);
-  if (!encrypted) throw new Error(`企业认证敏感字段 ${prefix} 缺失`);
-  return store.fieldCipher.decryptText(
-    encrypted,
-    encryptionContext(row.id, prefix),
-  );
-}
-
 function rowToView(
   store: EnterpriseVerificationRepositoryStore,
   row: EnterpriseVerificationRow,
 ): EnterpriseVerificationApplicationView {
+  const legalRepresentative = encryptedValueFromRow(
+    row,
+    'legal_representative_name',
+  );
+  const businessLicense = encryptedValueFromRow(
+    row,
+    'business_license_reference',
+  );
   const authorizationLetter = encryptedValueFromRow(
     row,
     'authorization_letter_reference',
   );
+  const legalRepresentativeName = legalRepresentative
+    ? store.fieldCipher.decryptText(
+        legalRepresentative,
+        encryptionContext(row.id, 'legal_representative_name'),
+      )
+    : '';
+  const businessLicenseReference = businessLicense
+    ? store.fieldCipher.decryptText(
+        businessLicense,
+        encryptionContext(row.id, 'business_license_reference'),
+      )
+    : '';
+  const authorizationLetterReference = authorizationLetter
+    ? store.fieldCipher.decryptText(
+        authorizationLetter,
+        encryptionContext(row.id, 'authorization_letter_reference'),
+      )
+    : '';
   return {
     id: row.id,
     applicantAccountId: row.applicant_account_id,
@@ -287,30 +253,27 @@ function rowToView(
     targetOrganizationId:
       row.status === 'approved' ? row.source_organization_id : null,
     enterpriseName: row.enterprise_name,
-    unifiedSocialCreditCode: row.unified_social_credit_code,
-    legalRepresentativeName: decryptRequiredField(
-      store,
-      row,
-      'legal_representative_name',
-    ),
+    unifiedSocialCreditCode: row.unified_social_credit_code.startsWith(
+      SELF_SERVICE_CODE_PREFIX,
+    )
+      ? null
+      : row.unified_social_credit_code,
+    legalRepresentativeName: legalRepresentativeName || null,
     applicantIdentity: row.applicant_identity,
-    businessLicense: {
-      evidenceReference: decryptRequiredField(
-        store,
-        row,
-        'business_license_reference',
-      ),
-      evidenceSha256: row.business_license_sha256,
-    },
-    authorizationLetter: authorizationLetter
-      ? {
-          evidenceReference: store.fieldCipher.decryptText(
-            authorizationLetter,
-            encryptionContext(row.id, 'authorization_letter_reference'),
-          ),
-          evidenceSha256: row.authorization_letter_sha256!,
-        }
-      : null,
+    businessLicense:
+      businessLicenseReference && row.business_license_sha256
+        ? {
+            evidenceReference: businessLicenseReference,
+            evidenceSha256: row.business_license_sha256,
+          }
+        : null,
+    authorizationLetter:
+      authorizationLetterReference && row.authorization_letter_sha256
+        ? {
+            evidenceReference: authorizationLetterReference,
+            evidenceSha256: row.authorization_letter_sha256,
+          }
+        : null,
     status: row.status,
     submittedAtMs: Number(row.submitted_at_ms),
     updatedAtMs: Number(row.updated_at_ms),
@@ -351,7 +314,7 @@ function assertApplicantEligible(
 ): void {
   const account = database
     .prepare(
-      `SELECT a.id
+      `SELECT a.id, a.phone
        FROM accounts AS a
        INNER JOIN organizations AS o ON o.id = a.organization_id
        WHERE a.id = ? AND a.organization_id = ?
@@ -359,11 +322,19 @@ function assertApplicantEligible(
          AND a.status = 'active' AND a.deleted_at IS NULL
          AND o.status = 'active'`,
     )
-    .get(applicantAccountId, sourceOrganizationId);
+    .get(applicantAccountId, sourceOrganizationId) as
+    | { id: string; phone: string | null }
+    | undefined;
   if (!account) {
     throw verificationError(
       'applicant_not_eligible',
       '申请账号不是该个人组织中的有效 personal account',
+    );
+  }
+  if (!account.phone?.trim()) {
+    throw verificationError(
+      'applicant_not_eligible',
+      '请先绑定并验证手机号，再申请创建企业',
     );
   }
 }
@@ -374,17 +345,7 @@ function sameSubmission(
 ): boolean {
   return (
     view.sourceOrganizationId === input.sourceOrganizationId &&
-    view.enterpriseName === input.enterpriseName &&
-    view.unifiedSocialCreditCode === input.unifiedSocialCreditCode &&
-    view.legalRepresentativeName === input.legalRepresentativeName &&
-    view.applicantIdentity === input.applicantIdentity &&
-    view.businessLicense.evidenceReference ===
-      input.businessLicense.evidenceReference &&
-    view.businessLicense.evidenceSha256 === input.businessLicense.evidenceSha256 &&
-    view.authorizationLetter?.evidenceReference ===
-      input.authorizationLetter?.evidenceReference &&
-    view.authorizationLetter?.evidenceSha256 ===
-      input.authorizationLetter?.evidenceSha256
+    view.enterpriseName === input.enterpriseName
   );
 }
 
@@ -463,58 +424,6 @@ function evidenceStorageKeyFromRow(
     authTag: row.storage_key_auth_tag,
     keyVersion: row.storage_key_key_version,
   };
-}
-
-function findEvidenceForSubmission(
-  database: Database,
-  input: {
-    evidenceReference: string;
-    evidenceSha256: string;
-    applicantAccountId: string;
-    sourceOrganizationId: string;
-    purpose: EnterpriseVerificationEvidencePurpose;
-  },
-): EnterpriseVerificationEvidenceRow {
-  const evidenceReference = normalizeId(input.evidenceReference, '证据引用');
-  const row = database
-    .prepare(
-      `SELECT * FROM enterprise_verification_evidence
-       WHERE id = ? AND applicant_account_id = ? AND source_organization_id = ?
-         AND purpose = ? AND application_id IS NULL AND deleted_at_ms IS NULL`,
-    )
-    .get(
-      evidenceReference,
-      input.applicantAccountId,
-      input.sourceOrganizationId,
-      input.purpose,
-    ) as EnterpriseVerificationEvidenceRow | undefined;
-  if (!row) {
-    throw verificationError(
-      'invalid_evidence',
-      '证据不存在、无权使用、用途不符或已绑定其他申请',
-    );
-  }
-  if (row.sha256 !== input.evidenceSha256) {
-    throw verificationError('invalid_evidence', '证据 SHA-256 不匹配');
-  }
-  return row;
-}
-
-function bindEvidenceToApplication(
-  database: Database,
-  evidenceId: string,
-  applicationId: string,
-): void {
-  const bound = database
-    .prepare(
-      `UPDATE enterprise_verification_evidence
-       SET application_id = ?
-       WHERE id = ? AND application_id IS NULL AND deleted_at_ms IS NULL`,
-    )
-    .run(applicationId, evidenceId);
-  if (Number(bound.changes) !== 1) {
-    throw verificationError('invalid_evidence', '证据已被其他申请占用');
-  }
 }
 
 export function uploadEnterpriseVerificationEvidence(
@@ -651,6 +560,125 @@ export function readEnterpriseVerificationEvidence(
   };
 }
 
+function provisionPersonalOrganization(
+  store: EnterpriseVerificationRepositoryStore,
+  database: Database,
+  row: EnterpriseVerificationRow,
+): void {
+  const account = database
+    .prepare(
+      `SELECT id, name, employee_id
+       FROM accounts
+       WHERE id = ? AND organization_id = ? AND account_type = 'personal'
+         AND status = 'active' AND deleted_at IS NULL`,
+    )
+    .get(row.applicant_account_id, row.source_organization_id) as
+    | { id: string; name: string; employee_id: string | null }
+    | undefined;
+  if (!account || account.employee_id !== null) {
+    throw verificationError(
+      'applicant_not_eligible',
+      '申请账号已不再是可升级的 personal account',
+    );
+  }
+  const activeOrganization = database
+    .prepare("SELECT id FROM organizations WHERE id = ? AND status = 'active'")
+    .get(row.source_organization_id);
+  if (!activeOrganization) {
+    throw verificationError('applicant_not_eligible', '个人组织不存在或已停用');
+  }
+  const activeAccounts = database
+    .prepare(
+      `SELECT COUNT(*) AS count FROM accounts
+       WHERE organization_id = ? AND status = 'active' AND deleted_at IS NULL`,
+    )
+    .get(row.source_organization_id) as { count: number };
+  if (Number(activeAccounts.count) !== 1) {
+    throw verificationError(
+      'organization_not_isolated',
+      '个人组织存在其他活动账号，不能原地升级为企业',
+    );
+  }
+
+  const slug = organizationSlug(
+    row.enterprise_name,
+    row.unified_social_credit_code,
+  );
+  const slugConflict = database
+    .prepare(
+      'SELECT id FROM organizations WHERE slug = ? COLLATE NOCASE AND id <> ?',
+    )
+    .get(slug, row.source_organization_id);
+  if (slugConflict) {
+    throw verificationError(
+      'organization_slug_conflict',
+      '企业标识已存在，无法完成创建',
+    );
+  }
+
+  const role = row.unified_social_credit_code.startsWith(
+    SELF_SERVICE_CODE_PREFIX,
+  )
+    ? 'CEO'
+    : row.applicant_identity === 'legal_representative'
+      ? 'CEO'
+      : '企业管理员';
+  const departmentId = store.createDepartmentId();
+  const employeeId = store.createEmployeeId();
+  const updatedOrganization = database
+    .prepare(
+      `UPDATE organizations
+       SET name = ?, slug = ?, updated_at = datetime('now')
+       WHERE id = ? AND status = 'active'`,
+    )
+    .run(row.enterprise_name, slug, row.source_organization_id);
+  if (Number(updatedOrganization.changes) !== 1) {
+    throw verificationError('applicant_not_eligible', '个人组织升级失败');
+  }
+  database
+    .prepare(
+      `INSERT INTO organization_departments
+       (id, organization_id, name, parent_department_id)
+       VALUES (?, ?, '管理层', NULL)`,
+    )
+    .run(departmentId, row.source_organization_id);
+  database
+    .prepare(
+      `INSERT INTO employees
+       (id, organization_id, name, role, department, department_id,
+        position_title, status)
+       VALUES (?, ?, ?, ?, '管理层', ?, ?, 'active')`,
+    )
+    .run(
+      employeeId,
+      row.source_organization_id,
+      account.name,
+      role,
+      departmentId,
+      role,
+    );
+  const updatedAccount = database
+    .prepare(
+      `UPDATE accounts
+       SET account_type = 'enterprise', employee_id = ?, role = ?,
+           department = '管理层', department_id = ?, position_id = NULL,
+           position_title = ?, is_admin = 1,
+           updated_at = datetime('now')
+       WHERE id = ? AND organization_id = ? AND account_type = 'personal'
+         AND status = 'active' AND deleted_at IS NULL`,
+    )
+    .run(
+      employeeId,
+      role,
+      departmentId,
+      role,
+      row.applicant_account_id,
+      row.source_organization_id,
+    );
+  if (Number(updatedAccount.changes) !== 1) {
+    throw verificationError('applicant_not_eligible', '个人账号升级失败');
+  }
+}
 export function submitEnterpriseVerificationApplication(
   store: EnterpriseVerificationRepositoryStore,
   input: SubmitEnterpriseVerificationApplicationInput,
@@ -661,62 +689,54 @@ export function submitEnterpriseVerificationApplication(
   const now = store.now();
   database.exec('BEGIN IMMEDIATE');
   try {
-    assertApplicantEligible(
-      database,
-      normalized.applicantAccountId,
-      normalized.sourceOrganizationId,
-    );
-    const existingRow = database
+    const existingApprovedRow = database
       .prepare(
         `SELECT * FROM enterprise_verification_applications
-         WHERE applicant_account_id = ? AND status = 'manual_review'`,
+         WHERE applicant_account_id = ? AND status = 'approved'
+         ORDER BY submitted_at_ms DESC, id DESC LIMIT 1`,
       )
       .get(normalized.applicantAccountId) as
       | EnterpriseVerificationRow
       | undefined;
-    if (existingRow) {
-      const existing = rowToView(store, existingRow);
+    if (existingApprovedRow) {
+      const existing = rowToView(store, existingApprovedRow);
       if (!sameSubmission(existing, normalized)) {
         throw verificationError(
           'application_conflict',
-          '该账号已有待审核申请，请先取消原申请',
+          '该账号已经创建企业，不能再次创建其他企业',
         );
       }
       database.exec('COMMIT');
       return { application: existing, replayed: true };
     }
 
-    const businessLicenseEvidence = findEvidenceForSubmission(database, {
-      evidenceReference: normalized.businessLicense.evidenceReference,
-      evidenceSha256: normalized.businessLicense.evidenceSha256,
-      applicantAccountId: normalized.applicantAccountId,
-      sourceOrganizationId: normalized.sourceOrganizationId,
-      purpose: 'business_license',
-    });
-    const authorizationLetterEvidence = normalized.authorizationLetter
-      ? findEvidenceForSubmission(database, {
-          evidenceReference: normalized.authorizationLetter.evidenceReference,
-          evidenceSha256: normalized.authorizationLetter.evidenceSha256,
-          applicantAccountId: normalized.applicantAccountId,
-          sourceOrganizationId: normalized.sourceOrganizationId,
-          purpose: 'authorization_letter',
-        })
-      : null;
+    database
+      .prepare(
+        `UPDATE enterprise_verification_applications
+         SET status = 'cancelled', cancelled_at_ms = ?, updated_at_ms = ?
+         WHERE applicant_account_id = ? AND status = 'manual_review'`,
+      )
+      .run(now, now, normalized.applicantAccountId);
 
+    assertApplicantEligible(
+      database,
+      normalized.applicantAccountId,
+      normalized.sourceOrganizationId,
+    );
+
+    const legacyCreditCode = `${SELF_SERVICE_CODE_PREFIX}${applicationId}`;
     const legalRepresentative = store.fieldCipher.encryptText(
-      normalized.legalRepresentativeName,
+      '',
       encryptionContext(applicationId, 'legal_representative_name'),
     );
     const businessLicenseReference = store.fieldCipher.encryptText(
-      businessLicenseEvidence.id,
+      '',
       encryptionContext(applicationId, 'business_license_reference'),
     );
-    const authorizationLetterReference = authorizationLetterEvidence
-      ? store.fieldCipher.encryptText(
-          authorizationLetterEvidence.id,
-          encryptionContext(applicationId, 'authorization_letter_reference'),
-        )
-      : null;
+    const authorizationLetterReference = store.fieldCipher.encryptText(
+      '',
+      encryptionContext(applicationId, 'authorization_letter_reference'),
+    );
 
     database
       .prepare(
@@ -733,10 +753,11 @@ export function submitEnterpriseVerificationApplication(
           authorization_letter_reference_auth_tag,
           authorization_letter_reference_key_version,
           authorization_letter_sha256,
-          status, submitted_at_ms, updated_at_ms
+          status, submitted_at_ms, updated_at_ms, reviewer_id, review_note,
+          decided_at_ms
         ) VALUES (
           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-          'manual_review', ?, ?
+          'approved', ?, ?, ?, ?, ?
         )`,
       )
       .run(
@@ -744,8 +765,8 @@ export function submitEnterpriseVerificationApplication(
         normalized.applicantAccountId,
         normalized.sourceOrganizationId,
         normalized.enterpriseName,
-        normalized.unifiedSocialCreditCode,
-        normalized.applicantIdentity,
+        legacyCreditCode,
+        'authorized_agent',
         legalRepresentative.ciphertext,
         legalRepresentative.iv,
         legalRepresentative.authTag,
@@ -754,28 +775,32 @@ export function submitEnterpriseVerificationApplication(
         businessLicenseReference.iv,
         businessLicenseReference.authTag,
         businessLicenseReference.keyVersion,
-        businessLicenseEvidence.sha256,
-        authorizationLetterReference?.ciphertext ?? null,
-        authorizationLetterReference?.iv ?? null,
-        authorizationLetterReference?.authTag ?? null,
-        authorizationLetterReference?.keyVersion ?? null,
-        authorizationLetterEvidence?.sha256 ?? null,
+        '',
+        authorizationLetterReference.ciphertext,
+        authorizationLetterReference.iv,
+        authorizationLetterReference.authTag,
+        authorizationLetterReference.keyVersion,
+        '',
         now,
         now,
+        SELF_SERVICE_REVIEWER_ID,
+        SELF_SERVICE_REVIEW_NOTE,
+        now,
       );
-    bindEvidenceToApplication(database, businessLicenseEvidence.id, applicationId);
-    if (authorizationLetterEvidence) {
-      bindEvidenceToApplication(
-        database,
-        authorizationLetterEvidence.id,
-        applicationId,
-      );
-    }
-    const application = rowToView(store, getRowById(database, applicationId)!);
+
+    const inserted = getRowById(database, applicationId)!;
+    provisionPersonalOrganization(store, database, inserted);
+    const application = rowToView(store, inserted);
     database.exec('COMMIT');
     return { application, replayed: false };
   } catch (error) {
     rollbackIfNeeded(database);
+    if (isOrganizationSlugConstraint(error)) {
+      throw verificationError(
+        'organization_slug_conflict',
+        '企业标识已存在，无法完成创建',
+      );
+    }
     throw error;
   }
 }
@@ -961,112 +986,8 @@ export function approveEnterpriseVerificationApplication(
       );
     }
 
-    const account = database
-      .prepare(
-        `SELECT id, name, employee_id
-         FROM accounts
-         WHERE id = ? AND organization_id = ? AND account_type = 'personal'
-           AND status = 'active' AND deleted_at IS NULL`,
-      )
-      .get(row.applicant_account_id, row.source_organization_id) as
-      | { id: string; name: string; employee_id: string | null }
-      | undefined;
-    if (!account || account.employee_id !== null) {
-      throw verificationError(
-        'applicant_not_eligible',
-        '申请账号已不再是可升级的 personal account',
-      );
-    }
-    const activeOrganization = database
-      .prepare('SELECT id FROM organizations WHERE id = ? AND status = \'active\'')
-      .get(row.source_organization_id);
-    if (!activeOrganization) {
-      throw verificationError('applicant_not_eligible', '个人组织不存在或已停用');
-    }
-    const activeAccounts = database
-      .prepare(
-        `SELECT COUNT(*) AS count FROM accounts
-         WHERE organization_id = ? AND status = 'active' AND deleted_at IS NULL`,
-      )
-      .get(row.source_organization_id) as { count: number };
-    if (Number(activeAccounts.count) !== 1) {
-      throw verificationError(
-        'organization_not_isolated',
-        '个人组织存在其他活动账号，不能原地升级为企业',
-      );
-    }
-
-    const slug = organizationSlug(row.enterprise_name, row.unified_social_credit_code);
-    const slugConflict = database
-      .prepare(
-        'SELECT id FROM organizations WHERE slug = ? COLLATE NOCASE AND id <> ?',
-      )
-      .get(slug, row.source_organization_id);
-    if (slugConflict) {
-      throw verificationError(
-        'organization_slug_conflict',
-        '企业标识已存在，无法完成认证',
-      );
-    }
-
-    const role =
-      row.applicant_identity === 'legal_representative' ? 'CEO' : '企业管理员';
-    const departmentId = store.createDepartmentId();
-    const employeeId = store.createEmployeeId();
     const now = store.now();
-    const updatedOrganization = database
-      .prepare(
-        `UPDATE organizations
-         SET name = ?, slug = ?, updated_at = datetime('now')
-         WHERE id = ? AND status = 'active'`,
-      )
-      .run(row.enterprise_name, slug, row.source_organization_id);
-    if (Number(updatedOrganization.changes) !== 1) {
-      throw verificationError('applicant_not_eligible', '个人组织升级失败');
-    }
-    database
-      .prepare(
-        `INSERT INTO organization_departments
-         (id, organization_id, name, parent_department_id)
-         VALUES (?, ?, '管理层', NULL)`,
-      )
-      .run(departmentId, row.source_organization_id);
-    database
-      .prepare(
-        `INSERT INTO employees
-         (id, organization_id, name, role, department, department_id,
-          position_title, status)
-         VALUES (?, ?, ?, ?, '管理层', ?, ?, 'active')`,
-      )
-      .run(
-        employeeId,
-        row.source_organization_id,
-        account.name,
-        role,
-        departmentId,
-        role,
-      );
-    const updatedAccount = database
-      .prepare(
-        `UPDATE accounts
-         SET account_type = 'enterprise', employee_id = ?, role = ?,
-             department = '管理层', department_id = ?, position_id = NULL,
-             position_title = ?, is_admin = 1,
-             updated_at = datetime('now')
-         WHERE id = ? AND organization_id = ? AND account_type = 'personal'
-           AND status = 'active' AND deleted_at IS NULL`,
-      )
-      .run(
-        employeeId,
-        role,
-        departmentId,
-        role,
-        row.applicant_account_id,
-        row.source_organization_id,
-      );
-    if (Number(updatedAccount.changes) !== 1) {
-      throw verificationError('applicant_not_eligible', '个人账号升级失败');
-    }
+    provisionPersonalOrganization(store, database, row);
     database
       .prepare(
         `UPDATE enterprise_verification_applications

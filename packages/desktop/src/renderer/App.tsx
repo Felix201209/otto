@@ -135,7 +135,6 @@ export function App(): React.JSX.Element {
     submitEnterpriseVerificationApplication?: EnterpriseVerificationHandlers['onSubmitEnterpriseVerification'];
     getEnterpriseVerificationApplication?: EnterpriseVerificationHandlers['onGetEnterpriseVerification'];
     cancelEnterpriseVerificationApplication?: EnterpriseVerificationHandlers['onCancelEnterpriseVerification'];
-    uploadEnterpriseVerificationEvidence?: EnterpriseVerificationHandlers['onUploadEnterpriseVerificationEvidence'];
   };
   const accessMode = resolveEnterpriseAccessMode({
     internalTestAccessEnabled: INTERNAL_TEST_ACCESS_ENABLED,
@@ -180,7 +179,6 @@ export function App(): React.JSX.Element {
       onSubmitEnterpriseVerification={verificationActions.submitEnterpriseVerificationApplication}
       onGetEnterpriseVerification={verificationActions.getEnterpriseVerificationApplication}
       onCancelEnterpriseVerification={verificationActions.cancelEnterpriseVerificationApplication}
-      onUploadEnterpriseVerificationEvidence={verificationActions.uploadEnterpriseVerificationEvidence}
       onReloadEnterpriseIdentity={() => window.location.reload()}
       onLogout={auth.actions.logout}
     />
@@ -194,7 +192,6 @@ function OttoWorkspaceApp({
   onSubmitEnterpriseVerification,
   onGetEnterpriseVerification,
   onCancelEnterpriseVerification,
-  onUploadEnterpriseVerificationEvidence,
   onReloadEnterpriseIdentity,
   onLogout,
 }: {
@@ -1109,7 +1106,6 @@ function OttoWorkspaceApp({
         onSubmitEnterpriseVerification={onSubmitEnterpriseVerification}
         onGetEnterpriseVerification={onGetEnterpriseVerification}
         onCancelEnterpriseVerification={onCancelEnterpriseVerification}
-        onUploadEnterpriseVerificationEvidence={onUploadEnterpriseVerificationEvidence}
         onReloadEnterpriseIdentity={onReloadEnterpriseIdentity}
         onLogout={onLogout}
         unreadSessions={state.unreadSessions}

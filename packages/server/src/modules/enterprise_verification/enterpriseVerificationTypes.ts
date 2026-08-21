@@ -25,10 +25,11 @@ export interface SubmitEnterpriseVerificationApplicationInput {
   applicantAccountId: string;
   sourceOrganizationId: string;
   enterpriseName: string;
-  unifiedSocialCreditCode: string;
-  legalRepresentativeName: string;
-  applicantIdentity: EnterpriseVerificationApplicantIdentity;
-  businessLicense: EnterpriseVerificationEvidenceInput;
+  /** Legacy fields are accepted for compatibility and ignored by self-service creation. */
+  unifiedSocialCreditCode?: string | null;
+  legalRepresentativeName?: string | null;
+  applicantIdentity?: EnterpriseVerificationApplicantIdentity | null;
+  businessLicense?: EnterpriseVerificationEvidenceInput | null;
   authorizationLetter?: EnterpriseVerificationEvidenceInput | null;
 }
 
@@ -108,10 +109,10 @@ export interface EnterpriseVerificationApplicationView {
   sourceOrganizationId: string;
   targetOrganizationId: string | null;
   enterpriseName: string;
-  unifiedSocialCreditCode: string;
-  legalRepresentativeName: string;
+  unifiedSocialCreditCode: string | null;
+  legalRepresentativeName: string | null;
   applicantIdentity: EnterpriseVerificationApplicantIdentity;
-  businessLicense: EnterpriseVerificationEvidenceView;
+  businessLicense: EnterpriseVerificationEvidenceView | null;
   authorizationLetter: EnterpriseVerificationEvidenceView | null;
   status: EnterpriseVerificationStatus;
   submittedAtMs: number;

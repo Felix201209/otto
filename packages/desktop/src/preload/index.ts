@@ -307,40 +307,8 @@ export interface EnterpriseLegalDocumentSection {
   important?: boolean;
 }
 
-export type EnterpriseVerificationApplicantAuthority =
-  | 'legal_representative'
-  | 'authorized_agent';
-
-export type EnterpriseVerificationEvidencePurpose =
-  | 'business_license'
-  | 'authorization_letter';
-
-export interface EnterpriseVerificationEvidenceReference {
-  reference: string;
-  sha256: string;
-}
-
-export interface EnterpriseVerificationUploadedEvidence
-  extends EnterpriseVerificationEvidenceReference {
-  fileName: string;
-  contentType: string;
-  sizeBytes: number;
-}
-
-export interface EnterpriseVerificationEvidenceUploadInput {
-  purpose: EnterpriseVerificationEvidencePurpose;
-  fileName: string;
-  contentType: string;
-  contentBase64: string;
-}
-
 export interface EnterpriseVerificationApplicationInput {
   legalName: string;
-  unifiedSocialCreditCode: string;
-  legalRepresentativeName: string;
-  applicantAuthority: EnterpriseVerificationApplicantAuthority;
-  businessLicenseEvidence: EnterpriseVerificationEvidenceReference;
-  authorizationEvidence?: EnterpriseVerificationEvidenceReference | null;
 }
 
 export interface EnterpriseVerificationApplication {
@@ -348,11 +316,6 @@ export interface EnterpriseVerificationApplication {
   applicantAccountId: string;
   sourceOrganizationId: string;
   legalName: string;
-  unifiedSocialCreditCode: string;
-  legalRepresentativeName: string;
-  applicantAuthority: EnterpriseVerificationApplicantAuthority;
-  businessLicenseEvidence: EnterpriseVerificationEvidenceReference;
-  authorizationEvidence: EnterpriseVerificationEvidenceReference | null;
   status:
     | 'draft'
     | 'submitted'
@@ -1183,8 +1146,6 @@ const IPC = {
   enterpriseDataGovernanceGet: 'otto:enterprise-data-governance-get',
   enterpriseVerificationApplicationGet:
     'otto:enterprise-verification-application-get',
-  enterpriseVerificationEvidenceUpload:
-    'otto:enterprise-verification-evidence-upload',
   enterpriseVerificationApplicationSubmit:
     'otto:enterprise-verification-application-submit',
   enterpriseVerificationApplicationCancel:
@@ -1649,9 +1610,6 @@ export interface OttoBridge {
   getEnterpriseVerificationApplication(): Promise<
     EnterpriseVerificationApplication | null
   >;
-  uploadEnterpriseVerificationEvidence(
-    input: EnterpriseVerificationEvidenceUploadInput,
-  ): Promise<EnterpriseVerificationUploadedEvidence>;
   submitEnterpriseVerificationApplication(
     input: EnterpriseVerificationApplicationInput,
   ): Promise<EnterpriseVerificationApplication>;
@@ -2777,14 +2735,6 @@ const bridge: OttoBridge = {
     return ipcRenderer.invoke(
       IPC.enterpriseVerificationApplicationGet,
     ) as Promise<EnterpriseVerificationApplication | null>;
-  },
-  uploadEnterpriseVerificationEvidence(
-    input: EnterpriseVerificationEvidenceUploadInput,
-  ): Promise<EnterpriseVerificationUploadedEvidence> {
-    return ipcRenderer.invoke(
-      IPC.enterpriseVerificationEvidenceUpload,
-      input,
-    ) as Promise<EnterpriseVerificationUploadedEvidence>;
   },
   submitEnterpriseVerificationApplication(
     input: EnterpriseVerificationApplicationInput,

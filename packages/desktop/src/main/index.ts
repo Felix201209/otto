@@ -152,7 +152,6 @@ import {
   type EnterpriseOrganizationFeatures,
   type EnterprisePositionRoleMapping,
   type EnterpriseVerificationApplicationInput,
-  type EnterpriseVerificationEvidenceUploadInput,
 } from './enterprise-client.js';
 import {
   EnterpriseE2eeCrypto,
@@ -561,8 +560,6 @@ const IPC = {
   enterpriseLegalAccept: 'otto:enterprise-legal-accept',
   enterpriseVerificationApplicationGet:
     'otto:enterprise-verification-application-get',
-  enterpriseVerificationEvidenceUpload:
-    'otto:enterprise-verification-evidence-upload',
   enterpriseVerificationApplicationSubmit:
     'otto:enterprise-verification-application-submit',
   enterpriseVerificationApplicationCancel:
@@ -2613,13 +2610,6 @@ function registerIpc(): void {
     loadEnterpriseSession();
     return enterpriseClient.getEnterpriseVerificationApplication();
   });
-  ipcMain.handle(
-    IPC.enterpriseVerificationEvidenceUpload,
-    async (_event, input: EnterpriseVerificationEvidenceUploadInput) => {
-      loadEnterpriseSession();
-      return enterpriseClient.uploadEnterpriseVerificationEvidence(input);
-    },
-  );
   ipcMain.handle(
     IPC.enterpriseVerificationApplicationSubmit,
     async (_event, input: EnterpriseVerificationApplicationInput) => {

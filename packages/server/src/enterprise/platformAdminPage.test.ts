@@ -5,13 +5,15 @@
 import { describe, expect, it } from 'vitest';
 import { platformAdminHTML } from './platformAdminPage.js';
 
-describe('platformAdminHTML enterprise verification queue', () => {
-  it('exposes an organization-independent review entry and required API paths', () => {
+describe('platformAdminHTML legacy enterprise onboarding queue', () => {
+  it('keeps an organization-independent compatibility queue for old requests', () => {
     const html = platformAdminHTML();
 
     expect(html).toContain('id="verificationQueueButton"');
     expect(html).toContain('id="verificationCount"');
     expect(html).toContain('id="verificationPanel"');
+    expect(html).toContain('历史开通申请');
+    expect(html).toContain('新企业开通不需要在这里人工审核');
     expect(html).toContain(
       "api('/enterprise/platform/verifications?status=manual_review')",
     );
@@ -28,16 +30,22 @@ describe('platformAdminHTML enterprise verification queue', () => {
     expect(html).toContain('body:JSON.stringify({reviewNote})');
   });
 
-  it('encodes opaque evidence identifiers and reuses the platform bearer token', () => {
+  it('shows only the enterprise name and submitted time without old evidence details', () => {
     const html = platformAdminHTML();
 
     expect(html).toContain(
-      "encodeURIComponent(String(applicationId||''))+'/evidence/'+encodeURIComponent(String(reference||''))",
+      "name.textContent=String(application.legalName||'未命名企业')",
     );
-    expect(html).toContain("headers:{authorization:'Bearer '+token}");
-    expect(html).not.toContain('dataset.evidenceReference');
-    expect(html).not.toContain('dataset.authorizationEvidence');
-    expect(html).not.toContain('href="/enterprise/platform/verifications/');
+    expect(html).toContain(
+      "appendVerificationDetail(details,'提交时间',formatSubmittedAt(application.submittedAt))",
+    );
+    expect(html).not.toContain('统一社会信用代码');
+    expect(html).not.toContain('法定代表人');
+    expect(html).not.toContain('申请人身份');
+    expect(html).not.toContain('营业执照');
+    expect(html).not.toContain('授权书');
+    expect(html).not.toContain("+'/evidence/'");
+    expect(html).not.toContain('fetchVerificationEvidence');
   });
 
   it('keeps the embedded page script syntactically valid', () => {

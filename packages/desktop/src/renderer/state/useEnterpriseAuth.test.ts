@@ -93,7 +93,6 @@ beforeEach(() => {
       account: UPGRADED_ACCOUNT,
     })),
     getEnterpriseVerificationApplication: vi.fn(),
-    uploadEnterpriseVerificationEvidence: vi.fn(),
     submitEnterpriseVerificationApplication: vi.fn(),
     cancelEnterpriseVerificationApplication: vi.fn(),
     enterpriseLogout: vi.fn(),
@@ -212,31 +211,16 @@ describe('企业注册链接进入中心注册', () => {
     });
     expect(view.result.current.state.registrationIntent).toBeNull();
   });
-  it('个人账号可通过 hook 查询、上传、提交和取消企业认证申请', async () => {
+  it('个人账号可通过 hook 查询、提交和取消企业认证申请', async () => {
     bridge.enterpriseSession.mockResolvedValueOnce({
       serverUrl: 'https://enterprise.otto.test',
       account: PERSONAL_ACCOUNT,
     });
-    const evidence = {
-      reference: 'enterprise-verification://evidence/business-license-1',
-      sha256: 'c'.repeat(64),
-      fileName: '营业执照.pdf',
-      contentType: 'application/pdf',
-      sizeBytes: 7,
-    };
     const application = {
       id: 'verification-1',
       applicantAccountId: PERSONAL_ACCOUNT.id,
       sourceOrganizationId: PERSONAL_ACCOUNT.organizationId,
       legalName: '星河科技有限公司',
-      unifiedSocialCreditCode: '91310000MA1K12345X',
-      legalRepresentativeName: '张三',
-      applicantAuthority: 'legal_representative' as const,
-      businessLicenseEvidence: {
-        reference: evidence.reference,
-        sha256: evidence.sha256,
-      },
-      authorizationEvidence: null,
       status: 'manual_review' as const,
       reviewNote: null,
       reviewedBy: null,
@@ -250,7 +234,6 @@ describe('企业注册链接进入中心注册', () => {
     bridge.getEnterpriseVerificationApplication.mockResolvedValueOnce(
       application,
     );
-    bridge.uploadEnterpriseVerificationEvidence.mockResolvedValueOnce(evidence);
     bridge.submitEnterpriseVerificationApplication.mockResolvedValueOnce(
       application,
     );
@@ -260,29 +243,13 @@ describe('企业注册链接进入中心注册', () => {
     const view = renderHook(() => useEnterpriseAuth());
     await waitFor(() => expect(view.result.current.state.status).toBe('signed-in'));
 
-    const uploadInput = {
-      purpose: 'business_license' as const,
-      fileName: evidence.fileName,
-      contentType: evidence.contentType,
-      contentBase64: 'JVBERg==',
-    };
-    const submitInput = {
-      legalName: application.legalName,
-      unifiedSocialCreditCode: application.unifiedSocialCreditCode,
-      legalRepresentativeName: application.legalRepresentativeName,
-      applicantAuthority: application.applicantAuthority,
-      businessLicenseEvidence: evidence,
-      authorizationEvidence: null,
-    };
+    const submitInput = { legalName: application.legalName };
     let loaded;
-    let uploaded;
     let submitted;
     let cancelledResult;
     await act(async () => {
       loaded = await view.result.current.actions
         .getEnterpriseVerificationApplication();
-      uploaded = await view.result.current.actions
-        .uploadEnterpriseVerificationEvidence(uploadInput);
       submitted = await view.result.current.actions
         .submitEnterpriseVerificationApplication(submitInput);
       cancelledResult = await view.result.current.actions
@@ -290,11 +257,8 @@ describe('企业注册链接进入中心注册', () => {
     });
 
     expect(loaded).toEqual(application);
-    expect(uploaded).toEqual(evidence);
     expect(submitted).toEqual(application);
     expect(cancelledResult).toEqual(cancelled);
-    expect(bridge.uploadEnterpriseVerificationEvidence)
-      .toHaveBeenCalledWith(uploadInput);
     expect(bridge.submitEnterpriseVerificationApplication)
       .toHaveBeenCalledWith(submitInput);
     expect(view.result.current.state.error).toBeNull();
@@ -312,7 +276,6 @@ describe('企业注册链接进入中心注册', () => {
     expect(view.result.current.state.error).toBe('审核服务不可用');
     expect(view.result.current.state.status).toBe('signed-in');
   });
-
 
   it('个人账号升级失败时保留当前登录身份，允许原地改邀请码重试', async () => {
     bridge.enterpriseSession.mockResolvedValueOnce({

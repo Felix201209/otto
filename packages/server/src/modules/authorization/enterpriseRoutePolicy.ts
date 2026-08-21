@@ -74,7 +74,6 @@ const MEMBER_ROUTES = new Set([
   '/enterprise/privacy/export',
   '/enterprise/privacy/account',
   '/enterprise/verification/application',
-  '/enterprise/verification/evidence',
 ]);
 
 export const FEATURE_ADMIN_PREFIX = '/admin/features';
@@ -143,7 +142,6 @@ export function isLicenseMaintenanceRoute(
     path === '/enterprise/privacy/export' ||
     path === '/enterprise/privacy/account' ||
     path === '/enterprise/verification/application' ||
-    path === '/enterprise/verification/evidence' ||
     path === '/enterprise/platform/verifications' ||
     path.startsWith('/enterprise/platform/verifications/') ||
     path.startsWith('/enterprise/auth/')

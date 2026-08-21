@@ -1752,10 +1752,17 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('id="organizationPanel"');
     expect(html).toContain('id="verificationQueueButton"');
     expect(html).toContain('id="verificationPanel"');
+    expect(html).toContain('历史开通申请');
+    expect(html).toContain('新企业开通不需要在这里人工审核');
     expect(html).toContain('/enterprise/platform/verifications?status=manual_review');
-    expect(html).toContain('/evidence/');
     expect(html).toContain('审核意见（必填）');
     expect(html).toContain('再次点击确认');
+    expect(html).not.toContain('统一社会信用代码');
+    expect(html).not.toContain('法定代表人');
+    expect(html).not.toContain('申请人身份');
+    expect(html).not.toContain('营业执照');
+    expect(html).not.toContain('授权书');
+    expect(html).not.toContain("+'/evidence/'");
     expect(html).toContain('企业工作台');
     expect(html).toContain('成员账号');
     expect(html).toContain('部门成员目录');
@@ -7270,8 +7277,8 @@ describe('企业 Skill 市场 HTTP 闭环', () => {
   }, 30_000);
 });
 
-describe('企业主体认证 HTTP 纵向闭环', { timeout: 30_000 }, () => {
-  it('在 License 未激活时安全完成申请、材料审核、升级与拒绝', async () => {
+describe('企业自助创建 HTTP 纵向闭环', { timeout: 30_000 }, () => {
+  it('在 License 未激活时只填企业名称即可原子升级，并支持安全重试', async () => {
     process.env.OTTO_LICENSE_ENFORCE = 'true';
     const { base } = await startIsolated(ADMIN_TOKEN);
     const database: DatabaseModule = await import('./db.js');
@@ -7285,92 +7292,77 @@ describe('企业主体认证 HTTP 纵向闭环', { timeout: 30_000 }, () => {
       authorization: `Bearer ${applicantToken}`,
       'content-type': 'application/json',
     };
-    const evidenceBody = {
-      purpose: 'business_license',
-      fileName: 'business-license.pdf',
-      contentType: 'application/pdf',
-      contentBase64: Buffer.from('%PDF-1.7\nenterprise license').toString(
-        'base64',
-      ),
-    };
 
-    const anonymousUpload = await fetch(
-      `${base}/enterprise/verification/evidence`,
+    const anonymous = await fetch(
+      `${base}/enterprise/verification/application`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(evidenceBody),
+        body: JSON.stringify({ enterpriseName: '匿名企业' }),
       },
     );
-    expect(anonymousUpload.status).toBe(401);
+    expect(anonymous.status).toBe(401);
 
-    const upload = await fetch(`${base}/enterprise/verification/evidence`, {
-      method: 'POST',
-      headers: memberHeaders,
-      body: JSON.stringify(evidenceBody),
-    });
-    expect(upload.status).toBe(201);
-    const uploaded = (await upload.json()) as {
-      evidence: {
-        reference: string;
-        sha256: string;
-        fileName: string;
-        contentType: string;
-        sizeBytes: number;
-      };
-    };
-    expect(uploaded.evidence).toMatchObject({
-      fileName: 'business-license.pdf',
-      contentType: 'application/pdf',
-    });
-
-    const forged = await fetch(`${base}/enterprise/verification/application`, {
-      method: 'POST',
-      headers: memberHeaders,
-      body: JSON.stringify({
-        legalName: '伪造引用企业',
-        unifiedSocialCreditCode: '91330100799655058B',
-        legalRepresentativeName: '测试代表',
-        applicantAuthority: 'legal_representative',
-        businessLicenseEvidence: {
-          reference: 'eve_forged_reference',
-          sha256: '0'.repeat(64),
-        },
-      }),
-    });
-    expect(forged.status).toBe(400);
-
-    const submitted = await fetch(
+    const missingName = await fetch(
       `${base}/enterprise/verification/application`,
       {
         method: 'POST',
         headers: memberHeaders,
-        body: JSON.stringify({
-          legalName: 'HTTP 认证企业',
-          unifiedSocialCreditCode: '91330100799655058B',
-          legalRepresentativeName: '测试代表',
-          applicantAuthority: 'legal_representative',
-          businessLicenseEvidence: uploaded.evidence,
-        }),
+        body: JSON.stringify({ enterpriseName: '   ' }),
       },
     );
-    expect(submitted.status).toBe(201);
-    const submittedBody = (await submitted.json()) as {
+    expect(missingName.status).toBe(400);
+
+    const created = await fetch(
+      `${base}/enterprise/verification/application`,
+      {
+        method: 'POST',
+        headers: memberHeaders,
+        body: JSON.stringify({ enterpriseName: 'HTTP 自助企业' }),
+      },
+    );
+    expect(created.status).toBe(201);
+    const createdBody = (await created.json()) as {
       application: {
         id: string;
         legalName: string;
+        unifiedSocialCreditCode: string | null;
+        legalRepresentativeName: string | null;
+        applicantAuthority: string | null;
+        businessLicenseEvidence: unknown;
+        authorizationEvidence: unknown;
         status: string;
+        reviewedBy: string | null;
         provisionedOrganizationId: string | null;
+        authoritativeBusinessVerification: boolean;
       };
       replayed: boolean;
+      authoritativeBusinessVerification: boolean;
     };
-    expect(submittedBody).toMatchObject({
+    expect(createdBody).toMatchObject({
       application: {
-        legalName: 'HTTP 认证企业',
-        status: 'manual_review',
-        provisionedOrganizationId: null,
+        legalName: 'HTTP 自助企业',
+        unifiedSocialCreditCode: null,
+        legalRepresentativeName: null,
+        applicantAuthority: null,
+        businessLicenseEvidence: null,
+        authorizationEvidence: null,
+        status: 'approved',
+        reviewedBy: 'self-service',
+        provisionedOrganizationId: applicant.organizationId,
+        authoritativeBusinessVerification: false,
       },
       replayed: false,
+      authoritativeBusinessVerification: false,
+    });
+    expect(
+      database.getAccount(applicant.id, applicant.organizationId),
+    ).toMatchObject({
+      accountType: 'enterprise',
+      isAdmin: true,
+      role: 'CEO',
+      positionTitle: 'CEO',
+      department: '管理层',
     });
 
     const ownApplication = await fetch(
@@ -7379,7 +7371,38 @@ describe('企业主体认证 HTTP 纵向闭环', { timeout: 30_000 }, () => {
     );
     expect(ownApplication.status).toBe(200);
     await expect(ownApplication.json()).resolves.toMatchObject({
-      application: { id: submittedBody.application.id },
+      application: {
+        id: createdBody.application.id,
+        status: 'approved',
+        authoritativeBusinessVerification: false,
+      },
+    });
+
+    const replay = await fetch(
+      `${base}/enterprise/verification/application`,
+      {
+        method: 'POST',
+        headers: memberHeaders,
+        body: JSON.stringify({ enterpriseName: 'HTTP 自助企业' }),
+      },
+    );
+    expect(replay.status).toBe(200);
+    await expect(replay.json()).resolves.toMatchObject({
+      application: { id: createdBody.application.id },
+      replayed: true,
+    });
+
+    const conflict = await fetch(
+      `${base}/enterprise/verification/application`,
+      {
+        method: 'POST',
+        headers: memberHeaders,
+        body: JSON.stringify({ enterpriseName: '另一家企业' }),
+      },
+    );
+    expect(conflict.status).toBe(409);
+    await expect(conflict.json()).resolves.toMatchObject({
+      error: expect.stringContaining('已经创建企业'),
     });
 
     const enterpriseAdmin = database.createAccount({
@@ -7397,128 +7420,20 @@ describe('企业主体认证 HTTP 纵向闭环', { timeout: 30_000 }, () => {
     );
     expect(enterpriseAdminReview.status).toBe(403);
 
-    const badStatus = await fetch(
-      `${base}/enterprise/platform/verifications?status=secret_internal_state`,
+    const listed = await fetch(
+      `${base}/enterprise/platform/verifications?status=approved`,
       { headers: { 'x-otto-admin-token': ADMIN_TOKEN } },
     );
-    expect(badStatus.status).toBe(400);
-
-    const listed = await fetch(`${base}/enterprise/platform/verifications`, {
-      headers: { 'x-otto-admin-token': ADMIN_TOKEN },
-    });
     expect(listed.status).toBe(200);
     await expect(listed.json()).resolves.toMatchObject({
-      applications: [{ id: submittedBody.application.id }],
+      applications: [
+        {
+          id: createdBody.application.id,
+          status: 'approved',
+          authoritativeBusinessVerification: false,
+        },
+      ],
       total: 1,
     });
-
-    const evidenceDownload = await fetch(
-      `${base}/enterprise/platform/verifications/${encodeURIComponent(submittedBody.application.id)}/evidence/${encodeURIComponent(uploaded.evidence.reference)}`,
-      { headers: { 'x-otto-admin-token': ADMIN_TOKEN } },
-    );
-    expect(evidenceDownload.status).toBe(200);
-    expect(evidenceDownload.headers.get('x-content-type-options')).toBe(
-      'nosniff',
-    );
-    expect(evidenceDownload.headers.get('content-disposition')).toContain(
-      'attachment;',
-    );
-    expect(Buffer.from(await evidenceDownload.arrayBuffer())).toEqual(
-      Buffer.from('%PDF-1.7\nenterprise license'),
-    );
-
-    const approveUrl = `${base}/enterprise/platform/verifications/${encodeURIComponent(submittedBody.application.id)}/approve`;
-    const approved = await fetch(approveUrl, {
-      method: 'POST',
-      headers: {
-        'x-otto-admin-token': ADMIN_TOKEN,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({ reviewNote: '材料核验通过' }),
-    });
-    expect(approved.status).toBe(200);
-    await expect(approved.json()).resolves.toMatchObject({
-      application: {
-        status: 'approved',
-        provisionedOrganizationId: applicant.organizationId,
-      },
-    });
-    expect(
-      database.getAccount(applicant.id, applicant.organizationId),
-    ).toMatchObject({
-      accountType: 'enterprise',
-      isAdmin: true,
-      positionTitle: 'CEO',
-    });
-
-    const repeatedApproval = await fetch(approveUrl, {
-      method: 'POST',
-      headers: {
-        'x-otto-admin-token': ADMIN_TOKEN,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({ reviewNote: '重复审核不应重复升级' }),
-    });
-    expect(repeatedApproval.status).toBe(200);
-
-    const rejectedApplicant = database.createPersonalRegisteredAccount({
-      phone: '13800138102',
-      name: '被拒申请人',
-      password: 'verification-password-2',
-    });
-    const rejectedToken = database.createAuthSession(
-      rejectedApplicant.id,
-    ).token;
-    const rejectedHeaders = {
-      authorization: `Bearer ${rejectedToken}`,
-      'content-type': 'application/json',
-    };
-    const rejectedUpload = await fetch(
-      `${base}/enterprise/verification/evidence`,
-      {
-        method: 'POST',
-        headers: rejectedHeaders,
-        body: JSON.stringify(evidenceBody),
-      },
-    );
-    const rejectedEvidence = (await rejectedUpload.json()) as {
-      evidence: { reference: string; sha256: string };
-    };
-    const rejectedSubmit = await fetch(
-      `${base}/enterprise/verification/application`,
-      {
-        method: 'POST',
-        headers: rejectedHeaders,
-        body: JSON.stringify({
-          legalName: '拒绝测试企业',
-          unifiedSocialCreditCode: '91440300708461136T',
-          legalRepresentativeName: '拒绝代表',
-          applicantAuthority: 'legal_representative',
-          businessLicenseEvidence: rejectedEvidence.evidence,
-        }),
-      },
-    );
-    const rejectedApplication = (await rejectedSubmit.json()) as {
-      application: { id: string };
-    };
-    const rejectUrl = `${base}/enterprise/platform/verifications/${encodeURIComponent(rejectedApplication.application.id)}/reject`;
-    const rejected = await fetch(rejectUrl, {
-      method: 'POST',
-      headers: {
-        'x-otto-admin-token': ADMIN_TOKEN,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({ reviewNote: '材料不满足认证条件' }),
-    });
-    expect(rejected.status).toBe(200);
-    await expect(rejected.json()).resolves.toMatchObject({
-      application: { status: 'rejected', provisionedOrganizationId: null },
-    });
-    expect(
-      database.getAccount(
-        rejectedApplicant.id,
-        rejectedApplicant.organizationId,
-      ),
-    ).toMatchObject({ accountType: 'personal', isAdmin: false });
   });
 });

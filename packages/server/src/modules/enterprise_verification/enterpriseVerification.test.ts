@@ -44,6 +44,7 @@ interface SetupResult {
   composition: EnterpriseVerificationComposition;
   objectRoot: string;
   objectStore: ReturnType<typeof createEncryptedObjectStore>;
+  fieldCipher: ReturnType<typeof createEncryptedFieldCipher>;
   setNow(value: number): void;
 }
 
@@ -170,6 +171,7 @@ function setup(): SetupResult {
     clear() {},
   };
   const objectStore = createEncryptedObjectStore({ root: objectRoot, keyProvider });
+  const fieldCipher = createEncryptedFieldCipher({ keyProvider });
   let now = 1_800_000_000_000;
   let applicationCounter = 0;
   let evidenceCounter = 0;
@@ -177,7 +179,7 @@ function setup(): SetupResult {
   let employeeCounter = 0;
   const composition = createEnterpriseVerificationComposition({
     db: () => db,
-    fieldCipher: createEncryptedFieldCipher({ keyProvider }),
+    fieldCipher,
     objectStore,
     isPlatformReviewer: (reviewerId) => reviewerId === 'reviewer-platform',
     now: () => now,
@@ -191,6 +193,7 @@ function setup(): SetupResult {
     composition,
     objectRoot,
     objectStore,
+    fieldCipher,
     setNow(value) {
       now = value;
     },
@@ -219,34 +222,126 @@ function uploadEvidence(
   });
 }
 
-function submitInput(
-  businessLicense: ReturnType<typeof uploadEvidence>,
+function selfServiceInput(
   overrides: Partial<SubmitEnterpriseVerificationApplicationInput> = {},
 ): SubmitEnterpriseVerificationApplicationInput {
   return {
     applicantAccountId: 'acct-applicant',
     sourceOrganizationId: 'org-personal',
     enterpriseName: '北京示例科技有限公司',
-    unifiedSocialCreditCode: VALID_CREDIT_CODE,
-    legalRepresentativeName: '法定代表人甲',
-    applicantIdentity: 'legal_representative',
-    businessLicense: {
-      evidenceReference: businessLicense.evidenceReference,
-      evidenceSha256: businessLicense.evidenceSha256,
-    },
-    authorizationLetter: null,
     ...overrides,
   };
 }
 
-function submitLegalRepresentative(setupResult: SetupResult) {
-  const evidence = uploadEvidence(
-    setupResult.composition,
-    'business_license',
+function insertLegacyManualReview(
+  result: SetupResult,
+  input: {
+    applicantAccountId?: string;
+    sourceOrganizationId?: string;
+    enterpriseName?: string;
+    creditCode?: string;
+    legalRepresentativeName?: string;
+    applicantIdentity?: 'legal_representative' | 'authorized_agent';
+  } = {},
+) {
+  const applicantAccountId = input.applicantAccountId ?? 'acct-applicant';
+  const sourceOrganizationId = input.sourceOrganizationId ?? 'org-personal';
+  const applicantIdentity = input.applicantIdentity ?? 'legal_representative';
+  const businessLicense = uploadEvidence(result.composition, 'business_license', {
+    accountId: applicantAccountId,
+    organizationId: sourceOrganizationId,
+  });
+  const authorizationLetter =
+    applicantIdentity === 'authorized_agent'
+      ? uploadEvidence(result.composition, 'authorization_letter', {
+          accountId: applicantAccountId,
+          organizationId: sourceOrganizationId,
+          content: PNG_CONTENT,
+          contentType: 'image/png',
+          fileName: 'authorization.png',
+        })
+      : null;
+  const applicationCount = result.db.prepare(
+    'SELECT COUNT(*) AS count FROM enterprise_verification_applications',
+  ).get() as { count: number };
+  const applicationId = `legacy_${applicationCount.count + 1}`;
+  const context = (field: string) =>
+    `enterprise_verification:${applicationId}:${field}`;
+  const legalRepresentative = result.fieldCipher.encryptText(
+    input.legalRepresentativeName ?? '法定代表人甲',
+    context('legal_representative_name'),
   );
-  return setupResult.composition.submitEnterpriseVerificationApplication(
-    submitInput(evidence),
+  const businessLicenseReference = result.fieldCipher.encryptText(
+    businessLicense.evidenceReference,
+    context('business_license_reference'),
   );
+  const authorizationReference = authorizationLetter
+    ? result.fieldCipher.encryptText(
+        authorizationLetter.evidenceReference,
+        context('authorization_letter_reference'),
+      )
+    : null;
+  const submittedAtMs = 1_700_000_000_000 + applicationCount.count;
+  result.db.prepare(
+    `INSERT INTO enterprise_verification_applications (
+      id, applicant_account_id, source_organization_id, enterprise_name,
+      unified_social_credit_code, applicant_identity,
+      legal_representative_name_ciphertext, legal_representative_name_iv,
+      legal_representative_name_auth_tag, legal_representative_name_key_version,
+      business_license_reference_ciphertext, business_license_reference_iv,
+      business_license_reference_auth_tag, business_license_reference_key_version,
+      business_license_sha256,
+      authorization_letter_reference_ciphertext,
+      authorization_letter_reference_iv,
+      authorization_letter_reference_auth_tag,
+      authorization_letter_reference_key_version,
+      authorization_letter_sha256,
+      status, submitted_at_ms, updated_at_ms
+    ) VALUES (
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+      'manual_review', ?, ?
+    )`,
+  ).run(
+    applicationId,
+    applicantAccountId,
+    sourceOrganizationId,
+    input.enterpriseName ?? '北京示例科技有限公司',
+    input.creditCode ?? VALID_CREDIT_CODE,
+    applicantIdentity,
+    legalRepresentative.ciphertext,
+    legalRepresentative.iv,
+    legalRepresentative.authTag,
+    legalRepresentative.keyVersion,
+    businessLicenseReference.ciphertext,
+    businessLicenseReference.iv,
+    businessLicenseReference.authTag,
+    businessLicenseReference.keyVersion,
+    businessLicense.evidenceSha256,
+    authorizationReference?.ciphertext ?? null,
+    authorizationReference?.iv ?? null,
+    authorizationReference?.authTag ?? null,
+    authorizationReference?.keyVersion ?? null,
+    authorizationLetter?.evidenceSha256 ?? null,
+    submittedAtMs,
+    submittedAtMs,
+  );
+  result.db.prepare(
+    `UPDATE enterprise_verification_evidence
+     SET application_id = ? WHERE id = ?`,
+  ).run(applicationId, businessLicense.evidenceReference);
+  if (authorizationLetter) {
+    result.db.prepare(
+      `UPDATE enterprise_verification_evidence
+       SET application_id = ? WHERE id = ?`,
+    ).run(applicationId, authorizationLetter.evidenceReference);
+  }
+  const application =
+    result.composition.getEnterpriseVerificationApplicationForApplicant({
+      applicantAccountId,
+      applicationId,
+    });
+  if (!application) throw new Error('legacy verification fixture missing');
+  return { application, businessLicense, authorizationLetter };
 }
 
 function expectedSlug(enterpriseName: string, creditCode: string): string {
@@ -361,244 +456,51 @@ describe('enterprise verification evidence', () => {
   });
 });
 
-describe('enterprise verification submission and applicant access', () => {
-  it('submits only to manual review, binds evidence and encrypts sensitive values', () => {
-    const { db, composition } = setup();
-    const businessLicense = uploadEvidence(composition, 'business_license');
-    const submitted = composition.submitEnterpriseVerificationApplication(
-      submitInput(businessLicense),
+describe('enterprise self-service creation', () => {
+  it('immediately approves and atomically provisions the current account as CEO admin', () => {
+    const result = setup();
+    const created = result.composition.submitEnterpriseVerificationApplication(
+      selfServiceInput(),
     );
-    expect(submitted.replayed).toBe(false);
-    expect(submitted.application).toMatchObject({
-      status: 'manual_review',
-      targetOrganizationId: null,
-      legalRepresentativeName: '法定代表人甲',
-      businessLicense: {
-        evidenceReference: businessLicense.evidenceReference,
+
+    expect(created).toMatchObject({
+      replayed: false,
+      application: {
+        status: 'approved',
+        targetOrganizationId: 'org-personal',
+        enterpriseName: '北京示例科技有限公司',
+        unifiedSocialCreditCode: null,
+        legalRepresentativeName: null,
+        businessLicense: null,
+        authorizationLetter: null,
+        reviewerId: 'self-service',
       },
     });
-    const row = db.prepare(
-      `SELECT legal_representative_name_ciphertext,
-              business_license_reference_ciphertext
+    expect(created.application.reviewNote).toContain('未进行权威工商主体认证');
+
+    const stored = result.db.prepare(
+      `SELECT status, unified_social_credit_code, reviewer_id
        FROM enterprise_verification_applications WHERE id = ?`,
-    ).get(submitted.application.id) as Record<string, string>;
-    expect(JSON.stringify(row)).not.toContain('法定代表人甲');
-    expect(JSON.stringify(row)).not.toContain(businessLicense.evidenceReference);
-    expect(
-      db.prepare(
-        'SELECT application_id FROM enterprise_verification_evidence WHERE id = ?',
-      ).get(businessLicense.evidenceReference),
-    ).toEqual({ application_id: submitted.application.id });
-  });
-
-  it('rejects forged, cross-account, wrong-purpose and hash-mismatched evidence', () => {
-    const first = setup();
-    expect(() =>
-      first.composition.submitEnterpriseVerificationApplication(
-        submitInput({
-          evidenceReference: 'eve_forged',
-          evidenceSha256: '0'.repeat(64),
-          purpose: 'business_license',
-          fileName: 'x.pdf',
-          contentType: 'application/pdf',
-          sizeBytes: 1,
-          createdAtMs: 1,
-        }),
-      ),
-    ).toThrow('证据不存在');
-
-    const second = setup();
-    seedPersonalAccount(second.db, {
-      organizationId: 'org-other',
-      accountId: 'acct-other',
-      accountName: '其他账号',
-    });
-    const crossAccount = uploadEvidence(second.composition, 'business_license', {
-      accountId: 'acct-other',
-      organizationId: 'org-other',
-    });
-    expect(() =>
-      second.composition.submitEnterpriseVerificationApplication(
-        submitInput(crossAccount),
-      ),
-    ).toThrow('无权使用');
-
-    const third = setup();
-    const wrongPurpose = uploadEvidence(
-      third.composition,
-      'authorization_letter',
-    );
-    expect(() =>
-      third.composition.submitEnterpriseVerificationApplication(
-        submitInput(wrongPurpose),
-      ),
-    ).toThrow('用途不符');
-
-    const fourth = setup();
-    const wrongHash = uploadEvidence(fourth.composition, 'business_license');
-    expect(() =>
-      fourth.composition.submitEnterpriseVerificationApplication(
-        submitInput({ ...wrongHash, evidenceSha256: 'f'.repeat(64) }),
-      ),
-    ).toThrow('SHA-256 不匹配');
-  });
-
-  it('requires an uploaded authorization letter for an authorized agent', () => {
-    const { composition } = setup();
-    const businessLicense = uploadEvidence(composition, 'business_license');
-    expect(() =>
-      composition.submitEnterpriseVerificationApplication(
-        submitInput(businessLicense, {
-          applicantIdentity: 'authorized_agent',
-          authorizationLetter: null,
-        }),
-      ),
-    ).toThrow('必须提交授权书');
-  });
-
-  it('replays an identical pending submission and rejects changed content', () => {
-    const { db, composition } = setup();
-    const businessLicense = uploadEvidence(composition, 'business_license');
-    const input = submitInput(businessLicense);
-    const first = composition.submitEnterpriseVerificationApplication(input);
-    const replay = composition.submitEnterpriseVerificationApplication(input);
-    expect(replay.replayed).toBe(true);
-    expect(replay.application.id).toBe(first.application.id);
-    expect(() =>
-      composition.submitEnterpriseVerificationApplication({
-        ...input,
-        enterpriseName: '另一家企业',
-      }),
-    ).toThrow('已有待审核申请');
-    expect(
-      db.prepare(
-        'SELECT COUNT(*) AS count FROM enterprise_verification_applications',
-      ).get(),
-    ).toEqual({ count: 1 });
-  });
-
-  it('gets the latest application without an id and preserves ownership checks', () => {
-    const result = setup();
-    const first = submitLegalRepresentative(result).application;
-    result.composition.cancelEnterpriseVerificationApplication({
-      applicationId: first.id,
-      applicantAccountId: 'acct-applicant',
-    });
-    result.setNow(1_800_000_000_100);
-    const secondEvidence = uploadEvidence(result.composition, 'business_license');
-    const second = result.composition.submitEnterpriseVerificationApplication(
-      submitInput(secondEvidence, {
-        unifiedSocialCreditCode: SECOND_VALID_CREDIT_CODE,
-      }),
-    ).application;
-    expect(
-      result.composition.getEnterpriseVerificationApplicationForApplicant({
-        applicantAccountId: 'acct-applicant',
-      })?.id,
-    ).toBe(second.id);
-    expect(
-      result.composition.getEnterpriseVerificationApplicationForApplicant({
-        applicantAccountId: 'acct-other',
-        applicationId: second.id,
-      }),
-    ).toBeNull();
-  });
-
-  it('allows only the owner to cancel and keeps cancellation idempotent', () => {
-    const { composition } = setup();
-    const application = submitLegalRepresentative(setup()).application;
-    expect(() =>
-      composition.cancelEnterpriseVerificationApplication({
-        applicationId: application.id,
-        applicantAccountId: 'acct-other',
-      }),
-    ).toThrow();
-  });
-});
-
-describe('enterprise verification review and promotion', () => {
-  it('allows only platform reviewers to list, read evidence and decide', () => {
-    const result = setup();
-    const submitted = submitLegalRepresentative(result).application;
-    expect(() =>
-      result.composition.listEnterpriseVerificationApplications({
-        reviewerId: 'acct-applicant',
-      }),
-    ).toThrow('仅平台审核员');
-    expect(() =>
-      result.composition.readEnterpriseVerificationEvidence({
-        applicationId: submitted.id,
-        evidenceReference: submitted.businessLicense.evidenceReference,
-        reviewerId: 'acct-applicant',
-      }),
-    ).toThrow('仅平台审核员');
-    expect(() =>
-      result.composition.approveEnterpriseVerificationApplication({
-        applicationId: submitted.id,
-        reviewerId: 'acct-applicant',
-        reviewNote: '非法批准',
-      }),
-    ).toThrow('仅平台审核员');
-  });
-
-  it('lets a reviewer read only evidence bound to the requested application', () => {
-    const result = setup();
-    const submitted = submitLegalRepresentative(result).application;
-    const evidence = result.composition.readEnterpriseVerificationEvidence({
-      applicationId: submitted.id,
-      evidenceReference: submitted.businessLicense.evidenceReference,
-      reviewerId: 'reviewer-platform',
-    });
-    expect(evidence.content).toEqual(PDF_CONTENT);
-    expect(() =>
-      result.composition.readEnterpriseVerificationEvidence({
-        applicationId: 'ev_other',
-        evidenceReference: submitted.businessLicense.evidenceReference,
-        reviewerId: 'reviewer-platform',
-      }),
-    ).toThrow('未绑定该申请');
-  });
-
-  it('fails closed when encrypted object ciphertext is tampered with', () => {
-    const result = setup();
-    const submitted = submitLegalRepresentative(result).application;
-    const key = result.objectStore.listKeys()[0]!;
-    const target = path.join(result.objectRoot, ...key.split('/'));
-    const raw = fs.readFileSync(target);
-    raw[raw.length - 1] ^= 1;
-    fs.writeFileSync(target, raw);
-    expect(() =>
-      result.composition.readEnterpriseVerificationEvidence({
-        applicationId: submitted.id,
-        evidenceReference: submitted.businessLicense.evidenceReference,
-        reviewerId: 'reviewer-platform',
-      }),
-    ).toThrow();
-  });
-
-  it('promotes a legal representative in place and preserves auth sessions', () => {
-    const result = setup();
-    const submitted = submitLegalRepresentative(result).application;
-    const approved = result.composition.approveEnterpriseVerificationApplication({
-      applicationId: submitted.id,
-      reviewerId: 'reviewer-platform',
-      reviewNote: '材料核验通过',
-    });
-    expect(approved).toMatchObject({
+    ).get(created.application.id) as Record<string, unknown>;
+    expect(stored).toMatchObject({
       status: 'approved',
-      targetOrganizationId: 'org-personal',
-      reviewerId: 'reviewer-platform',
-      reviewNote: '材料核验通过',
+      reviewer_id: 'self-service',
     });
+    expect(String(stored.unified_social_credit_code)).toMatch(
+      /^OTTO-SELF-SERVICE:/,
+    );
+
     const organization = result.db.prepare(
       'SELECT id, name, slug FROM organizations WHERE id = ?',
     ).get('org-personal') as { id: string; name: string; slug: string };
-    expect(organization.id).toBe('org-personal');
-    expect(organization.name).toBe('北京示例科技有限公司');
-    expect(organization.slug).toBe(
-      expectedSlug('北京示例科技有限公司', VALID_CREDIT_CODE),
-    );
-    expect(organization.slug).not.toContain(VALID_CREDIT_CODE.toLowerCase());
+    expect(organization).toEqual({
+      id: 'org-personal',
+      name: '北京示例科技有限公司',
+      slug: expectedSlug(
+        '北京示例科技有限公司',
+        `OTTO-SELF-SERVICE:${created.application.id}`,
+      ),
+    });
     const account = result.db.prepare(
       `SELECT account_type, employee_id, role, department, department_id,
               position_title, is_admin
@@ -611,110 +513,69 @@ describe('enterprise verification review and promotion', () => {
       position_title: 'CEO',
       is_admin: 1,
     });
-    const employee = result.db.prepare(
+    expect(result.db.prepare(
       'SELECT name, role, position_title FROM employees WHERE id = ?',
-    ).get(account.employee_id) as Record<string, unknown>;
-    expect(employee).toEqual({
+    ).get(account.employee_id)).toEqual({
       name: '申请账号姓名',
       role: 'CEO',
       position_title: 'CEO',
     });
-    expect(
-      result.db.prepare(
-        'SELECT organization_id FROM auth_sessions WHERE account_id = ?',
-      ).get('acct-applicant'),
-    ).toEqual({ organization_id: 'org-personal' });
-
-    const replay = result.composition.approveEnterpriseVerificationApplication({
-      applicationId: submitted.id,
-      reviewerId: 'reviewer-platform',
-      reviewNote: '重复请求不得覆盖首次审核记录',
-    });
-    expect(replay.reviewNote).toBe('材料核验通过');
-    expect(result.db.prepare('SELECT COUNT(*) AS count FROM employees').get())
-      .toEqual({ count: 1 });
-  });
-
-  it('promotes an authorized agent as enterprise administrator, never CEO', () => {
-    const result = setup();
-    const businessLicense = uploadEvidence(
-      result.composition,
-      'business_license',
-    );
-    const authorizationLetter = uploadEvidence(
-      result.composition,
-      'authorization_letter',
-      { content: PNG_CONTENT, contentType: 'image/png', fileName: 'letter.png' },
-    );
-    const application = result.composition.submitEnterpriseVerificationApplication(
-      submitInput(businessLicense, {
-        applicantIdentity: 'authorized_agent',
-        authorizationLetter: {
-          evidenceReference: authorizationLetter.evidenceReference,
-          evidenceSha256: authorizationLetter.evidenceSha256,
-        },
-      }),
-    ).application;
-    result.composition.approveEnterpriseVerificationApplication({
-      applicationId: application.id,
-      reviewerId: 'reviewer-platform',
-      reviewNote: '授权书有效',
-    });
-    expect(
-      result.db.prepare(
-        `SELECT a.role AS account_role, a.position_title AS account_position,
-                e.name AS employee_name, e.role AS employee_role,
-                e.position_title AS employee_position, a.is_admin
-         FROM accounts AS a INNER JOIN employees AS e ON e.id = a.employee_id
-         WHERE a.id = 'acct-applicant'`,
-      ).get(),
-    ).toEqual({
-      account_role: '企业管理员',
-      account_position: '企业管理员',
-      employee_name: '申请账号姓名',
-      employee_role: '企业管理员',
-      employee_position: '企业管理员',
-      is_admin: 1,
-    });
-  });
-
-  it('rejects idempotently without upgrading and retains evidence for audit', () => {
-    const result = setup();
-    const submitted = submitLegalRepresentative(result).application;
-    const rejected = result.composition.rejectEnterpriseVerificationApplication({
-      applicationId: submitted.id,
-      reviewerId: 'reviewer-platform',
-      reviewNote: '材料信息不一致',
-    });
-    expect(rejected.status).toBe('rejected');
-    const replay = result.composition.rejectEnterpriseVerificationApplication({
-      applicationId: submitted.id,
-      reviewerId: 'reviewer-platform',
-      reviewNote: '不覆盖',
-    });
-    expect(replay.reviewNote).toBe('材料信息不一致');
     expect(result.db.prepare(
-      'SELECT account_type FROM accounts WHERE id = ?',
-    ).get('acct-applicant')).toEqual({ account_type: 'personal' });
-    expect(
-      result.composition.readEnterpriseVerificationEvidence({
-        applicationId: submitted.id,
-        evidenceReference: submitted.businessLicense.evidenceReference,
-        reviewerId: 'reviewer-platform',
-      }).content,
-    ).toEqual(PDF_CONTENT);
-    expect(() =>
-      result.composition.approveEnterpriseVerificationApplication({
-        applicationId: submitted.id,
-        reviewerId: 'reviewer-platform',
-        reviewNote: '禁止反向转换',
-      }),
-    ).toThrow('当前状态不允许批准');
+      'SELECT name FROM organization_departments WHERE id = ?',
+    ).get(account.department_id)).toEqual({ name: '管理层' });
+    expect(result.db.prepare(
+      'SELECT organization_id FROM auth_sessions WHERE account_id = ?',
+    ).get('acct-applicant')).toEqual({ organization_id: 'org-personal' });
   });
 
-  it('blocks promotion when the personal organization has another active account', () => {
+  it('requires a non-empty enterprise name of at most 80 characters', () => {
     const result = setup();
-    const submitted = submitLegalRepresentative(result).application;
+    expect(() =>
+      result.composition.submitEnterpriseVerificationApplication(
+        selfServiceInput({ enterpriseName: '   ' }),
+      ),
+    ).toThrow('企业名称不能为空');
+    expect(() =>
+      result.composition.submitEnterpriseVerificationApplication(
+        selfServiceInput({ enterpriseName: '企'.repeat(81) }),
+      ),
+    ).toThrow('不能超过 80 个字符');
+  });
+
+  it('requires an active personal account with a non-empty verified phone', () => {
+    const missingPhone = setup();
+    missingPhone.db.prepare(
+      'UPDATE accounts SET phone = NULL WHERE id = ?',
+    ).run('acct-applicant');
+    expect(() =>
+      missingPhone.composition.submitEnterpriseVerificationApplication(
+        selfServiceInput(),
+      ),
+    ).toThrow('请先绑定并验证手机号');
+
+    const enterpriseAccount = setup();
+    enterpriseAccount.db.prepare(
+      "UPDATE accounts SET account_type = 'enterprise' WHERE id = ?",
+    ).run('acct-applicant');
+    expect(() =>
+      enterpriseAccount.composition.submitEnterpriseVerificationApplication(
+        selfServiceInput(),
+      ),
+    ).toThrow('有效 personal account');
+
+    const disabledAccount = setup();
+    disabledAccount.db.prepare(
+      "UPDATE accounts SET status = 'disabled' WHERE id = ?",
+    ).run('acct-applicant');
+    expect(() =>
+      disabledAccount.composition.submitEnterpriseVerificationApplication(
+        selfServiceInput(),
+      ),
+    ).toThrow('有效 personal account');
+  });
+
+  it('requires the personal organization to have exactly one active account', () => {
+    const result = setup();
     result.db.prepare(
       `INSERT INTO accounts (
         id, organization_id, account_type, username, password_hash, name,
@@ -722,13 +583,15 @@ describe('enterprise verification review and promotion', () => {
       ) VALUES ('acct-shared', 'org-personal', 'personal', 'shared@example.test',
         'hash', '共享账号', '个人用户', 0, 'active')`,
     ).run();
+
     expect(() =>
-      result.composition.approveEnterpriseVerificationApplication({
-        applicationId: submitted.id,
-        reviewerId: 'reviewer-platform',
-        reviewNote: '尝试批准',
-      }),
+      result.composition.submitEnterpriseVerificationApplication(
+        selfServiceInput(),
+      ),
     ).toThrow('存在其他活动账号');
+    expect(result.db.prepare(
+      'SELECT COUNT(*) AS count FROM enterprise_verification_applications',
+    ).get()).toEqual({ count: 0 });
     expect(result.db.prepare(
       'SELECT name, slug FROM organizations WHERE id = ?',
     ).get('org-personal')).toEqual({
@@ -737,9 +600,54 @@ describe('enterprise verification review and promotion', () => {
     });
   });
 
-  it('rolls back organization, department, employee, account and decision together', () => {
+  it('replays the same creation and rejects a different enterprise name', () => {
     const result = setup();
-    const submitted = submitLegalRepresentative(result).application;
+    const first = result.composition.submitEnterpriseVerificationApplication(
+      selfServiceInput(),
+    );
+    const replay = result.composition.submitEnterpriseVerificationApplication(
+      selfServiceInput(),
+    );
+    expect(replay.replayed).toBe(true);
+    expect(replay.application.id).toBe(first.application.id);
+    expect(() =>
+      result.composition.submitEnterpriseVerificationApplication(
+        selfServiceInput({ enterpriseName: '另一家企业' }),
+      ),
+    ).toThrow('已经创建企业');
+    expect(result.db.prepare(
+      'SELECT COUNT(*) AS count FROM enterprise_verification_applications',
+    ).get()).toEqual({ count: 1 });
+    expect(result.db.prepare('SELECT COUNT(*) AS count FROM employees').get())
+      .toEqual({ count: 1 });
+  });
+
+  it('cancels a legacy manual-review application and preserves its evidence', () => {
+    const result = setup();
+    const legacy = insertLegacyManualReview(result);
+    const created = result.composition.submitEnterpriseVerificationApplication(
+      selfServiceInput({ enterpriseName: '自助创建企业' }),
+    );
+
+    expect(created.application.status).toBe('approved');
+    expect(result.db.prepare(
+      `SELECT status, cancelled_at_ms, reviewer_id
+       FROM enterprise_verification_applications WHERE id = ?`,
+    ).get(legacy.application.id)).toEqual({
+      status: 'cancelled',
+      cancelled_at_ms: 1_800_000_000_000,
+      reviewer_id: null,
+    });
+    expect(result.composition.readEnterpriseVerificationEvidence({
+      applicationId: legacy.application.id,
+      evidenceReference: legacy.businessLicense.evidenceReference,
+      reviewerId: 'reviewer-platform',
+    }).content).toEqual(PDF_CONTENT);
+  });
+
+  it('rolls back the record, legacy cancellation and organization upgrade together', () => {
+    const result = setup();
+    const legacy = insertLegacyManualReview(result);
     result.db.exec(`
       CREATE TRIGGER fail_enterprise_employee
       BEFORE INSERT ON employees
@@ -747,77 +655,211 @@ describe('enterprise verification review and promotion', () => {
         SELECT RAISE(ABORT, 'forced employee failure');
       END;
     `);
+
     expect(() =>
-      result.composition.approveEnterpriseVerificationApplication({
-        applicationId: submitted.id,
-        reviewerId: 'reviewer-platform',
-        reviewNote: '触发事务失败',
-      }),
+      result.composition.submitEnterpriseVerificationApplication(
+        selfServiceInput({ enterpriseName: '事务回滚企业' }),
+      ),
     ).toThrow('forced employee failure');
     expect(result.db.prepare(
-      'SELECT name, slug FROM organizations WHERE id = ?',
-    ).get('org-personal')).toEqual({
-      name: '申请账号姓名的个人空间',
-      slug: 'personal-acct-applicant',
+      `SELECT status, cancelled_at_ms FROM enterprise_verification_applications
+       WHERE id = ?`,
+    ).get(legacy.application.id)).toEqual({
+      status: 'manual_review',
+      cancelled_at_ms: null,
     });
     expect(result.db.prepare(
-      'SELECT account_type, employee_id FROM accounts WHERE id = ?',
+      'SELECT COUNT(*) AS count FROM enterprise_verification_applications',
+    ).get()).toEqual({ count: 1 });
+    expect(result.db.prepare(
+      'SELECT account_type, employee_id, is_admin FROM accounts WHERE id = ?',
     ).get('acct-applicant')).toEqual({
       account_type: 'personal',
       employee_id: null,
+      is_admin: 0,
     });
     expect(result.db.prepare('SELECT COUNT(*) AS count FROM employees').get())
       .toEqual({ count: 0 });
     expect(result.db.prepare(
       'SELECT COUNT(*) AS count FROM organization_departments',
     ).get()).toEqual({ count: 0 });
-    expect(result.db.prepare(
-      'SELECT status, reviewer_id FROM enterprise_verification_applications WHERE id = ?',
-    ).get(submitted.id)).toEqual({ status: 'manual_review', reviewer_id: null });
   });
 
-  it('enforces one approved application per credit code', () => {
+  it('returns the approved self-service record only to its owner and cannot cancel it', () => {
     const result = setup();
-    seedPersonalAccount(result.db, {
+    const created = result.composition.submitEnterpriseVerificationApplication(
+      selfServiceInput(),
+    ).application;
+    expect(result.composition.getEnterpriseVerificationApplicationForApplicant({
+      applicantAccountId: 'acct-applicant',
+    })?.id).toBe(created.id);
+    expect(result.composition.getEnterpriseVerificationApplicationForApplicant({
+      applicantAccountId: 'acct-other',
+      applicationId: created.id,
+    })).toBeNull();
+    expect(() =>
+      result.composition.cancelEnterpriseVerificationApplication({
+        applicationId: created.id,
+        applicantAccountId: 'acct-applicant',
+      }),
+    ).toThrow('当前状态不允许取消');
+  });
+});
+
+describe('legacy enterprise verification review compatibility', () => {
+  it('keeps legacy evidence and review operations restricted to platform reviewers', () => {
+    const result = setup();
+    const legacy = insertLegacyManualReview(result);
+    expect(() =>
+      result.composition.listEnterpriseVerificationApplications({
+        reviewerId: 'acct-applicant',
+      }),
+    ).toThrow('仅平台审核员');
+    expect(() =>
+      result.composition.readEnterpriseVerificationEvidence({
+        applicationId: legacy.application.id,
+        evidenceReference: legacy.businessLicense.evidenceReference,
+        reviewerId: 'acct-applicant',
+      }),
+    ).toThrow('仅平台审核员');
+    expect(result.composition.readEnterpriseVerificationEvidence({
+      applicationId: legacy.application.id,
+      evidenceReference: legacy.businessLicense.evidenceReference,
+      reviewerId: 'reviewer-platform',
+    }).content).toEqual(PDF_CONTENT);
+    expect(() =>
+      result.composition.readEnterpriseVerificationEvidence({
+        applicationId: 'legacy_other',
+        evidenceReference: legacy.businessLicense.evidenceReference,
+        reviewerId: 'reviewer-platform',
+      }),
+    ).toThrow('未绑定该申请');
+    expect(() =>
+      result.composition.approveEnterpriseVerificationApplication({
+        applicationId: legacy.application.id,
+        reviewerId: 'acct-applicant',
+        reviewNote: '非法批准',
+      }),
+    ).toThrow('仅平台审核员');
+  });
+
+  it('approves a legacy legal representative as CEO and remains idempotent', () => {
+    const result = setup();
+    const legacy = insertLegacyManualReview(result);
+    const approved = result.composition.approveEnterpriseVerificationApplication({
+      applicationId: legacy.application.id,
+      reviewerId: 'reviewer-platform',
+      reviewNote: '材料核验通过',
+    });
+    expect(approved).toMatchObject({
+      status: 'approved',
+      targetOrganizationId: 'org-personal',
+      reviewerId: 'reviewer-platform',
+      reviewNote: '材料核验通过',
+    });
+    expect(result.db.prepare(
+      `SELECT account_type, role, position_title, is_admin
+       FROM accounts WHERE id = 'acct-applicant'`,
+    ).get()).toEqual({
+      account_type: 'enterprise',
+      role: 'CEO',
+      position_title: 'CEO',
+      is_admin: 1,
+    });
+    const replay = result.composition.approveEnterpriseVerificationApplication({
+      applicationId: legacy.application.id,
+      reviewerId: 'reviewer-platform',
+      reviewNote: '不得覆盖首次决定',
+    });
+    expect(replay.reviewNote).toBe('材料核验通过');
+    expect(result.db.prepare('SELECT COUNT(*) AS count FROM employees').get())
+      .toEqual({ count: 1 });
+  });
+
+  it('approves a legacy authorized agent as enterprise administrator', () => {
+    const result = setup();
+    const legacy = insertLegacyManualReview(result, {
+      applicantIdentity: 'authorized_agent',
+    });
+    result.composition.approveEnterpriseVerificationApplication({
+      applicationId: legacy.application.id,
+      reviewerId: 'reviewer-platform',
+      reviewNote: '授权书有效',
+    });
+    expect(result.db.prepare(
+      `SELECT a.role AS account_role, a.position_title AS account_position,
+              e.role AS employee_role, e.position_title AS employee_position,
+              a.is_admin
+       FROM accounts AS a INNER JOIN employees AS e ON e.id = a.employee_id
+       WHERE a.id = 'acct-applicant'`,
+    ).get()).toEqual({
+      account_role: '企业管理员',
+      account_position: '企业管理员',
+      employee_role: '企业管理员',
+      employee_position: '企业管理员',
+      is_admin: 1,
+    });
+  });
+
+  it('rejects a legacy application idempotently and retains evidence', () => {
+    const result = setup();
+    const legacy = insertLegacyManualReview(result);
+    const rejected = result.composition.rejectEnterpriseVerificationApplication({
+      applicationId: legacy.application.id,
+      reviewerId: 'reviewer-platform',
+      reviewNote: '材料信息不一致',
+    });
+    expect(rejected.status).toBe('rejected');
+    const replay = result.composition.rejectEnterpriseVerificationApplication({
+      applicationId: legacy.application.id,
+      reviewerId: 'reviewer-platform',
+      reviewNote: '不得覆盖',
+    });
+    expect(replay.reviewNote).toBe('材料信息不一致');
+    expect(result.db.prepare(
+      'SELECT account_type, is_admin FROM accounts WHERE id = ?',
+    ).get('acct-applicant')).toEqual({ account_type: 'personal', is_admin: 0 });
+    expect(result.composition.readEnterpriseVerificationEvidence({
+      applicationId: legacy.application.id,
+      evidenceReference: legacy.businessLicense.evidenceReference,
+      reviewerId: 'reviewer-platform',
+    }).content).toEqual(PDF_CONTENT);
+  });
+
+  it('keeps legacy credit-code uniqueness and slug-conflict protection', () => {
+    const duplicate = setup();
+    seedPersonalAccount(duplicate.db, {
       organizationId: 'org-second',
       accountId: 'acct-second',
       accountName: '第二申请人',
     });
-    const first = submitLegalRepresentative(result).application;
-    const secondEvidence = uploadEvidence(result.composition, 'business_license', {
-      accountId: 'acct-second',
-      organizationId: 'org-second',
+    const first = insertLegacyManualReview(duplicate);
+    const second = insertLegacyManualReview(duplicate, {
+      applicantAccountId: 'acct-second',
+      sourceOrganizationId: 'org-second',
     });
-    const second = result.composition.submitEnterpriseVerificationApplication(
-      submitInput(secondEvidence, {
-        applicantAccountId: 'acct-second',
-        sourceOrganizationId: 'org-second',
-      }),
-    ).application;
-    result.composition.approveEnterpriseVerificationApplication({
-      applicationId: first.id,
+    duplicate.composition.approveEnterpriseVerificationApplication({
+      applicationId: first.application.id,
       reviewerId: 'reviewer-platform',
       reviewNote: '第一份通过',
     });
     expect(() =>
-      result.composition.approveEnterpriseVerificationApplication({
-        applicationId: second.id,
+      duplicate.composition.approveEnterpriseVerificationApplication({
+        applicationId: second.application.id,
         reviewerId: 'reviewer-platform',
         reviewNote: '重复代码',
       }),
     ).toThrow('已通过企业认证');
-  });
 
-  it('returns a deterministic error when the derived organization slug conflicts', () => {
-    const result = setup();
-    const submitted = submitLegalRepresentative(result).application;
-    result.db.prepare(
+    const slugConflict = setup();
+    const legacy = insertLegacyManualReview(slugConflict);
+    slugConflict.db.prepare(
       `INSERT INTO organizations (id, name, slug, invite_secret, status)
        VALUES ('org-conflict', '冲突企业', ?, 'secret', 'active')`,
     ).run(expectedSlug('北京示例科技有限公司', VALID_CREDIT_CODE));
     expect(() =>
-      result.composition.approveEnterpriseVerificationApplication({
-        applicationId: submitted.id,
+      slugConflict.composition.approveEnterpriseVerificationApplication({
+        applicationId: legacy.application.id,
         reviewerId: 'reviewer-platform',
         reviewNote: '尝试批准',
       }),

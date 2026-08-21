@@ -11,8 +11,6 @@ import type {
   EnterpriseSmsLoginChallenge,
   EnterpriseVerificationApplication,
   EnterpriseVerificationApplicationInput,
-  EnterpriseVerificationEvidenceUploadInput,
-  EnterpriseVerificationUploadedEvidence,
 } from '../../preload/index.js';
 
 type AuthStatus = 'loading' | 'signed-out' | 'signed-in';
@@ -66,9 +64,6 @@ export function useEnterpriseAuth(): {
     getEnterpriseVerificationApplication(): Promise<
       EnterpriseVerificationApplication | null
     >;
-    uploadEnterpriseVerificationEvidence(
-      input: EnterpriseVerificationEvidenceUploadInput,
-    ): Promise<EnterpriseVerificationUploadedEvidence>;
     submitEnterpriseVerificationApplication(
       input: EnterpriseVerificationApplicationInput,
     ): Promise<EnterpriseVerificationApplication>;
@@ -361,16 +356,6 @@ export function useEnterpriseAuth(): {
     [runEnterpriseVerificationAction],
   );
 
-  const uploadEnterpriseVerificationEvidence = useCallback(
-    (
-      input: EnterpriseVerificationEvidenceUploadInput,
-    ): Promise<EnterpriseVerificationUploadedEvidence> =>
-      runEnterpriseVerificationAction(() =>
-        window.otto.uploadEnterpriseVerificationEvidence(input),
-      ),
-    [runEnterpriseVerificationAction],
-  );
-
   const submitEnterpriseVerificationApplication = useCallback(
     (
       input: EnterpriseVerificationApplicationInput,
@@ -420,7 +405,6 @@ export function useEnterpriseAuth(): {
       register,
       joinEnterprise,
       getEnterpriseVerificationApplication,
-      uploadEnterpriseVerificationEvidence,
       submitEnterpriseVerificationApplication,
       cancelEnterpriseVerificationApplication,
       logout,
@@ -431,7 +415,6 @@ export function useEnterpriseAuth(): {
     loginWithPassword, requestLoginCode, loginWithSms,
     requestRegistrationCode, register, joinEnterprise, logout, clearError,
     getEnterpriseVerificationApplication,
-    uploadEnterpriseVerificationEvidence,
     submitEnterpriseVerificationApplication,
     cancelEnterpriseVerificationApplication,
   ]);

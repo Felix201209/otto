@@ -160,40 +160,8 @@ export interface EnterpriseLegalDocumentSection {
   important?: boolean;
 }
 
-export type EnterpriseVerificationApplicantAuthority =
-  | 'legal_representative'
-  | 'authorized_agent';
-
-export type EnterpriseVerificationEvidencePurpose =
-  | 'business_license'
-  | 'authorization_letter';
-
-export interface EnterpriseVerificationEvidenceReference {
-  reference: string;
-  sha256: string;
-}
-
-export interface EnterpriseVerificationUploadedEvidence
-  extends EnterpriseVerificationEvidenceReference {
-  fileName: string;
-  contentType: string;
-  sizeBytes: number;
-}
-
-export interface EnterpriseVerificationEvidenceUploadInput {
-  purpose: EnterpriseVerificationEvidencePurpose;
-  fileName: string;
-  contentType: string;
-  contentBase64: string;
-}
-
 export interface EnterpriseVerificationApplicationInput {
   legalName: string;
-  unifiedSocialCreditCode: string;
-  legalRepresentativeName: string;
-  applicantAuthority: EnterpriseVerificationApplicantAuthority;
-  businessLicenseEvidence: EnterpriseVerificationEvidenceReference;
-  authorizationEvidence?: EnterpriseVerificationEvidenceReference | null;
 }
 
 export interface EnterpriseVerificationApplication {
@@ -201,11 +169,6 @@ export interface EnterpriseVerificationApplication {
   applicantAccountId: string;
   sourceOrganizationId: string;
   legalName: string;
-  unifiedSocialCreditCode: string;
-  legalRepresentativeName: string;
-  applicantAuthority: EnterpriseVerificationApplicantAuthority;
-  businessLicenseEvidence: EnterpriseVerificationEvidenceReference;
-  authorizationEvidence: EnterpriseVerificationEvidenceReference | null;
   status:
     | 'draft'
     | 'submitted'
@@ -2520,41 +2483,18 @@ export class EnterpriseClient {
     return result.application;
   }
 
-  async uploadEnterpriseVerificationEvidence(
-    input: EnterpriseVerificationEvidenceUploadInput,
-  ): Promise<EnterpriseVerificationUploadedEvidence> {
-    this.requirePersonalEnterpriseVerificationAccount();
-    const result = await this.request<{
-      evidence: EnterpriseVerificationUploadedEvidence;
-    }>('/enterprise/verification/evidence', {
-      method: 'POST',
-      body: JSON.stringify(input),
-    });
-    return result.evidence;
-  }
 
   async submitEnterpriseVerificationApplication(
     input: EnterpriseVerificationApplicationInput,
   ): Promise<EnterpriseVerificationApplication> {
     this.requirePersonalEnterpriseVerificationAccount();
-    const businessLicenseEvidence =
-      this.normalizeUploadedEnterpriseVerificationEvidence(
-        input.businessLicenseEvidence,
-      );
-    const authorizationEvidence = input.authorizationEvidence
-      ? this.normalizeUploadedEnterpriseVerificationEvidence(
-          input.authorizationEvidence,
-        )
-      : input.authorizationEvidence;
+    const legalName = input.legalName.trim();
+    if (!legalName) throw new Error('请输入企业名称');
     const result = await this.request<{
       application: EnterpriseVerificationApplication;
     }>('/enterprise/verification/application', {
       method: 'POST',
-      body: JSON.stringify({
-        ...input,
-        businessLicenseEvidence,
-        authorizationEvidence,
-      }),
+      body: JSON.stringify({ legalName }),
     });
     return result.application;
   }
@@ -2577,21 +2517,6 @@ export class EnterpriseClient {
       throw new Error('当前账号已经属于企业');
     }
     return this.currentAccount;
-  }
-
-  private normalizeUploadedEnterpriseVerificationEvidence(
-    evidence: EnterpriseVerificationEvidenceReference,
-  ): EnterpriseVerificationEvidenceReference {
-    const reference = evidence?.reference?.trim() ?? '';
-    const sha256 = evidence?.sha256?.trim().toLowerCase() ?? '';
-    if (
-      !reference ||
-      /^local-pending(?:$|:)/iu.test(reference) ||
-      !/^[0-9a-f]{64}$/u.test(sha256)
-    ) {
-      throw new Error('请先上传企业认证材料，再提交申请');
-    }
-    return { reference, sha256 };
   }
 
 

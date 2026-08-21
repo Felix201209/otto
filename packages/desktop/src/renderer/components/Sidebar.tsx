@@ -118,7 +118,6 @@ export function Sidebar({
   onSubmitEnterpriseVerification,
   onGetEnterpriseVerification,
   onCancelEnterpriseVerification,
-  onUploadEnterpriseVerificationEvidence,
   onReloadEnterpriseIdentity,
   onLogout,
   onRename,
@@ -239,7 +238,7 @@ export function Sidebar({
             type="button"
             className="otto-viewall otto-viewall--upgrade"
             onClick={() => setJoinEnterpriseOpen(true)}
-            title="使用邀请码加入企业，或认证并创建企业"
+            title="使用邀请码加入企业，或直接创建企业"
           >
             <span className="otto-viewall__accounticon" aria-hidden>↗</span>
             加入企业
@@ -298,7 +297,6 @@ export function Sidebar({
           onSubmitEnterpriseVerification={onSubmitEnterpriseVerification}
           onGetEnterpriseVerification={onGetEnterpriseVerification}
           onCancelEnterpriseVerification={onCancelEnterpriseVerification}
-          onUploadEnterpriseVerificationEvidence={onUploadEnterpriseVerificationEvidence}
           onReloadEnterpriseIdentity={onReloadEnterpriseIdentity}
         />
       ) : null}
