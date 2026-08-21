@@ -31,7 +31,9 @@ afterEach(() => {
 describe('后台模型任务用户设置', () => {
   it('新安装和缺失字段时均安全默认关闭', () => {
     const home = tempHome();
-    expect(loadUserSettingsSubset(home).backgroundModelTasksEnabled).toBe(false);
+    const settings = loadUserSettingsSubset(home);
+    expect(settings.backgroundModelTasksEnabled).toBe(false);
+    expect(settings.authorizationMode).toBe('manual');
   });
 
   it('只在显式开启后返回 true，并保留其它未知字段', () => {
@@ -44,5 +46,17 @@ describe('后台模型任务用户设置', () => {
 
     expect(loadUserSettingsSubset(home).backgroundModelTasksEnabled).toBe(true);
     expect(JSON.parse(fs.readFileSync(file, 'utf8')).customField).toBe('keep-me');
+  });
+
+  it('授权模式对非法值 fail closed，并保留用户显式选择的 auto', () => {
+    const home = tempHome();
+    const file = userSettingsFilePath(home);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ authorizationMode: 'unexpected' }));
+
+    expect(loadUserSettingsSubset(home).authorizationMode).toBe('manual');
+
+    patchUserSettings({ authorizationMode: 'auto' }, home);
+    expect(loadUserSettingsSubset(home).authorizationMode).toBe('auto');
   });
 });

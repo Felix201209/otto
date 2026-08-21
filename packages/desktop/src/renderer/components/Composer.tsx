@@ -296,8 +296,17 @@ export function Composer({
   const [text, setText] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [authorizationOpen, setAuthorizationOpen] = useState(false);
-  const [globalAuto, setGlobalAuto] = useState(
-    () => localStorage.getItem('otto.authorization.global-auto') !== '0',
+  const [initialAuthorizationPreference] = useState(() => {
+    const stored = localStorage.getItem('otto.authorization.global-auto');
+    return {
+      globalAuto: stored === '1',
+      // 缺失或非法值可能来自旧版错误默认；首次获得会话时必须纠正服务端。
+      needsManualMigration: stored !== '0' && stored !== '1',
+    };
+  });
+  const [globalAuto, setGlobalAuto] = useState(initialAuthorizationPreference.globalAuto);
+  const authorizationMigrationPendingRef = useRef(
+    initialAuthorizationPreference.needsManualMigration,
   );
   const [sessionAuthorization, setSessionAuthorization] = useState<Record<string, 'manual' | 'auto'>>({});
   const authorizationStateRef = useRef({ globalAuto, sessionAuthorization });
@@ -419,12 +428,23 @@ export function Composer({
       : '手动授权';
 
   React.useEffect(() => {
-    if (globalAuto && sessionId) {
+    if (!sessionId) return;
+    if (globalAuto) {
       transport.send({
         type: 'set_authorization_mode',
         payload: { sessionId, mode: 'auto', scope: 'all' },
       });
+      return;
     }
+
+    if (!authorizationMigrationPendingRef.current) return;
+    // 在发送前完成本地迁移，StrictMode 重放 effect 时也只会执行一次。
+    authorizationMigrationPendingRef.current = false;
+    localStorage.setItem('otto.authorization.global-auto', '0');
+    transport.send({
+      type: 'set_authorization_mode',
+      payload: { sessionId, mode: 'manual', scope: 'all' },
+    });
   }, [globalAuto, sessionId]);
 
   React.useEffect(() => {

@@ -185,11 +185,17 @@ describe('旧企业模型显示迁移', () => {
 });
 
 describe('执行授权菜单', () => {
-  it('默认全局自动，并可降级到当前会话或手动后再恢复', () => {
+  it('新安装默认手动，只有用户明确选择后才启用自动授权', () => {
     const send = vi.spyOn(transport, 'send').mockImplementation(() => {});
     localStorage.clear();
     renderComposer([], null);
-    fireEvent.click(screen.getByRole('button', { name: '执行授权：所有会话自动' }));
+    expect(screen.getByRole('button', { name: '执行授权：手动授权' })).toBeTruthy();
+    expect(send).not.toHaveBeenCalledWith({
+      type: 'set_authorization_mode',
+      payload: { sessionId: 's1', mode: 'auto', scope: 'all' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '执行授权：手动授权' }));
     expect(document.querySelector('.otto-authorization__option-icon--manual svg')).toBeTruthy();
     expect(document.querySelector('.otto-authorization__option-icon--session svg')).toBeTruthy();
     expect(document.querySelector('.otto-authorization__option-icon--global svg')).toBeTruthy();
@@ -226,6 +232,40 @@ describe('执行授权菜单', () => {
       type: 'set_authorization_mode',
       payload: { sessionId: 's1', mode: 'auto', scope: 'all' },
     });
+  });
+
+  it('只恢复用户曾明确保存的所有会话自动授权', () => {
+    const send = vi.spyOn(transport, 'send').mockImplementation(() => {});
+    localStorage.setItem('otto.authorization.global-auto', '1');
+
+    renderComposer([], null);
+
+    expect(screen.getByRole('button', { name: '执行授权：所有会话自动' })).toBeTruthy();
+    expect(send).toHaveBeenCalledWith({
+      type: 'set_authorization_mode',
+      payload: { sessionId: 's1', mode: 'auto', scope: 'all' },
+    });
+  });
+
+  it.each([
+    ['0', false],
+    ['invalid', true],
+  ] as const)('本地值 %s 时安全保持手动授权', (stored, migrates) => {
+    const send = vi.spyOn(transport, 'send').mockImplementation(() => {});
+    localStorage.setItem('otto.authorization.global-auto', stored);
+
+    renderComposer([], null);
+
+    expect(screen.getByRole('button', { name: '执行授权：手动授权' })).toBeTruthy();
+    expect(localStorage.getItem('otto.authorization.global-auto')).toBe('0');
+    if (migrates) {
+      expect(send).toHaveBeenCalledWith({
+        type: 'set_authorization_mode',
+        payload: { sessionId: 's1', mode: 'manual', scope: 'all' },
+      });
+    } else {
+      expect(send).not.toHaveBeenCalled();
+    }
   });
 
   it('离开仅当前会话自动的会话时在服务端 fail closed 回手动', () => {
