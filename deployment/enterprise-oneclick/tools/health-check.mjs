@@ -5,10 +5,11 @@ function fail(message) {
   process.exit(5);
 }
 
-async function fetchJson(url, headers = undefined) {
+async function fetchJson(url, headers = undefined, method = 'GET') {
   try {
     const response = await fetch(url, {
       headers,
+      method,
       signal: AbortSignal.timeout(10_000),
     });
     const body = await response.json();
@@ -32,6 +33,8 @@ const expectedSchema = Number(process.argv[5]);
 const requireSms = process.argv[6] !== 'allow-sms-disabled';
 const adminToken =
   process.env.OTTO_ENTERPRISE_ADMIN_TOKEN?.trim() || process.argv[7]?.trim();
+const requireDeploymentActivation =
+  process.argv[8] !== 'allow-unactivated-deployment';
 if (
   !baseUrl ||
   !expectedVersion ||
@@ -40,7 +43,7 @@ if (
   !adminToken
 ) {
   fail(
-    'usage: health-check.mjs <base-url> <version> <40-char-build-id> <schema> [allow-sms-disabled] [admin-token]',
+    'usage: health-check.mjs <base-url> <version> <40-char-build-id> <schema> [allow-sms-disabled] [admin-token] [allow-unactivated-deployment]',
   );
 }
 
@@ -118,8 +121,50 @@ if (deploymentStatus.license?.enforce !== true) {
 if (deploymentStatus.operationsSecurity?.sqlCipher?.state !== 'active') {
   fail('SQLCipher encryption is not active');
 }
-if (requireSms && runtime?.smsConfigured !== true) {
-  fail('SMS configuration is incomplete');
+let deploymentReady = false;
+if (requireDeploymentActivation) {
+  const usableLicenseStates = new Set(['active', 'expiring', 'grace']);
+  if (
+    !usableLicenseStates.has(deploymentStatus.license?.status) ||
+    (deploymentStatus.license?.lease?.required === true &&
+      deploymentStatus.license?.lease?.status !== 'active')
+  ) {
+    fail('deployment License is not usable');
+  }
+  const bootstrap = await fetchJson(
+    `${baseUrl}/enterprise/bootstrap/prepare`,
+    undefined,
+    'POST',
+  );
+  if (
+    bootstrap.readiness?.canAuthenticate !== true ||
+    bootstrap.readiness?.canUseLicensedFeatures !== true ||
+    !['ready', 'ready_for_identity', 'degraded'].includes(
+      bootstrap.readiness?.state,
+    )
+  ) {
+    fail(
+      `private deployment bootstrap is not ready: ${JSON.stringify(bootstrap)}`,
+    );
+  }
+  deploymentReady = true;
+}
+
+if (requireSms) {
+  if (runtime?.smsConfigured !== true) {
+    fail('SMS runtime configuration is incomplete');
+  }
+  const missingSmsConfiguration = [
+    'ALIYUN_SMS_ACCESS_KEY_ID',
+    'ALIYUN_SMS_ACCESS_KEY_SECRET',
+    'ALIYUN_SMS_SIGN_NAME',
+    'ALIYUN_SMS_TEMPLATE_ID',
+  ].filter((key) => !process.env[key]?.trim());
+  if (missingSmsConfiguration.length > 0) {
+    fail(
+      `SMS configuration is incomplete: ${missingSmsConfiguration.join(', ')}`,
+    );
+  }
 }
 
 process.stdout.write(
@@ -131,6 +176,7 @@ process.stdout.write(
     schemaVersion: expectedSchema,
     sqlCipher: 'active',
     licenseEnforced: true,
+    deploymentReady,
     smsRequired: requireSms,
   })}\n`,
 );

@@ -362,8 +362,10 @@ DATA_CREATED=0
 CONFIG_CREATED=0
 DATABASE_KEY_CREATED=0
 BOOTSTRAP_SECRET_CREATED=0
+BOOTSTRAP_SECRET_REPLACED=0
 BOOTSTRAP_SECRET_STAGED=""
 BOOTSTRAP_SECRET_TARGET=""
+BOOTSTRAP_SECRET_BACKUP=""
 RUNTIME_LINK_CREATED=0
 RUNTIME_DIR_CREATED=0
 TRANSACTION_MARKER_CREATED=0
@@ -411,8 +413,15 @@ cleanup() {
         "${TXN_DIR}/failed-database-sqlcipher.key"
     fi
     if [ "$BOOTSTRAP_SECRET_CREATED" -eq 1 ] \
-      && [ -f "$BOOTSTRAP_SECRET_TARGET" ]; then
+      && { [ -e "$BOOTSTRAP_SECRET_TARGET" ] || [ -L "$BOOTSTRAP_SECRET_TARGET" ]; }; then
       rm -f "$BOOTSTRAP_SECRET_TARGET"
+    fi
+    if [ "$BOOTSTRAP_SECRET_REPLACED" -eq 1 ] \
+      && [ -f "$BOOTSTRAP_SECRET_BACKUP" ] \
+      && [ ! -L "$BOOTSTRAP_SECRET_BACKUP" ]; then
+      install -o otto-enterprise -g otto-enterprise -m 0600 \
+        "$BOOTSTRAP_SECRET_BACKUP" "$BOOTSTRAP_SECRET_TARGET"
+      rm -f "$BOOTSTRAP_SECRET_BACKUP"
     fi
     if [ "$RUNTIME_LINK_CREATED" -eq 1 ] && [ -L "${INSTALL_ROOT}/runtime/current" ]; then
       mv "${INSTALL_ROOT}/runtime/current" "${TXN_DIR}/failed-runtime-link"
@@ -758,6 +767,7 @@ for _ in $(seq 1 20); do
     "$RELEASE_SCHEMA_TO" \
     "$([ "$OTTO_ALLOW_SMS_DISABLED" = "1" ] && printf 'allow-sms-disabled' || printf 'require-sms')" \
     "$OTTO_ENTERPRISE_ADMIN_TOKEN" \
+    allow-unactivated-deployment \
     >/dev/null 2>&1; then
     CANARY_OK=1
     break
@@ -820,8 +830,14 @@ DATA_CREATED=1
 
 if [ -n "$BOOTSTRAP_SECRET_STAGED" ]; then
   BOOTSTRAP_SECRET_TARGET="${CONFIG_DIR}/deployment-bootstrap-secret"
-  [ ! -e "$BOOTSTRAP_SECRET_TARGET" ] && [ ! -L "$BOOTSTRAP_SECRET_TARGET" ] \
-    || otto_die "部署登记密钥目标已存在，拒绝覆盖"
+  if [ -e "$BOOTSTRAP_SECRET_TARGET" ] || [ -L "$BOOTSTRAP_SECRET_TARGET" ]; then
+    [ -f "$BOOTSTRAP_SECRET_TARGET" ] && [ ! -L "$BOOTSTRAP_SECRET_TARGET" ] \
+      || otto_die "已有部署登记密钥不是普通文件，拒绝替换"
+    BOOTSTRAP_SECRET_BACKUP="${TXN_DIR}/previous-deployment-bootstrap-secret"
+    mv "$BOOTSTRAP_SECRET_TARGET" "$BOOTSTRAP_SECRET_BACKUP"
+    chmod 0600 "$BOOTSTRAP_SECRET_BACKUP"
+    BOOTSTRAP_SECRET_REPLACED=1
+  fi
   install -o otto-enterprise -g otto-enterprise -m 0600 \
     "$BOOTSTRAP_SECRET_STAGED" "$BOOTSTRAP_SECRET_TARGET"
   BOOTSTRAP_SECRET_CREATED=1
@@ -995,6 +1011,11 @@ if [ -f "${TXN_DIR}/bootstrap-credentials.txt" ]; then
   BOOTSTRAP_CREDENTIALS_FINAL="/root/otto-enterprise-bootstrap-${TRANSACTION_ID}.txt"
 else
   BOOTSTRAP_CREDENTIALS_FINAL=""
+fi
+
+if [ "$BOOTSTRAP_SECRET_REPLACED" -eq 1 ]; then
+  rm -f "$BOOTSTRAP_SECRET_BACKUP"
+  BOOTSTRAP_SECRET_REPLACED=0
 fi
 
 rm -f "$TRANSACTION_MARKER"

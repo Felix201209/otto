@@ -447,6 +447,11 @@ export function createPrivateDeploymentBootstrapCoordinator(
 ): PrivateDeploymentBootstrapCoordinator {
   const fetchImpl = options.fetch ?? fetch;
   const now = options.now ?? Date.now;
+  let claimConfig = config ? { ...config } : null;
+  const forgetClaimConfig = () => {
+    if (claimConfig) claimConfig.bootstrapSecret = '';
+    claimConfig = null;
+  };
   let current: PrivateDeploymentBootstrapSnapshot = {
     phase: 'idle',
     lastAttemptAt: null,
@@ -462,7 +467,8 @@ export function createPrivateDeploymentBootstrapCoordinator(
   const prepareOnce = async (): Promise<PrivateDeploymentReadiness> => {
     const beforeSource = services.getReadinessSource(current);
     const before = beforeSource.deployment.license;
-    if (usableLicense(before) && (beforeSource.runtimeConfiguration || !config)) {
+    if (usableLicense(before) && (beforeSource.runtimeConfiguration || !claimConfig)) {
+      forgetClaimConfig();
       current = {
         ...current,
         phase: 'activated',
@@ -480,7 +486,7 @@ export function createPrivateDeploymentBootstrapCoordinator(
     ) {
       return readiness();
     }
-    if (!config) {
+    if (!claimConfig) {
       current = {
         ...current,
         phase: 'not_configured',
@@ -488,6 +494,7 @@ export function createPrivateDeploymentBootstrapCoordinator(
       };
       return readiness();
     }
+    const activeConfig = claimConfig;
     const attemptAtMs = now();
     const attemptedAt = new Date(attemptAtMs).toISOString();
     current = {
@@ -498,10 +505,10 @@ export function createPrivateDeploymentBootstrapCoordinator(
     };
     try {
       const controlOrigin = normalizeControlOrigin(
-        config.controlUrl,
-        config.allowInsecureLoopback,
+        activeConfig.controlUrl,
+        activeConfig.allowInsecureLoopback,
       );
-      if (config.bootstrapSecret.trim().length < 32) {
+      if (activeConfig.bootstrapSecret.trim().length < 32) {
         throw new Error('bootstrap_secret_invalid');
       }
       const source = services.getReadinessSource(current);
@@ -510,7 +517,7 @@ export function createPrivateDeploymentBootstrapCoordinator(
         {
           method: 'POST',
           headers: {
-            authorization: `Bearer ${config.bootstrapSecret}`,
+            authorization: `Bearer ${activeConfig.bootstrapSecret}`,
             'content-type': 'application/json',
             'user-agent': 'Otto-Private-Deployment-Bootstrap/1',
           },
@@ -518,10 +525,10 @@ export function createPrivateDeploymentBootstrapCoordinator(
             version: 1,
             deploymentId: source.deployment.deploymentId,
             machineFingerprint: source.deployment.machineFingerprint,
-            appVersion: config.appVersion,
-            buildCommit: config.buildCommit,
-            publicOrigin: config.publicOrigin || null,
-            deploymentKind: config.deploymentKind || 'self-hosted',
+            appVersion: activeConfig.appVersion,
+            buildCommit: activeConfig.buildCommit,
+            publicOrigin: activeConfig.publicOrigin || null,
+            deploymentKind: activeConfig.deploymentKind || 'self-hosted',
           }),
           signal: AbortSignal.timeout(
             Math.max(1_000, options.timeoutMs ?? 15_000),
@@ -535,7 +542,7 @@ export function createPrivateDeploymentBootstrapCoordinator(
         await response.json(),
         controlOrigin,
         attemptedAt,
-        config.allowInsecureLoopback,
+        activeConfig.allowInsecureLoopback,
       );
       services.importDeploymentLicense(normalized.response.licenseEnvelope);
       services.saveRuntimeConfiguration(normalized.configuration);
@@ -544,6 +551,7 @@ export function createPrivateDeploymentBootstrapCoordinator(
         const lease = await services.refreshDeploymentLicenseLease();
         if (lease.error) throw new Error('bootstrap_lease_failed');
       }
+      forgetClaimConfig();
       current = {
         phase: 'activated',
         lastAttemptAt: attemptedAt,

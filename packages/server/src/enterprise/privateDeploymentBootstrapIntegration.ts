@@ -12,21 +12,118 @@ import {
 } from '../modules/deployment_lifecycle/index.js';
 import * as db from './db.js';
 
+interface OpenBootstrapSecretFile {
+  fd: number;
+  resolvedPath: string;
+  stat: fs.Stats;
+}
+
+function missingFile(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === 'ENOENT';
+}
+
+function validateBootstrapSecretFile(stat: fs.Stats): void {
+  if (
+    !stat.isFile() ||
+    stat.isSymbolicLink() ||
+    stat.nlink !== 1 ||
+    stat.size > 4_096
+  ) {
+    throw new Error('deployment bootstrap secret file is invalid');
+  }
+  if (process.platform !== 'win32') {
+    if ((stat.mode & 0o077) !== 0) {
+      throw new Error(
+        'deployment bootstrap secret file permissions are too broad',
+      );
+    }
+    if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) {
+      throw new Error('deployment bootstrap secret file owner is invalid');
+    }
+  }
+}
+
+function openBootstrapSecretFile(
+  configuredPath: string,
+  accessFlag: number,
+): OpenBootstrapSecretFile | null {
+  if (!path.isAbsolute(configuredPath)) {
+    throw new Error('deployment bootstrap secret file path must be absolute');
+  }
+  const resolvedPath = path.resolve(configuredPath);
+  const noFollow = process.platform === 'win32' ? 0 : fs.constants.O_NOFOLLOW;
+  let fd: number;
+  try {
+    fd = fs.openSync(resolvedPath, accessFlag | noFollow);
+  } catch (error) {
+    if (missingFile(error)) return null;
+    throw error;
+  }
+  try {
+    const stat = fs.fstatSync(fd);
+    validateBootstrapSecretFile(stat);
+    return { fd, resolvedPath, stat };
+  } catch (error) {
+    fs.closeSync(fd);
+    throw error;
+  }
+}
+
 function readBootstrapSecret(environment: NodeJS.ProcessEnv): string | null {
-  const configuredPath = environment.OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE?.trim();
+  const configuredPath =
+    environment.OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE?.trim();
   if (configuredPath) {
-    const resolved = path.resolve(configuredPath);
-    const stat = fs.statSync(resolved);
-    if (!stat.isFile() || stat.size > 4_096) {
-      throw new Error('deployment bootstrap secret file is invalid');
+    const opened = openBootstrapSecretFile(
+      configuredPath,
+      fs.constants.O_RDONLY,
+    );
+    if (!opened) return null;
+    try {
+      const value = fs.readFileSync(opened.fd, 'utf8').trim();
+      return value || null;
+    } finally {
+      fs.closeSync(opened.fd);
     }
-    if (process.platform !== 'win32' && (stat.mode & 0o077) !== 0) {
-      throw new Error('deployment bootstrap secret file permissions are too broad');
-    }
-    const value = fs.readFileSync(resolved, 'utf8').trim();
-    return value || null;
   }
   return environment.OTTO_DEPLOYMENT_BOOTSTRAP_SECRET?.trim() || null;
+}
+
+export function consumePrivateDeploymentBootstrapSecretFile(
+  environment: NodeJS.ProcessEnv = process.env,
+): void {
+  const configuredPath =
+    environment.OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE?.trim();
+  if (!configuredPath) return;
+  const opened = openBootstrapSecretFile(configuredPath, fs.constants.O_WRONLY);
+  if (!opened) {
+    delete environment.OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE;
+    return;
+  }
+  try {
+    fs.ftruncateSync(opened.fd, 0);
+    fs.fsyncSync(opened.fd);
+  } finally {
+    fs.closeSync(opened.fd);
+  }
+  let current: fs.Stats;
+  try {
+    current = fs.lstatSync(opened.resolvedPath);
+  } catch (error) {
+    if (missingFile(error)) {
+      delete environment.OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE;
+      return;
+    }
+    throw error;
+  }
+  if (
+    current.isSymbolicLink() ||
+    current.dev !== opened.stat.dev ||
+    current.ino !== opened.stat.ino
+  ) {
+    throw new Error('deployment bootstrap secret file changed during cleanup');
+  }
+  fs.unlinkSync(opened.resolvedPath);
+  delete environment.OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE;
 }
 
 export function privateDeploymentBootstrapConfigFromEnvironment(
@@ -63,11 +160,17 @@ export function createEnterprisePrivateDeploymentBootstrap(input: {
   publicOrigin: string;
   config?: PrivateDeploymentBootstrapClaimConfig | null;
   fetch?: typeof fetch;
+  environment?: NodeJS.ProcessEnv;
 }): PrivateDeploymentBootstrapCoordinator {
-  const config = input.config === undefined
-    ? privateDeploymentBootstrapConfigFromEnvironment(input)
-    : input.config;
-  return createPrivateDeploymentBootstrapCoordinator(
+  const environment = input.environment ?? process.env;
+  const configuredFromEnvironment = input.config === undefined;
+  const config = configuredFromEnvironment
+    ? privateDeploymentBootstrapConfigFromEnvironment({
+        ...input,
+        environment,
+      })
+    : input.config ?? null;
+  const coordinator = createPrivateDeploymentBootstrapCoordinator(
     {
       getReadinessSource(bootstrap) {
         const deployment = db.getPrivateDeploymentStatus();
@@ -109,4 +212,16 @@ export function createEnterprisePrivateDeploymentBootstrap(input: {
     config,
     { fetch: input.fetch },
   );
+  if (!configuredFromEnvironment) return coordinator;
+  return {
+    async prepare() {
+      const result = await coordinator.prepare();
+      if (result.bootstrap.phase === 'activated') {
+        consumePrivateDeploymentBootstrapSecretFile(environment);
+      }
+      return result;
+    },
+    readiness: () => coordinator.readiness(),
+    snapshot: () => coordinator.snapshot(),
+  };
 }
