@@ -509,6 +509,8 @@ export const {
   ingestTelemetryBatch,
   ensureDeploymentLicenseSecretsEncrypted,
   getPrivateDeploymentStatus,
+  getPrivateDeploymentRuntimeConfiguration,
+  savePrivateDeploymentRuntimeConfiguration,
   exportDeploymentDiagnostics,
   isLicenseUsableForOrganizationFeature,
   isLicenseRestricted,
@@ -564,8 +566,13 @@ export const {
   fieldCipher,
   deploymentId: getDeploymentId,
   dataDirectory: DATA_DIR,
-  enabled: () => process.env.OTTO_FEDERATION_ENABLED === 'true',
-  gatewayUrl: () => process.env.OTTO_FEDERATION_GATEWAY_URL?.trim() || null,
+  enabled: () =>
+    process.env.OTTO_FEDERATION_ENABLED === 'true' ||
+    getPrivateDeploymentRuntimeConfiguration()?.capabilities.federation === true,
+  gatewayUrl: () =>
+    process.env.OTTO_FEDERATION_GATEWAY_URL?.trim() ||
+    getPrivateDeploymentRuntimeConfiguration()?.federationGatewayUrl ||
+    null,
   publicOrigin: () => process.env.OTTO_ENTERPRISE_PUBLIC_URL?.trim() || null,
   displayName: () =>
     process.env.OTTO_FEDERATION_DISPLAY_NAME?.trim() ||

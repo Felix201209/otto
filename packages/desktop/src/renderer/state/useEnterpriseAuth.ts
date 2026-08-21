@@ -9,6 +9,7 @@ import type {
   EnterpriseRegistrationIntent,
   EnterpriseSmsChallenge,
   EnterpriseSmsLoginChallenge,
+  EnterpriseServerPreparationResult,
 } from '../../preload/index.js';
 
 type AuthStatus = 'loading' | 'signed-out' | 'signed-in';
@@ -36,9 +37,13 @@ export function useEnterpriseAuth(): {
     serverUrl: string;
     account: EnterpriseAccount | null;
     registrationIntent: EnterpriseRegistrationIntent | null;
+    preparation: EnterpriseServerPreparationResult | null;
     error: string | null;
   };
   actions: {
+    prepareServer(input: {
+      serverUrl: string;
+    }): Promise<EnterpriseServerPreparationResult>;
     loginWithPassword(input: { serverUrl: string; identifier: string; password: string }): Promise<void>;
     requestLoginCode(input: {
       serverUrl: string;
@@ -64,6 +69,8 @@ export function useEnterpriseAuth(): {
   };
 } {
   const [status, setStatus] = useState<AuthStatus>('loading');
+  const [preparation, setPreparation] =
+    useState<EnterpriseServerPreparationResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [serverUrl, setServerUrl] = useState('');
   const [account, setAccount] = useState<EnterpriseAccount | null>(null);
@@ -86,6 +93,7 @@ export function useEnterpriseAuth(): {
       // 再暴露邀请码，避免运行中的注册链接继续请求旧企业服务器。
       if (intent?.serverUrl) setServerUrl(intent.serverUrl);
       setRegistrationIntent(intent);
+      setPreparation(null);
     };
     const applyIntent = (intent: EnterpriseRegistrationIntent): void => {
       if (signedInRef.current) return;
@@ -168,6 +176,35 @@ export function useEnterpriseAuth(): {
       unsubscribeInvalidated();
       unsubscribeAccountUpdated();
     };
+  }, []);
+
+  const prepareServer = useCallback(async (input: {
+    serverUrl: string;
+  }): Promise<EnterpriseServerPreparationResult> => {
+    const epoch = authEpochRef.current + 1;
+    authEpochRef.current = epoch;
+    registrationRequestEpochRef.current += 1;
+    setBusy(true);
+    setError(null);
+    setPreparation(null);
+    try {
+      const result = await window.otto.enterprisePrepareServer(input);
+      if (epoch !== authEpochRef.current) return result;
+      setServerUrl(result.serverUrl);
+      setPreparation(result);
+      setAccount(null);
+      signedInRef.current = false;
+      setStatus('signed-out');
+      return result;
+    } catch (cause) {
+      if (epoch === authEpochRef.current) {
+        setError(friendlyAuthError(cause));
+        setStatus('signed-out');
+      }
+      throw cause;
+    } finally {
+      if (epoch === authEpochRef.current) setBusy(false);
+    }
   }, []);
 
   const loginWithPassword = useCallback(async (input: {
@@ -346,10 +383,19 @@ export function useEnterpriseAuth(): {
 
   const clearError = useCallback(() => setError(null), []);
   return useMemo(() => ({
-    state: { status, busy, serverUrl, account, registrationIntent, error },
+    state: {
+      status,
+      busy,
+      serverUrl,
+      account,
+      registrationIntent,
+      preparation,
+      error,
+    },
     actions: {
       loginWithPassword,
       requestLoginCode,
+      prepareServer,
       loginWithSms,
       requestRegistrationCode,
       register,
@@ -361,5 +407,6 @@ export function useEnterpriseAuth(): {
     status, busy, serverUrl, account, registrationIntent, error,
     loginWithPassword, requestLoginCode, loginWithSms,
     requestRegistrationCode, register, joinEnterprise, logout, clearError,
+    preparation, prepareServer,
   ]);
 }

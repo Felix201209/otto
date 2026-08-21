@@ -22,6 +22,7 @@ export * from './moduleUpdateRepository.js';
 export * from './moduleUpdateRoutes.js';
 export * from './privateDeploymentSchema.js';
 export * from './privateDeploymentRuntime.js';
+export * from './privateDeploymentConfigurationRepository.js';
 export * from './signedEnvelope.js';
 export * from './updatePolicyClient.js';
 export * from './commercialControlComposition.js';

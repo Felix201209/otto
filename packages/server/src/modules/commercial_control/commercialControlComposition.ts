@@ -45,6 +45,11 @@ import {
   updateModuleUpdateDescriptorInStore,
   type ModuleUpdateDescriptorInput,
 } from './moduleUpdateRepository.js';
+import {
+  getPrivateDeploymentRuntimeConfiguration,
+  savePrivateDeploymentRuntimeConfiguration,
+} from './privateDeploymentConfigurationRepository.js';
+import type { PrivateDeploymentRuntimeConfiguration } from './deploymentTypes.js';
 
 export interface CommercialControlCompositionOptions {
   db(): Database;
@@ -85,7 +90,10 @@ export function createCommercialControlComposition(
     defaultOrganizationId: options.defaultOrganizationId,
     licenseEnforcementEnabled: options.licenseEnforcementEnabled,
     licenseVerificationPublicKeys: options.licenseVerificationPublicKeys,
-    telemetryEndpoint: options.telemetryEndpoint,
+    telemetryEndpoint: () =>
+      options.telemetryEndpoint() ??
+      getPrivateDeploymentRuntimeConfiguration(settings)?.telemetryEndpoint ??
+      null,
     telemetryIngestSecret: options.telemetryIngestSecret,
     telemetryRetentionDays: options.telemetryRetentionDays,
     fieldCipher: options.fieldCipher,
@@ -200,6 +208,11 @@ export function createCommercialControlComposition(
     ),
     getPrivateDeploymentStatus: () =>
       getPrivateDeploymentStatusFromRepository(deploymentStore),
+    getPrivateDeploymentRuntimeConfiguration: () =>
+      getPrivateDeploymentRuntimeConfiguration(settings),
+    savePrivateDeploymentRuntimeConfiguration: (
+      configuration: PrivateDeploymentRuntimeConfiguration,
+    ) => savePrivateDeploymentRuntimeConfiguration(settings, configuration),
     exportDeploymentDiagnostics: (
       input: Parameters<
         typeof exportDeploymentDiagnosticsFromRepository

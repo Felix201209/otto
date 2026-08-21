@@ -124,6 +124,14 @@ chmod 600 ./enterprise.env
 
 这些可选项留空不会阻止报修记录写入，但对应的外部通知通道不会发送。安装器会把它们写入 `/etc/otto-enterprise/enterprise.env`，不会放进迁移包或日志。
 
+部署中心自动登记为推荐配置：
+
+- `OTTO_CONTROL_URL`：Otto Control 的 HTTPS 地址；
+- `OTTO_DEPLOYMENT_BOOTSTRAP_SECRET` 或 `OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE`：部署中心签发的一次性登记密钥，只能二选一；
+- `OTTO_DEPLOYMENT_KIND`：发行/部署类型，默认 `self-hosted`。
+
+安装器不会把密钥值写进 `enterprise.env`，而是复制到仅 `otto-enterprise` 服务账号可读的 `/etc/otto-enterprise/deployment-bootstrap-secret`。服务器随后自动完成部署身份、License、套餐模块、模型积分网关、联邦网关、更新通道和遥测配置；桌面客户端只需填写服务器地址，不能读取或提交该密钥。手工离线授权可留空这些字段。
+
 跨私有服务器联邦为可选配置：
 
 - `OTTO_FEDERATION_ENABLED`：仅在已完成 Control 联邦网关注册和验签配置后设为 `1`；

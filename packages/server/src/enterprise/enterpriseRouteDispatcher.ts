@@ -27,6 +27,8 @@ import {
 import { handleOrganizationRoute } from '../modules/identity_organization/index.js';
 import { handleGeneralizedParkRoute } from './generalizedParkRoutes.js';
 import { handleHealthRoute } from './healthRoutes.js';
+import { handlePrivateDeploymentBootstrapRoute } from './privateDeploymentBootstrapRoutes.js';
+import type { PrivateDeploymentBootstrapCoordinator } from '../modules/deployment_lifecycle/index.js';
 import { handleLocalAgentRoute } from './localAgentRoutes.js';
 import { handleMemberWorkflowRoute } from './memberWorkflowRoutes.js';
 import { handleModelGatewayRoute } from './modelGatewayRoutes.js';
@@ -66,6 +68,10 @@ export interface EnterpriseRouteDispatcherDeps {
   deploymentInfo: EnterpriseRouteDeploymentInfo;
   apiVersion: number;
   capabilities: readonly string[];
+  privateDeploymentBootstrap: Pick<
+    PrivateDeploymentBootstrapCoordinator,
+    'prepare' | 'readiness'
+  >;
   atoaClaims: Map<string, number>;
   atoaClaimTtlMs: number;
   isPublicSimplePark: boolean;
@@ -104,6 +110,7 @@ export async function dispatchEnterpriseRoute({
   deploymentInfo,
   apiVersion,
   capabilities,
+  privateDeploymentBootstrap,
   atoaClaims,
   atoaClaimTtlMs,
   isPublicSimplePark,
@@ -132,6 +139,20 @@ export async function dispatchEnterpriseRoute({
   }
 
   if (
+    await handlePrivateDeploymentBootstrapRoute({
+      path,
+      method,
+      res,
+      req,
+      readBody,
+      services: privateDeploymentBootstrap,
+      sendJSON,
+    })
+  ) {
+    return true;
+  }
+
+  if (
     handleHealthRoute({
       path,
       method,
@@ -139,6 +160,7 @@ export async function dispatchEnterpriseRoute({
       apiVersion,
       capabilities,
       deploymentInfo,
+      readiness: privateDeploymentBootstrap.readiness,
       sendJSON,
     })
   ) {

@@ -731,6 +731,7 @@ describe('受保护 vs 公开路由边界', () => {
       'park_service_statistics_v1',
       'account_data_sync_v1',
       'private_deployment_v1',
+      'private_deployment_bootstrap_v1',
       'license_enforcement_v1',
       'encrypted_telemetry_queue_v1',
       'signed_telemetry_transport_v1',
@@ -739,6 +740,56 @@ describe('受保护 vs 公开路由边界', () => {
       'encrypted_attachment_storage_v1',
       'encrypted_message_storage_v1',
     ]));
+    expect(body.readiness).toMatchObject({
+      state: expect.any(String),
+      canAuthenticate: expect.any(Boolean),
+      steps: expect.any(Array),
+    });
+  }, 15_000);
+
+  it('部署准备接口只触发服务端协调器，不接收或回显客户端密钥', async () => {
+    const readiness = {
+      state: 'ready_for_identity' as const,
+      canAuthenticate: true,
+      canUseLicensedFeatures: true,
+      bootstrap: {
+        phase: 'activated' as const,
+        lastAttemptAt: '2026-08-21T00:00:00.000Z',
+        lastSuccessAt: '2026-08-21T00:00:01.000Z',
+        errorCode: null,
+      },
+      steps: [
+        {
+          id: 'account_identity' as const,
+          state: 'waiting_for_user' as const,
+          required: true,
+          message: '服务器已就绪，请登录',
+        },
+      ],
+    };
+    const prepare = vi.fn(async () => readiness);
+    const { base } = await startIsolated(ADMIN_TOKEN, null, {
+      privateDeploymentBootstrapCoordinator: {
+        prepare,
+        readiness: () => readiness,
+        snapshot: () => readiness.bootstrap,
+      },
+    });
+
+    const response = await fetch(`${base}/enterprise/bootstrap/prepare`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        bootstrapSecret: 'client-must-not-control-this-value',
+        organizationId: 'forged-organization',
+      }),
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(body).toEqual({ readiness });
+    expect(JSON.stringify(body)).not.toContain('client-must-not-control');
+    expect(JSON.stringify(body)).not.toContain('forged-organization');
   }, 15_000);
 
   it('private deployment license enforcement keeps only maintenance routes open', async () => {

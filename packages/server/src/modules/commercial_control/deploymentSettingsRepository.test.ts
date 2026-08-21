@@ -10,6 +10,10 @@ import {
 } from '../data_platform/index.js';
 import { createDeploymentSettingsRepository } from './deploymentSettingsRepository.js';
 import { PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR } from './privateDeploymentSchema.js';
+import {
+  getPrivateDeploymentRuntimeConfiguration,
+  savePrivateDeploymentRuntimeConfiguration,
+} from './privateDeploymentConfigurationRepository.js';
 
 function createDatabase(): Database {
   const database = new Database(':memory:');
@@ -100,6 +104,58 @@ describe('deployment settings repository', () => {
     } finally {
       first.close();
       second.close();
+    }
+  });
+});
+
+describe('private deployment runtime configuration', () => {
+  it('persists only non-secret Control capability configuration across repository instances', () => {
+    const database = createDatabase();
+    try {
+      const first = createDeploymentSettingsRepository(() => database);
+      savePrivateDeploymentRuntimeConfiguration(first, {
+        controlOrigin: 'https://control.otto.example',
+        capabilities: {
+          billing: true,
+          telemetry: true,
+          federation: true,
+          updates: true,
+          modelGateway: true,
+          storage: true,
+        },
+        federationGatewayUrl: 'https://gateway.otto.example',
+        modelGatewayUrl: 'https://model.otto.example',
+        telemetryEndpoint: 'https://control.otto.example/v1/telemetry/ingest',
+        updateDistributionId: 'standard-windows',
+        activatedAt: '2026-08-21T00:00:00.000Z',
+      });
+
+      const restored = getPrivateDeploymentRuntimeConfiguration(
+        createDeploymentSettingsRepository(() => database),
+      );
+      expect(restored).toMatchObject({
+        controlOrigin: 'https://control.otto.example',
+        federationGatewayUrl: 'https://gateway.otto.example',
+        modelGatewayUrl: 'https://model.otto.example',
+        updateDistributionId: 'standard-windows',
+      });
+      expect(JSON.stringify(restored)).not.toMatch(/secret|token|privateKey/i);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('fails closed to null when persisted JSON is corrupt', () => {
+    const database = createDatabase();
+    try {
+      const settings = createDeploymentSettingsRepository(() => database);
+      settings.writeSetting(
+        'private_deployment_runtime_configuration_v1',
+        '{not-json',
+      );
+      expect(getPrivateDeploymentRuntimeConfiguration(settings)).toBeNull();
+    } finally {
+      database.close();
     }
   });
 });

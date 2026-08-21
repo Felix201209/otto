@@ -35,3 +35,4 @@ export {
   type BootstrapTokenVerdict,
   type BootstrapRejectReason,
 } from './deploymentBootstrapToken.js';
+export * from './privateDeploymentBootstrap.js';
