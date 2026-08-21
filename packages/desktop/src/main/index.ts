@@ -51,6 +51,10 @@ import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { HealthInfo, ServerEndpoint } from 'otto-server';
+import {
+  resumeDesktopWindow,
+  suspendDesktopWindow,
+} from './window-lifecycle.js';
 
 function ignoreBrokenPipe(stream: NodeJS.WriteStream): void {
   stream.on('error', (error: NodeJS.ErrnoException) => {
@@ -1862,6 +1866,7 @@ function showMainWindow(): void {
     return;
   }
   if (mainWindow.isMinimized()) mainWindow.restore();
+  resumeDesktopWindow(mainWindow);
   mainWindow.show();
   mainWindow.focus();
 }
@@ -2010,7 +2015,7 @@ function createWindow(): BrowserWindow {
   win.on('close', (event) => {
     if (isQuitting || process.platform === 'darwin') return;
     event.preventDefault();
-    win.hide();
+    suspendDesktopWindow(win);
   });
 
   hardenWebContents(win);

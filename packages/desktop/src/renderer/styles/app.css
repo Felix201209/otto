@@ -6197,7 +6197,7 @@ h6.otto-prose__h {
   font-size: 12.5px;
   min-width: 0;
 }
-/* workflow 状态小徽章：已完成 / 运行中 / 失败三态。 */
+/* workflow 状态小徽章：已完成 / 运行中 / 失败 / 已取消。 */
 .otto-hub__wfstatus {
   flex-shrink: 0;
   padding: 2px 8px;
@@ -6218,6 +6218,10 @@ h6.otto-prose__h {
 .otto-hub__wfstatus--fail {
   background: color-mix(in srgb, #ef4444 12%, transparent);
   color: #ef4444;
+}
+.otto-hub__wfstatus--cancel {
+  background: color-mix(in srgb, var(--otto-text-secondary) 12%, transparent);
+  color: var(--otto-text-secondary);
 }
 
 /* 偏好语言等行内紧凑输入组（设置行右侧，不抢整行宽）。 */

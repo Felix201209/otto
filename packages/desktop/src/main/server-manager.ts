@@ -46,7 +46,10 @@ import {
 import type { OttoServer as OttoServerType, ServerEndpoint } from 'otto-server';
 import type { AuthenticatedEnterpriseAccountInput } from './enterprise-identity.js';
 
-type ServerEndpointRecord = ServerEndpoint & { controlToken?: string };
+type ServerEndpointRecord = ServerEndpoint & {
+  controlToken?: string;
+  owner?: 'desktop';
+};
 type TrustedOttoServer = OttoServerType & {
   readonly endpoint: {
     host: string;
@@ -244,6 +247,7 @@ export interface ServerManagerDependencies {
   /** 子进程边界可注入，避免单测真的拉起另一个 Otto server。 */
   spawnDetached: typeof childProcess.spawn;
   pidAlive: typeof pidAlive;
+  killProcess: typeof process.kill;
   probeHealth: typeof probeHealth;
   fetchImpl: typeof fetch;
   enterpriseListenTimeoutMs: number;
@@ -254,6 +258,7 @@ const DEFAULT_DEPENDENCIES: ServerManagerDependencies = {
   loadEnterpriseServer,
   spawnDetached: childProcess.spawn,
   pidAlive,
+  killProcess: process.kill.bind(process),
   probeHealth,
   fetchImpl: fetch,
   enterpriseListenTimeoutMs: ENTERPRISE_LISTEN_TIMEOUT_MS,
@@ -390,7 +395,7 @@ export class ServerManager {
         this.ownership === 'embedded'
           ? this.embedded != null
           : this.ownership === 'detached'
-            ? this.detachedChild?.exitCode === null
+            ? this.dependencies.pidAlive(this.currentEndpointRecord.pid)
             : true;
       if (isAlive) {
         return {
@@ -407,7 +412,8 @@ export class ServerManager {
         readEndpointRecord?: () => ServerEndpointRecord | undefined;
       }
     ).readEndpointRecord;
-    const discovered = readEndpointRecord?.() ?? mod.readEndpoint();
+    const discovered: ServerEndpointRecord | undefined =
+      readEndpointRecord?.() ?? mod.readEndpoint();
     if (discovered && this.dependencies.pidAlive(discovered.pid)) {
       const healthy = await this.dependencies.probeHealth(
         discovered.host,
@@ -416,13 +422,16 @@ export class ServerManager {
       );
       this.throwIfShuttingDown();
       if (healthy) {
-        this.ownership = 'discovered';
+        const ownership: ServerOwnership =
+          discovered.owner === 'desktop' ? 'detached' : 'discovered';
+        this.ownership = ownership;
         this.currentEndpointRecord = discovered;
+        if (ownership === 'detached') this.startHealthCheck();
         this.onHealthChange?.('服务运行中');
         if (this.localEnterpriseServerUrl) await this.ensureEnterprise();
         return {
           endpoint: publicServerEndpoint(discovered),
-          ownership: 'discovered',
+          ownership,
         };
       }
     }
@@ -501,6 +510,7 @@ export class ServerManager {
     const env: Record<string, string> = {
       ...process.env,
       OTTO_SERVER_PORT: String(port),
+      OTTO_SERVER_OWNER: 'desktop',
     };
 
     let spawnArgs: string[];
@@ -665,23 +675,34 @@ export class ServerManager {
         this.currentEndpointRecord = undefined;
       }
     }
-    if (this.detachedChild) {
+    const detachedRecord =
+      this.ownership === 'detached' ? this.currentEndpointRecord : undefined;
+    if (this.detachedChild || detachedRecord) {
       if (forceKill) {
-        console.log('[ServerManager] 强制停止 detached server…');
-        try {
-          const mod = await this.dependencies.loadOttoServer();
-          const ep = mod.readEndpoint();
-          if (ep?.pid && this.dependencies.pidAlive(ep.pid)) {
-            process.kill(ep.pid, 'SIGTERM');
-            await new Promise((r) => setTimeout(r, 2000));
-            if (this.dependencies.pidAlive(ep.pid))
-              process.kill(ep.pid, 'SIGKILL');
-          }
-          mod.clearEndpoint();
-        } catch {}
-        try {
-          this.detachedChild.kill('SIGTERM');
-        } catch {}
+        const desktopOwned =
+          Boolean(this.detachedChild) || detachedRecord?.owner === 'desktop';
+        if (desktopOwned) {
+          console.log('[ServerManager] 强制停止 desktop-owned detached server…');
+          try {
+            if (
+              detachedRecord?.pid &&
+              this.dependencies.pidAlive(detachedRecord.pid)
+            ) {
+              this.dependencies.killProcess(detachedRecord.pid, 'SIGTERM');
+              if (this.dependencies.pidAlive(detachedRecord.pid)) {
+                await new Promise((resolve) => setTimeout(resolve, 2000));
+              }
+              if (this.dependencies.pidAlive(detachedRecord.pid)) {
+                this.dependencies.killProcess(detachedRecord.pid, 'SIGKILL');
+              }
+            }
+            const mod = await this.dependencies.loadOttoServer();
+            mod.clearEndpoint();
+          } catch {}
+          try {
+            this.detachedChild?.kill('SIGTERM');
+          } catch {}
+        }
       } else {
         console.log('[ServerManager] detached server 留活（飞书继续运行）');
       }

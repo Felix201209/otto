@@ -43,7 +43,13 @@ async function cmdStart(): Promise<void> {
   const server = new OttoServer({ host: DEFAULT_HOST, port, enableFeishu });
   await server.start();
   const { host, port: boundPort, clientToken } = server.endpoint;
-  writeEndpoint(host, boundPort, clientToken, server.controlToken);
+  writeEndpoint(
+    host,
+    boundPort,
+    clientToken,
+    server.controlToken,
+    process.env.OTTO_SERVER_OWNER === 'desktop' ? 'desktop' : undefined,
+  );
 
   console.log(
     `[otto-server] listening on http://${host}:${boundPort} ` +

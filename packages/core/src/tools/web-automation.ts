@@ -17,7 +17,7 @@ import {
 import { Type } from '@google/genai';
 import { SchemaValidator } from '../utils/schemaValidator.js';
 import { Config, ApprovalMode } from '../config/config.js';
-import { ProcessGuard } from '../utils/process-guard.js';
+import { executeAutomationProcess } from './automation-process.js';
 import { DoctorService } from '../services/doctor.js';
 
 export interface WebAutomationToolParams {
@@ -54,7 +54,12 @@ export class WebAutomationTool extends BaseTool<WebAutomationToolParams, ToolRes
    * 注意 playwright 走 node 模块解析（不是 PATH 二进制）——本机全局装了二进制但
    * node_modules 里没有时，应判为「缺失」。可注入以便测试。
    */
-  constructor(private readonly config: Config, private readonly doctor: DoctorService = new DoctorService()) {
+  constructor(
+    private readonly config: Config,
+    private readonly doctor: DoctorService = new DoctorService(),
+    private readonly processExecutor: typeof executeAutomationProcess =
+      executeAutomationProcess,
+  ) {
     const desc = `Browser automation via Playwright for OA/ERP/web scraping.
 
 EXAMPLES:
@@ -139,7 +144,8 @@ CROSS-PLATFORM: Works identically on macOS, Windows, Linux.`;
     };
   }
 
-  async execute(p: WebAutomationToolParams, _s: AbortSignal): Promise<ToolResult> {
+  async execute(p: WebAutomationToolParams, signal: AbortSignal): Promise<ToolResult> {
+    signal.throwIfAborted();
     const err = this.validateToolParams(p);
     if (err) return { llmContent: err, returnDisplay: err };
 
@@ -147,27 +153,31 @@ CROSS-PLATFORM: Works identically on macOS, Windows, Linux.`;
     // 内部用 require.resolve，不看 PATH 二进制）。缺就一上来明说，别跑到启动浏览器
     // 才报错。
     const depErr = await this.preflightPlaywright();
+    signal.throwIfAborted();
     if (depErr) {
       return { llmContent: depErr, returnDisplay: 'web_automation FAIL: Playwright 未安装' };
     }
 
     const logLabel = 'web_automation.' + p.action;
     console.time(logLabel);
+    let scriptFile: string | undefined;
 
     try {
+      signal.throwIfAborted();
       // Write a Node.js script that uses Playwright to perform the action
       const script = this.buildPlaywrightScript(p);
-      const scriptFile = path.join(os.tmpdir(), 'otto-web-' + Date.now() + '.mjs');
+      scriptFile = path.join(os.tmpdir(), 'otto-web-' + Date.now() + '.mjs');
 
+      signal.throwIfAborted();
       fs.writeFileSync(scriptFile, script);
+      signal.throwIfAborted();
 
-      const result = await ProcessGuard.exec({
+      const result = await this.processExecutor({
         command: 'node "' + scriptFile + '"',
         timeoutMs: (p.timeout_ms || 10000) + 30000,
         maxBuffer: 20 * 1024 * 1024,
+        signal,
       });
-
-      try { fs.unlinkSync(scriptFile); } catch {}
 
       const output = result.stdout.trim();
       if (!output) {
@@ -200,12 +210,16 @@ CROSS-PLATFORM: Works identically on macOS, Windows, Linux.`;
         };
       }
     } catch (e: unknown) {
-      console.timeEnd(logLabel);
       const m = e instanceof Error ? e.message : String(e);
       return {
         llmContent: 'web_automation FAIL: ' + m,
         returnDisplay: 'web_automation FAIL: ' + m,
       };
+    } finally {
+      if (scriptFile) {
+        try { fs.unlinkSync(scriptFile); } catch {}
+      }
+      console.timeEnd(logLabel);
     }
   }
 

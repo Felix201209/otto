@@ -48,6 +48,7 @@ describe('endpoint write/read round-trip', () => {
       7637,
       clientToken,
       controlToken,
+      'desktop',
     );
     expect(written.host).toBe('127.0.0.1');
     expect(written.port).toBe(7637);
@@ -60,11 +61,16 @@ describe('endpoint write/read round-trip', () => {
     expect(read!.protocolVersion).toBe(written.protocolVersion);
     expect(read?.clientToken).toBe(clientToken);
     expect(read).not.toHaveProperty('controlToken');
+    expect(read).not.toHaveProperty('owner');
     expect(ep.readEndpointRecord()?.controlToken).toBe(controlToken);
+    expect(ep.readEndpointRecord()?.owner).toBe('desktop');
     expect(ep.readEndpointRecord()?.clientToken).toBe(clientToken);
     expect(
       JSON.parse(fs.readFileSync(ep.endpointFilePath(), 'utf8')).controlToken,
     ).toBe(controlToken);
+    expect(
+      JSON.parse(fs.readFileSync(ep.endpointFilePath(), 'utf8')).owner,
+    ).toBe('desktop');
     if (process.platform !== 'win32') {
       expect(fs.statSync(ep.endpointFilePath()).mode & 0o777).toBe(0o600);
     }

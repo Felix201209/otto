@@ -291,7 +291,21 @@ IMPORTANT — sub-agent output discipline:
       params.max_agents,
     );
 
-    const runResult = await runWorkflowScript(params.script, bridge, signal);
+    let runResult: Awaited<ReturnType<typeof runWorkflowScript>>;
+    try {
+      runResult = await runWorkflowScript(params.script, bridge, signal);
+      signal.throwIfAborted();
+    } catch (error) {
+      if (
+        signal.aborted ||
+        (error instanceof Error && error.name === 'AbortError')
+      ) {
+        WorkflowRegistry.cancelWorkflow(workflowId);
+      } else {
+        WorkflowRegistry.endWorkflow(workflowId, 'failed');
+      }
+      throw error;
+    }
 
     if (runResult.success) {
       WorkflowRegistry.endWorkflow(workflowId, 'completed', runResult.totalTokenUsage);

@@ -40,6 +40,11 @@ import {
   hasOutboundPathReference,
   sendAuthorizedFileFrame,
 } from './outbound-file-authorization.js';
+import {
+  applyDesktopConnectionLifecycle,
+  DESKTOP_WINDOW_LIFECYCLE_CHANNEL,
+  type DesktopWindowLifecycleAction,
+} from './window-lifecycle.js';
 
 /**
  * 飞书守护状态（main 从 server /health 透传；renderer 徽标据此渲染）。
@@ -3278,6 +3283,18 @@ const bridge: OttoBridge = {
     return ipcRenderer.invoke(IPC.writeClipboard, text) as Promise<boolean>;
   },
 };
+
+ipcRenderer.on(
+  DESKTOP_WINDOW_LIFECYCLE_CHANNEL,
+  (_event, action: DesktopWindowLifecycleAction) => {
+    if (action !== 'suspend' && action !== 'resume') return;
+    void applyDesktopConnectionLifecycle(action, {
+      connect: () => bridge.connect(),
+      disconnect: () => bridge.disconnect(),
+      clearPending: () => sendQueue.splice(0),
+    }).catch(() => undefined);
+  },
+);
 
 // 端点变更（main 在发现/拉起 server 后推送）：更新缓存，若期望连接则重连到新端点。
 ipcRenderer.on(IPC.endpointChanged, (_e, ep: ServerEndpoint | null) => {

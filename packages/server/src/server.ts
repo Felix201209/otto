@@ -2701,6 +2701,7 @@ export class OttoServer {
     for (const c of this.conns) {
       if (c.subscriptions.has(sessionId)) return;
     }
+    this.messageQueues.delete(sessionId);
     this.store.getRuntime(sessionId)?.cancel();
   }
 
@@ -2765,9 +2766,11 @@ export class OttoServer {
       case 'subscribe':
         return this.subscribeConn(conn, msg.payload.sessionId);
       case 'unsubscribe': {
-        const unsub = conn.subscriptions.get(msg.payload.sessionId);
+        const sessionId = msg.payload.sessionId;
+        const unsub = conn.subscriptions.get(sessionId);
         unsub?.();
-        conn.subscriptions.delete(msg.payload.sessionId);
+        conn.subscriptions.delete(sessionId);
+        this.cancelIfOrphaned(sessionId);
         return;
       }
       case 'create_session': {
@@ -4021,13 +4024,22 @@ export class OttoServer {
   }
 
   private drainQueuedMessages(sessionId: string, conn: ClientConn): void {
+    if (!this.conns.has(conn) || !conn.subscriptions.has(sessionId)) {
+      this.messageQueues.delete(sessionId);
+      return;
+    }
     const queue = this.messageQueues.get(sessionId);
     if (!queue || queue.length === 0) return;
     const next = queue.shift()!;
     if (queue.length === 0) this.messageQueues.delete(sessionId);
-    // fire-and-forget: 下一轮不阻塞当前返回
+    // fire-and-forget: 下一轮不阻塞当前返回。调度执行前再次复核连接，
+    // 避免当前轮完成与窗口断开同时发生时把旧队列重新启动。
     setImmediate(() => {
-      this.handleSendUserMessageRaw(
+      if (!this.conns.has(conn) || !conn.subscriptions.has(sessionId)) {
+        this.messageQueues.delete(sessionId);
+        return;
+      }
+      void this.handleSendUserMessageRaw(
         sessionId,
         conn,
         next.content,
