@@ -160,6 +160,69 @@ export interface EnterpriseLegalDocumentSection {
   important?: boolean;
 }
 
+export type EnterpriseVerificationApplicantAuthority =
+  | 'legal_representative'
+  | 'authorized_agent';
+
+export type EnterpriseVerificationEvidencePurpose =
+  | 'business_license'
+  | 'authorization_letter';
+
+export interface EnterpriseVerificationEvidenceReference {
+  reference: string;
+  sha256: string;
+}
+
+export interface EnterpriseVerificationUploadedEvidence
+  extends EnterpriseVerificationEvidenceReference {
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+}
+
+export interface EnterpriseVerificationEvidenceUploadInput {
+  purpose: EnterpriseVerificationEvidencePurpose;
+  fileName: string;
+  contentType: string;
+  contentBase64: string;
+}
+
+export interface EnterpriseVerificationApplicationInput {
+  legalName: string;
+  unifiedSocialCreditCode: string;
+  legalRepresentativeName: string;
+  applicantAuthority: EnterpriseVerificationApplicantAuthority;
+  businessLicenseEvidence: EnterpriseVerificationEvidenceReference;
+  authorizationEvidence?: EnterpriseVerificationEvidenceReference | null;
+}
+
+export interface EnterpriseVerificationApplication {
+  id: string;
+  applicantAccountId: string;
+  sourceOrganizationId: string;
+  legalName: string;
+  unifiedSocialCreditCode: string;
+  legalRepresentativeName: string;
+  applicantAuthority: EnterpriseVerificationApplicantAuthority;
+  businessLicenseEvidence: EnterpriseVerificationEvidenceReference;
+  authorizationEvidence: EnterpriseVerificationEvidenceReference | null;
+  status:
+    | 'draft'
+    | 'submitted'
+    | 'auto_check'
+    | 'manual_review'
+    | 'approved'
+    | 'rejected'
+    | 'cancelled';
+  reviewNote: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  provisionedOrganizationId: string | null;
+  submittedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SmsLoginChallenge {
   challengeId: string;
   expiresAt: string;
@@ -2447,6 +2510,90 @@ export class EnterpriseClient {
       body: JSON.stringify({ accepted: true, documents }),
     });
   }
+  async getEnterpriseVerificationApplication(): Promise<
+    EnterpriseVerificationApplication | null
+  > {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    const result = await this.request<{
+      application: EnterpriseVerificationApplication | null;
+    }>('/enterprise/verification/application');
+    return result.application;
+  }
+
+  async uploadEnterpriseVerificationEvidence(
+    input: EnterpriseVerificationEvidenceUploadInput,
+  ): Promise<EnterpriseVerificationUploadedEvidence> {
+    this.requirePersonalEnterpriseVerificationAccount();
+    const result = await this.request<{
+      evidence: EnterpriseVerificationUploadedEvidence;
+    }>('/enterprise/verification/evidence', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+    return result.evidence;
+  }
+
+  async submitEnterpriseVerificationApplication(
+    input: EnterpriseVerificationApplicationInput,
+  ): Promise<EnterpriseVerificationApplication> {
+    this.requirePersonalEnterpriseVerificationAccount();
+    const businessLicenseEvidence =
+      this.normalizeUploadedEnterpriseVerificationEvidence(
+        input.businessLicenseEvidence,
+      );
+    const authorizationEvidence = input.authorizationEvidence
+      ? this.normalizeUploadedEnterpriseVerificationEvidence(
+          input.authorizationEvidence,
+        )
+      : input.authorizationEvidence;
+    const result = await this.request<{
+      application: EnterpriseVerificationApplication;
+    }>('/enterprise/verification/application', {
+      method: 'POST',
+      body: JSON.stringify({
+        ...input,
+        businessLicenseEvidence,
+        authorizationEvidence,
+      }),
+    });
+    return result.application;
+  }
+
+  async cancelEnterpriseVerificationApplication(): Promise<
+    EnterpriseVerificationApplication
+  > {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    const result = await this.request<{
+      application: EnterpriseVerificationApplication;
+    }>('/enterprise/verification/application', { method: 'DELETE' });
+    return result.application;
+  }
+
+  private requirePersonalEnterpriseVerificationAccount(): EnterpriseAccount {
+    if (!this.token || !this.currentAccount) {
+      throw new Error('登录已失效，请重新登录');
+    }
+    if (this.currentAccount.accountType !== 'personal') {
+      throw new Error('当前账号已经属于企业');
+    }
+    return this.currentAccount;
+  }
+
+  private normalizeUploadedEnterpriseVerificationEvidence(
+    evidence: EnterpriseVerificationEvidenceReference,
+  ): EnterpriseVerificationEvidenceReference {
+    const reference = evidence?.reference?.trim() ?? '';
+    const sha256 = evidence?.sha256?.trim().toLowerCase() ?? '';
+    if (
+      !reference ||
+      /^local-pending(?:$|:)/iu.test(reference) ||
+      !/^[0-9a-f]{64}$/u.test(sha256)
+    ) {
+      throw new Error('请先上传企业认证材料，再提交申请');
+    }
+    return { reference, sha256 };
+  }
+
 
   async exportMyAccountData(): Promise<Record<string, unknown>> {
     if (!this.token) throw new Error('登录已失效，请重新登录');

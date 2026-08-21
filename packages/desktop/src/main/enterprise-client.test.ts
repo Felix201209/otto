@@ -1170,6 +1170,169 @@ describe('EnterpriseClient', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('个人账号使用 member bearer 完成企业认证材料上传与申请生命周期', async () => {
+    const personalAccount = {
+      ...ACCOUNT,
+      organizationId: 'personal_acc_1',
+      organizationName: '员工一号的个人空间',
+      accountType: 'personal' as const,
+    };
+    const uploadedEvidence = {
+      reference: 'enterprise-verification://evidence/business-license-1',
+      sha256: 'c'.repeat(64),
+      fileName: '营业执照.pdf',
+      contentType: 'application/pdf',
+      sizeBytes: 7,
+    };
+    const application = {
+      id: 'verification-1',
+      applicantAccountId: personalAccount.id,
+      sourceOrganizationId: personalAccount.organizationId,
+      legalName: '星河科技有限公司',
+      unifiedSocialCreditCode: '91310000MA1K12345X',
+      legalRepresentativeName: '张三',
+      applicantAuthority: 'legal_representative' as const,
+      businessLicenseEvidence: {
+        reference: uploadedEvidence.reference,
+        sha256: uploadedEvidence.sha256,
+      },
+      authorizationEvidence: null,
+      status: 'manual_review' as const,
+      reviewNote: null,
+      reviewedBy: null,
+      reviewedAt: null,
+      provisionedOrganizationId: null,
+      submittedAt: '2026-08-21T01:00:00.000Z',
+      createdAt: '2026-08-21T01:00:00.000Z',
+      updatedAt: '2026-08-21T01:00:00.000Z',
+    };
+    const cancelled = { ...application, status: 'cancelled' as const };
+    const uploadInput = {
+      purpose: 'business_license' as const,
+      fileName: uploadedEvidence.fileName,
+      contentType: uploadedEvidence.contentType,
+      contentBase64: 'JVBERg==',
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: personalAccount,
+        token: 'personal-token',
+        expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, { application: null }))
+      .mockResolvedValueOnce(jsonResponse(201, { evidence: uploadedEvidence }))
+      .mockResolvedValueOnce(jsonResponse(201, { application }))
+      .mockResolvedValueOnce(jsonResponse(200, { application: cancelled }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(client.getEnterpriseVerificationApplication())
+      .resolves.toBeNull();
+    const evidence = await client.uploadEnterpriseVerificationEvidence(
+      uploadInput,
+    );
+    await expect(client.submitEnterpriseVerificationApplication({
+      legalName: application.legalName,
+      unifiedSocialCreditCode: application.unifiedSocialCreditCode,
+      legalRepresentativeName: application.legalRepresentativeName,
+      applicantAuthority: application.applicantAuthority,
+      businessLicenseEvidence: evidence,
+      authorizationEvidence: null,
+    })).resolves.toEqual(application);
+    await expect(client.cancelEnterpriseVerificationApplication())
+      .resolves.toEqual(cancelled);
+
+    const requests = fetchMock.mock.calls.slice(2).map(([url, init]) => ({
+      url,
+      init: init as RequestInit,
+    }));
+    expect(requests.map(({ url, init }) => [url, init.method])).toEqual([
+      ['https://enterprise.otto.test/enterprise/verification/application', 'GET'],
+      ['https://enterprise.otto.test/enterprise/verification/evidence', 'POST'],
+      ['https://enterprise.otto.test/enterprise/verification/application', 'POST'],
+      ['https://enterprise.otto.test/enterprise/verification/application', 'DELETE'],
+    ]);
+    for (const { init } of requests) {
+      expect(init.headers).toMatchObject({
+        authorization: 'Bearer personal-token',
+      });
+    }
+    expect(JSON.parse(String(requests[1]?.init.body))).toEqual(uploadInput);
+    expect(JSON.parse(String(requests[2]?.init.body))).toEqual({
+      legalName: application.legalName,
+      unifiedSocialCreditCode: application.unifiedSocialCreditCode,
+      legalRepresentativeName: application.legalRepresentativeName,
+      applicantAuthority: application.applicantAuthority,
+      businessLicenseEvidence: {
+        reference: uploadedEvidence.reference,
+        sha256: uploadedEvidence.sha256,
+      },
+      authorizationEvidence: null,
+    });
+  });
+
+  it('企业账号不能上传企业认证材料', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: { ...ACCOUNT, accountType: 'enterprise' },
+        token: 'member-token',
+        expiresAt: '2099-01-01',
+      }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(client.uploadEnterpriseVerificationEvidence({
+      purpose: 'business_license',
+      fileName: '营业执照.pdf',
+      contentType: 'application/pdf',
+      contentBase64: 'JVBERg==',
+    })).rejects.toThrow('当前账号已经属于企业');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('企业认证申请拒绝尚未上传的 local-pending 材料引用', async () => {
+    const personalAccount = {
+      ...ACCOUNT,
+      accountType: 'personal' as const,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: personalAccount,
+        token: 'personal-token',
+        expiresAt: '2099-01-01',
+      }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(client.submitEnterpriseVerificationApplication({
+      legalName: '星河科技有限公司',
+      unifiedSocialCreditCode: '91310000MA1K12345X',
+      legalRepresentativeName: '张三',
+      applicantAuthority: 'legal_representative',
+      businessLicenseEvidence: {
+        reference: 'local-pending:business-license',
+        sha256: 'c'.repeat(64),
+      },
+      authorizationEvidence: null,
+    })).rejects.toThrow('请先上传企业认证材料');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('支持手机号验证码登录并保存会话', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))

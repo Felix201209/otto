@@ -37,6 +37,7 @@ import { handlePlatformOrganizationRoute } from './platformOrganizationRoutes.js
 import { handleSimpleParkCompatibilityRoute } from './simpleParkCompatibilityRoutes.js';
 import { handleTicketRoute } from './ticketRoutes.js';
 import { handleWorkspaceRoute } from './workspaceRoutes.js';
+import { handleEnterpriseVerificationRoute } from './enterpriseVerificationRoutes.js';
 import type { RepairNotificationSender } from '../modules/integration_adapters/index.js';
 
 export type AdminPrincipal =
@@ -69,21 +70,22 @@ export interface EnterpriseRouteDispatcherDeps {
   atoaClaimTtlMs: number;
   isPublicSimplePark: boolean;
   featureFlags?: FeatureFlagManager;
-  readBody(req: IncomingMessage, maxLength?: number): Promise<Record<string, unknown>>;
+  readBody(
+    req: IncomingMessage,
+    maxLength?: number,
+  ): Promise<Record<string, unknown>>;
   sendJSON(res: ServerResponse, status: number, data: unknown): void;
   extractToken(req: IncomingMessage): string;
   /** CONTROL-12 签名指令队列 HTTP 端点（可选；未启用时为 undefined）。 */
-  controlCommandHandle?(
-    deps: {
-      path: string;
-      method: string;
-      url: URL;
-      req: IncomingMessage;
-      res: ServerResponse;
-      readBody(req: IncomingMessage): Promise<Record<string, unknown>>;
-      sendJSON(res: ServerResponse, status: number, data: unknown): void;
-    },
-  ): Promise<boolean>;
+  controlCommandHandle?(deps: {
+    path: string;
+    method: string;
+    url: URL;
+    req: IncomingMessage;
+    res: ServerResponse;
+    readBody(req: IncomingMessage): Promise<Record<string, unknown>>;
+    sendJSON(res: ServerResponse, status: number, data: unknown): void;
+  }): Promise<boolean>;
 }
 
 export async function dispatchEnterpriseRoute({
@@ -190,6 +192,21 @@ export async function dispatchEnterpriseRoute({
       res,
       memberAccount,
       services: db,
+      readBody,
+      sendJSON,
+    })
+  ) {
+    return true;
+  }
+  if (
+    await handleEnterpriseVerificationRoute({
+      path,
+      method,
+      url,
+      req,
+      res,
+      memberAccount,
+      adminPrincipal,
       readBody,
       sendJSON,
     })

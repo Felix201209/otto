@@ -151,6 +151,8 @@ import {
   type EnterpriseModuleUpdateDescriptor,
   type EnterpriseOrganizationFeatures,
   type EnterprisePositionRoleMapping,
+  type EnterpriseVerificationApplicationInput,
+  type EnterpriseVerificationEvidenceUploadInput,
 } from './enterprise-client.js';
 import {
   EnterpriseE2eeCrypto,
@@ -557,6 +559,14 @@ const IPC = {
   enterpriseAccountDelete: 'otto:enterprise-account-delete',
   enterpriseDataGovernanceGet: 'otto:enterprise-data-governance-get',
   enterpriseLegalAccept: 'otto:enterprise-legal-accept',
+  enterpriseVerificationApplicationGet:
+    'otto:enterprise-verification-application-get',
+  enterpriseVerificationEvidenceUpload:
+    'otto:enterprise-verification-evidence-upload',
+  enterpriseVerificationApplicationSubmit:
+    'otto:enterprise-verification-application-submit',
+  enterpriseVerificationApplicationCancel:
+    'otto:enterprise-verification-application-cancel',
   enterprisePrivacyExport: 'otto:enterprise-privacy-export',
   enterprisePrivacyDelete: 'otto:enterprise-privacy-delete',
   enterprisePair: 'otto:enterprise-pair',
@@ -2599,6 +2609,31 @@ function registerIpc(): void {
       parseLegalDocumentReferences(input),
     );
   });
+  ipcMain.handle(IPC.enterpriseVerificationApplicationGet, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.getEnterpriseVerificationApplication();
+  });
+  ipcMain.handle(
+    IPC.enterpriseVerificationEvidenceUpload,
+    async (_event, input: EnterpriseVerificationEvidenceUploadInput) => {
+      loadEnterpriseSession();
+      return enterpriseClient.uploadEnterpriseVerificationEvidence(input);
+    },
+  );
+  ipcMain.handle(
+    IPC.enterpriseVerificationApplicationSubmit,
+    async (_event, input: EnterpriseVerificationApplicationInput) => {
+      loadEnterpriseSession();
+      return enterpriseClient.submitEnterpriseVerificationApplication(input);
+    },
+  );
+  ipcMain.handle(
+    IPC.enterpriseVerificationApplicationCancel,
+    async () => {
+      loadEnterpriseSession();
+      return enterpriseClient.cancelEnterpriseVerificationApplication();
+    },
+  );
   ipcMain.handle(IPC.enterprisePrivacyExport, async () => {
     loadEnterpriseSession();
     const payload = await enterpriseClient.exportMyAccountData();

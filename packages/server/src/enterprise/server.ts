@@ -69,9 +69,7 @@ import {
   commercialBillingOperationForRoute,
   startPrivateDeploymentRuntime,
 } from '../modules/commercial_control/index.js';
-import {
-  controlPublicKeysFromEnv,
-} from '../modules/control_commands/index.js';
+import { controlPublicKeysFromEnv } from '../modules/control_commands/index.js';
 import { createEnterpriseControlCommandBoundary } from './controlCommandIntegration.js';
 
 export { adminAccountsHTML } from './adminAccountsPage.js';
@@ -118,7 +116,9 @@ export interface EnterpriseServerOptions {
   /** 回执签名私钥（PEM）；不传则不签名（只含 digest）。 */
   controlSigningPrivateKey?: string;
   /** 执行 Control 下发指令的业务钩子（对接 SERVER-16 企业开通）。未传则 CONTROL-12 不启用执行。 */
-  controlCommandExecute?: (command: ControlCommandEnvelopeLike) => ControlCommandRunResultShim;
+  controlCommandExecute?: (
+    command: ControlCommandEnvelopeLike,
+  ) => ControlCommandRunResultShim;
   /** 密码登录限流参数；生产使用安全默认值，测试可注入时钟和较小阈值。 */
   loginRateLimit?: PasswordLoginRateLimitOptions;
 }
@@ -156,6 +156,7 @@ const ENTERPRISE_CAPABILITIES = [
   'sms_registration',
   'personal_registration',
   'personal_enterprise_upgrade',
+  'enterprise_verification_v1',
   'organization_invites',
   'usage_summary',
   'admin_console',
@@ -414,9 +415,9 @@ function makeHandler(
       }
       const commercialOrganizationId =
         memberAccount?.organizationId ?? adminPrincipal?.organizationId ?? null;
-      const commercialActorId = memberAccount?.id ?? (
-        adminPrincipal?.kind === 'account' ? adminPrincipal.account.id : null
-      );
+      const commercialActorId =
+        memberAccount?.id ??
+        (adminPrincipal?.kind === 'account' ? adminPrincipal.account.id : null);
       const auditCommercialDecision = (
         event: string,
         detail: Record<string, unknown>,
@@ -503,8 +504,8 @@ function makeHandler(
         }
         const rawIdempotencyKey = req.headers['x-otto-idempotency-key'];
         const idempotencyKey = Array.isArray(rawIdempotencyKey)
-          ? rawIdempotencyKey[0] ?? ''
-          : rawIdempotencyKey ?? '';
+          ? (rawIdempotencyKey[0] ?? '')
+          : (rawIdempotencyKey ?? '');
         const referenceId = `op_${createHash('sha256')
           .update(`${method}\0${path}\0${idempotencyKey}`, 'utf8')
           .digest('hex')}`;
@@ -524,26 +525,35 @@ function makeHandler(
               referenceId,
               holdId: admission.holdId,
             });
-            res.setHeader('X-Otto-Billing-Admission', admission.holdId ?? 'required');
+            res.setHeader(
+              'X-Otto-Billing-Admission',
+              admission.holdId ?? 'required',
+            );
             res.once('finish', () => {
-              const outcome = res.statusCode >= 200 && res.statusCode < 400
-                ? 'capture'
-                : 'release';
-              auditCommercialDecision('commercial_billing_finalization_queued', {
-                module: billingOperation.module,
-                referenceId,
-                outcome,
-              });
-              void db.finalizeBillingOperation(
-                admission,
-                outcome,
-                billingFetch,
-              ).catch((error: unknown) => {
-                console.error('[Otto Enterprise] billing finalization failed', {
-                  code: outcome,
-                  message: error instanceof Error ? error.message : String(error),
+              const outcome =
+                res.statusCode >= 200 && res.statusCode < 400
+                  ? 'capture'
+                  : 'release';
+              auditCommercialDecision(
+                'commercial_billing_finalization_queued',
+                {
+                  module: billingOperation.module,
+                  referenceId,
+                  outcome,
+                },
+              );
+              void db
+                .finalizeBillingOperation(admission, outcome, billingFetch)
+                .catch((error: unknown) => {
+                  console.error(
+                    '[Otto Enterprise] billing finalization failed',
+                    {
+                      code: outcome,
+                      message:
+                        error instanceof Error ? error.message : String(error),
+                    },
+                  );
                 });
-              });
             });
           }
         } catch (error) {
@@ -715,14 +725,14 @@ export function createEnterpriseServer(opts: EnterpriseServerOptions = {}): {
   const controlKeys =
     opts.controlPublicKeys ?? controlPublicKeysFromEnv(process.env);
   const controlExecute =
-    opts.controlCommandExecute ?? (() => ({
+    opts.controlCommandExecute ??
+    (() => ({
       status: 'failed' as const,
       resultSummary: 'no executor configured',
       errorCategory: 'not_configured',
     }));
   const controlBoundary = createEnterpriseControlCommandBoundary({
-    deploymentId:
-      process.env.OTTO_ENTERPRISE_DEPLOYMENT_ID || publicBaseUrl,
+    deploymentId: process.env.OTTO_ENTERPRISE_DEPLOYMENT_ID || publicBaseUrl,
     controlPublicKeys: controlKeys,
     signingPrivateKey: opts.controlSigningPrivateKey,
     execute: controlExecute,

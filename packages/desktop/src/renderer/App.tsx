@@ -33,6 +33,7 @@ import {
 } from './state/useOttoStore.js';
 import type { Attachment } from './state/useOttoStore.js';
 import { Sidebar } from './components/Sidebar.js';
+import type { EnterpriseVerificationHandlers } from './components/JoinEnterpriseDialog.js';
 import { ChatView } from './components/ChatView.js';
 import { SLASH_COMMANDS } from './components/Composer.js';
 import {
@@ -130,6 +131,12 @@ type PendingToolConsult = {
 
 export function App(): React.JSX.Element {
   const auth = useEnterpriseAuth();
+  const verificationActions = auth.actions as typeof auth.actions & {
+    submitEnterpriseVerificationApplication?: EnterpriseVerificationHandlers['onSubmitEnterpriseVerification'];
+    getEnterpriseVerificationApplication?: EnterpriseVerificationHandlers['onGetEnterpriseVerification'];
+    cancelEnterpriseVerificationApplication?: EnterpriseVerificationHandlers['onCancelEnterpriseVerification'];
+    uploadEnterpriseVerificationEvidence?: EnterpriseVerificationHandlers['onUploadEnterpriseVerificationEvidence'];
+  };
   const accessMode = resolveEnterpriseAccessMode({
     internalTestAccessEnabled: INTERNAL_TEST_ACCESS_ENABLED,
     authStatus: auth.state.status,
@@ -170,6 +177,11 @@ export function App(): React.JSX.Element {
       account={auth.state.account}
       serverUrl={auth.state.serverUrl}
       onJoinEnterprise={auth.actions.joinEnterprise}
+      onSubmitEnterpriseVerification={verificationActions.submitEnterpriseVerificationApplication}
+      onGetEnterpriseVerification={verificationActions.getEnterpriseVerificationApplication}
+      onCancelEnterpriseVerification={verificationActions.cancelEnterpriseVerificationApplication}
+      onUploadEnterpriseVerificationEvidence={verificationActions.uploadEnterpriseVerificationEvidence}
+      onReloadEnterpriseIdentity={() => window.location.reload()}
       onLogout={auth.actions.logout}
     />
   );
@@ -179,13 +191,18 @@ function OttoWorkspaceApp({
   account,
   serverUrl,
   onJoinEnterprise,
+  onSubmitEnterpriseVerification,
+  onGetEnterpriseVerification,
+  onCancelEnterpriseVerification,
+  onUploadEnterpriseVerificationEvidence,
+  onReloadEnterpriseIdentity,
   onLogout,
 }: {
   account: EnterpriseAccount;
   serverUrl?: string;
   onJoinEnterprise?: (input: { inviteCode: string }) => Promise<void>;
   onLogout?: () => Promise<void>;
-}): React.JSX.Element {
+} & EnterpriseVerificationHandlers): React.JSX.Element {
   const { state, actions } = useOttoStore({
     enterpriseOrganizationId: account.accountType === 'personal'
       ? null
@@ -1089,6 +1106,11 @@ function OttoWorkspaceApp({
         enterpriseAccount={account}
         enterpriseUnreadCounts={enterpriseUnreadCounts}
         onJoinEnterprise={onJoinEnterprise}
+        onSubmitEnterpriseVerification={onSubmitEnterpriseVerification}
+        onGetEnterpriseVerification={onGetEnterpriseVerification}
+        onCancelEnterpriseVerification={onCancelEnterpriseVerification}
+        onUploadEnterpriseVerificationEvidence={onUploadEnterpriseVerificationEvidence}
+        onReloadEnterpriseIdentity={onReloadEnterpriseIdentity}
         onLogout={onLogout}
         unreadSessions={state.unreadSessions}
       />

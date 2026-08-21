@@ -40,6 +40,7 @@ const ADMIN_ROUTES = new Set([
   '/enterprise/deployment/diagnostics',
   '/enterprise/modules/updates',
   '/enterprise/organizations',
+  '/enterprise/platform/verifications',
 ]);
 
 /** 会读取或写入企业内部数据的成员路由，必须使用账号会话。 */
@@ -72,6 +73,8 @@ const MEMBER_ROUTES = new Set([
   '/enterprise/privacy/accept',
   '/enterprise/privacy/export',
   '/enterprise/privacy/account',
+  '/enterprise/verification/application',
+  '/enterprise/verification/evidence',
 ]);
 
 export const FEATURE_ADMIN_PREFIX = '/admin/features';
@@ -84,6 +87,7 @@ export function isAdminRoute(path: string): boolean {
     path.startsWith('/enterprise/organization/positions') ||
     path.startsWith('/enterprise/park-meeting-rooms/') ||
     path.startsWith('/enterprise/platform/organizations/') ||
+    path.startsWith('/enterprise/platform/verifications/') ||
     path.startsWith('/enterprise/federation/admin/')
   );
 }
@@ -118,7 +122,10 @@ export function isPublicSimpleParkRoute(
   );
 }
 
-export function isLicenseMaintenanceRoute(path: string, method?: string): boolean {
+export function isLicenseMaintenanceRoute(
+  path: string,
+  method?: string,
+): boolean {
   return (
     path === '/enterprise/health' ||
     path === '/enterprise/export' ||
@@ -135,6 +142,10 @@ export function isLicenseMaintenanceRoute(path: string, method?: string): boolea
     path === '/enterprise/privacy/accept' ||
     path === '/enterprise/privacy/export' ||
     path === '/enterprise/privacy/account' ||
+    path === '/enterprise/verification/application' ||
+    path === '/enterprise/verification/evidence' ||
+    path === '/enterprise/platform/verifications' ||
+    path.startsWith('/enterprise/platform/verifications/') ||
     path.startsWith('/enterprise/auth/')
   );
 }

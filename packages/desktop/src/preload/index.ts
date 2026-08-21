@@ -307,6 +307,69 @@ export interface EnterpriseLegalDocumentSection {
   important?: boolean;
 }
 
+export type EnterpriseVerificationApplicantAuthority =
+  | 'legal_representative'
+  | 'authorized_agent';
+
+export type EnterpriseVerificationEvidencePurpose =
+  | 'business_license'
+  | 'authorization_letter';
+
+export interface EnterpriseVerificationEvidenceReference {
+  reference: string;
+  sha256: string;
+}
+
+export interface EnterpriseVerificationUploadedEvidence
+  extends EnterpriseVerificationEvidenceReference {
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+}
+
+export interface EnterpriseVerificationEvidenceUploadInput {
+  purpose: EnterpriseVerificationEvidencePurpose;
+  fileName: string;
+  contentType: string;
+  contentBase64: string;
+}
+
+export interface EnterpriseVerificationApplicationInput {
+  legalName: string;
+  unifiedSocialCreditCode: string;
+  legalRepresentativeName: string;
+  applicantAuthority: EnterpriseVerificationApplicantAuthority;
+  businessLicenseEvidence: EnterpriseVerificationEvidenceReference;
+  authorizationEvidence?: EnterpriseVerificationEvidenceReference | null;
+}
+
+export interface EnterpriseVerificationApplication {
+  id: string;
+  applicantAccountId: string;
+  sourceOrganizationId: string;
+  legalName: string;
+  unifiedSocialCreditCode: string;
+  legalRepresentativeName: string;
+  applicantAuthority: EnterpriseVerificationApplicantAuthority;
+  businessLicenseEvidence: EnterpriseVerificationEvidenceReference;
+  authorizationEvidence: EnterpriseVerificationEvidenceReference | null;
+  status:
+    | 'draft'
+    | 'submitted'
+    | 'auto_check'
+    | 'manual_review'
+    | 'approved'
+    | 'rejected'
+    | 'cancelled';
+  reviewNote: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  provisionedOrganizationId: string | null;
+  submittedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface EnterpriseSmsLoginChallenge {
   serverUrl: string;
   challengeId: string;
@@ -1118,6 +1181,14 @@ const IPC = {
   enterpriseAccountUpdate: 'otto:enterprise-account-update',
   enterpriseAccountDelete: 'otto:enterprise-account-delete',
   enterpriseDataGovernanceGet: 'otto:enterprise-data-governance-get',
+  enterpriseVerificationApplicationGet:
+    'otto:enterprise-verification-application-get',
+  enterpriseVerificationEvidenceUpload:
+    'otto:enterprise-verification-evidence-upload',
+  enterpriseVerificationApplicationSubmit:
+    'otto:enterprise-verification-application-submit',
+  enterpriseVerificationApplicationCancel:
+    'otto:enterprise-verification-application-cancel',
   enterpriseLegalAccept: 'otto:enterprise-legal-accept',
   enterprisePrivacyExport: 'otto:enterprise-privacy-export',
   enterprisePrivacyDelete: 'otto:enterprise-privacy-delete',
@@ -1575,6 +1646,18 @@ export interface OttoBridge {
   enterpriseLegalAccept(
     documents: EnterpriseLegalDocumentReference[],
   ): Promise<EnterpriseDataGovernanceProfile>;
+  getEnterpriseVerificationApplication(): Promise<
+    EnterpriseVerificationApplication | null
+  >;
+  uploadEnterpriseVerificationEvidence(
+    input: EnterpriseVerificationEvidenceUploadInput,
+  ): Promise<EnterpriseVerificationUploadedEvidence>;
+  submitEnterpriseVerificationApplication(
+    input: EnterpriseVerificationApplicationInput,
+  ): Promise<EnterpriseVerificationApplication>;
+  cancelEnterpriseVerificationApplication(): Promise<
+    EnterpriseVerificationApplication
+  >;
   enterprisePrivacyExport(): Promise<{ ok: true; path: string } | null>;
   enterprisePrivacyDelete(input: {
     password: string;
@@ -2687,6 +2770,36 @@ const bridge: OttoBridge = {
       IPC.enterpriseLegalAccept,
       documents,
     ) as Promise<EnterpriseDataGovernanceProfile>;
+  },
+  getEnterpriseVerificationApplication(): Promise<
+    EnterpriseVerificationApplication | null
+  > {
+    return ipcRenderer.invoke(
+      IPC.enterpriseVerificationApplicationGet,
+    ) as Promise<EnterpriseVerificationApplication | null>;
+  },
+  uploadEnterpriseVerificationEvidence(
+    input: EnterpriseVerificationEvidenceUploadInput,
+  ): Promise<EnterpriseVerificationUploadedEvidence> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseVerificationEvidenceUpload,
+      input,
+    ) as Promise<EnterpriseVerificationUploadedEvidence>;
+  },
+  submitEnterpriseVerificationApplication(
+    input: EnterpriseVerificationApplicationInput,
+  ): Promise<EnterpriseVerificationApplication> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseVerificationApplicationSubmit,
+      input,
+    ) as Promise<EnterpriseVerificationApplication>;
+  },
+  cancelEnterpriseVerificationApplication(): Promise<
+    EnterpriseVerificationApplication
+  > {
+    return ipcRenderer.invoke(
+      IPC.enterpriseVerificationApplicationCancel,
+    ) as Promise<EnterpriseVerificationApplication>;
   },
   enterprisePrivacyExport(): Promise<{ ok: true; path: string } | null> {
     return ipcRenderer.invoke(IPC.enterprisePrivacyExport) as Promise<{

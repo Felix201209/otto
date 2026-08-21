@@ -700,45 +700,47 @@ describe('受保护 vs 公开路由边界', () => {
     ]) {
       expect(body).not.toHaveProperty(privateField);
     }
-    expect(body.capabilities).toEqual(expect.arrayContaining([
-      'password_auth',
-      'sms_login',
-      'sms_registration',
-      'personal_registration',
-      'personal_enterprise_upgrade',
-      'organization_invites',
-      'usage_summary',
-      'admin_console',
-      'account_deletion',
-      'data_governance_v1',
-      'signed_update_policy_v1',
-      'privacy_self_service',
-      'multi_organization',
-      'direct_messages',
-      'atoa',
-      'position_invites',
-      'park_service_push',
-      'park_repair_v1',
-      'park_services_v2',
-      'organization_structure_v1',
-      'organization_feature_switches_v1',
-      'enterprise_skill_market_v1',
-      'park_membership_v1',
-      'park_specialist_routing_v1',
-      'unread_message_notifications_v1',
-      'account_presence_v1',
-      'park_tenants_v1',
-      'park_service_statistics_v1',
-      'account_data_sync_v1',
-      'private_deployment_v1',
-      'license_enforcement_v1',
-      'encrypted_telemetry_queue_v1',
-      'signed_telemetry_transport_v1',
-      'diagnostic_bundle_v1',
-      'data_protection_v1',
-      'encrypted_attachment_storage_v1',
-      'encrypted_message_storage_v1',
-    ]));
+    expect(body.capabilities).toEqual(
+      expect.arrayContaining([
+        'password_auth',
+        'sms_login',
+        'sms_registration',
+        'personal_registration',
+        'personal_enterprise_upgrade',
+        'organization_invites',
+        'usage_summary',
+        'admin_console',
+        'account_deletion',
+        'data_governance_v1',
+        'signed_update_policy_v1',
+        'privacy_self_service',
+        'multi_organization',
+        'direct_messages',
+        'atoa',
+        'position_invites',
+        'park_service_push',
+        'park_repair_v1',
+        'park_services_v2',
+        'organization_structure_v1',
+        'organization_feature_switches_v1',
+        'enterprise_skill_market_v1',
+        'park_membership_v1',
+        'park_specialist_routing_v1',
+        'unread_message_notifications_v1',
+        'account_presence_v1',
+        'park_tenants_v1',
+        'park_service_statistics_v1',
+        'account_data_sync_v1',
+        'private_deployment_v1',
+        'license_enforcement_v1',
+        'encrypted_telemetry_queue_v1',
+        'signed_telemetry_transport_v1',
+        'diagnostic_bundle_v1',
+        'data_protection_v1',
+        'encrypted_attachment_storage_v1',
+        'encrypted_message_storage_v1',
+      ]),
+    );
   }, 15_000);
 
   it('private deployment license enforcement keeps only maintenance routes open', async () => {
@@ -781,7 +783,7 @@ describe('受保护 vs 公开路由边界', () => {
     await expect(backup.json()).resolves.toMatchObject({
       lastError: null,
       backupCount: 1,
-      latestSchemaVersion: 22,
+      latestSchemaVersion: 23,
     });
 
     const telemetry = await fetch(`${base}/enterprise/deployment/telemetry`, {
@@ -894,7 +896,8 @@ describe('受保护 vs 公开路由边界', () => {
       body: JSON.stringify({
         serviceId: 'it',
         title: 'Internal IT request',
-        description: 'This enterprise workflow must not require the park module.',
+        description:
+          'This enterprise workflow must not require the park module.',
       }),
     });
     expect(internalTicket.status).toBe(201);
@@ -951,11 +954,16 @@ describe('受保护 vs 公开路由边界', () => {
       if (target.endsWith('/hold_servere2e123456/capture')) {
         return Response.json({ replayed: false }, { status: 200 });
       }
-      return Response.json({ error: 'unexpected test endpoint' }, { status: 503 });
+      return Response.json(
+        { error: 'unexpected test endpoint' },
+        { status: 503 },
+      );
     }) as unknown as typeof fetch;
     const { base } = await startIsolated(ADMIN_TOKEN, null, { billingFetch });
     const headers = { 'x-otto-admin-token': ADMIN_TOKEN };
-    const status = await fetch(`${base}/enterprise/deployment/status`, { headers });
+    const status = await fetch(`${base}/enterprise/deployment/status`, {
+      headers,
+    });
     const deployment = await status.json();
     const now = Date.now();
     const payload = {
@@ -971,7 +979,8 @@ describe('受保护 vs 公开路由边界', () => {
       offline: false,
       telemetryAllowed: false,
       billingEnforcement: 'enforce',
-      leaseEndpoint: 'https://control.example/v1/licenses/lic_billing_e2e/lease',
+      leaseEndpoint:
+        'https://control.example/v1/licenses/lic_billing_e2e/lease',
       leaseToken: 'billing-e2e-lease-token-at-least-32-characters',
       billingEndpoint: 'https://control.example/v1/billing/usage/consume',
       billingHoldEndpoint: 'https://control.example/v1/billing/holds',
@@ -980,7 +989,10 @@ describe('受保护 vs 公开路由边界', () => {
     const imported = await fetch(`${base}/enterprise/deployment/license`, {
       method: 'POST',
       headers: { ...headers, 'content-type': 'application/json' },
-      body: JSON.stringify({ license: payload, signature: signLicensePayload(payload) }),
+      body: JSON.stringify({
+        license: payload,
+        signature: signLicensePayload(payload),
+      }),
     });
     expect(imported.status).toBe(200);
 
@@ -1003,25 +1015,29 @@ describe('受保护 vs 公开路由边界', () => {
       name: 'Billing E2E Member',
     });
     const token = db.createAuthSession(member.id).token;
-    const request = (idempotencyKey?: string) => fetch(`${base}/enterprise/knowledge`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${token}`,
-        'content-type': 'application/json',
-        ...(idempotencyKey ? { 'x-otto-idempotency-key': idempotencyKey } : {}),
-      },
-      body: JSON.stringify({
-        sourceId: 'billing-e2e-source',
-        sourceType: 'auto_capture',
-        sourceSessionId: 'billing-e2e-session',
-        sourceFingerprint: 'billing-e2e-fingerprint',
-        category: 'solution',
-        content: 'Run the commercial admission check before mutating knowledge.',
-        confidence: 0.9,
-        department: 'Operations',
-        contributor: 'Billing E2E Member',
-      }),
-    });
+    const request = (idempotencyKey?: string) =>
+      fetch(`${base}/enterprise/knowledge`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+          ...(idempotencyKey
+            ? { 'x-otto-idempotency-key': idempotencyKey }
+            : {}),
+        },
+        body: JSON.stringify({
+          sourceId: 'billing-e2e-source',
+          sourceType: 'auto_capture',
+          sourceSessionId: 'billing-e2e-session',
+          sourceFingerprint: 'billing-e2e-fingerprint',
+          category: 'solution',
+          content:
+            'Run the commercial admission check before mutating knowledge.',
+          confidence: 0.9,
+          department: 'Operations',
+          contributor: 'Billing E2E Member',
+        }),
+      });
 
     const missingKey = await request();
     expect(missingKey.status).toBe(400);
@@ -1043,14 +1059,20 @@ describe('受保护 vs 公开路由边界', () => {
       'hold_servere2e123456',
     );
     await vi.waitFor(() => {
-      expect(billingCalls.filter((url) => url.endsWith('/capture'))).toHaveLength(1);
+      expect(
+        billingCalls.filter((url) => url.endsWith('/capture')),
+      ).toHaveLength(1);
     });
-    expect(db.getKnowledge(undefined, undefined, 'org_default')).toHaveLength(0);
+    expect(db.getKnowledge(undefined, undefined, 'org_default')).toHaveLength(
+      0,
+    );
 
     const replay = await request('knowledge:e2e:2');
     expect(replay.status).toBe(200);
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(billingCalls.filter((url) => url.endsWith('/capture'))).toHaveLength(1);
+    expect(billingCalls.filter((url) => url.endsWith('/capture'))).toHaveLength(
+      1,
+    );
   }, 60_000);
 
   it('admin publishes modular updates without exposing deployment details in public health', async () => {
@@ -1138,7 +1160,7 @@ describe('受保护 vs 公开路由边界', () => {
 
     const health = await fetch(`${base}/enterprise/health`);
     expect(health.status).toBe(200);
-    const body = await health.json() as { capabilities: string[] };
+    const body = (await health.json()) as { capabilities: string[] };
     expect(body.capabilities).toContain('modular_update_push_v1');
     expect(body).not.toHaveProperty('deployment');
   });
@@ -1728,6 +1750,12 @@ describe('report/dashboard 路由基本可达', () => {
     expect(html).toContain('全部企业');
     expect(html).toContain('id="organizationNav"');
     expect(html).toContain('id="organizationPanel"');
+    expect(html).toContain('id="verificationQueueButton"');
+    expect(html).toContain('id="verificationPanel"');
+    expect(html).toContain('/enterprise/platform/verifications?status=manual_review');
+    expect(html).toContain('/evidence/');
+    expect(html).toContain('审核意见（必填）');
+    expect(html).toContain('再次点击确认');
     expect(html).toContain('企业工作台');
     expect(html).toContain('成员账号');
     expect(html).toContain('部门成员目录');
@@ -2636,9 +2664,7 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       await fetch(`${base}/enterprise/health`)
     ).json()) as { capabilities: string[] };
     expect(health.capabilities).toContain('e2ee_mls_transport_v1');
-    expect(health.capabilities).toContain(
-      'e2ee_mls_resource_governance_v1',
-    );
+    expect(health.capabilities).toContain('e2ee_mls_resource_governance_v1');
     expect(health.capabilities).toContain(
       'e2ee_mls_transport_session_reset_v1',
     );
@@ -3833,18 +3859,19 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       phone: '13600136000',
       feishuOpenId: 'ou_engineer',
     });
-    const processDueSms = async () => db.processTicketNotificationTasks({
-      smsSender: { channel: 'sms', send: smsSend },
-      feishuSender: null,
-      resolveRecipientChannel: (accountId: string) => {
-        const account = db.getAccount(accountId);
-        return {
-          phone: account?.phone ?? null,
-          feishuOpenId: account?.feishuOpenId ?? null,
-        };
-      },
-      now: () => new Date(Date.now() + 10 * 60_000),
-    });
+    const processDueSms = async () =>
+      db.processTicketNotificationTasks({
+        smsSender: { channel: 'sms', send: smsSend },
+        feishuSender: null,
+        resolveRecipientChannel: (accountId: string) => {
+          const account = db.getAccount(accountId);
+          return {
+            phone: account?.phone ?? null,
+            feishuOpenId: account?.feishuOpenId ?? null,
+          };
+        },
+        now: () => new Date(Date.now() + 10 * 60_000),
+      });
     const login = async (
       identifier: string,
       password: string,
@@ -4036,18 +4063,19 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
       name: '园区运营企业',
       slug: 'receipt-park',
     });
-    const processDueSms = async () => db.processTicketNotificationTasks({
-      smsSender: { channel: 'sms', send: smsSend },
-      feishuSender: null,
-      resolveRecipientChannel: (accountId: string) => {
-        const account = db.getAccount(accountId);
-        return {
-          phone: account?.phone ?? null,
-          feishuOpenId: account?.feishuOpenId ?? null,
-        };
-      },
-      now: () => new Date(Date.now() + 10 * 60_000),
-    });
+    const processDueSms = async () =>
+      db.processTicketNotificationTasks({
+        smsSender: { channel: 'sms', send: smsSend },
+        feishuSender: null,
+        resolveRecipientChannel: (accountId: string) => {
+          const account = db.getAccount(accountId);
+          return {
+            phone: account?.phone ?? null,
+            feishuOpenId: account?.feishuOpenId ?? null,
+          };
+        },
+        now: () => new Date(Date.now() + 10 * 60_000),
+      });
     const parkAdmin = db.createAccount({
       organizationId: parkOrganization.id,
       username: 'receipt.park.admin',
@@ -7240,4 +7268,257 @@ describe('企业 Skill 市场 HTTP 闭环', () => {
     });
     expect(disabledMarket.status).toBe(403);
   }, 30_000);
+});
+
+describe('企业主体认证 HTTP 纵向闭环', { timeout: 30_000 }, () => {
+  it('在 License 未激活时安全完成申请、材料审核、升级与拒绝', async () => {
+    process.env.OTTO_LICENSE_ENFORCE = 'true';
+    const { base } = await startIsolated(ADMIN_TOKEN);
+    const database: DatabaseModule = await import('./db.js');
+    const applicant = database.createPersonalRegisteredAccount({
+      phone: '13800138101',
+      name: '企业申请人',
+      password: 'verification-password-1',
+    });
+    const applicantToken = database.createAuthSession(applicant.id).token;
+    const memberHeaders = {
+      authorization: `Bearer ${applicantToken}`,
+      'content-type': 'application/json',
+    };
+    const evidenceBody = {
+      purpose: 'business_license',
+      fileName: 'business-license.pdf',
+      contentType: 'application/pdf',
+      contentBase64: Buffer.from('%PDF-1.7\nenterprise license').toString(
+        'base64',
+      ),
+    };
+
+    const anonymousUpload = await fetch(
+      `${base}/enterprise/verification/evidence`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(evidenceBody),
+      },
+    );
+    expect(anonymousUpload.status).toBe(401);
+
+    const upload = await fetch(`${base}/enterprise/verification/evidence`, {
+      method: 'POST',
+      headers: memberHeaders,
+      body: JSON.stringify(evidenceBody),
+    });
+    expect(upload.status).toBe(201);
+    const uploaded = (await upload.json()) as {
+      evidence: {
+        reference: string;
+        sha256: string;
+        fileName: string;
+        contentType: string;
+        sizeBytes: number;
+      };
+    };
+    expect(uploaded.evidence).toMatchObject({
+      fileName: 'business-license.pdf',
+      contentType: 'application/pdf',
+    });
+
+    const forged = await fetch(`${base}/enterprise/verification/application`, {
+      method: 'POST',
+      headers: memberHeaders,
+      body: JSON.stringify({
+        legalName: '伪造引用企业',
+        unifiedSocialCreditCode: '91330100799655058B',
+        legalRepresentativeName: '测试代表',
+        applicantAuthority: 'legal_representative',
+        businessLicenseEvidence: {
+          reference: 'eve_forged_reference',
+          sha256: '0'.repeat(64),
+        },
+      }),
+    });
+    expect(forged.status).toBe(400);
+
+    const submitted = await fetch(
+      `${base}/enterprise/verification/application`,
+      {
+        method: 'POST',
+        headers: memberHeaders,
+        body: JSON.stringify({
+          legalName: 'HTTP 认证企业',
+          unifiedSocialCreditCode: '91330100799655058B',
+          legalRepresentativeName: '测试代表',
+          applicantAuthority: 'legal_representative',
+          businessLicenseEvidence: uploaded.evidence,
+        }),
+      },
+    );
+    expect(submitted.status).toBe(201);
+    const submittedBody = (await submitted.json()) as {
+      application: {
+        id: string;
+        legalName: string;
+        status: string;
+        provisionedOrganizationId: string | null;
+      };
+      replayed: boolean;
+    };
+    expect(submittedBody).toMatchObject({
+      application: {
+        legalName: 'HTTP 认证企业',
+        status: 'manual_review',
+        provisionedOrganizationId: null,
+      },
+      replayed: false,
+    });
+
+    const ownApplication = await fetch(
+      `${base}/enterprise/verification/application`,
+      { headers: { authorization: `Bearer ${applicantToken}` } },
+    );
+    expect(ownApplication.status).toBe(200);
+    await expect(ownApplication.json()).resolves.toMatchObject({
+      application: { id: submittedBody.application.id },
+    });
+
+    const enterpriseAdmin = database.createAccount({
+      username: 'verification-enterprise-admin',
+      password: 'verification-admin-password-1',
+      name: '企业管理员',
+      isAdmin: true,
+    });
+    const enterpriseAdminToken = database.createAuthSession(
+      enterpriseAdmin.id,
+    ).token;
+    const enterpriseAdminReview = await fetch(
+      `${base}/enterprise/platform/verifications`,
+      { headers: { authorization: `Bearer ${enterpriseAdminToken}` } },
+    );
+    expect(enterpriseAdminReview.status).toBe(403);
+
+    const badStatus = await fetch(
+      `${base}/enterprise/platform/verifications?status=secret_internal_state`,
+      { headers: { 'x-otto-admin-token': ADMIN_TOKEN } },
+    );
+    expect(badStatus.status).toBe(400);
+
+    const listed = await fetch(`${base}/enterprise/platform/verifications`, {
+      headers: { 'x-otto-admin-token': ADMIN_TOKEN },
+    });
+    expect(listed.status).toBe(200);
+    await expect(listed.json()).resolves.toMatchObject({
+      applications: [{ id: submittedBody.application.id }],
+      total: 1,
+    });
+
+    const evidenceDownload = await fetch(
+      `${base}/enterprise/platform/verifications/${encodeURIComponent(submittedBody.application.id)}/evidence/${encodeURIComponent(uploaded.evidence.reference)}`,
+      { headers: { 'x-otto-admin-token': ADMIN_TOKEN } },
+    );
+    expect(evidenceDownload.status).toBe(200);
+    expect(evidenceDownload.headers.get('x-content-type-options')).toBe(
+      'nosniff',
+    );
+    expect(evidenceDownload.headers.get('content-disposition')).toContain(
+      'attachment;',
+    );
+    expect(Buffer.from(await evidenceDownload.arrayBuffer())).toEqual(
+      Buffer.from('%PDF-1.7\nenterprise license'),
+    );
+
+    const approveUrl = `${base}/enterprise/platform/verifications/${encodeURIComponent(submittedBody.application.id)}/approve`;
+    const approved = await fetch(approveUrl, {
+      method: 'POST',
+      headers: {
+        'x-otto-admin-token': ADMIN_TOKEN,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ reviewNote: '材料核验通过' }),
+    });
+    expect(approved.status).toBe(200);
+    await expect(approved.json()).resolves.toMatchObject({
+      application: {
+        status: 'approved',
+        provisionedOrganizationId: applicant.organizationId,
+      },
+    });
+    expect(
+      database.getAccount(applicant.id, applicant.organizationId),
+    ).toMatchObject({
+      accountType: 'enterprise',
+      isAdmin: true,
+      positionTitle: 'CEO',
+    });
+
+    const repeatedApproval = await fetch(approveUrl, {
+      method: 'POST',
+      headers: {
+        'x-otto-admin-token': ADMIN_TOKEN,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ reviewNote: '重复审核不应重复升级' }),
+    });
+    expect(repeatedApproval.status).toBe(200);
+
+    const rejectedApplicant = database.createPersonalRegisteredAccount({
+      phone: '13800138102',
+      name: '被拒申请人',
+      password: 'verification-password-2',
+    });
+    const rejectedToken = database.createAuthSession(
+      rejectedApplicant.id,
+    ).token;
+    const rejectedHeaders = {
+      authorization: `Bearer ${rejectedToken}`,
+      'content-type': 'application/json',
+    };
+    const rejectedUpload = await fetch(
+      `${base}/enterprise/verification/evidence`,
+      {
+        method: 'POST',
+        headers: rejectedHeaders,
+        body: JSON.stringify(evidenceBody),
+      },
+    );
+    const rejectedEvidence = (await rejectedUpload.json()) as {
+      evidence: { reference: string; sha256: string };
+    };
+    const rejectedSubmit = await fetch(
+      `${base}/enterprise/verification/application`,
+      {
+        method: 'POST',
+        headers: rejectedHeaders,
+        body: JSON.stringify({
+          legalName: '拒绝测试企业',
+          unifiedSocialCreditCode: '91440300708461136T',
+          legalRepresentativeName: '拒绝代表',
+          applicantAuthority: 'legal_representative',
+          businessLicenseEvidence: rejectedEvidence.evidence,
+        }),
+      },
+    );
+    const rejectedApplication = (await rejectedSubmit.json()) as {
+      application: { id: string };
+    };
+    const rejectUrl = `${base}/enterprise/platform/verifications/${encodeURIComponent(rejectedApplication.application.id)}/reject`;
+    const rejected = await fetch(rejectUrl, {
+      method: 'POST',
+      headers: {
+        'x-otto-admin-token': ADMIN_TOKEN,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ reviewNote: '材料不满足认证条件' }),
+    });
+    expect(rejected.status).toBe(200);
+    await expect(rejected.json()).resolves.toMatchObject({
+      application: { status: 'rejected', provisionedOrganizationId: null },
+    });
+    expect(
+      database.getAccount(
+        rejectedApplicant.id,
+        rejectedApplicant.organizationId,
+      ),
+    ).toMatchObject({ accountType: 'personal', isAdmin: false });
+  });
 });

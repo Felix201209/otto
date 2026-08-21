@@ -39,6 +39,10 @@ import {
   createEnterpriseSkillMarketplaceComposition,
   ENTERPRISE_SKILL_MARKET_SCHEMA_CONTRIBUTOR,
 } from '../modules/enterprise_skill_market/index.js';
+import {
+  createEnterpriseVerificationComposition,
+  ENTERPRISE_VERIFICATION_SCHEMA_CONTRIBUTOR,
+} from '../modules/enterprise_verification/index.js';
 import { createIntegrationAdaptersComposition } from '../modules/integration_adapters/index.js';
 import {
   createFederationComposition,
@@ -248,7 +252,7 @@ const PRIVACY_DELETION_LEDGER_KEY_PATH = path.join(
 );
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
-export const ENTERPRISE_SCHEMA_VERSION = 22;
+export const ENTERPRISE_SCHEMA_VERSION = 23;
 export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
@@ -293,6 +297,7 @@ function initSchema(d: Database): void {
     }),
     PERSONAL_INTELLIGENCE_SCHEMA_CONTRIBUTOR,
     DATA_GOVERNANCE_SCHEMA_CONTRIBUTOR,
+    ENTERPRISE_VERIFICATION_SCHEMA_CONTRIBUTOR,
     PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR,
     FEDERATION_GATEWAY_SCHEMA_CONTRIBUTOR,
     MESH_RENDEZVOUS_SCHEMA_CONTRIBUTOR,
@@ -361,6 +366,7 @@ const attachmentObjectStore = createEncryptedObjectStore({
   root: ATTACHMENT_STORAGE_DIR,
   keyProvider: attachmentStorageKeyProvider,
 });
+
 const dataProtection = createDataProtectionService({
   dataDirectory: DATA_DIR,
   databasePath: DB_PATH,
@@ -405,6 +411,21 @@ export function closeEnterpriseDatabase(): void {
 
 export const getDB = dataPlatform.getDatabase;
 
+export const {
+  submitEnterpriseVerificationApplication,
+  getEnterpriseVerificationApplicationForApplicant,
+  listEnterpriseVerificationApplications,
+  cancelEnterpriseVerificationApplication,
+  approveEnterpriseVerificationApplication,
+  rejectEnterpriseVerificationApplication,
+  uploadEnterpriseVerificationEvidence,
+  readEnterpriseVerificationEvidence,
+} = createEnterpriseVerificationComposition({
+  db: getDB,
+  fieldCipher,
+  objectStore: attachmentObjectStore,
+  isPlatformReviewer: (reviewerId) => reviewerId === 'platform-system',
+});
 /** Credential-free storage topology for diagnostics and readiness output. */
 export function getEnterpriseServiceTopology() {
   return describeEnterpriseServiceTopology(ENTERPRISE_SERVICE_TOPOLOGY);

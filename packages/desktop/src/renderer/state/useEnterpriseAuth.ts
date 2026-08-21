@@ -9,6 +9,10 @@ import type {
   EnterpriseRegistrationIntent,
   EnterpriseSmsChallenge,
   EnterpriseSmsLoginChallenge,
+  EnterpriseVerificationApplication,
+  EnterpriseVerificationApplicationInput,
+  EnterpriseVerificationEvidenceUploadInput,
+  EnterpriseVerificationUploadedEvidence,
 } from '../../preload/index.js';
 
 type AuthStatus = 'loading' | 'signed-out' | 'signed-in';
@@ -59,6 +63,18 @@ export function useEnterpriseAuth(): {
       legalDocuments: EnterpriseLegalDocumentReference[];
     }): Promise<void>;
     joinEnterprise(input: { inviteCode: string }): Promise<void>;
+    getEnterpriseVerificationApplication(): Promise<
+      EnterpriseVerificationApplication | null
+    >;
+    uploadEnterpriseVerificationEvidence(
+      input: EnterpriseVerificationEvidenceUploadInput,
+    ): Promise<EnterpriseVerificationUploadedEvidence>;
+    submitEnterpriseVerificationApplication(
+      input: EnterpriseVerificationApplicationInput,
+    ): Promise<EnterpriseVerificationApplication>;
+    cancelEnterpriseVerificationApplication(): Promise<
+      EnterpriseVerificationApplication
+    >;
     logout(): Promise<void>;
     clearError(): void;
   };
@@ -324,6 +340,55 @@ export function useEnterpriseAuth(): {
     }
   }, []);
 
+  const runEnterpriseVerificationAction = useCallback(
+    async <T>(operation: () => Promise<T>): Promise<T> => {
+      setError(null);
+      try {
+        return await operation();
+      } catch (cause) {
+        setError(friendlyAuthError(cause));
+        throw cause;
+      }
+    },
+    [],
+  );
+
+  const getEnterpriseVerificationApplication = useCallback(
+    (): Promise<EnterpriseVerificationApplication | null> =>
+      runEnterpriseVerificationAction(() =>
+        window.otto.getEnterpriseVerificationApplication(),
+      ),
+    [runEnterpriseVerificationAction],
+  );
+
+  const uploadEnterpriseVerificationEvidence = useCallback(
+    (
+      input: EnterpriseVerificationEvidenceUploadInput,
+    ): Promise<EnterpriseVerificationUploadedEvidence> =>
+      runEnterpriseVerificationAction(() =>
+        window.otto.uploadEnterpriseVerificationEvidence(input),
+      ),
+    [runEnterpriseVerificationAction],
+  );
+
+  const submitEnterpriseVerificationApplication = useCallback(
+    (
+      input: EnterpriseVerificationApplicationInput,
+    ): Promise<EnterpriseVerificationApplication> =>
+      runEnterpriseVerificationAction(() =>
+        window.otto.submitEnterpriseVerificationApplication(input),
+      ),
+    [runEnterpriseVerificationAction],
+  );
+
+  const cancelEnterpriseVerificationApplication = useCallback(
+    (): Promise<EnterpriseVerificationApplication> =>
+      runEnterpriseVerificationAction(() =>
+        window.otto.cancelEnterpriseVerificationApplication(),
+      ),
+    [runEnterpriseVerificationAction],
+  );
+
   const logout = useCallback(async (): Promise<void> => {
     const epoch = authEpochRef.current + 1;
     authEpochRef.current = epoch;
@@ -354,6 +419,10 @@ export function useEnterpriseAuth(): {
       requestRegistrationCode,
       register,
       joinEnterprise,
+      getEnterpriseVerificationApplication,
+      uploadEnterpriseVerificationEvidence,
+      submitEnterpriseVerificationApplication,
+      cancelEnterpriseVerificationApplication,
       logout,
       clearError,
     },
@@ -361,5 +430,9 @@ export function useEnterpriseAuth(): {
     status, busy, serverUrl, account, registrationIntent, error,
     loginWithPassword, requestLoginCode, loginWithSms,
     requestRegistrationCode, register, joinEnterprise, logout, clearError,
+    getEnterpriseVerificationApplication,
+    uploadEnterpriseVerificationEvidence,
+    submitEnterpriseVerificationApplication,
+    cancelEnterpriseVerificationApplication,
   ]);
 }
