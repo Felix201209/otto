@@ -84,6 +84,13 @@ export interface PatternDetectionOptions {
   minSequenceLength?: number;
 }
 
+export interface AutoSkillGenerationOptions {
+  /** 手动分析默认允许；后台调度必须显式传 true。 */
+  allowModelAnalysis?: boolean;
+  /** 使用持久化日志 revision，避免后台对静态输入重复调用模型。 */
+  dedupeModelAnalysisByWorkLogRevision?: boolean;
+}
+
 const DEFAULT_OPTIONS: PatternDetectionOptions = {
   minOccurrences: 3,
   daysToAnalyze: 14,
@@ -324,6 +331,7 @@ export function generateLegacySkillContent(
 export async function generateSkillCandidates(
   config: Config,
   options: PatternDetectionOptions = {},
+  generationOptions: AutoSkillGenerationOptions = {},
 ): Promise<SkillCandidate[]> {
   const opts = { ...DEFAULT_OPTIONS, ...options };
   const logger = getWorkLogger();
@@ -367,26 +375,37 @@ export async function generateSkillCandidates(
   }
 
   // ── 调 LLM 做语义分析 ──────────────────────────────────────
-  try {
-    const llmCandidates = await callLLMForSkillCandidates(
-      config,
-      allEntries,
-      patterns.slice(0, 10),
-      rejected,
-      skillsDir,
-      existingSkills,
-      personalKnowledge,
+  let allowModelAnalysis = generationOptions.allowModelAnalysis ?? true;
+  if (
+    allowModelAnalysis &&
+    generationOptions.dedupeModelAnalysisByWorkLogRevision
+  ) {
+    allowModelAnalysis = await claimBackgroundModelAnalysisRevision(
+      createWorkLogRevision(allEntries),
     );
-    if (llmCandidates.length > 0) {
-      return rankAutoSkillCandidates(
-        mergeSkillCandidates(llmCandidates, workResultCandidates),
+  }
+  if (allowModelAnalysis) {
+    try {
+      const llmCandidates = await callLLMForSkillCandidates(
+        config,
+        allEntries,
+        patterns.slice(0, 10),
+        rejected,
+        skillsDir,
         existingSkills,
+        personalKnowledge,
+      );
+      if (llmCandidates.length > 0) {
+        return rankAutoSkillCandidates(
+          mergeSkillCandidates(llmCandidates, workResultCandidates),
+          existingSkills,
+        );
+      }
+    } catch (err) {
+      console.warn(
+        `[AutoSkill] LLM analysis failed, falling back to template: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
-  } catch (err) {
-    console.warn(
-      `[AutoSkill] LLM analysis failed, falling back to template: ${err instanceof Error ? err.message : String(err)}`,
-    );
   }
 
   // ── 回退：旧模板方式 ──────────────────────────────────────
@@ -419,6 +438,61 @@ export async function generateSkillCandidates(
     mergeSkillCandidates(candidates, workResultCandidates),
     existingSkills,
   );
+}
+
+function createWorkLogRevision(
+  allEntries: Array<{ date: string; entry: WorkLogEntry }>,
+): string {
+  const stableEntries = allEntries
+    .filter(({ entry }) => entry.toolName !== 'auto_skill_scan')
+    .map(({ date, entry }) => [
+      date,
+      entry.timestamp,
+      entry.toolName,
+      entry.action,
+      entry.category,
+      entry.success,
+      entry.entryType ?? null,
+      entry.taskTitle ?? null,
+      entry.userInput ?? null,
+      entry.details ?? null,
+    ])
+    .sort((left, right) =>
+      JSON.stringify(left).localeCompare(JSON.stringify(right)),
+    );
+  return createHash('sha256')
+    .update(JSON.stringify(stableEntries))
+    .digest('hex');
+}
+
+function backgroundModelAnalysisStatePath(): string {
+  return path.join(
+    resolveAutoSkillUserDir(),
+    'memory',
+    'worklog',
+    'auto_skill_scanner_state.json',
+  );
+}
+
+async function claimBackgroundModelAnalysisRevision(
+  revision: string,
+): Promise<boolean> {
+  const statePath = backgroundModelAnalysisStatePath();
+  try {
+    const parsed = JSON.parse(await fs.readFile(statePath, 'utf8')) as {
+      lastModelAnalysisRevision?: unknown;
+    };
+    if (parsed.lastModelAnalysisRevision === revision) return false;
+  } catch {
+    // 首次运行、旧文件损坏或不可读时按未分析处理。
+  }
+
+  // 在供应商调用前认领；即使请求超时或进程退出，也不会对同一批日志重复计费。
+  await writeJsonAtomic(statePath, {
+    lastModelAnalysisRevision: revision,
+    claimedAt: new Date().toISOString(),
+  });
+  return true;
 }
 
 function mergeSkillCandidates(
@@ -1309,7 +1383,8 @@ function formatTitle(steps: string[]): string {
 let globalFeishuNotifier: AutoSkillFeishuNotifier | null = null;
 let scanTimer: ReturnType<typeof setInterval> | null = null;
 let initialScanTimer: ReturnType<typeof setTimeout> | null = null;
-let scanInFlight = false;
+let scanInFlightPromise: Promise<void> | null = null;
+let scanAbortController: AbortController | null = null;
 
 // ── 实时触发监视器 ──
 let realtimeWatcher: AutoSkillRealtimeWatcherType | null = null;
@@ -1328,8 +1403,15 @@ export interface AutoSkillScannerOptions {
   initialDelayMs?: number;
   /** 周期，生产默认 24 小时；测试可缩短。 */
   intervalMs?: number;
+  /** 明确 opt-in：允许后台扫描调用付费模型；默认 false。 */
+  enableBackgroundModelAnalysis?: boolean;
   /** 每轮候选原子落盘后通知桌面/飞书刷新；不代表安装。 */
   onCandidatesStaged?: (candidates: SkillCandidate[]) => void | Promise<void>;
+}
+
+export interface AutoSkillScanOptions extends AutoSkillGenerationOptions {
+  /** 停止后台 scanner 后，不再暂存或通知尚未完成的扫描结果。 */
+  signal?: AbortSignal;
 }
 
 /** 注入飞书通知器 */
@@ -1345,15 +1427,20 @@ export function setAutoSkillFeishuNotifier(notifier: AutoSkillFeishuNotifier): v
 export async function scanAndStageSkillCandidates(
   config: Config,
   getUserId: () => string,
+  options: AutoSkillScanOptions = {},
 ): Promise<SkillCandidate[]> {
-  const candidates = await generateSkillCandidates(config);
+  if (options.signal?.aborted) return [];
+  const candidates = await generateSkillCandidates(config, {}, options);
+  if (options.signal?.aborted) return [];
   await savePendingSkillCandidates(candidates);
+  if (options.signal?.aborted) return [];
 
   if (candidates.length === 0) return candidates;
 
   if (globalFeishuNotifier) {
     await globalFeishuNotifier.notifyCandidate(getUserId(), candidates);
   }
+  if (options.signal?.aborted) return [];
 
   // 记工作日志（候选态，不代表已生成 Skill）。
   try {
@@ -1382,19 +1469,37 @@ export function startAutoSkillScanner(
   if (scanTimer || initialScanTimer) return false;
   const intervalMs = options.intervalMs ?? 24 * 60 * 60 * 1000;
   const initialDelayMs = options.initialDelayMs ?? 15_000;
+  const abortController = new AbortController();
+  scanAbortController = abortController;
 
   const scan = async (): Promise<void> => {
-    // 慢磁盘/大量日志时不叠加第二轮扫描。
-    if (scanInFlight) return;
-    scanInFlight = true;
-    try {
-      const candidates = await scanAndStageSkillCandidates(config, getUserId);
-      await options.onCandidatesStaged?.(candidates);
-    } catch (err) {
-      console.warn(`[AutoSkill] Scanner error: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      scanInFlight = false;
-    }
+    if (abortController.signal.aborted) return;
+    // 新一代 scanner 若紧跟在旧扫描停止后启动，应等待旧调用收尾，不能并发读写候选。
+    while (scanInFlightPromise) await scanInFlightPromise;
+    if (abortController.signal.aborted) return;
+
+    const promise = (async () => {
+      try {
+        const candidates = await scanAndStageSkillCandidates(config, getUserId, {
+          allowModelAnalysis: options.enableBackgroundModelAnalysis === true,
+          dedupeModelAnalysisByWorkLogRevision:
+            options.enableBackgroundModelAnalysis === true,
+          signal: abortController.signal,
+        });
+        if (abortController.signal.aborted) return;
+        await options.onCandidatesStaged?.(candidates);
+      } catch (err) {
+        if (!abortController.signal.aborted) {
+          console.warn(
+            `[AutoSkill] Scanner error: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+    })();
+    scanInFlightPromise = promise;
+    await promise.finally(() => {
+      if (scanInFlightPromise === promise) scanInFlightPromise = null;
+    });
   };
 
   initialScanTimer = setTimeout(async () => {
@@ -1410,7 +1515,9 @@ export function startAutoSkillScanner(
 }
 
 /** 停止定时扫描 */
-export function stopAutoSkillScanner(): void {
+export async function stopAutoSkillScanner(): Promise<void> {
+  scanAbortController?.abort();
+  scanAbortController = null;
   if (initialScanTimer) {
     clearTimeout(initialScanTimer);
     initialScanTimer = null;
@@ -1419,6 +1526,6 @@ export function stopAutoSkillScanner(): void {
     clearInterval(scanTimer);
     scanTimer = null;
   }
-  scanInFlight = false;
+  await scanInFlightPromise;
   console.log('[AutoSkill] Scanner stopped');
 }

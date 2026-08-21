@@ -57,6 +57,21 @@ describe('isClientToServer 守卫', () => {
 });
 
 describe('validateClientPayload 形状校验（第二道闸）', () => {
+  it('后台模型任务设置只接受显式布尔值', () => {
+    expect(
+      validateClientPayload({
+        type: 'set_setting',
+        payload: { key: 'backgroundModelTasksEnabled', value: true },
+      }),
+    ).toBeNull();
+    expect(
+      validateClientPayload({
+        type: 'set_setting',
+        payload: { key: 'backgroundModelTasksEnabled', value: 'true' },
+      }),
+    ).toContain('布尔');
+  });
+
   it('合法 send_user_message → null（通过）', () => {
     expect(
       validateClientPayload({

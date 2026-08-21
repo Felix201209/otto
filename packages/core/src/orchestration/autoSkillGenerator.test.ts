@@ -35,6 +35,20 @@ const tempDirs: string[] = [];
 const fakeConfig = {} as Config;
 let previousUserDir: string | undefined;
 
+function configWithModel() {
+  const sendMessage = vi.fn().mockResolvedValue({
+    candidates: [
+      { content: { parts: [{ text: '{"skills":[]}' }] } },
+    ],
+  });
+  const createTemporaryChat = vi.fn().mockResolvedValue({ sendMessage });
+  const config = {
+    getOttoClient: () => ({ createTemporaryChat }),
+    getTargetDir: () => undefined,
+  } as unknown as Config;
+  return { config, createTemporaryChat };
+}
+
 function entry(action: string, day: number): WorkLogEntry {
   return {
     timestamp: `2026-07-${String(day).padStart(2, '0')}T09:00:00.000Z`,
@@ -85,7 +99,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  stopAutoSkillScanner();
+  await stopAutoSkillScanner();
   vi.useRealTimers();
   if (previousUserDir === undefined) delete process.env['OTTO_USER_DIR'];
   else process.env['OTTO_USER_DIR'] = previousUserDir;
@@ -272,5 +286,80 @@ describe('AutoSkillGenerator 个人 Skill 候选闭环', () => {
     expect(onCandidatesStaged).toHaveBeenCalledTimes(1);
     expect(candidates).toHaveLength(1);
     await expect(fs.access(candidates[0].filePath)).rejects.toThrow();
+  });
+
+  it('后台定时扫描默认不调用模型，手动立即分析仍可调用模型', async () => {
+    vi.useFakeTimers();
+    const { config, createTemporaryChat } = configWithModel();
+
+    startAutoSkillScanner(config, () => 'user-1', {
+      initialDelayMs: 1,
+      intervalMs: 60_000,
+    });
+    await vi.advanceTimersByTimeAsync(1);
+    await stopAutoSkillScanner();
+    expect(createTemporaryChat).not.toHaveBeenCalled();
+
+    await scanAndStageSkillCandidates(config, () => 'user-1');
+    expect(createTemporaryChat).toHaveBeenCalledTimes(1);
+  });
+
+  it('显式 opt-in 后同一批日志只调用模型一次，重启 scanner 也不重复', async () => {
+    vi.useFakeTimers();
+    const { config, createTemporaryChat } = configWithModel();
+
+    startAutoSkillScanner(config, () => 'user-1', {
+      initialDelayMs: 1,
+      intervalMs: 100,
+      enableBackgroundModelAnalysis: true,
+    });
+    await vi.advanceTimersByTimeAsync(101);
+    await stopAutoSkillScanner();
+    expect(createTemporaryChat).toHaveBeenCalledTimes(1);
+
+    startAutoSkillScanner(config, () => 'user-1', {
+      initialDelayMs: 1,
+      intervalMs: 100,
+      enableBackgroundModelAnalysis: true,
+    });
+    await vi.advanceTimersByTimeAsync(1);
+    await stopAutoSkillScanner();
+    expect(createTemporaryChat).toHaveBeenCalledTimes(1);
+  });
+
+  it('停止 scanner 会取消尚未开始的后台扫描', async () => {
+    vi.useFakeTimers();
+    startAutoSkillScanner(fakeConfig, () => 'user-1', {
+      initialDelayMs: 50,
+      intervalMs: 60_000,
+    });
+
+    await stopAutoSkillScanner();
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(workLogMock.readDateRange).not.toHaveBeenCalled();
+  });
+
+  it('停止后丢弃尚未结束的扫描结果，不写候选也不通知', async () => {
+    vi.useFakeTimers();
+    let resolveLogs!: (logs: Record<string, WorkLogEntry[]>) => void;
+    workLogMock.readDateRange.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveLogs = resolve; }),
+    );
+    const onCandidatesStaged = vi.fn();
+    startAutoSkillScanner(fakeConfig, () => 'user-1', {
+      initialDelayMs: 1,
+      intervalMs: 60_000,
+      onCandidatesStaged,
+    });
+    await vi.advanceTimersByTimeAsync(1);
+
+    const stopping = stopAutoSkillScanner();
+    resolveLogs(repeatedPatternLogs());
+    await stopping;
+    await vi.runAllTimersAsync();
+
+    expect(onCandidatesStaged).not.toHaveBeenCalled();
+    expect(await listPendingSkillCandidates()).toEqual([]);
   });
 });

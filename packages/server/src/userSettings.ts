@@ -29,9 +29,14 @@ export function userSettingsFilePath(homeDir = os.homedir()): string {
   return path.join(homeDir, SETTINGS_DIR_NAME, SETTINGS_FILE);
 }
 
-/** 本文件关心的字段子集（其余字段读时原样保留在 raw 里，写回不丢）。 */
+/**
+ * 本文件关心的字段子集（其余字段读时原样保留在 raw 里，写回不丢）。
+ * 安全默认：后台模型任务关闭，工具授权保持手动。
+ */
 export interface UserSettingsSubset {
   healthyUse?: boolean;
+  /** 允许空闲时调用当前模型执行自动压缩、习惯分析和 Auto Skill。默认关闭。 */
+  backgroundModelTasksEnabled?: boolean;
   preferredLanguage?: string;
   mcpServers?: Record<string, MCPServerConfig>;
   /** 桌面端全局自动授权；仅放行非高危操作。 */
@@ -100,6 +105,7 @@ export function loadUserSettingsSubset(
       typeof raw['healthyUse'] === 'boolean'
         ? (raw['healthyUse'] as boolean)
         : true,
+    backgroundModelTasksEnabled: raw['backgroundModelTasksEnabled'] === true,
     preferredLanguage:
       typeof raw['preferredLanguage'] === 'string'
         ? (raw['preferredLanguage'] as string)

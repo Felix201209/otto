@@ -23,7 +23,7 @@ import {
   type Server as HttpServer,
   type ServerResponse,
 } from 'node:http';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { homedir } from 'node:os';
@@ -44,6 +44,7 @@ import {
   type MessageContent,
   type MessageSource,
   type ModelInfo,
+  type OttoMessage,
   type SessionSummary,
   type ServerToClient,
   type SettingsSnapshot,
@@ -178,6 +179,36 @@ const AUTO_COMPRESS_MIN_MESSAGES = 30;
 /** 后台维护周期（ms）：记忆合并/压缩 + 上下文自动压缩。 */
 const MAINTENANCE_INTERVAL_MS = 10 * 60 * 1000;
 
+interface AutoCompressionWatermark {
+  /** 只包含会影响上下文的内容，不包含状态等瞬时字段。 */
+  contentRevision: string;
+  /** 只有追加消息才变化；单条流式消息的 patch 不会伪装成新一轮对话。 */
+  newMessageWatermark: string;
+}
+
+function autoCompressionWatermark(
+  messages: OttoMessage[],
+): AutoCompressionWatermark {
+  const lastMessage = messages.at(-1);
+  const contentRevision = createHash('sha256')
+    .update(
+      JSON.stringify(
+        messages.map((message) => ({
+          role: message.role,
+          content: message.content,
+          source: message.source,
+          reasoning: message.reasoning,
+          associatedToolCalls: message.associatedToolCalls,
+        })),
+      ),
+    )
+    .digest('base64url');
+  return {
+    contentRevision,
+    newMessageWatermark: `${messages.length}:${lastMessage?.id ?? ''}:${lastMessage?.timestamp ?? 0}`,
+  };
+}
+
 function publicAutoSkillCandidate(
   candidate: SkillCandidate,
 ): AutoSkillCandidateInfo {
@@ -311,6 +342,11 @@ export interface OttoServerOptions {
   productWorkspaceStore?: ProductWorkspaceStore;
   /** 聊天附件服务端缓存目录；测试可注入临时目录。 */
   chatFileCacheDir?: string;
+  /**
+   * 后台模型任务测试/嵌入式显式开关。省略时读取用户设置；false 不得被设置覆盖。
+   * 产品界面通过 backgroundModelTasksEnabled 设置控制，不应静默传 true。
+   */
+  backgroundModelTasksEnabled?: boolean;
 }
 
 /** 飞书凭证存取接口（可注入；默认实现走 feishu/vendor/credentials.ts）。 */
@@ -399,8 +435,16 @@ export class OttoServer {
   private externalInboundUnsub?: () => void;
   /** 进程级自动 Skill 扫描器由当前 server 实例启动时，停机时负责释放。 */
   private autoSkillScannerStarted = false;
+  private backgroundModelTasksStarted = false;
+  private backgroundModelTasksEnabled: boolean;
   private readonly productWorkspace: ProductWorkspaceStore;
   private readonly chatFileCacheDir?: string;
+  /** 同一内容 revision 最多自动尝试一次；只有追加新消息后才产生下一次机会。 */
+  private readonly autoCompressionAttempts = new Map<
+    string,
+    AutoCompressionWatermark
+  >();
+  private readonly autoCompressionAbortControllers = new Set<AbortController>();
 
   constructor(opts: OttoServerOptions = {}) {
     this.host = opts.host ?? DEFAULT_HOST;
@@ -417,8 +461,12 @@ export class OttoServer {
     this.productWorkspace =
       opts.productWorkspaceStore ?? new ProductWorkspaceStore();
     this.chatFileCacheDir = opts.chatFileCacheDir;
-    this.globalAuthorizationMode =
-      loadUserSettingsSubset().authorizationMode ?? 'manual';
+    const userSettings = loadUserSettingsSubset();
+    this.globalAuthorizationMode = userSettings.authorizationMode ?? 'manual';
+    this.backgroundModelTasksEnabled =
+      opts.backgroundModelTasksEnabled !== undefined
+        ? opts.backgroundModelTasksEnabled
+        : userSettings.backgroundModelTasksEnabled === true;
   }
 
   /** mock 只允许测试显式开启；真实用户没有个人 API 时必须明确报错。 */
@@ -514,59 +562,9 @@ export class OttoServer {
       await origStop();
     };
 
-    // 自动 Skill 只分析本地工作日志并暂存“待确认候选”，不会直接写 SKILL.md。
-    // 延迟首扫 15 秒，避免与桌面首屏初始化争抢磁盘；定时器 unref，不阻塞进程退出。
-    try {
-      const scannerConfig = createCoreConfig({
-        sessionId: 'auto-skill-scanner',
-      });
-      setAutoSkillConfigForProfile(scannerConfig);
-
-      // 实时触发监视器：每完成一个操作就检查是否达到重复阈值
-      const realtimeWatcher = new AutoSkillRealtimeWatcher({ threshold: 3 });
-      realtimeWatcher.setCallback((summary) => {
-        this.broadcastAll({
-          type: "realtime_pattern",
-          payload: {
-            pattern: summary.pattern,
-            count: summary.count,
-            samples: summary.samples,
-            suggestion: summary.suggestion,
-            timestamp: new Date().toISOString(),
-          },
-        });
-      });
-      setRealtimeWatcher(realtimeWatcher);
-
-      // 习惯分析引擎：后台积累操作日志，定期调LLM做深度分析
-      const habitAnalyzer = getHabitAnalyzer();
-      habitAnalyzer.setConfig(scannerConfig);
-      habitAnalyzer.setCallback((insights) => {
-        this.broadcastAll({
-          type: "habit_insight",
-          payload: { insights },
-        });
-      });
-      habitAnalyzer.start();
-
-
-      this.autoSkillScannerStarted = startAutoSkillScanner(
-        scannerConfig,
-        () => this.productWorkspace.snapshot().context.userId,
-        {
-          onCandidatesStaged: (candidates) => {
-            this.broadcastAll({
-              type: 'pending_auto_skills',
-              payload: { candidates: candidates.map(publicAutoSkillCandidate) },
-            });
-          },
-        },
-      );
-    } catch (error) {
-      console.warn(
-        `[AutoSkill] Scanner startup skipped: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    // 本地重复模式观察不调用模型；付费后台任务仅在用户明确开启后启动。
+    this.installRealtimePatternWatcher();
+    this.startBackgroundModelTasks();
 
     if (this.enableFeishu) {
       // ── registerFeishu 接缝（Issue #3）──
@@ -628,6 +626,91 @@ export class OttoServer {
     }
   }
 
+  /** 本地重复模式提示不调用模型，因此可常驻；停机时仍会移除全局引用。 */
+  private installRealtimePatternWatcher(): void {
+    const realtimeWatcher = new AutoSkillRealtimeWatcher({ threshold: 3 });
+    realtimeWatcher.setCallback((summary) => {
+      this.broadcastAll({
+        type: 'realtime_pattern',
+        payload: {
+          pattern: summary.pattern,
+          count: summary.count,
+          samples: summary.samples,
+          suggestion: summary.suggestion,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    });
+    setRealtimeWatcher(realtimeWatcher);
+  }
+
+  /** 只在用户明确开启后启动可能调用当前模型并产生费用的后台任务。 */
+  private startBackgroundModelTasks(): void {
+    if (!this.backgroundModelTasksEnabled || this.backgroundModelTasksStarted) {
+      return;
+    }
+    try {
+      const scannerConfig = createCoreConfig({
+        sessionId: 'background-model-tasks',
+      });
+      setAutoSkillConfigForProfile(scannerConfig);
+
+      const habitAnalyzer = getHabitAnalyzer();
+      habitAnalyzer.setConfig(scannerConfig);
+      habitAnalyzer.setLlmAnalysisEnabled(true);
+      habitAnalyzer.setCallback((insights) => {
+        this.broadcastAll({
+          type: 'habit_insight',
+          payload: { insights },
+        });
+      });
+      habitAnalyzer.start();
+
+      this.autoSkillScannerStarted = startAutoSkillScanner(
+        scannerConfig,
+        () => this.productWorkspace.snapshot().context.userId,
+        {
+          enableBackgroundModelAnalysis: true,
+          onCandidatesStaged: (candidates) => {
+            this.broadcastAll({
+              type: 'pending_auto_skills',
+              payload: { candidates: candidates.map(publicAutoSkillCandidate) },
+            });
+          },
+        },
+      );
+      this.backgroundModelTasksStarted = true;
+    } catch (error) {
+      const habitAnalyzer = getHabitAnalyzer();
+      habitAnalyzer.setLlmAnalysisEnabled(false);
+      habitAnalyzer.stop();
+      if (this.autoSkillScannerStarted) {
+        void stopAutoSkillScanner();
+        this.autoSkillScannerStarted = false;
+      }
+      console.warn(
+        `[BackgroundModelTasks] Startup skipped: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /** 关闭后不得再启动新付费调用；各模块同时撤销尚未完成的后台工作。 */
+  private async stopBackgroundModelTasks(): Promise<void> {
+    const habitAnalyzer = getHabitAnalyzer();
+    habitAnalyzer.setLlmAnalysisEnabled(false);
+    habitAnalyzer.stop();
+    if (this.autoSkillScannerStarted) {
+      await stopAutoSkillScanner();
+      this.autoSkillScannerStarted = false;
+    }
+    this.backgroundModelTasksStarted = false;
+    this.autoCompressionAttempts.clear();
+    for (const controller of this.autoCompressionAbortControllers) {
+      controller.abort();
+    }
+    this.autoCompressionAbortControllers.clear();
+  }
+
   /** 停止服务（取消并释放所有活跃 runtime，再关 WS、HTTP、飞书）。 */
   async stop(): Promise<void> {
     this.externalInboundUnsub?.();
@@ -636,10 +719,8 @@ export class OttoServer {
       clearTimeout(this.enterpriseLeaseTimer);
       this.enterpriseLeaseTimer = undefined;
     }
-    if (this.autoSkillScannerStarted) {
-      stopAutoSkillScanner();
-      this.autoSkillScannerStarted = false;
-    }
+    await this.stopBackgroundModelTasks();
+    setRealtimeWatcher(null);
     this.workflowUnsub?.();
     this.workflowUnsub = undefined;
     try { getProactiveService().stopScheduler(); } catch { /* ignore */ }
@@ -1306,6 +1387,7 @@ export class OttoServer {
     return {
       agentStyle: projectMgr.getAgentStyle(),
       healthyUse: userSubset.healthyUse ?? true,
+      backgroundModelTasksEnabled: this.backgroundModelTasksEnabled,
       preferredLanguage: userSubset.preferredLanguage,
     };
   }
@@ -1350,6 +1432,17 @@ export class OttoServer {
           } catch {
             // 忽略单个会话失败。
           }
+        }
+      } else if (key === 'backgroundModelTasksEnabled') {
+        if (typeof value !== 'boolean') {
+          throw new Error('backgroundModelTasksEnabled 的值必须是布尔');
+        }
+        patchUserSettings({ backgroundModelTasksEnabled: value });
+        this.backgroundModelTasksEnabled = value;
+        if (value) {
+          this.startBackgroundModelTasks();
+        } else {
+          await this.stopBackgroundModelTasks();
         }
       } else if (key === 'preferredLanguage') {
         if (typeof value !== 'string') {
@@ -1870,26 +1963,56 @@ export class OttoServer {
    * 设计原则：
    *   - 只压 idle 会话（不影响用户正在活跃对话的）
    *   - 消息数 ≥ AUTO_COMPRESS_MIN_MESSAGES 才触发
-   *   - 每个会话在一次周期内最多压一次（isCompressionInProgress 防重入）
+   *   - 默认关闭，仅在用户明确开启“后台智能分析”后运行
+   *   - 同一内容 revision 最多尝试一次，且不使用强制压缩
+   *   - 每轮最多发起 3 次真实供应商调用；无 runtime 的会话不占额度
    *   - 静默失败：压缩异常不影响其他会话和主对话流
    */
   private async runAutoCompressionCycle(): Promise<void> {
+    if (!this.backgroundModelTasksEnabled) return;
+
     const sessions = this.store.listSessions();
-    const candidates = sessions.filter(
-      (s) =>
-        s.status === 'idle' && s.messageCount >= AUTO_COMPRESS_MIN_MESSAGES,
+    const activeSessionIds = new Set(
+      sessions.map((session) => session.sessionId),
     );
+    for (const sessionId of this.autoCompressionAttempts.keys()) {
+      if (!activeSessionIds.has(sessionId)) {
+        this.autoCompressionAttempts.delete(sessionId);
+      }
+    }
+    const candidates = sessions
+      .filter(
+        (session) =>
+          session.status === 'idle' &&
+          session.messageCount >= AUTO_COMPRESS_MIN_MESSAGES,
+      )
+      .map((session) => ({
+        session,
+        watermark: autoCompressionWatermark(
+          this.store.getHistory(session.sessionId),
+        ),
+      }))
+      .filter(({ session, watermark }) => {
+        const previous = this.autoCompressionAttempts.get(session.sessionId);
+        if (!previous) return true;
+        return (
+          previous.newMessageWatermark !== watermark.newMessageWatermark &&
+          previous.contentRevision !== watermark.contentRevision
+        );
+      });
 
     if (candidates.length === 0) return;
 
     // 按消息数降序，优先压缩最臃肿的会话
-    candidates.sort((a, b) => b.messageCount - a.messageCount);
+    candidates.sort((a, b) => b.session.messageCount - a.session.messageCount);
 
     const MAX_PER_CYCLE = 3;
+    let attempted = 0;
     let compressed = 0;
     let skipped = 0;
 
-    for (const session of candidates.slice(0, MAX_PER_CYCLE)) {
+    for (const { session, watermark } of candidates) {
+      if (attempted >= MAX_PER_CYCLE) break;
       try {
         const runtime = this.store.getRuntime(session.sessionId);
         if (!runtime) {
@@ -1909,11 +2032,18 @@ export class OttoServer {
           continue; // 已有压缩任务
         }
 
-        const info = await client.tryCompressChat(
-          `${session.sessionId}-auto-${Date.now()}`,
-          new AbortController().signal,
-          true,
-        );
+        // 在调用供应商前认领 revision，避免周期重叠或超时后的重复计费。
+        this.autoCompressionAttempts.set(session.sessionId, watermark);
+        attempted++;
+        const controller = new AbortController();
+        this.autoCompressionAbortControllers.add(controller);
+        const info = await client
+          .tryCompressChat(
+            `${session.sessionId}-auto-${Date.now()}`,
+            controller.signal,
+            false,
+          )
+          .finally(() => this.autoCompressionAbortControllers.delete(controller));
 
         if (info) {
           compressed++;
@@ -1940,9 +2070,9 @@ export class OttoServer {
       }
     }
 
-    if (compressed > 0 || skipped > 0) {
+    if (attempted > 0 || skipped > 0) {
       console.log(
-        `[Server] Auto-compression cycle: ${compressed} compressed, ${skipped} skipped ` +
+        `[Server] Auto-compression cycle: ${attempted} attempted, ${compressed} compressed, ${skipped} skipped ` +
           `(out of ${candidates.length} candidates)`,
       );
     }
