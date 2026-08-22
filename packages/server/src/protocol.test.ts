@@ -212,6 +212,22 @@ describe('validateClientPayload 形状校验（第二道闸）', () => {
         payload: { sessionId: 's1', model: 'm1' },
       }),
     ).toBeNull();
+    expect(
+      validateClientPayload({
+        type: 'set_model',
+        payload: {
+          sessionId: 's1',
+          model: 'm2',
+          confirmedUnknownOutcomeRequestId: 'otto-model-request-1',
+        },
+      }),
+    ).toBeNull();
+    expect(
+      validateClientPayload({
+        type: 'set_model',
+        payload: { sessionId: 's1', model: 'm2', confirmedUnknownOutcomeRequestId: '   ' },
+      }),
+    ).not.toBeNull();
   });
 
   it('save_custom_model：必填字段缺失 → 拒绝；齐全 → 通过', () => {

@@ -23,7 +23,12 @@ import { logger } from '../utils/enhancedLogger.js';
 import { UnauthorizedError, isOurAuthError } from '../utils/errors.js';
 import { SceneType, SceneManager } from './sceneManager.js';
 import { retryWithBackoff } from '../utils/retry.js';
-import { isOttoQuotaError } from '../utils/quotaErrorDetection.js';
+import {
+  ModelRequestSafetyError,
+  canAutomaticallyRetryModelRequest,
+  classifyModelRequestFailure,
+  generateModelRequestId,
+} from './modelRequestSafety.js';
 
 import { realTimeTokenEventManager } from '../events/realTimeTokenEvents.js';
 import { MESSAGE_ROLES } from '../config/messageRoles.js';
@@ -804,65 +809,12 @@ export class OttoServerAdapter implements ContentGenerator {
       {
         // 使用标准退避配置，适合大多数场景
         // 对于大量工具调用场景，可以在调用处设置 aggressiveBackoff: true
-        shouldRetry: (error: Error) => {
-          // 🚫 Otto配额错误(402) - 不重试，立即显示友好提示
-          if (isOttoQuotaError(error)) {
-            return false;
-          }
-          // 🚫 用户取消 - 不重试
-          if (error.message.includes('cancelled by user') || error.name === 'AbortError') {
-            return false;
-          }
-          // 🚫 认证错误 - 不重试
-          if (error.message.includes('401') || error instanceof UnauthorizedError) {
-            return false;
-          }
-          // 🚫 区域封锁 - 不重试
-          if (error.message.includes('451') || error.message.includes('REGION_BLOCKED')) {
-            return false;
-          }
-          // ✅ 429 限流 - 重试
-          if (error.message.includes('429')) {
-            return true;
-          }
-          // ✅ 5xx 服务器错误 - 重试
-          if (error.message.match(/5\d{2}/)) {
-            return true;
-          }
-          // ✅ 传输中断/连接异常 - 重试
-          const errorMessage = error.message.toLowerCase();
-          const retriableError = error as RetriableProxyError;
-          const errorCode = retriableError.cause?.code ?? retriableError.code;
-          if (
-            errorMessage.includes('terminated') ||
-            errorMessage.includes('socket hang up') ||
-            errorMessage.includes('connection closed') ||
-            errorMessage.includes('other side closed')
-          ) {
-            return true;
-          }
-          if (
-            errorCode &&
-            [
-              'ECONNRESET',
-              'ECONNABORTED',
-              'ECONNREFUSED',
-              'EPIPE',
-              'ETIMEDOUT',
-              'UND_ERR_SOCKET',
-              'UND_ERR_CONNECT_TIMEOUT',
-              'UND_ERR_HEADERS_TIMEOUT',
-              'UND_ERR_BODY_TIMEOUT'
-            ].includes(errorCode)
-          ) {
-            return true;
-          }
-          // ✅ 网络连接错误 - 重试
-          if (error instanceof TypeError && error.message.includes('fetch failed')) {
-            return true;
-          }
-          return false;
-        },
+        maxAttempts: 2,
+        initialDelayMs: 250,
+        maxDelayMs: 1_000,
+        shouldRetry: (error) =>
+          error instanceof ModelRequestSafetyError
+          && canAutomaticallyRetryModelRequest(error),
       }
     );
   }
@@ -872,6 +824,7 @@ export class OttoServerAdapter implements ContentGenerator {
    * 被 callUnifiedChatAPI 通过 retryWithBackoff 包装调用
    */
   private async executeUnifiedChatAPICall(endpoint: string, requestBody: ProxyRequestBody, abortSignal?: AbortSignal, sceneType?: string): Promise<GenerateContentResponse> {
+    const requestId = modelRequestId(requestBody);
     const userHeaders = await proxyAuthManager.getUserHeaders(sceneType);
     const proxyUrl = buildProxyRequestUrl(
       proxyAuthManager.getProxyServerUrl(),
@@ -902,7 +855,9 @@ export class OttoServerAdapter implements ContentGenerator {
     // 第2层（数据层）：响应头后，300秒内必须完成 response.json() 解析
     //   - 保护完整响应体的接收和 JSON 反序列化
     //   - 总请求时间 = 连接等待 + 数据接收 + 解析，均有保护
+    let timedOut = false;
     const fetchTimeoutId = setTimeout(() => {
+      timedOut = true;
       console.warn('[Otto Server] API fetch timeout - aborting connection layer after 300s. Try: check your network, or say "continue" to retry.');
       controller.abort();
     }, 300000);
@@ -912,6 +867,7 @@ export class OttoServerAdapter implements ContentGenerator {
     // withTimeout(response.json()) reject 时这个 300s 幽灵定时器永不清除，
     // 会一直拖住 AbortController 闭包并在 300s 后对已结束请求误触发 abort。
     let dataTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    let responseHeaders: Headers | undefined;
 
     const startTime = Date.now();
 
@@ -954,16 +910,20 @@ export class OttoServerAdapter implements ContentGenerator {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-Otto-Request-Id': requestId,
+          'Idempotency-Key': requestId,
           ...userHeaders,
         },
         body: JSON.stringify(requestBody),
         signal: controller.signal,
       });
+      responseHeaders = response.headers;
 
       // 🚨 获取响应头后清理连接层超时，启用数据层超时
       // 响应头已收到说明连接正常，现在保护响应体接收和解析阶段
       clearTimeout(fetchTimeoutId);
       dataTimeoutId = setTimeout(() => {
+        timedOut = true;
         console.warn('[Otto Server] API data timeout - response.json() taking too long (>300s) in data layer. Try: check your network, say "continue" to retry, or try a different model.');
         controller.abort();
       }, 300000);
@@ -990,19 +950,15 @@ export class OttoServerAdapter implements ContentGenerator {
           throw new Error(`REGION_BLOCKED_451: ${errorText}`);
         }
 
-        // 🆕 为 429/5xx 错误创建带状态码的错误对象，便于重试逻辑判断
-        const apiError = new Error(`API request failed (${response.status}): ${errorText}`);
-        const retriableError = apiError as RetriableProxyError;
-        retriableError.status = response.status;
-        // 🆕 尝试解析 Retry-After 头，传递给重试逻辑
-        const retryAfter = response.headers.get('retry-after');
-        if (retryAfter) {
-          retriableError.response = {
-            status: response.status,
-            headers: { 'retry-after': retryAfter }
-          };
-        }
-        throw apiError;
+        throw classifyModelRequestFailure({
+          requestId,
+          message: `API request failed (${response.status}): ${errorText}`,
+          kind: 'http_error',
+          httpStatus: response.status,
+          headers: response.headers,
+          providerRequestId: response.headers.get('x-upstream-request-id'),
+          receivedResponseHeaders: true,
+        });
       }
 
       // 🚨 第三层保护：response.json() 解析也有独立的 300s 超时
@@ -1058,6 +1014,7 @@ export class OttoServerAdapter implements ContentGenerator {
 
       // 用户取消请求的优雅处理
       if (error instanceof Error &&
+          abortSignal?.aborted &&
           (error.message.includes('cancelled by user') || error.name === 'AbortError')) {
         console.log('⚠️  任务已取消');
         throw error;
@@ -1084,7 +1041,22 @@ export class OttoServerAdapter implements ContentGenerator {
         });
       }
 
-      throw error;
+      if (
+        error instanceof ModelRequestSafetyError ||
+        error instanceof UnauthorizedError ||
+        (error instanceof Error && error.message.includes('REGION_BLOCKED_451'))
+      ) {
+        throw error;
+      }
+      throw classifyModelRequestFailure({
+        requestId,
+        message: error instanceof Error ? error.message : 'model request failed',
+        kind: timedOut ? 'timeout' : responseHeaders ? 'response_lost' : 'connection_not_established',
+        cause: error,
+        headers: responseHeaders,
+        providerRequestId: responseHeaders?.get('x-upstream-request-id'),
+        receivedResponseHeaders: Boolean(responseHeaders),
+      });
     } finally {
       // 🚨 最终清理：确保资源一定被释放
       clearTimeout(fetchTimeoutId);
@@ -1256,7 +1228,7 @@ export class OttoServerAdapter implements ContentGenerator {
       const response = await this.callStreamAPI('/v1/chat/stream', streamRequest, request.config?.abortSignal, sceneValue);
 
       // 返回流式生成器
-      return this.createStreamGenerator(response, request.config?.abortSignal);
+      return this.createStreamGenerator(response, request.config?.abortSignal, modelRequestId(streamRequest));
 
     } catch (error) {
       logger.error('[Otto Server] Stream request failed', { error });
@@ -1274,65 +1246,12 @@ export class OttoServerAdapter implements ContentGenerator {
     return retryWithBackoff(
       () => this.executeStreamAPICall(endpoint, requestBody, abortSignal, sceneType),
       {
-        shouldRetry: (error: Error) => {
-          // 🚫 Otto配额错误(402) - 不重试，立即显示友好提示
-          if (isOttoQuotaError(error)) {
-            return false;
-          }
-          // 🚫 用户取消 - 不重试
-          if (error.message.includes('cancelled by user') || error.name === 'AbortError') {
-            return false;
-          }
-          // 🚫 认证错误 - 不重试
-          if (error.message.includes('401') || error instanceof UnauthorizedError) {
-            return false;
-          }
-          // 🚫 区域封锁 - 不重试
-          if (error.message.includes('451') || error.message.includes('REGION_BLOCKED')) {
-            return false;
-          }
-          // ✅ 429 限流 - 重试
-          if (error.message.includes('429')) {
-            return true;
-          }
-          // ✅ 5xx 服务器错误 - 重试
-          if (error.message.match(/5\d{2}/)) {
-            return true;
-          }
-          // ✅ 传输中断/连接异常 - 重试
-          const errorMessage = error.message.toLowerCase();
-          const retryError = error as RetriableProxyError;
-          const errorCode = retryError.cause?.code || retryError.code;
-          if (
-            errorMessage.includes('terminated') ||
-            errorMessage.includes('socket hang up') ||
-            errorMessage.includes('connection closed') ||
-            errorMessage.includes('other side closed')
-          ) {
-            return true;
-          }
-          if (
-            errorCode &&
-            [
-              'ECONNRESET',
-              'ECONNABORTED',
-              'ECONNREFUSED',
-              'EPIPE',
-              'ETIMEDOUT',
-              'UND_ERR_SOCKET',
-              'UND_ERR_CONNECT_TIMEOUT',
-              'UND_ERR_HEADERS_TIMEOUT',
-              'UND_ERR_BODY_TIMEOUT'
-            ].includes(errorCode)
-          ) {
-            return true;
-          }
-          // ✅ 网络连接错误 - 重试
-          if (error instanceof TypeError && error.message.includes('fetch failed')) {
-            return true;
-          }
-          return false;
-        },
+        maxAttempts: 2,
+        initialDelayMs: 250,
+        maxDelayMs: 1_000,
+        shouldRetry: (error) =>
+          error instanceof ModelRequestSafetyError
+          && canAutomaticallyRetryModelRequest(error),
       }
     );
   }
@@ -1342,6 +1261,7 @@ export class OttoServerAdapter implements ContentGenerator {
    * 被 callStreamAPI 通过 retryWithBackoff 包装调用
    */
   private async executeStreamAPICall(endpoint: string, requestBody: ProxyRequestBody, abortSignal?: AbortSignal, sceneType?: string): Promise<Response> {
+    const requestId = modelRequestId(requestBody);
     const userHeaders = await proxyAuthManager.getUserHeaders(sceneType);
     const proxyUrl = buildProxyRequestUrl(
       proxyAuthManager.getProxyServerUrl(),
@@ -1393,6 +1313,7 @@ export class OttoServerAdapter implements ContentGenerator {
     // 4. 用户可以通过 abortSignal 随时取消请求
 
     const startTime = Date.now();
+    let responseHeaders: Headers | undefined;
 
     try {
       console.log('[Otto Server] Making stream API call', {
@@ -1420,12 +1341,15 @@ export class OttoServerAdapter implements ContentGenerator {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-Otto-Request-Id': requestId,
+          'Idempotency-Key': requestId,
           'Accept': 'text/event-stream',
           ...userHeaders,
         },
         body: JSON.stringify(requestBody),
         signal: controller.signal,
       });
+      responseHeaders = response.headers;
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -1448,10 +1372,15 @@ export class OttoServerAdapter implements ContentGenerator {
           throw new Error(`REGION_BLOCKED_451: ${errorText}`);
         }
 
-        // 为 429/5xx 错误创建带状态码的错误对象，便于重试逻辑判断
-        const apiError = new Error(`Stream API error (${response.status}): ${errorText}`);
-        (apiError as RetriableProxyError).status = response.status;
-        throw apiError;
+        throw classifyModelRequestFailure({
+          requestId,
+          message: `Stream API error (${response.status}): ${errorText}`,
+          kind: 'http_error',
+          httpStatus: response.status,
+          headers: response.headers,
+          providerRequestId: response.headers.get('x-upstream-request-id'),
+          receivedResponseHeaders: true,
+        });
       }
 
       const duration = Date.now() - startTime;
@@ -1473,6 +1402,7 @@ export class OttoServerAdapter implements ContentGenerator {
 
       // 用户取消请求的优雅处理
       if (error instanceof Error &&
+          abortSignal?.aborted &&
           (error.message.includes('cancelled by user') || error.name === 'AbortError')) {
         console.log('⚠️  流式任务已取消');
         throw error;
@@ -1493,7 +1423,22 @@ export class OttoServerAdapter implements ContentGenerator {
         });
       }
 
-      throw error;
+      if (
+        error instanceof ModelRequestSafetyError ||
+        error instanceof UnauthorizedError ||
+        (error instanceof Error && error.message.includes('REGION_BLOCKED_451'))
+      ) {
+        throw error;
+      }
+      throw classifyModelRequestFailure({
+        requestId,
+        message: error instanceof Error ? error.message : 'stream model request failed',
+        kind: responseHeaders ? 'response_lost' : 'connection_not_established',
+        cause: error,
+        headers: responseHeaders,
+        providerRequestId: responseHeaders?.get('x-upstream-request-id'),
+        receivedResponseHeaders: Boolean(responseHeaders),
+      });
     } finally {
       // 清理abort监听器
       if (abortListener) {
@@ -1514,7 +1459,7 @@ export class OttoServerAdapter implements ContentGenerator {
    *
    * 设计意图：防止单个数据块卡顿，但允许完整的流式响应任意长
    */
-  private async *createStreamGenerator(response: Response, abortSignal?: AbortSignal): AsyncGenerator<GenerateContentResponse> {
+  private async *createStreamGenerator(response: Response, abortSignal: AbortSignal | undefined, requestId: string): AsyncGenerator<GenerateContentResponse> {
     const reader = response.body?.getReader();
     if (!reader) {
       throw new Error('No stream reader available');
@@ -1613,27 +1558,32 @@ export class OttoServerAdapter implements ContentGenerator {
               ].includes(errorCode));
 
             if (isTCPInterrupt) {
-              // 创建一个带标记的错误，便于上层识别和处理
-              const streamInterruptError = new Error(
-                `Stream interrupted: Connection was terminated mid-stream. ` +
-                `This may be caused by server restart or network issues. ` +
-                `Please retry your request. (Original: ${readError.message})`
-              );
-              const annotatedError = streamInterruptError as Error & {
-                isStreamInterrupt?: boolean;
-                isRetryable?: boolean;
-                bytesReceived?: number;
-              };
-              annotatedError.isStreamInterrupt = true;
-              annotatedError.isRetryable = true;
-              annotatedError.bytesReceived = totalBytesRead;
               console.warn(`⚠️  [Otto Server] Stream connection interrupted after ${totalBytesRead} bytes. Cause: ${readError.message}`);
-              throw streamInterruptError;
+              throw classifyModelRequestFailure({
+                requestId,
+                message: `Stream interrupted after ${totalBytesRead} bytes: ${readError.message}`,
+                kind: 'socket_reset',
+                cause: readError,
+                headers: response.headers,
+                providerRequestId: response.headers.get('x-upstream-request-id'),
+                receivedResponseHeaders: true,
+                receivedStreamData: totalBytesRead > 0,
+              });
             }
           }
 
-          // 其他错误继续抛出
-          throw readError;
+          throw classifyModelRequestFailure({
+            requestId,
+            message: readError instanceof Error ? readError.message : 'stream read failed',
+            kind: readError instanceof Error && readError.message.includes('timeout')
+              ? 'slow_stream'
+              : 'stream_interrupted',
+            cause: readError,
+            headers: response.headers,
+            providerRequestId: response.headers.get('x-upstream-request-id'),
+            receivedResponseHeaders: true,
+            receivedStreamData: totalBytesRead > 0,
+          });
         }
 
         const { done, value } = readResult;
@@ -2333,4 +2283,14 @@ export class OttoServerAdapter implements ContentGenerator {
       }
     });
   }
+}
+
+const MODEL_REQUEST_IDS = new WeakMap<object, string>();
+
+function modelRequestId(requestBody: ProxyRequestBody): string {
+  const existing = MODEL_REQUEST_IDS.get(requestBody);
+  if (existing) return existing;
+  const created = generateModelRequestId();
+  MODEL_REQUEST_IDS.set(requestBody, created);
+  return created;
 }

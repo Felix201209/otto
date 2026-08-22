@@ -40,7 +40,7 @@ import {
   getWorkLogger,
   getHabitAnalyzer,
   getRealtimeWatcher,
-  generateCustomModelId,
+  ModelRequestSafetyError,
   loadBuiltinSkillInstructions,
   MODEL_SERVICE_URL_UNAVAILABLE,
   type ToolCallRequestInfo,
@@ -73,7 +73,25 @@ import {
 } from './modules/authorization/index.js';
 
 const MODEL_CONNECTION_ERROR =
-  '当前模型连接失败，已重试但仍无法访问其 API。请在模型菜单切换到其他模型，或在设置中检查 Base URL、API Key 和网络代理。';
+  '当前模型请求的结果未知：请求可能已被供应商接收并计费。Otto 已停止自动重试和跨供应商切换。如果手动重试或切换模型，可能产生双重费用。';
+
+class ModelOutcomeUnknownError extends Error {
+  readonly requestId: string;
+  readonly providerRequestId?: string;
+
+  constructor(requestId: string, cause: unknown, providerRequestId?: string) {
+    super(MODEL_CONNECTION_ERROR, { cause });
+    this.name = 'ModelOutcomeUnknownError';
+    this.requestId = requestId;
+    this.providerRequestId = providerRequestId;
+  }
+
+  safetyDetails() {
+    return { requestId: this.requestId, requestState: 'unknown_outcome' as const,
+      ...(this.providerRequestId ? { providerRequestId: this.providerRequestId } : {}),
+      requiresProviderSwitchConfirmation: true as const };
+  }
+}
 
 /** 把带 cause 的 Node/undici 网络错误链摊平成可匹配文本，但不暴露给最终用户。 */
 function runtimeErrorText(error: unknown): string {
@@ -107,6 +125,11 @@ function userFacingRuntimeError(error: unknown): string {
     (message.includes('Invalid URL') && message.includes('/v1/'))
   ) {
     return MODEL_SERVICE_URL_UNAVAILABLE;
+  }
+  if (error instanceof ModelOutcomeUnknownError) {
+    return `${MODEL_CONNECTION_ERROR}\n\n请求编号：${error.requestId}${
+      error.providerRequestId
+        ? `\n供应商请求编号：${error.providerRequestId}` : ''}`;
   }
   if (isRetryableModelConnectionError(error)) return MODEL_CONNECTION_ERROR;
   return message;
@@ -349,6 +372,7 @@ export class CoreSessionRuntime implements SessionRuntime {
   private abort?: AbortController;
   private running = false;
   private authorizationMode: RuntimeAuthorizationMode = 'manual';
+  private pendingProviderSwitchRisk?: ModelOutcomeUnknownError;
   /**
    * 挂起中的工具确认：callId → resolver。AskUserQuestion 弹卡后在此登记，
    * server 收到 tool_confirmation_response 调 resolveToolConfirmation 唤醒。
@@ -394,7 +418,13 @@ export class CoreSessionRuntime implements SessionRuntime {
     // this.config.setApprovalMode?.(ApprovalMode.DEFAULT);
   }
 
-  async setModel(model: string): Promise<void> {
+  async setModel(model: string, confirmedUnknownOutcomeRequestId?: string): Promise<void> {
+    const pending = this.pendingProviderSwitchRisk;
+    if (pending && confirmedUnknownOutcomeRequestId !== pending.requestId) {
+      throw new Error(
+        `上一次请求结果未知，切换模型前必须明确确认可能重复计费。请求编号：${pending.requestId}`,
+      );
+    }
     // 不能只改 Config：OttoChat 会缓存 specifiedModel，真实出网请求仍会走旧模型。
     // 统一走 core 的 switchModel，让 Config、live chat、工具与系统提示词一起切换。
     const result = await this.config
@@ -403,48 +433,7 @@ export class CoreSessionRuntime implements SessionRuntime {
     if (!result.success) {
       throw new Error(result.error || `无法切换到模型 ${model}`);
     }
-  }
-
-  /**
-   * 首 token 前遇到连接故障时，按“不同 API 地址优先”尝试其他已启用自定义模型。
-   * API Key 不参与日志或排序；切换成功后同步会话模型，保证 UI 下拉框与真实出网一致。
-   */
-  private async tryFailoverModel(
-    currentModel: string,
-    attemptedModels: Set<string>,
-  ): Promise<string | null> {
-    const currentConfig = this.config.getCustomModelConfig?.(currentModel);
-    const candidates = (this.config.getCustomModels?.() ?? [])
-      .filter((model) => model.enabled !== false)
-      .map((model) => ({ model, id: generateCustomModelId(model) }))
-      .filter(({ model, id }) => {
-        if (attemptedModels.has(id) || id === currentModel) return false;
-        if (!currentConfig) return true;
-        return !(
-          model.provider === currentConfig.provider &&
-          model.baseUrl === currentConfig.baseUrl &&
-          model.modelId === currentConfig.modelId
-        );
-      })
-      .sort((a, b) => {
-        const aSameEndpoint =
-          a.model.baseUrl === currentConfig?.baseUrl ? 1 : 0;
-        const bSameEndpoint =
-          b.model.baseUrl === currentConfig?.baseUrl ? 1 : 0;
-        return aSameEndpoint - bSameEndpoint;
-      });
-
-    for (const candidate of candidates) {
-      attemptedModels.add(candidate.id);
-      try {
-        await this.setModel(candidate.id);
-        this.store.patchSessionModel(this.sessionId, candidate.id);
-        return candidate.id;
-      } catch {
-        // 单个备用模型无法切换时继续尝试下一个，不让一次坏配置阻断整个兜底链。
-      }
-    }
-    return null;
+    if (pending) this.pendingProviderSwitchRisk = undefined;
   }
 
   /** 供 server.ts 的 GUI 面板 handler 只读查询/即时应用设置（context 分解/mcp/healthyUse 等）。 */
@@ -550,9 +539,8 @@ export class CoreSessionRuntime implements SessionRuntime {
     }
 
     const chat = await this.config.getOttoClient().getChat();
-    let modelName = this.config.getModel();
-    let caps = getModelCapabilities(modelName);
-    const attemptedModels = new Set<string>([modelName]);
+    const modelName = this.config.getModel();
+    const caps = getModelCapabilities(modelName);
 
     // 首轮 user message：把协议 content 构造成 core Part[]（文本 + 图片 inlineData）。
     let currentMessages: Content[] = [
@@ -621,7 +609,6 @@ export class CoreSessionRuntime implements SessionRuntime {
         let lastFinishReason: FinishReason | undefined;
         let lastUsage: GenerateContentResponse['usageMetadata'] | undefined;
 
-        let receivedMeaningfulOutput = false;
         while (true) {
           try {
             const responseStream = await chat.sendMessageStream(
@@ -653,7 +640,6 @@ export class CoreSessionRuntime implements SessionRuntime {
               }
               const delta = extractStreamText(resp);
               if (delta) {
-                receivedMeaningfulOutput = true;
                 if (assistantId === null) {
                   assistantId = startAssistant();
                 }
@@ -676,33 +662,23 @@ export class CoreSessionRuntime implements SessionRuntime {
                 });
               }
               if (resp.functionCalls) {
-                receivedMeaningfulOutput = true;
                 functionCalls.push(...resp.functionCalls);
               }
             }
             break;
           } catch (error) {
-            if (
-              signal.aborted ||
-              this.options.toolFree ||
-              receivedMeaningfulOutput ||
-              !isRetryableModelConnectionError(error)
-            ) {
+            if (error instanceof ModelRequestSafetyError) {
+              if (error.requestState === 'unknown_outcome') {
+                throw new ModelOutcomeUnknownError(
+                  error.requestId, error, error.providerRequestId,
+                );
+              }
               throw error;
             }
-            const fallbackModel = await this.tryFailoverModel(
-              modelName,
-              attemptedModels,
-            );
-            if (!fallbackModel) throw error;
-            modelName = fallbackModel;
-            caps = getModelCapabilities(modelName);
-            if (assistantId !== null) {
-              this.store.patchMessage(this.sessionId, assistantId, {
-                modelName,
-              });
+            if (!signal.aborted && isRetryableModelConnectionError(error)) {
+              throw new ModelOutcomeUnknownError(promptId, error);
             }
-            this.store.setStatus(this.sessionId, 'thinking');
+            throw error;
           }
         }
 
@@ -823,6 +799,9 @@ export class CoreSessionRuntime implements SessionRuntime {
       if (signal.aborted) {
         publishCancellation();
       } else {
+        if (e instanceof ModelOutcomeUnknownError) {
+          this.pendingProviderSwitchRisk = e;
+        }
         const message = userFacingRuntimeError(e);
         if (assistantId !== null) {
           const finalText = assistantText.trim() ? assistantText : message;
@@ -842,7 +821,13 @@ export class CoreSessionRuntime implements SessionRuntime {
             },
           });
         }
-        this.fail('core_error', message);
+        this.fail(
+          e instanceof ModelOutcomeUnknownError
+            ? 'model_outcome_unknown'
+            : 'core_error',
+          message,
+          e instanceof ModelOutcomeUnknownError ? e.safetyDetails() : undefined,
+        );
         this.publishRuntimeActivity('turn', 'failed', message);
       }
     } finally {
@@ -1334,10 +1319,17 @@ export class CoreSessionRuntime implements SessionRuntime {
     }
   }
 
-  private fail(code: string, message: string): void {
+  private fail(
+    code: string,
+    message: string,
+    modelRequestSafety?: {
+      requestId: string; requestState: 'unknown_outcome'; providerRequestId?: string;
+      requiresProviderSwitchConfirmation: true;
+    },
+  ): void {
     this.store.publish(this.sessionId, {
       type: 'error',
-      payload: { sessionId: this.sessionId, code, message },
+      payload: { sessionId: this.sessionId, code, message, ...(modelRequestSafety ? { modelRequestSafety } : {}) },
     });
     this.store.setStatus(this.sessionId, 'error');
   }

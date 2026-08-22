@@ -45,8 +45,11 @@ export interface SessionRuntime {
   run(input: MessageContent, source: MessageSource): Promise<void>;
   /** 中止当前轮。 */
   cancel(): void;
-  /** 设置模型。 */
-  setModel(model: string): void | Promise<void>;
+  /** 设置模型；结果未知后的跨供应商切换必须回传用户确认的原请求编号。 */
+  setModel(
+    model: string,
+    confirmedUnknownOutcomeRequestId?: string,
+  ): void | Promise<void>;
   /**
    * 回传一个待确认工具调用的应答（AskUserQuestion 的答案 / 危险命令确认等）。
    * server 收到客户端 tool_confirmation_response 后按 callId 路由进来，唤醒

@@ -1328,7 +1328,7 @@ export class OttoServer {
     conn: ClientConn,
     msg: Extract<ClientToServer, { type: 'set_model' }>,
   ): Promise<void> {
-    const { sessionId, model } = msg.payload;
+    const { sessionId, model, confirmedUnknownOutcomeRequestId } = msg.payload;
     const known = this.modelInfos().find((m) => m.id === model && m.enabled);
     if (!known) {
       return this.send(
@@ -1345,7 +1345,9 @@ export class OttoServer {
     // live runtime 必须先完成真实切换，成功后才能更新摘要和 UI；否则会出现
     // 「界面显示 GPT、实际请求仍走 GLM」的假成功状态。
     try {
-      await this.store.getRuntime(sessionId)?.setModel(model);
+      await this.store.getRuntime(sessionId)?.setModel(
+        model, confirmedUnknownOutcomeRequestId,
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(
