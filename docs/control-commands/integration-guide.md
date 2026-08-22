@@ -25,9 +25,17 @@
   "idempotencyKey": "ik-<uuid>",
   "payloadDigest": "<sha256-of-payload>",
   "payload": {
-    "organization": { "name": "Acme", "displayName": "Acme Corp" },
-    "adminIdentity": { "email": "ceo@acme.example", "displayName": "CEO" },
-    "plan": "pro",
+    "organization": {
+      "id": "org-acme",
+      "name": "Acme Corp",
+      "slug": "acme"
+    },
+    "ceo": {
+      "username": "acme-ceo",
+      "name": "Acme CEO",
+      "phone": "13800138000"
+    },
+    "defaultDepartmentName": "管理层",
     "modules": ["knowledge", "park", "billing"]
   },
   "signature": "ed25519:<base64url-signature>"
@@ -90,7 +98,7 @@ Control                             Server
 
 ## 5. 安全约定（必须遵守）
 
-- payload **禁止**含明文密码、License 私钥、数据库凭据、客户端 E2EE 私钥。CEO 首次登录走短时一次性邀请/设置密码链接或企业 SSO。
+- payload **禁止**含明文密码、License 私钥、数据库凭据、客户端 E2EE 私钥。CEO 身份由签名命令原子创建，首次登录使用绑定手机号验证码；Control 不生成或持有可复用密码。
 - `deploymentId` 必须等于目标 Server 部署 ID，否则拒收（跨部署投递 fail closed）。
 - 密钥轮换：Control 追加新公钥给 Server 部署方，过渡期新旧并用；废止旧钥后 Server 只认新钥。
 

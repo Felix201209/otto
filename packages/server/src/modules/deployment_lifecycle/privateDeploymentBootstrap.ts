@@ -92,6 +92,8 @@ export interface PrivateDeploymentReadinessSource {
   };
   activeOrganizations: number;
   activeAccounts: number;
+  identityReady: boolean;
+  provisioningIdentityReady: boolean;
   runtimeConfiguration: PrivateDeploymentRuntimeConfiguration | null;
   bootstrap: PrivateDeploymentBootstrapSnapshot;
 }
@@ -100,7 +102,10 @@ export interface PrivateDeploymentBootstrapServices {
   getReadinessSource(
     bootstrap: PrivateDeploymentBootstrapSnapshot,
   ): PrivateDeploymentReadinessSource;
-  importDeploymentLicense(envelope: unknown): DeploymentLicenseView;
+  importDeploymentLicense(
+    envelope: unknown,
+    options?: { allowMissingOrganization?: boolean },
+  ): DeploymentLicenseView;
   refreshDeploymentLicenseLease(): Promise<{
     refreshed: boolean;
     skippedReason: string | null;
@@ -109,6 +114,7 @@ export interface PrivateDeploymentBootstrapServices {
   saveRuntimeConfiguration(
     configuration: PrivateDeploymentRuntimeConfiguration,
   ): void;
+  applyProvisioningCommand(command: unknown): void;
 }
 
 export interface PrivateDeploymentBootstrapCoordinator {
@@ -125,6 +131,7 @@ interface ControlBootstrapResponse {
   modelGatewayUrl?: string | null;
   telemetryEndpoint?: string | null;
   updateDistributionId?: string | null;
+  provisioningCommand: unknown;
 }
 
 function usableLicense(license: DeploymentLicenseView): boolean {
@@ -272,10 +279,10 @@ export function buildPrivateDeploymentReadiness(
     ),
     step(
       'account_identity',
-      source.activeAccounts > 0 ? 'ready' : 'waiting_for_user',
+      source.identityReady ? 'ready' : 'waiting_for_user',
       true,
-      source.activeAccounts > 0
-        ? '可恢复已有账号，或使用本服务器账号登录'
+      source.identityReady
+        ? '企业与管理员身份已就绪，可直接登录'
         : '服务器已就绪，请创建首个企业账号或登录身份',
     ),
   ];
@@ -302,7 +309,11 @@ export function buildPrivateDeploymentReadiness(
   return {
     state,
     canAuthenticate: !requiredBlocked && !bootstrapBusy,
-    canUseLicensedFeatures: licenseUsable && source.databaseReady && source.storageReady,
+    canUseLicensedFeatures:
+      licenseUsable &&
+      source.databaseReady &&
+      source.storageReady &&
+      source.identityReady,
     bootstrap: { ...source.bootstrap },
     steps,
   };
@@ -366,6 +377,9 @@ export function normalizeControlBootstrapResponse(
   if (body.status !== 'activated' && body.status !== 'already_activated') {
     throw new Error('bootstrap_response_invalid');
   }
+  if (body.provisioningCommand === undefined || body.provisioningCommand === null) {
+    throw new Error('bootstrap_provisioning_command_missing');
+  }
   if (!body.licenseEnvelope || typeof body.licenseEnvelope !== 'object') {
     throw new Error('bootstrap_license_missing');
   }
@@ -411,6 +425,7 @@ export function normalizeControlBootstrapResponse(
       modelGatewayUrl: configuration.modelGatewayUrl,
       telemetryEndpoint: configuration.telemetryEndpoint,
       updateDistributionId: configuration.updateDistributionId,
+      provisioningCommand: body.provisioningCommand,
     },
     configuration,
   };
@@ -467,7 +482,11 @@ export function createPrivateDeploymentBootstrapCoordinator(
   const prepareOnce = async (): Promise<PrivateDeploymentReadiness> => {
     const beforeSource = services.getReadinessSource(current);
     const before = beforeSource.deployment.license;
-    if (usableLicense(before) && (beforeSource.runtimeConfiguration || !claimConfig)) {
+    if (
+      usableLicense(before) &&
+      (beforeSource.runtimeConfiguration || !claimConfig) &&
+      (!claimConfig || beforeSource.provisioningIdentityReady)
+    ) {
       forgetClaimConfig();
       current = {
         ...current,
@@ -544,12 +563,24 @@ export function createPrivateDeploymentBootstrapCoordinator(
         attemptedAt,
         activeConfig.allowInsecureLoopback,
       );
-      services.importDeploymentLicense(normalized.response.licenseEnvelope);
+      services.importDeploymentLicense(normalized.response.licenseEnvelope, {
+        allowMissingOrganization: true,
+      });
       services.saveRuntimeConfiguration(normalized.configuration);
       const license = services.getReadinessSource(current).deployment.license;
       if (license.lease.required) {
         const lease = await services.refreshDeploymentLicenseLease();
         if (lease.error) throw new Error('bootstrap_lease_failed');
+      }
+      services.applyProvisioningCommand(
+        normalized.response.provisioningCommand,
+      );
+      const provisionedIdentity = services.getReadinessSource(current);
+      if (
+        !provisionedIdentity.provisioningIdentityReady ||
+        !provisionedIdentity.identityReady
+      ) {
+        throw new Error('bootstrap_provisioning_incomplete');
       }
       forgetClaimConfig();
       current = {

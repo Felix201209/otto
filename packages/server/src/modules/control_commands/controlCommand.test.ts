@@ -29,10 +29,15 @@ const { publicKey, privateKey } = generateKeyPairSync('ed25519', {
 });
 
 const NOW_MS = 1_700_000_000_000;
+const QUEUE_ISSUED_AT = new Date(NOW_MS - 1_000).toISOString();
+const QUEUE_EXPIRES_AT = new Date(NOW_MS + 60_000).toISOString();
 
-function makeStore(): { db: Database; store: ControlCommandQueueStore } {
+function makeStore(now: () => number = () => NOW_MS): {
+  db: Database;
+  store: ControlCommandQueueStore;
+} {
   const db = new Database(':memory:');
-  return { db, store: { db: () => db, now: () => NOW_MS } };
+  return { db, store: { db: () => db, now } };
 }
 
 function signEnvelope(body: {
@@ -183,7 +188,7 @@ describe('control command queue (CONTROL-12)', () => {
 
     const accepted = acceptControlCommandInRepository(store, {
       commandId: 'c1', type: 'enterprise.initiate', schemaVersion: 1,
-      sequence: 1, deploymentId: 'deploy-1', issuedAt: 'now', expiresAt: 'later',
+      sequence: 1, deploymentId: 'deploy-1', issuedAt: QUEUE_ISSUED_AT, expiresAt: QUEUE_EXPIRES_AT,
       idempotencyKey: 'k1', payloadDigest: 'd', payloadJson: '{}', signature: 'sig',
     });
     expect(accepted.status).toBe('accepted');
@@ -207,7 +212,7 @@ describe('control command queue (CONTROL-12)', () => {
     const { store } = makeStore();
     acceptControlCommandInRepository(store, {
       commandId: 'c1', type: 'enterprise.initiate', schemaVersion: 1,
-      sequence: 1, deploymentId: 'deploy-1', issuedAt: 'now', expiresAt: 'later',
+      sequence: 1, deploymentId: 'deploy-1', issuedAt: QUEUE_ISSUED_AT, expiresAt: QUEUE_EXPIRES_AT,
       idempotencyKey: 'k1', payloadDigest: 'd', payloadJson: '{}', signature: 'sig',
     });
     // 第一个实例领取成功。
@@ -223,11 +228,85 @@ describe('control command queue (CONTROL-12)', () => {
     expect(row.attempt).toBe(1);
   });
 
+  it('租约超时后自动恢复 running 命令，且保留递增 attempt', () => {
+    let now = NOW_MS;
+    const { store } = makeStore(() => now);
+    acceptControlCommandInRepository(store, {
+      commandId: 'lease-recovery', type: 'enterprise.initiate', schemaVersion: 1,
+      sequence: 1, deploymentId: 'deploy-1',
+      issuedAt: new Date(NOW_MS - 1_000).toISOString(),
+      expiresAt: new Date(NOW_MS + 120_000).toISOString(),
+      idempotencyKey: 'lease-key', payloadDigest: 'd', payloadJson: '{}', signature: 'sig',
+    });
+    expect(claimPendingControlCommand(store, 30_000)?.attempt).toBe(1);
+
+    now += 30_001;
+    const recovered = claimPendingControlCommand(store, 30_000);
+    expect(recovered).toMatchObject({
+      command_id: 'lease-recovery',
+      status: 'running',
+      attempt: 2,
+    });
+  });
+
+  it('租约期间业务时间窗到期后标记 expired 而不恢复', () => {
+    let now = NOW_MS;
+    const { db, store } = makeStore(() => now);
+    acceptControlCommandInRepository(store, {
+      commandId: 'lease-expired', type: 'enterprise.initiate', schemaVersion: 1,
+      sequence: 1, deploymentId: 'deploy-1',
+      issuedAt: new Date(NOW_MS - 1_000).toISOString(),
+      expiresAt: new Date(NOW_MS + 10_000).toISOString(),
+      payloadDigest: 'd', payloadJson: '{}', signature: 'sig',
+    });
+    expect(claimPendingControlCommand(store, 60_000)).not.toBeNull();
+
+    now += 10_001;
+    expect(claimPendingControlCommand(store, 60_000)).toBeNull();
+    expect(
+      db.prepare('SELECT status FROM control_command_queue WHERE command_id = ?')
+        .get('lease-expired'),
+    ).toEqual({ status: 'expired' });
+  });
+
+  it('preserves signed timestamps and expires non-ISO values by parsed milliseconds', () => {
+    let now = NOW_MS;
+    const { db, store } = makeStore(() => now);
+    const issuedAt = new Date(NOW_MS - 1_000).toUTCString();
+    const expiresAt = new Date(NOW_MS + 10_000).toUTCString();
+    const input = {
+      commandId: 'rfc-time', type: 'enterprise.initiate', schemaVersion: 1,
+      sequence: 1, deploymentId: 'deploy-1', issuedAt, expiresAt,
+      payloadDigest: 'd', payloadJson: '{}', signature: 'sig',
+    };
+
+    expect(acceptControlCommandInRepository(store, input)).toMatchObject({
+      status: 'accepted',
+      replayed: false,
+    });
+    expect(
+      db.prepare(
+        'SELECT issued_at, expires_at FROM control_command_queue WHERE command_id = ?',
+      ).get('rfc-time'),
+    ).toEqual({
+      issued_at: issuedAt,
+      expires_at: expiresAt,
+    });
+    expect(acceptControlCommandInRepository(store, input).replayed).toBe(true);
+
+    now = NOW_MS + 10_001;
+    expect(claimPendingControlCommand(store, 60_000)).toBeNull();
+    expect(
+      db.prepare('SELECT status FROM control_command_queue WHERE command_id = ?')
+        .get('rfc-time'),
+    ).toEqual({ status: 'expired' });
+  });
+
   it('重复 accept 同 commandId 幂等返回既有状态', () => {
     const { store } = makeStore();
     const input = {
       commandId: 'c1', type: 'enterprise.initiate', schemaVersion: 1,
-      sequence: 1, deploymentId: 'deploy-1', issuedAt: 'now', expiresAt: 'later',
+      sequence: 1, deploymentId: 'deploy-1', issuedAt: QUEUE_ISSUED_AT, expiresAt: QUEUE_EXPIRES_AT,
       idempotencyKey: 'k1', payloadDigest: 'd', payloadJson: '{}', signature: 'sig',
     };
     acceptControlCommandInRepository(store, input);
@@ -236,6 +315,28 @@ describe('control command queue (CONTROL-12)', () => {
     // 队列里只有一条。
     const count = store.db().prepare('SELECT COUNT(*) AS c FROM control_command_queue').get() as { c: number };
     expect(count.c).toBe(1);
+  });
+
+  it.each([
+    ['type', { type: 'other.command' }],
+    ['schema', { schemaVersion: 2 }],
+    ['sequence', { sequence: 2 }],
+    ['deployment', { deploymentId: 'deploy-2' }],
+    ['idempotency', { idempotencyKey: 'k2' }],
+    ['digest', { payloadDigest: 'other-digest' }],
+    ['signature', { signature: 'other-signature' }],
+    ['payload', { payloadJson: '{"changed":true}' }],
+  ])('同 commandId 的 %s 不同会返回 command_id_conflict', (_field, patch) => {
+    const { store } = makeStore();
+    const input = {
+      commandId: 'conflict', type: 'enterprise.initiate', schemaVersion: 1,
+      sequence: 1, deploymentId: 'deploy-1', issuedAt: QUEUE_ISSUED_AT, expiresAt: QUEUE_EXPIRES_AT,
+      idempotencyKey: 'k1', payloadDigest: 'd', payloadJson: '{}', signature: 'sig',
+    };
+    acceptControlCommandInRepository(store, input);
+    expect(() =>
+      acceptControlCommandInRepository(store, { ...input, ...patch }),
+    ).toThrow('command_id_conflict');
   });
 
   it('到期未领取的指令标记 expired 且不执行', () => {
@@ -258,7 +359,7 @@ describe('control command queue (CONTROL-12)', () => {
     const { store } = makeStore();
     acceptControlCommandInRepository(store, {
       commandId: 'c1', type: 'enterprise.initiate', schemaVersion: 1,
-      sequence: 5, deploymentId: 'deploy-1', issuedAt: 'now', expiresAt: 'later',
+      sequence: 5, deploymentId: 'deploy-1', issuedAt: QUEUE_ISSUED_AT, expiresAt: QUEUE_EXPIRES_AT,
       payloadDigest: 'd', payloadJson: '{}', signature: 'sig',
     });
     expect(assertMonotonicSequence(store, 'c1', 5).ok).toBe(false);
@@ -270,7 +371,7 @@ describe('control command queue (CONTROL-12)', () => {
     const { store } = makeStore();
     acceptControlCommandInRepository(store, {
       commandId: 'c1', type: 'enterprise.initiate', schemaVersion: 1,
-      sequence: 1, deploymentId: 'deploy-1', issuedAt: 'now', expiresAt: 'later',
+      sequence: 1, deploymentId: 'deploy-1', issuedAt: QUEUE_ISSUED_AT, expiresAt: QUEUE_EXPIRES_AT,
       payloadDigest: 'd', payloadJson: '{}', signature: 'sig',
     });
     expect(cancelControlCommandInRepository(store, 'c1')).toBe('cancelled');

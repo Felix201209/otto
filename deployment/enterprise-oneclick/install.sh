@@ -84,6 +84,7 @@ OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE="${OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE:-
 OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE="${OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE:-}"
 OTTO_FIELD_ENCRYPTION_KEY_FILE="${OTTO_FIELD_ENCRYPTION_KEY_FILE:-}"
 OTTO_CONTROL_URL="${OTTO_CONTROL_URL:-}"
+OTTO_CONTROL_TRUST_FILE="${OTTO_CONTROL_TRUST_FILE:-}"
 OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE="${OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE:-}"
 OTTO_DEPLOYMENT_KIND="${OTTO_DEPLOYMENT_KIND:-self-hosted}"
 OTTO_TELEMETRY_ENDPOINT="${OTTO_TELEMETRY_ENDPOINT:-}"
@@ -215,6 +216,13 @@ if [ -n "${OTTO_DEPLOYMENT_BOOTSTRAP_SECRET:-}" ]; then
   otto_die "不再接受内联部署登记密钥；请使用权限受限的 OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE"
 fi
 unset OTTO_DEPLOYMENT_BOOTSTRAP_SECRET
+if [ -n "$OTTO_CONTROL_TRUST_FILE" ]; then
+  [[ "$OTTO_CONTROL_TRUST_FILE" = /* ]] \
+    || otto_die "OTTO_CONTROL_TRUST_FILE 必须使用绝对路径"
+  [ -f "$OTTO_CONTROL_TRUST_FILE" ] \
+    && [ ! -L "$OTTO_CONTROL_TRUST_FILE" ] \
+    || otto_die "Control 公钥文件必须是普通文件且不能是符号链接"
+fi
 if [ -n "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE" ]; then
   [[ "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE" = /* ]] \
     || otto_die "OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE 必须使用绝对路径"
@@ -223,6 +231,8 @@ if [ -n "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE" ]; then
     || otto_die "部署登记密钥文件必须是普通文件且不能是符号链接"
   [ -n "$OTTO_CONTROL_URL" ] \
     || otto_die "提供部署登记密钥文件时必须同时配置 OTTO_CONTROL_URL"
+  [ -n "$OTTO_CONTROL_TRUST_FILE" ] \
+    || otto_die "提供部署登记密钥文件时必须同时配置独立 OTTO_CONTROL_TRUST_FILE"
 fi
 for key_variable in \
   OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE \
@@ -366,6 +376,13 @@ BOOTSTRAP_SECRET_REPLACED=0
 BOOTSTRAP_SECRET_STAGED=""
 BOOTSTRAP_SECRET_TARGET=""
 BOOTSTRAP_SECRET_BACKUP=""
+BOOTSTRAP_SECRET_DIR=""
+BOOTSTRAP_SECRET_DIR_CREATED=0
+CONTROL_TRUST_STAGED=""
+CONTROL_TRUST_TARGET=""
+CONTROL_TRUST_BACKUP=""
+CONTROL_TRUST_CREATED=0
+CONTROL_TRUST_REPLACED=0
 RUNTIME_LINK_CREATED=0
 RUNTIME_DIR_CREATED=0
 TRANSACTION_MARKER_CREATED=0
@@ -423,6 +440,22 @@ cleanup() {
         "$BOOTSTRAP_SECRET_BACKUP" "$BOOTSTRAP_SECRET_TARGET"
       rm -f "$BOOTSTRAP_SECRET_BACKUP"
     fi
+    if [ "$BOOTSTRAP_SECRET_DIR_CREATED" -eq 1 ] \
+      && [ -d "$BOOTSTRAP_SECRET_DIR" ] \
+      && [ ! -L "$BOOTSTRAP_SECRET_DIR" ]; then
+      rmdir "$BOOTSTRAP_SECRET_DIR" >/dev/null 2>&1 || true
+    fi
+    if [ "$CONTROL_TRUST_CREATED" -eq 1 ] \
+      && { [ -e "$CONTROL_TRUST_TARGET" ] || [ -L "$CONTROL_TRUST_TARGET" ]; }; then
+      rm -f "$CONTROL_TRUST_TARGET"
+    fi
+    if [ "$CONTROL_TRUST_REPLACED" -eq 1 ] \
+      && [ -f "$CONTROL_TRUST_BACKUP" ] \
+      && [ ! -L "$CONTROL_TRUST_BACKUP" ]; then
+      install -o root -g otto-enterprise -m 0640 \
+        "$CONTROL_TRUST_BACKUP" "$CONTROL_TRUST_TARGET"
+      rm -f "$CONTROL_TRUST_BACKUP"
+    fi
     if [ "$RUNTIME_LINK_CREATED" -eq 1 ] && [ -L "${INSTALL_ROOT}/runtime/current" ]; then
       mv "${INSTALL_ROOT}/runtime/current" "${TXN_DIR}/failed-runtime-link"
     fi
@@ -456,6 +489,9 @@ cleanup() {
   if [ -n "$BOOTSTRAP_SECRET_STAGED" ]; then
     rm -f "$BOOTSTRAP_SECRET_STAGED"
   fi
+  if [ -n "$CONTROL_TRUST_STAGED" ]; then
+    rm -f "$CONTROL_TRUST_STAGED"
+  fi
 }
 trap cleanup EXIT
 
@@ -475,6 +511,23 @@ if ! NODE_PATH="$(otto_resolve_node "$PREFERRED_NODE")"; then
       ca-certificates curl
   fi
   NODE_PATH="$(otto_install_node_runtime "${TXN_DIR}/runtime")"
+fi
+
+if [ -n "$OTTO_CONTROL_TRUST_FILE" ]; then
+  CONTROL_TRUST_STAGED="${TXN_DIR}/control-public-keys.json"
+  cp --no-dereference "$OTTO_CONTROL_TRUST_FILE" "$CONTROL_TRUST_STAGED"
+  chmod 0600 "$CONTROL_TRUST_STAGED"
+  "$NODE_PATH" --input-type=module - "$CONTROL_TRUST_STAGED" <<'NODE'
+import { readFileSync } from 'node:fs';
+const keys = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+if (
+  !Array.isArray(keys) ||
+  keys.length === 0 ||
+  keys.some((key) => typeof key !== 'string' || !key.includes('BEGIN PUBLIC KEY'))
+) {
+  throw new Error('Control command trust store is invalid');
+}
+NODE
 fi
 
 if [ -n "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE" ]; then
@@ -641,7 +694,7 @@ if [ "$OTTO_ENTERPRISE_ADMIN_TOKEN" != "auto" ]; then
   [ "${#OTTO_ENTERPRISE_ADMIN_TOKEN}" -ge 32 ] \
     || otto_die "OTTO_ENTERPRISE_ADMIN_TOKEN 至少 32 个字符" 3
 fi
-if [ "$ACCOUNT_COUNT" -eq 0 ] && [ "$OTTO_BOOTSTRAP_PASSWORD" != "auto" ]; then
+if [ "$ACCOUNT_COUNT" -eq 0 ] && [ -z "$BOOTSTRAP_SECRET_STAGED" ] && [ "$OTTO_BOOTSTRAP_PASSWORD" != "auto" ]; then
   [ "${#OTTO_BOOTSTRAP_PASSWORD}" -ge 8 ] \
     || otto_die "空库的 OTTO_BOOTSTRAP_PASSWORD 至少 8 个字符" 3
 fi
@@ -729,8 +782,8 @@ fi
   || otto_die "OTTO_ENTERPRISE_ADMIN_TOKEN 至少 32 个字符"
 export OTTO_ENTERPRISE_ADMIN_TOKEN
 
-if [ "$ACCOUNT_COUNT" -eq 0 ]; then
-  otto_log "迁移库没有账号，创建首个管理员"
+if [ "$ACCOUNT_COUNT" -eq 0 ] && [ -z "$BOOTSTRAP_SECRET_STAGED" ]; then
+  otto_log "离线空库没有账号，创建首个本地管理员"
   if [ "$OTTO_BOOTSTRAP_PASSWORD" = "auto" ]; then
     OTTO_BOOTSTRAP_PASSWORD="$(otto_random_secret "$NODE_PATH")"
     BOOTSTRAP_CREDENTIALS="${TXN_DIR}/bootstrap-credentials.txt"
@@ -750,6 +803,7 @@ otto_log "启动 127.0.0.1:17777 隔离 canary"
 env \
   -u OTTO_CONTROL_URL \
   -u OTTO_CONTROL_ORIGIN \
+  -u OTTO_CONTROL_TRUST_FILE \
   -u OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE \
   "$NODE_PATH" "${TARGET_RELEASE}/run.mjs" >"${TXN_DIR}/canary.log" 2>&1 &
 CANARY_PID=$!
@@ -828,8 +882,37 @@ install -o otto-enterprise -g otto-enterprise -m 0600 \
   "${CANARY_DIR}/data.db" "${DATA_DIR}/data.db"
 DATA_CREATED=1
 
+if [ -n "$CONTROL_TRUST_STAGED" ]; then
+  CONTROL_TRUST_TARGET="${CONFIG_DIR}/control-public-keys.json"
+  if [ -e "$CONTROL_TRUST_TARGET" ] || [ -L "$CONTROL_TRUST_TARGET" ]; then
+    [ -f "$CONTROL_TRUST_TARGET" ] && [ ! -L "$CONTROL_TRUST_TARGET" ] \
+      || otto_die "已有 Control 公钥文件不是普通文件，拒绝替换"
+    CONTROL_TRUST_BACKUP="${TXN_DIR}/previous-control-public-keys.json"
+    mv "$CONTROL_TRUST_TARGET" "$CONTROL_TRUST_BACKUP"
+    chmod 0600 "$CONTROL_TRUST_BACKUP"
+    CONTROL_TRUST_REPLACED=1
+  fi
+  install -o root -g otto-enterprise -m 0640 \
+    "$CONTROL_TRUST_STAGED" "$CONTROL_TRUST_TARGET"
+  CONTROL_TRUST_CREATED=1
+  rm -f "$CONTROL_TRUST_STAGED"
+  CONTROL_TRUST_STAGED=""
+fi
+
 if [ -n "$BOOTSTRAP_SECRET_STAGED" ]; then
-  BOOTSTRAP_SECRET_TARGET="${CONFIG_DIR}/deployment-bootstrap-secret"
+  BOOTSTRAP_SECRET_DIR="${DATA_DIR}/bootstrap"
+  if [ -e "$BOOTSTRAP_SECRET_DIR" ] || [ -L "$BOOTSTRAP_SECRET_DIR" ]; then
+    [ -d "$BOOTSTRAP_SECRET_DIR" ] && [ ! -L "$BOOTSTRAP_SECRET_DIR" ] \
+      || otto_die "部署登记密钥目录必须是普通目录且不能是符号链接"
+    [ "$(stat -c '%U:%G:%a' "$BOOTSTRAP_SECRET_DIR")" = \
+      "otto-enterprise:otto-enterprise:700" ] \
+      || otto_die "部署登记密钥目录必须属于 otto-enterprise 且权限为 0700"
+  else
+    install -d -o otto-enterprise -g otto-enterprise -m 0700 \
+      "$BOOTSTRAP_SECRET_DIR"
+    BOOTSTRAP_SECRET_DIR_CREATED=1
+  fi
+  BOOTSTRAP_SECRET_TARGET="${BOOTSTRAP_SECRET_DIR}/deployment-enrollment.secret"
   if [ -e "$BOOTSTRAP_SECRET_TARGET" ] || [ -L "$BOOTSTRAP_SECRET_TARGET" ]; then
     [ -f "$BOOTSTRAP_SECRET_TARGET" ] && [ ! -L "$BOOTSTRAP_SECRET_TARGET" ] \
       || otto_die "已有部署登记密钥不是普通文件，拒绝替换"
@@ -886,6 +969,7 @@ write_env "$ENV_TEMP" \
   OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE "$OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE" \
   OTTO_FIELD_ENCRYPTION_KEY_FILE "$OTTO_FIELD_ENCRYPTION_KEY_FILE" \
   OTTO_CONTROL_URL "$OTTO_CONTROL_URL" \
+  OTTO_CONTROL_TRUST_FILE "$CONTROL_TRUST_TARGET" \
   OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE "$BOOTSTRAP_SECRET_TARGET" \
   OTTO_DEPLOYMENT_KIND "$OTTO_DEPLOYMENT_KIND" \
   OTTO_TELEMETRY_ENDPOINT "$OTTO_TELEMETRY_ENDPOINT" \
@@ -1016,6 +1100,10 @@ fi
 if [ "$BOOTSTRAP_SECRET_REPLACED" -eq 1 ]; then
   rm -f "$BOOTSTRAP_SECRET_BACKUP"
   BOOTSTRAP_SECRET_REPLACED=0
+fi
+if [ "$CONTROL_TRUST_REPLACED" -eq 1 ]; then
+  rm -f "$CONTROL_TRUST_BACKUP"
+  CONTROL_TRUST_REPLACED=0
 fi
 
 rm -f "$TRANSACTION_MARKER"

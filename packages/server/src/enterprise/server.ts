@@ -71,7 +71,9 @@ import {
 } from '../modules/commercial_control/index.js';
 import {
   controlPublicKeysFromEnv,
+  type ControlCommandEnvelope,
 } from '../modules/control_commands/index.js';
+import { createEnterpriseInitiationCommandExecutor } from '../modules/enterprise_initiation/index.js';
 import { createEnterpriseControlCommandBoundary } from './controlCommandIntegration.js';
 import {
   startPrivateDeploymentBootstrapRuntime,
@@ -467,7 +469,10 @@ function makeHandler(
       const commercialFeature = commercialFeatureForEnterpriseRoute(path);
       if (
         commercialFeature &&
-        !db.isLicenseUsableForOrganizationFeature(commercialFeature)
+        !db.isLicenseUsableForOrganizationFeature(
+          commercialFeature,
+          commercialOrganizationId,
+        )
       ) {
         auditCommercialDecision('commercial_module_denied', {
           code: 'commercial_module_not_entitled',
@@ -729,18 +734,43 @@ export function createEnterpriseServer(opts: EnterpriseServerOptions = {}): {
   const controlKeys =
     opts.controlPublicKeys ?? controlPublicKeysFromEnv(process.env);
   const controlExecute =
-    opts.controlCommandExecute ?? (() => ({
-      status: 'failed' as const,
-      resultSummary: 'no executor configured',
-      errorCategory: 'not_configured',
-    }));
+    opts.controlCommandExecute ??
+    createEnterpriseInitiationCommandExecutor({
+      getDeploymentLicense: db.getDeploymentLicense,
+      provision: db.provisionBootstrapEnterprise,
+    });
   const controlBoundary = createEnterpriseControlCommandBoundary({
-    deploymentId:
-      process.env.OTTO_ENTERPRISE_DEPLOYMENT_ID || publicBaseUrl,
+    deploymentId: db.getDeploymentId(),
     controlPublicKeys: controlKeys,
     signingPrivateKey: opts.controlSigningPrivateKey,
     execute: controlExecute,
   });
+  const applyProvisioningCommand = (command: unknown): void => {
+    if (!controlBoundary.enabled) {
+      throw new Error('bootstrap_provisioning_not_configured');
+    }
+    const submitted = controlBoundary.submit(command as ControlCommandEnvelope);
+    if (submitted.kind !== 'accepted') {
+      throw new Error(
+        submitted.kind === 'invalid_signature'
+          ? 'bootstrap_provisioning_signature_invalid'
+          : 'bootstrap_provisioning_rejected',
+      );
+    }
+    for (let index = 0; index < 100; index += 1) {
+      const receipt = controlBoundary.services.queryReceipt(
+        submitted.commandId,
+      );
+      if (receipt) {
+        if (receipt.status !== 'succeeded') {
+          throw new Error('bootstrap_provisioning_failed');
+        }
+        return;
+      }
+      if (!controlBoundary.services.drainOnce().executed) break;
+    }
+    throw new Error('bootstrap_provisioning_incomplete');
+  };
   const deploymentInfo = {
     version,
     buildCommit,
@@ -752,6 +782,7 @@ export function createEnterpriseServer(opts: EnterpriseServerOptions = {}): {
       appVersion: version,
       buildCommit,
       publicOrigin: publicBaseUrl,
+      applyProvisioningCommand,
     });
   const server = createServer(
     makeHandler(

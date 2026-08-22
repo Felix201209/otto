@@ -573,9 +573,14 @@ export function getDeploymentLicense(
   return toDeploymentLicenseView(store, row ?? null);
 }
 
+export interface DeploymentLicenseImportOptions {
+  allowMissingOrganization?: boolean;
+}
+
 export function importDeploymentLicense(
   store: DeploymentRepositoryStore,
   raw: unknown,
+  options: DeploymentLicenseImportOptions = {},
 ): DeploymentLicenseView {
   const envelope = safeJsonObject(raw);
   const payload = safeJsonObject(envelope.license ?? envelope.payload);
@@ -606,7 +611,9 @@ export function importDeploymentLicense(
   const organization = store.db()
     .prepare('SELECT id FROM organizations WHERE id = ?')
     .get(organizationId) as { id: string } | undefined;
-  if (!organization) throw new Error('license organizationId mismatch');
+  if (!organization && !options.allowMissingOrganization) {
+    throw new Error('license organizationId mismatch');
+  }
   const modules = Array.isArray(payload.modules)
     ? [...new Set(payload.modules
         .filter((item): item is string => typeof item === 'string' && item.length > 0)
@@ -1647,10 +1654,17 @@ export function exportDeploymentDiagnostics(
 export function isLicenseUsableForOrganizationFeature(
   store: DeploymentRepositoryStore,
   feature: OrganizationFeatureKey,
+  organizationId?: string | null,
 ): boolean {
   const license = getDeploymentLicense(store);
   if (!license.enforce && ['active', 'expiring', 'grace'].includes(license.status)) return true;
   if (!['active', 'expiring', 'grace'].includes(license.status)) return false;
+  if (
+    organizationId !== undefined &&
+    (!organizationId || license.organizationId !== organizationId)
+  ) {
+    return false;
+  }
   for (const moduleName of license.modules) {
     if (LICENSE_MODULE_FEATURES[moduleName]?.includes(feature)) return true;
   }

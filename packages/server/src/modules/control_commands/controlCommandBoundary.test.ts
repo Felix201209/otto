@@ -93,6 +93,19 @@ describe('control command boundary (CONTROL-12)', () => {
     expect(r.kind).toBe('accepted');
   });
 
+  it('同 commandId 的签名内容变化时返回 command_id_conflict', () => {
+    const b = createControlCommandBoundary(makeDeps());
+    expect(b.submit(signEnv(makeEnvelope())).kind).toBe('accepted');
+
+    const conflict = b.submit(
+      signEnv(makeEnvelope({ payload: { name: 'Changed' } })),
+    );
+    expect(conflict).toEqual({
+      kind: 'rejected',
+      code: 'command_id_conflict',
+    });
+  });
+
   it('非法签名 → invalid_signature', () => {
     const b = createControlCommandBoundary(makeDeps());
     const r = b.submit(makeEnvelope()); // 未签名
