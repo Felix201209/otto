@@ -33,6 +33,7 @@ import { callCustomModel, callCustomModelStream } from './customModelAdapter.js'
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { randomUUID } from 'node:crypto';
 
 /**
  * 把出站请求体落盘到 ~/.otto/last-N-requests/ 用于事后诊断。
@@ -798,9 +799,10 @@ export class OttoServerAdapter implements ContentGenerator {
    * @see https://cloud.google.com/storage/docs/retry-strategy#exponential-backoff
    */
   private async callUnifiedChatAPI(endpoint: string, requestBody: ProxyRequestBody, abortSignal?: AbortSignal, sceneType?: string): Promise<GenerateContentResponse> {
+    const requestId = randomUUID();
     // 使用指数退避包装实际的 API 调用
     return retryWithBackoff(
-      () => this.executeUnifiedChatAPICall(endpoint, requestBody, abortSignal, sceneType),
+      () => this.executeUnifiedChatAPICall(endpoint, requestBody, requestId, abortSignal, sceneType),
       {
         // 使用标准退避配置，适合大多数场景
         // 对于大量工具调用场景，可以在调用处设置 aggressiveBackoff: true
@@ -871,7 +873,7 @@ export class OttoServerAdapter implements ContentGenerator {
    * 执行实际的 API 调用（不含重试逻辑）
    * 被 callUnifiedChatAPI 通过 retryWithBackoff 包装调用
    */
-  private async executeUnifiedChatAPICall(endpoint: string, requestBody: ProxyRequestBody, abortSignal?: AbortSignal, sceneType?: string): Promise<GenerateContentResponse> {
+  private async executeUnifiedChatAPICall(endpoint: string, requestBody: ProxyRequestBody, requestId: string, abortSignal?: AbortSignal, sceneType?: string): Promise<GenerateContentResponse> {
     const userHeaders = await proxyAuthManager.getUserHeaders(sceneType);
     const proxyUrl = buildProxyRequestUrl(
       proxyAuthManager.getProxyServerUrl(),
@@ -954,6 +956,9 @@ export class OttoServerAdapter implements ContentGenerator {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Idempotency-Key': requestId,
+          'x-otto-idempotency-key': requestId,
+          'x-otto-request-id': requestId,
           ...userHeaders,
         },
         body: JSON.stringify(requestBody),
@@ -1270,9 +1275,10 @@ export class OttoServerAdapter implements ContentGenerator {
    * 注意：只对初始连接进行重试，一旦流开始就不再重试
    */
   private async callStreamAPI(endpoint: string, requestBody: ProxyRequestBody, abortSignal?: AbortSignal, sceneType?: string): Promise<Response> {
+    const requestId = randomUUID();
     // 使用指数退避包装实际的流式 API 调用
     return retryWithBackoff(
-      () => this.executeStreamAPICall(endpoint, requestBody, abortSignal, sceneType),
+      () => this.executeStreamAPICall(endpoint, requestBody, requestId, abortSignal, sceneType),
       {
         shouldRetry: (error: Error) => {
           // 🚫 Otto配额错误(402) - 不重试，立即显示友好提示
@@ -1341,7 +1347,7 @@ export class OttoServerAdapter implements ContentGenerator {
    * 执行实际的流式 API 调用（不含重试逻辑）
    * 被 callStreamAPI 通过 retryWithBackoff 包装调用
    */
-  private async executeStreamAPICall(endpoint: string, requestBody: ProxyRequestBody, abortSignal?: AbortSignal, sceneType?: string): Promise<Response> {
+  private async executeStreamAPICall(endpoint: string, requestBody: ProxyRequestBody, requestId: string, abortSignal?: AbortSignal, sceneType?: string): Promise<Response> {
     const userHeaders = await proxyAuthManager.getUserHeaders(sceneType);
     const proxyUrl = buildProxyRequestUrl(
       proxyAuthManager.getProxyServerUrl(),
@@ -1421,6 +1427,9 @@ export class OttoServerAdapter implements ContentGenerator {
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'text/event-stream',
+          'Idempotency-Key': requestId,
+          'x-otto-idempotency-key': requestId,
+          'x-otto-request-id': requestId,
           ...userHeaders,
         },
         body: JSON.stringify(requestBody),

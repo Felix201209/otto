@@ -591,6 +591,7 @@ function makeHandler(
           smsSender,
           repairSmsSender,
           repairFeishuSender,
+          billingFetch,
           loginRateLimiter,
           deploymentInfo,
           apiVersion: ENTERPRISE_API_VERSION,

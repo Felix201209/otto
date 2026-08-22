@@ -63,6 +63,7 @@ export interface EnterpriseRouteDispatcherDeps {
   smsSender: AuthRouteSmsSender | null;
   repairSmsSender: RepairNotificationSender | null;
   repairFeishuSender: RepairNotificationSender | null;
+  billingFetch: typeof fetch;
   loginRateLimiter: AuthRouteLoginRateLimiter;
   deploymentInfo: EnterpriseRouteDeploymentInfo;
   apiVersion: number;
@@ -104,6 +105,7 @@ export async function dispatchEnterpriseRoute({
   smsSender,
   repairSmsSender,
   repairFeishuSender,
+  billingFetch,
   loginRateLimiter,
   deploymentInfo,
   apiVersion,
@@ -371,6 +373,7 @@ export async function dispatchEnterpriseRoute({
       res,
       repairSmsSender,
       repairFeishuSender,
+      billingFetch,
       extractToken,
       readBody,
       sendJSON,

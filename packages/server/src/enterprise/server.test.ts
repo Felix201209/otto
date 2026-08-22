@@ -1123,9 +1123,13 @@ describe('受保护 vs 公开路由边界', () => {
     expect(db.getKnowledge(undefined, undefined, 'org_default')).toHaveLength(0);
 
     const replay = await request('knowledge:e2e:2');
-    expect(replay.status).toBe(200);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(replay.status).toBe(409);
+    await expect(replay.json()).resolves.toMatchObject({
+      code: 'billing_operation_replayed',
+      module: 'enterprise_knowledge',
+    });
     expect(billingCalls.filter((url) => url.endsWith('/capture'))).toHaveLength(1);
+    expect(billingCalls.filter((url) => url.endsWith('/holds'))).toHaveLength(2);
   }, 60_000);
 
   it('admin publishes modular updates without exposing deployment details in public health', async () => {
