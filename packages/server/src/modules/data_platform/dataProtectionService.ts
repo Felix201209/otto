@@ -69,6 +69,7 @@ export interface DataProtectionServiceOptions {
   intervalHours?: number;
   retentionDays?: number;
   minimumRetained?: number;
+  orphanGraceMs?: number;
   minimumFreeBytes?: number;
   appVersion?: () => string;
   buildCommit?: () => string;
@@ -485,6 +486,10 @@ export function createDataProtectionService(
   const intervalHours = positiveInteger(options.intervalHours, 24);
   const retentionDays = positiveInteger(options.retentionDays, 30);
   const minimumRetained = positiveInteger(options.minimumRetained, 3);
+  const orphanGraceMs = options.orphanGraceMs ?? 24 * 60 * 60 * 1_000;
+  if (!Number.isSafeInteger(orphanGraceMs) || orphanGraceMs < 60_000) {
+    throw new Error('local attachment orphan grace period is invalid');
+  }
   const minimumFreeBytes = Math.max(
     64 * 1024 * 1024,
     positiveInteger(options.minimumFreeBytes, 2 * 1024 ** 3),
@@ -599,10 +604,10 @@ export function createDataProtectionService(
 
   function sweepOrphanAttachments(): number {
     ensureRuntimeDirectories();
+    const database = options.getDatabase();
     const referenced = new Set(
       (
-        options
-          .getDatabase()
+        database
           .prepare(
             `SELECT storage_key FROM direct_message_attachments
            WHERE storage_backend = 'encrypted-filesystem' AND storage_key IS NOT NULL`,
@@ -610,9 +615,32 @@ export function createDataProtectionService(
           .all() as Array<{ storage_key: string }>
       ).map((row) => row.storage_key),
     );
+    const referenceCheck = database.prepare(
+      `SELECT 1 AS referenced FROM direct_message_attachments
+       WHERE storage_backend = 'encrypted-filesystem' AND storage_key = ?
+       LIMIT 1`,
+    );
+    const cutoff = now().getTime() - orphanGraceMs;
+    const isProtected = (
+      metadata: ReturnType<EncryptedObjectStore['inspect']>,
+    ): boolean =>
+      metadata === null ||
+      !Number.isFinite(metadata.lastModifiedAtMs) ||
+      metadata.lastModifiedAtMs >= cutoff ||
+      (metadata.pendingSinceMs !== null &&
+        (!Number.isFinite(metadata.pendingSinceMs) ||
+          metadata.pendingSinceMs >= cutoff));
     let removed = 0;
     for (const key of options.attachmentObjectStore.listKeys()) {
       if (referenced.has(key)) continue;
+      if (isProtected(options.attachmentObjectStore.inspect(key))) continue;
+      // Recheck the authoritative row immediately before deletion. A writer
+      // creates its pending marker before publishing the object and removes it
+      // only after COMMIT, closing the object-write/metadata-commit race.
+      if (referenceCheck.get(key) as { referenced: number } | undefined) {
+        continue;
+      }
+      if (isProtected(options.attachmentObjectStore.inspect(key))) continue;
       options.attachmentObjectStore.delete(key);
       removed += 1;
     }

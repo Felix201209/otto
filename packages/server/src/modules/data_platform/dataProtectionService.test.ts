@@ -78,6 +78,7 @@ function createMinimalProtectionFixture(
     root,
     database,
     service,
+    objectStore,
     backupDirectory,
     replicaDirectory,
     keyPath: path.join(root, 'backup-encryption.key'),
@@ -156,11 +157,19 @@ describe('data protection service', () => {
       objectId: 'retained',
       content: Buffer.from('private attachment'),
     });
-    objectStore.put({
+    objectStore.markCommitted(retainedObject.key);
+    const orphanObject = objectStore.put({
       namespace: 'org-1',
       objectId: 'orphan',
       content: Buffer.from('orphan attachment'),
     });
+    objectStore.markCommitted(orphanObject.key);
+    const oldObjectTime = new Date(Date.now() - 25 * 60 * 60 * 1_000);
+    fs.utimesSync(
+      path.join(attachmentDirectory, ...orphanObject.key.split('/')),
+      oldObjectTime,
+      oldObjectTime,
+    );
     database
       .prepare('INSERT INTO direct_message_attachments VALUES (?, ?, ?)')
       .run('att-1', objectStore.backend, retainedObject.key);
@@ -241,6 +250,30 @@ describe('data protection service', () => {
     });
     restored.close();
     database.close();
+  });
+
+  it('keeps fresh and pending local attachments until the safety grace expires', () => {
+    const fixture = createMinimalProtectionFixture();
+    const pending = fixture.objectStore.put({
+      namespace: 'org-1',
+      objectId: 'pending-upload',
+      content: Buffer.from('ciphertext'),
+    });
+
+    expect(fixture.service.sweepOrphanAttachments()).toBe(0);
+    expect(fixture.objectStore.listKeys()).toEqual([pending.key]);
+
+    fixture.objectStore.markCommitted(pending.key);
+    const oldObjectTime = new Date(Date.now() - 25 * 60 * 60 * 1_000);
+    fs.utimesSync(
+      path.join(fixture.root, 'attachments', ...pending.key.split('/')),
+      oldObjectTime,
+      oldObjectTime,
+    );
+
+    expect(fixture.service.sweepOrphanAttachments()).toBe(1);
+    expect(fixture.objectStore.listKeys()).toEqual([]);
+    fixture.database.close();
   });
 
   it('retains the newest minimum even when old backups exceed retention', async () => {
