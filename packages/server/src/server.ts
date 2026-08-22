@@ -164,8 +164,14 @@ import {
   getAutoMemoryEngine,
   loadBuiltinSkillInstructions,
   getWebSearchDiagnostics,
+  getAuditLogger,
+  disposeGlobalMCPResponseGuard,
 } from 'otto-core';
 import type { CustomModelConfig } from 'otto-core';
+import {
+  LocalTaskRegistry,
+  type LocalTaskAuditEvent,
+} from './localTaskRegistry.js';
 
 /** server 版本（实装时可从 package.json 注入）。 */
 const SERVER_VERSION = '0.1.0';
@@ -445,6 +451,9 @@ export class OttoServer {
     AutoCompressionWatermark
   >();
   private readonly autoCompressionAbortControllers = new Set<AbortController>();
+  /** Desktop hide/exit cancellation owner for process-level local work. */
+  private readonly localTasks: LocalTaskRegistry;
+  private localTasksInstalled = false;
 
   constructor(opts: OttoServerOptions = {}) {
     this.host = opts.host ?? DEFAULT_HOST;
@@ -467,6 +476,9 @@ export class OttoServer {
       opts.backgroundModelTasksEnabled !== undefined
         ? opts.backgroundModelTasksEnabled
         : userSettings.backgroundModelTasksEnabled === true;
+    this.localTasks = new LocalTaskRegistry({
+      audit: (event) => this.auditLocalTaskLifecycle(event),
+    });
   }
 
   /** mock 只允许测试显式开启；真实用户没有个人 API 时必须明确报错。 */
@@ -597,32 +609,13 @@ export class OttoServer {
       });
     });
 
-    // 主动服务引擎：定时检查 cron 规则（晨间简报、明早日程提醒等），
-    // 通过 WS 广播给所有桌面客户端，无须飞书在线。
-    try {
-      const proactive = getProactiveService();
-      proactive.setLocalNotifier({
-        notify: async (message, priority, ruleId) => {
-          const ruleName =
-            { morning_briefing: '晨间简报', tomorrow_early_schedule: '明早日程提醒', daily_work_summary: '每日汇总' }[ruleId] ?? ruleId;
-          this.broadcastAll({
-            type: 'proactive_alert',
-            payload: { ruleId, ruleName, message, priority, timestamp: new Date().toISOString() },
-          });
-        },
-      } as ProactiveLocalNotifier);
-      proactive.startScheduler(() => ({
-        userId: 'local',
-        userName: 'Otto User',
-        currentDay: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date().getDay()],
-        currentTime: `${new Date().getHours()}:${new Date().getMinutes()}`,
-        recentActions: [],
-        pendingTasks: 0,
-        hasUpcomingMeeting: false,
-      }));
-      console.log('[Server] ProactiveService started (local mode)');
-    } catch (err) {
-      console.warn('[Server] ProactiveService init failed (non-fatal):', err);
+    this.installLocalTaskRegistry();
+    // The server becomes reachable before renderer creates its first socket.
+    // Keep desktop-only background work suspended until that connection exists.
+    if (this.conns.size === 0) {
+      await this.localTasks.cancelAll('desktop_hidden');
+    } else {
+      this.startLocalProactiveScheduler();
     }
   }
 
@@ -711,6 +704,84 @@ export class OttoServer {
     this.autoCompressionAbortControllers.clear();
   }
 
+  private installLocalTaskRegistry(): void {
+    if (this.localTasksInstalled) return;
+    this.localTasksInstalled = true;
+    this.localTasks.register({
+      id: 'local-session-workflow-rpa',
+      kind: 'workflow',
+      cancel: () => {
+        for (const session of this.store.listSessions()) {
+          // Feishu remains a deliberate background transport. A desktop close
+          // must not abandon a reply requested from that channel.
+          if (session.feishuChatId) continue;
+          this.messageQueues.delete(session.sessionId);
+          this.store.getRuntime(session.sessionId)?.cancel();
+        }
+      },
+    });
+    this.localTasks.register({
+      id: 'local-proactive-scheduler',
+      kind: 'proactive',
+      cancel: () => getProactiveService().stopScheduler(),
+      resume: () => this.startLocalProactiveScheduler(),
+    });
+    if (this.enableFeishu) {
+      this.localTasks.register({
+        id: 'feishu-background-gateway',
+        kind: 'feishu',
+        desktopSuspendPolicy: 'preserve',
+        cancel: () => this.feishu?.stop(),
+      });
+    }
+  }
+
+  private startLocalProactiveScheduler(): void {
+    try {
+      const proactive = getProactiveService();
+      proactive.setLocalNotifier({
+        notify: async (message, priority, ruleId) => {
+          const ruleName =
+            { morning_briefing: '晨间简报', tomorrow_early_schedule: '明早日程提醒', daily_work_summary: '每日汇总' }[ruleId] ?? ruleId;
+          this.broadcastAll({
+            type: 'proactive_alert',
+            payload: { ruleId, ruleName, message, priority, timestamp: new Date().toISOString() },
+          });
+        },
+      } as ProactiveLocalNotifier);
+      proactive.startScheduler(() => ({
+        userId: 'local',
+        userName: 'Otto User',
+        currentDay: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date().getDay()],
+        currentTime: `${new Date().getHours()}:${new Date().getMinutes()}`,
+        recentActions: [],
+        pendingTasks: 0,
+        hasUpcomingMeeting: false,
+      }));
+      console.log('[Server] ProactiveService started (local mode)');
+    } catch (err) {
+      console.warn('[Server] ProactiveService init failed (non-fatal):', err);
+    }
+  }
+
+  private async auditLocalTaskLifecycle(event: LocalTaskAuditEvent): Promise<void> {
+    const workspace = this.productWorkspace.snapshot();
+    await getAuditLogger().log({
+      sessionId: 'desktop-process',
+      userId: workspace.context.userId || 'local',
+      toolName: 'desktop_task_registry',
+      action: `${event.reason}:${event.taskId}`,
+      category: 'lifecycle',
+      success: event.outcome !== 'failed',
+      inputSummary: `kind=${event.kind}`,
+      outputSummary: event.error
+        ? `${event.outcome}: ${event.error}`
+        : event.outcome,
+      source: 'desktop',
+      riskLevel: event.outcome === 'preserved' ? 'medium' : 'low',
+    });
+  }
+
   /** 停止服务（取消并释放所有活跃 runtime，再关 WS、HTTP、飞书）。 */
   async stop(): Promise<void> {
     this.externalInboundUnsub?.();
@@ -719,6 +790,7 @@ export class OttoServer {
       clearTimeout(this.enterpriseLeaseTimer);
       this.enterpriseLeaseTimer = undefined;
     }
+    await this.localTasks.cancelAll('server_shutdown', { includePreserved: true });
     await this.stopBackgroundModelTasks();
     setRealtimeWatcher(null);
     this.workflowUnsub?.();
@@ -756,6 +828,13 @@ export class OttoServer {
     await new Promise<void>((resolve) =>
       this.http ? this.http.close(() => resolve()) : resolve(),
     );
+    await disposeGlobalMCPResponseGuard().catch((error) => {
+      console.warn(
+        `[server] MCP response guard dispose failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
   }
 
   /** 运行期状态（status 命令 / /health 复用）。 */
@@ -2635,6 +2714,7 @@ export class OttoServer {
   private handleConnection(socket: WebSocket): void {
     const conn: ClientConn = { socket, subscriptions: new Map() };
     this.conns.add(conn);
+    void this.localTasks.resumeAll();
 
     this.send(socket, {
       type: 'welcome',
@@ -2687,6 +2767,9 @@ export class OttoServer {
       // （否则关窗后 agent 继续烧 token；maxTurns=-1 不限回合）。
       for (const sessionId of subscribedIds) {
         this.cancelIfOrphaned(sessionId);
+      }
+      if (this.conns.size === 0) {
+        void this.localTasks.cancelAll('desktop_hidden');
       }
     });
   }
