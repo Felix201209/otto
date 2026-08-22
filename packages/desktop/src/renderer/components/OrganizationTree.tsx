@@ -16,8 +16,10 @@ import { buildAtoaRequest, displayDirectMessageContent } from '../atoaProtocol.j
 import { isAuthenticatedEnterpriseAccount } from '../internal-test-access.js';
 import { askLocalPeerOtto } from '../peerOttoRunner.js';
 import { IconChevronDown, IconPaperclip, IconPlus } from './icons.js';
+import { startVisiblePolling } from '../visiblePolling.js';
 import { AtoaConsultDialog } from './AtoaConsultDialog.js';
 import type { EnterpriseUnreadCounts } from '../enterpriseUnreadNotifications.js';
+const DIRECT_MESSAGE_REFRESH_MS = 5_000;
 
 const ORGANIZATION_REFRESH_MS = 10_000;
 const DIRECT_CHAT_CASCADE_PX = 28;
@@ -264,14 +266,16 @@ export function OrganizationTree({
       }
     };
 
-    void loadOrganization(true);
-    const timer = window.setInterval(() => {
-      void loadOrganization(false);
+    let firstLoad = true;
+    const stopPolling = startVisiblePolling(async () => {
+      const showLoading = firstLoad;
+      firstLoad = false;
+      await loadOrganization(showLoading);
     }, ORGANIZATION_REFRESH_MS);
 
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [
     hasAuthenticatedOrganization,
@@ -836,11 +840,10 @@ export function DirectMessagePanel({
         if (active) setError(reason instanceof Error ? reason.message : String(reason));
       }
     };
-    void load();
-    const timer = window.setInterval(() => void load(), 2000);
+    const stopPolling = startVisiblePolling(load, DIRECT_MESSAGE_REFRESH_MS);
     return () => {
       active = false;
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [member.id, onMessageRead]);
 

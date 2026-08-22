@@ -7,6 +7,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   DESKTOP_WINDOW_LIFECYCLE_CHANNEL,
+  observeDesktopWindowActivity,
   resumeDesktopWindow,
   suspendDesktopWindow,
 } from './window-lifecycle.js';
@@ -59,6 +60,48 @@ describe('desktop window lifecycle', () => {
     expect(suspendDesktopWindow(window)).toBe(false);
     expect(send).not.toHaveBeenCalled();
     expect(window.hide).not.toHaveBeenCalled();
+  });
+  it('tracks hidden, minimized, restored, and closing windows through one foreground signal', () => {
+    let visible = false;
+    let minimized = false;
+    const listeners = new Map<string, Set<() => void>>();
+    const window = {
+      isVisible: () => visible,
+      isMinimized: () => minimized,
+      on(event: string, listener: () => void) {
+        const registered = listeners.get(event) ?? new Set<() => void>();
+        registered.add(listener);
+        listeners.set(event, registered);
+        return window;
+      },
+      removeListener(event: string, listener: () => void) {
+        listeners.get(event)?.delete(listener);
+        return window;
+      },
+    };
+    const emit = (event: string): void => {
+      for (const listener of listeners.get(event) ?? []) listener();
+    };
+    const foregroundStates: boolean[] = [];
+
+    const stop = observeDesktopWindowActivity(
+      window,
+      (foreground) => foregroundStates.push(foreground),
+    );
+    expect(foregroundStates).toEqual([false]);
+
+    visible = true;
+    emit('show');
+    minimized = true;
+    emit('minimize');
+    minimized = false;
+    emit('restore');
+    emit('close');
+    expect(foregroundStates).toEqual([false, true, false, true, false]);
+
+    stop();
+    emit('show');
+    expect(foregroundStates).toEqual([false, true, false, true, false]);
   });
 
 

@@ -964,6 +964,7 @@ export const {
   listMlsTransportEvents,
   getMlsAttachmentSession,
   listMlsInboundConversationPeers,
+  listMlsInboundConversationHeads,
   cleanupExpiredMlsResources,
   listE2eeDirectMessages,
   listPendingE2eeAtoaRequests,

@@ -221,7 +221,7 @@ describe('执行授权菜单', () => {
     fireEvent.click(screen.getByRole('menuitemradio', { name: /手动授权/ }));
     expect(send).toHaveBeenLastCalledWith({
       type: 'set_authorization_mode',
-      payload: { sessionId: 's1', mode: 'manual', scope: 'session' },
+      payload: { sessionId: 's1', mode: 'manual', scope: 'all' },
     });
     expect(screen.getByRole('button', { name: '执行授权：手动授权' })).toBeTruthy();
 
@@ -247,26 +247,55 @@ describe('执行授权菜单', () => {
     });
   });
 
-  it.each([
-    ['0', false],
-    ['invalid', true],
-  ] as const)('本地值 %s 时安全保持手动授权', (stored, migrates) => {
-    const send = vi.spyOn(transport, 'send').mockImplementation(() => {});
-    localStorage.setItem('otto.authorization.global-auto', stored);
+  it.each(['0', 'invalid'] as const)(
+    '本地值 %s 时安全保持手动授权并清除服务端旧 auto 状态',
+    (stored) => {
+      const send = vi.spyOn(transport, 'send').mockImplementation(() => {});
+      localStorage.setItem('otto.authorization.global-auto', stored);
 
-    renderComposer([], null);
+      renderComposer([], null);
 
-    expect(screen.getByRole('button', { name: '执行授权：手动授权' })).toBeTruthy();
-    expect(localStorage.getItem('otto.authorization.global-auto')).toBe('0');
-    if (migrates) {
+      expect(screen.getByRole('button', { name: '执行授权：手动授权' })).toBeTruthy();
+      expect(localStorage.getItem('otto.authorization.global-auto')).toBe('0');
       expect(send).toHaveBeenCalledWith({
         type: 'set_authorization_mode',
         payload: { sessionId: 's1', mode: 'manual', scope: 'all' },
       });
-    } else {
-      expect(send).not.toHaveBeenCalled();
-    }
+    },
+  );
+
+  it('断线时不修改授权，重连后先同步手动安全基线', () => {
+    const send = vi.spyOn(transport, 'send').mockImplementation(() => {});
+    localStorage.setItem('otto.authorization.global-auto', '0');
+    const props = {
+      models: [] as ModelInfo[],
+      currentModel: null,
+      sessionId: 's1',
+      onSend: vi.fn(),
+      onSetModel: vi.fn(),
+    };
+    const view = render(<Composer {...props} connected={false} />);
+
+    expect(send).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '执行授权：手动授权' }));
+    fireEvent.click(
+      screen.getByRole('menuitemradio', { name: /自动授权（仅当前会话）/ }),
+    );
+
+    expect(send).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: '执行授权：手动授权' })).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toContain(
+      '连接已断开，授权模式未修改',
+    );
+
+    view.rerender(<Composer {...props} connected />);
+
+    expect(send).toHaveBeenCalledWith({
+      type: 'set_authorization_mode',
+      payload: { sessionId: 's1', mode: 'manual', scope: 'all' },
+    });
   });
+
 
   it('离开仅当前会话自动的会话时在服务端 fail closed 回手动', () => {
     const send = vi.spyOn(transport, 'send').mockImplementation(() => {});

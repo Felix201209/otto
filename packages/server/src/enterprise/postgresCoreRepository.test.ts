@@ -154,6 +154,19 @@ describe('PostgreSQL enterprise core authority', () => {
       'attachment_objects_mls_authorization_all_or_none',
     );
   });
+  it('indexes MLS conversations when the account is participant B', () => {
+    const migration = ENTERPRISE_POSTGRES_MIGRATIONS.find(
+      (candidate) => candidate.version === 15,
+    );
+    expect(migration).toMatchObject({
+      version: 15,
+      name: 'mls-inbound-head-discovery-index',
+    });
+    expect(migration!.sql).toContain('mls_conversations_participant_b');
+    expect(migration!.sql).toContain(
+      'organization_id, participant_b_account_id, participant_a_account_id',
+    );
+  });
 
   it('requires an exact policy hash before PostgreSQL reports current consent', async () => {
     const references = currentLegalDocumentReferences();
@@ -411,6 +424,61 @@ describe('PostgreSQL enterprise core authority', () => {
     expect(discovery?.sql).toContain("event.event_type = 'welcome'");
     expect(discovery?.sql).toContain('event.recipient_device_id = $3');
     expect(discovery?.sql).toContain('event.expires_at > $4::timestamptz');
+    expect(discovery?.values).toEqual([
+      'org_default',
+      'acc_bob',
+      'bob-device',
+      expect.any(String),
+      'acc_aaron',
+      25,
+    ]);
+  });
+
+  it('returns one bounded latest event watermark per active MLS conversation', async () => {
+    const statements: Array<{ sql: string; values: readonly unknown[] }> = [];
+    const pool: PostgresPoolLike = {
+      connect: vi.fn(),
+      query: vi.fn(async (sql: string, values: readonly unknown[] = []) => {
+        statements.push({ sql, values });
+        if (sql.includes('SELECT 1 FROM accounts AS account')) {
+          return result([{ available: 1 }]);
+        }
+        if (sql.includes('SELECT 1 FROM e2ee_devices')) {
+          return result([{ available: 1 }]);
+        }
+        if (sql.includes('MAX(event.sequence)')) {
+          return result([
+            { peer_account_id: 'acc_alice', latest_sequence: '41' },
+            { peer_account_id: 'acc_carol', latest_sequence: '73' },
+          ]);
+        }
+        return result();
+      }),
+      end: vi.fn(),
+    };
+    const repository = createPostgresEnterpriseCoreRepository({ pool });
+
+    await expect(
+      repository.listMlsInboundConversationHeads({
+        organizationId: 'org_default',
+        accountId: 'acc_bob',
+        deviceId: 'bob-device',
+        afterPeerAccountId: 'acc_aaron',
+        limit: 25,
+      }),
+    ).resolves.toEqual([
+      { peerAccountId: 'acc_alice', latestSequence: 41 },
+      { peerAccountId: 'acc_carol', latestSequence: 73 },
+    ]);
+
+    const discovery = statements.find((statement) =>
+      statement.sql.includes('MAX(event.sequence)'),
+    );
+    expect(discovery?.sql).toContain(
+      'conversation.active_generation = event.session_generation',
+    );
+    expect(discovery?.sql).toContain('event.expires_at > $4::timestamptz');
+    expect(discovery?.sql).toContain('GROUP BY peer_account_id');
     expect(discovery?.values).toEqual([
       'org_default',
       'acc_bob',

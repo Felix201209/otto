@@ -810,6 +810,42 @@ describe('EnterpriseClient', () => {
       'https://enterprise.otto.test/enterprise/e2ee/mls/inbound-conversations?deviceId=device-1&limit=500&afterPeerAccountId=peer-0499',
     );
   });
+  it('falls back safely when an older server ignores the conversation-head request', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          ...API_V2_HEALTH,
+          capabilities: [
+            ...API_V2_HEALTH.capabilities,
+            'e2ee_mls_transport_v1',
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          account: ACCOUNT,
+          token: 'session-token',
+          expiresAt: '2099-01-01',
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, { peerAccountIds: ['acc_other', 'acc_peer'] }),
+      );
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(
+      client.listMlsInboundConversationHeads('device-1'),
+    ).resolves.toBeNull();
+    expect(fetchMock.mock.calls.at(-1)?.[0]).toBe(
+      'https://enterprise.otto.test/enterprise/e2ee/mls/inbound-conversations?deviceId=device-1&limit=500&includeHeads=1',
+    );
+  });
 
   it('treats an empty peer KeyPackage inventory as a recoverable transport state', async () => {
     const fetchMock = vi

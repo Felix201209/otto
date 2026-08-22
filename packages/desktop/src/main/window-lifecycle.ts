@@ -32,3 +32,42 @@ export function suspendDesktopWindow(target: DesktopWindowTarget): boolean {
 export function resumeDesktopWindow(target: DesktopWindowTarget): boolean {
   return notify(target, 'resume');
 }
+
+export interface DesktopWindowActivityTarget {
+  isVisible(): boolean;
+  isMinimized(): boolean;
+  on(event: string, listener: () => void): unknown;
+  removeListener(event: string, listener: () => void): unknown;
+}
+
+/**
+ * Converts every Electron visibility transition into one foreground signal.
+ * This keeps background schedulers correct on minimize, hide, restore, and
+ * macOS close paths instead of depending on the Windows tray-close handler.
+ */
+export function observeDesktopWindowActivity(
+  target: DesktopWindowActivityTarget,
+  onForegroundChange: (foreground: boolean) => void,
+): () => void {
+  const updateForeground = (): void => {
+    onForegroundChange(target.isVisible() && !target.isMinimized());
+  };
+  const updateBackground = (): void => {
+    onForegroundChange(false);
+  };
+  const foregroundEvents = ['show', 'restore'] as const;
+  const backgroundEvents = ['hide', 'minimize', 'close'] as const;
+
+  for (const event of foregroundEvents) target.on(event, updateForeground);
+  for (const event of backgroundEvents) target.on(event, updateBackground);
+  updateForeground();
+
+  return () => {
+    for (const event of foregroundEvents) {
+      target.removeListener(event, updateForeground);
+    }
+    for (const event of backgroundEvents) {
+      target.removeListener(event, updateBackground);
+    }
+  };
+}

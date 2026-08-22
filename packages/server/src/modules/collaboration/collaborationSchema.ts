@@ -263,6 +263,9 @@ export const COLLABORATION_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor = {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_mls_key_packages_welcome
         ON mls_key_packages(organization_id, welcome_event_id)
         WHERE welcome_event_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_mls_conversations_participant_b
+        ON mls_conversations(
+          organization_id, participant_b_account_id, participant_a_account_id);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_mls_group_sessions_active
         ON mls_group_sessions(organization_id, conversation_id)
         WHERE status = 'active';

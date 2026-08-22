@@ -1510,6 +1510,33 @@ export class OpenMlsNativeKernel {
     }
     return pending;
   }
+  async listPendingReceivedApplicationPeers(): Promise<string[]> {
+    await this.init();
+    const result = await this.native.call('mls.application.inbox.list_peers', {
+      device_scope: this.scope,
+    });
+    if (!Array.isArray(result) || result.length > 1_000) {
+      throw new Error('native MLS application inbox peer response is invalid');
+    }
+    const localAccount = this.scope.split('/')[2];
+    const peers = result.map((value) => {
+      if (
+        typeof value !== 'string' ||
+        !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value) ||
+        value === localAccount
+      ) {
+        throw new Error('native MLS application inbox peer response is invalid');
+      }
+      return value;
+    });
+    if (
+      new Set(peers).size !== peers.length ||
+      peers.some((peer, index) => index > 0 && peers[index - 1]! >= peer)
+    ) {
+      throw new Error('native MLS application inbox peer response is invalid');
+    }
+    return peers;
+  }
 
   async acknowledgeReceivedApplication(
     conversationId: string,

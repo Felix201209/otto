@@ -957,6 +957,12 @@ fn handle_request(
             )?)
             .map_err(|error| format!("MLS response serialization failed: {error}"))
         }
+        "mls.application.inbox.list_peers" => {
+            let p = params.ok_or("Missing params")?;
+            let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;
+            serde_json::to_value(mls_kernel.list_pending_received_application_peers(scope)?)
+                .map_err(|error| format!("MLS response serialization failed: {error}"))
+        }
         "mls.application.inbox.ack" => {
             let p = params.ok_or("Missing params")?;
             let scope = p["device_scope"].as_str().ok_or("Missing device_scope")?;

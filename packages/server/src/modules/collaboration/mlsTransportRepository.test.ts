@@ -518,6 +518,16 @@ describe('MLS ciphertext transport repository', () => {
         }),
       ).toEqual(['alice', 'carol']);
       expect(
+        facade.listMlsInboundConversationHeads({
+          organizationId: 'org-a',
+          accountId: 'bob',
+          deviceId: 'bob-1',
+        }),
+      ).toEqual([
+        { peerAccountId: 'alice', latestSequence: 4 },
+        { peerAccountId: 'carol', latestSequence: 2 },
+      ]);
+      expect(
         (
           database
             .prepare('PRAGMA index_list(mls_transport_events)')
@@ -572,10 +582,24 @@ describe('MLS ciphertext transport repository', () => {
           deviceId: 'bob-1',
         }),
       ).toEqual(['carol']);
+      expect(
+        facade.listMlsInboundConversationHeads({
+          organizationId: 'org-a',
+          accountId: 'bob',
+          deviceId: 'bob-1',
+        }),
+      ).toEqual([{ peerAccountId: 'carol', latestSequence: 2 }]);
 
       advanceTime(91 * 24 * 60 * 60 * 1_000);
       expect(
         facade.listMlsInboundConversationPeers({
+          organizationId: 'org-a',
+          accountId: 'bob',
+          deviceId: 'bob-1',
+        }),
+      ).toEqual([]);
+      expect(
+        facade.listMlsInboundConversationHeads({
           organizationId: 'org-a',
           accountId: 'bob',
           deviceId: 'bob-1',

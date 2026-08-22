@@ -184,6 +184,8 @@ interface ComposerProps {
   currentModel: string | null;
   /** 当前选中会话 id：切换会话后据此自动聚焦 textarea，避免手动再点一下。 */
   sessionId?: string | null;
+  /** 当前 preload WebSocket 是否真实连通；断线时禁止修改执行授权。 */
+  connected?: boolean;
   /** 整体禁用（无选中会话）：textarea 与发送按钮都禁用。 */
   disabled?: boolean;
   /** 禁用原因，显示在输入框与按钮提示中。 */
@@ -242,6 +244,7 @@ export function Composer({
   models,
   currentModel,
   sessionId,
+  connected = true,
   disabled,
   disabledReason,
   busy = false,
@@ -285,6 +288,8 @@ export function Composer({
   const [sessionAuthorization, setSessionAuthorization] = useState<Record<string, 'manual' | 'auto'>>({});
   const authorizationStateRef = useRef({ globalAuto, sessionAuthorization });
   authorizationStateRef.current = { globalAuto, sessionAuthorization };
+  const authorizationConnectedRef = useRef(connected);
+  authorizationConnectedRef.current = connected;
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachmentSizes, setAttachmentSizes] = useState<Record<string, number>>({});
   const [attaching, setAttaching] = useState(false);
@@ -309,7 +314,12 @@ export function Composer({
       : '手动授权';
 
   React.useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || !connected) return;
+    if (authorizationMigrationPendingRef.current) {
+      // 在发送前完成本地迁移，StrictMode 重放 effect 时也只会执行一次。
+      authorizationMigrationPendingRef.current = false;
+      localStorage.setItem('otto.authorization.global-auto', '0');
+    }
     if (globalAuto) {
       transport.send({
         type: 'set_authorization_mode',
@@ -318,21 +328,26 @@ export function Composer({
       return;
     }
 
-    if (!authorizationMigrationPendingRef.current) return;
-    // 在发送前完成本地迁移，StrictMode 重放 effect 时也只会执行一次。
-    authorizationMigrationPendingRef.current = false;
-    localStorage.setItem('otto.authorization.global-auto', '0');
+    // 每次重连或切换会话都先清除服务端可能残留的 auto 状态，再按当前
+    // 用户选择恢复本会话授权。断线期间的旧授权帧不会被重放。
     transport.send({
       type: 'set_authorization_mode',
       payload: { sessionId, mode: 'manual', scope: 'all' },
     });
-  }, [globalAuto, sessionId]);
+    if (sessionAuthorization[sessionId] === 'auto') {
+      transport.send({
+        type: 'set_authorization_mode',
+        payload: { sessionId, mode: 'auto', scope: 'session' },
+      });
+    }
+  }, [connected, globalAuto, sessionAuthorization, sessionId]);
 
   React.useEffect(() => {
     const departingSessionId = sessionId;
     return () => {
       const state = authorizationStateRef.current;
       if (departingSessionId
+        && authorizationConnectedRef.current
         && !state.globalAuto
         && state.sessionAuthorization[departingSessionId] === 'auto') {
         transport.send({
@@ -345,32 +360,24 @@ export function Composer({
 
   const pickAuthorization = (kind: 'manual' | 'session' | 'global'): void => {
     if (!sessionId) return;
+    if (!connected) {
+      setAttachError('连接已断开，授权模式未修改；恢复连接后请重试');
+      setAuthorizationOpen(false);
+      return;
+    }
+    setAttachError(null);
     if (kind === 'global') {
       localStorage.setItem('otto.authorization.global-auto', '1');
       setGlobalAuto(true);
       setSessionAuthorization({});
-      transport.send({ type: 'set_authorization_mode', payload: { sessionId, mode: 'auto', scope: 'all' } });
     } else if (kind === 'session') {
-      const wasGlobal = globalAuto;
       localStorage.setItem('otto.authorization.global-auto', '0');
       setGlobalAuto(false);
-      if (wasGlobal) {
-        transport.send({
-          type: 'set_authorization_mode',
-          payload: { sessionId, mode: 'manual', scope: 'all' },
-        });
-      }
       setSessionAuthorization((prev) => ({ ...prev, [sessionId]: 'auto' }));
-      transport.send({ type: 'set_authorization_mode', payload: { sessionId, mode: 'auto', scope: 'session' } });
     } else {
-      const wasGlobal = globalAuto;
       localStorage.setItem('otto.authorization.global-auto', '0');
       setGlobalAuto(false);
       setSessionAuthorization((prev) => ({ ...prev, [sessionId]: 'manual' }));
-      transport.send({
-        type: 'set_authorization_mode',
-        payload: { sessionId, mode: 'manual', scope: wasGlobal ? 'all' : 'session' },
-      });
     }
     setAuthorizationOpen(false);
   };

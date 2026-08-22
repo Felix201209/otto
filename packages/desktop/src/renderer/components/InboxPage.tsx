@@ -25,6 +25,7 @@ import {
   buildAtoaRequest,
   displayDirectMessageContent,
 } from '../atoaProtocol.js';
+import { startVisiblePolling } from '../visiblePolling.js';
 import {
   IconCheckCheck,
   IconClose,
@@ -33,7 +34,7 @@ import {
   IconWarning,
 } from './icons.js';
 
-const INBOX_REFRESH_MS = 8_000;
+const INBOX_REFRESH_MS = 15_000;
 
 type InboxFilter = 'all' | 'unread' | 'handled';
 
@@ -150,15 +151,17 @@ export function InboxPage({
   useEffect(() => {
     if (!hasAuth) return;
     setLoading(true);
-    void Promise.all([
-      refreshNotifications(),
-      refreshFederationContacts(),
-    ]).finally(() => setLoading(false));
-    const timer = window.setInterval(() => {
-      void refreshNotifications();
-      void refreshFederationContacts();
-    }, INBOX_REFRESH_MS);
-    return () => window.clearInterval(timer);
+    const stopPolling = startVisiblePolling(
+      async () => {
+        await Promise.all([
+          refreshNotifications(),
+          refreshFederationContacts(),
+        ]);
+        setLoading(false);
+      },
+      INBOX_REFRESH_MS,
+    );
+    return stopPolling;
   }, [hasAuth, refreshFederationContacts, refreshNotifications]);
 
   // —— 构建会话列表 ——
