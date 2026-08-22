@@ -19,6 +19,20 @@ describe('commercial billing route policy', () => {
     expect(commercialBillingOperationForRoute(path, 'GET')).toBeNull();
   });
 
+  it('charges park tickets only after record-level service classification', () => {
+    expect(commercialBillingOperationForRoute(
+      '/enterprise/tickets',
+      'POST',
+      { ticketServiceId: 'repair' },
+    )).toEqual({ module: 'park_service', units: 1 });
+    expect(commercialBillingOperationForRoute(
+      '/enterprise/tickets',
+      'POST',
+      { ticketServiceId: 'it' },
+    )).toBeNull();
+    expect(commercialBillingOperationForRoute('/enterprise/tickets', 'POST')).toBeNull();
+  });
+
   it('does not charge similarly prefixed or maintenance routes', () => {
     expect(commercialBillingOperationForRoute('/enterprise/knowledge/1', 'POST'))
       .toBeNull();

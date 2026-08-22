@@ -33,6 +33,7 @@ function setup(enforcement: 'disabled' | 'enforce' = 'enforce') {
     db: () => database,
     deploymentId: () => credentials.deploymentId,
     credentials: () => credentials,
+    billingEnforcement: () => enforcement,
   };
   return { database, store };
 }
@@ -60,6 +61,26 @@ describe('billing admission repository', () => {
     }
   });
 
+  it('fails closed when enforced billing credentials are missing or malformed', async () => {
+    const { database, store } = setup();
+    try {
+      store.credentials = () => null;
+      const fetchImpl = vi.fn() as unknown as typeof fetch;
+
+      await expect(authorizeBillingOperation(store, operation, fetchImpl)).rejects
+        .toMatchObject<BillingAdmissionError>({
+          code: 'billing_policy_unavailable',
+          statusCode: 503,
+        });
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(database.prepare(
+        'SELECT COUNT(*) AS count FROM billing_admission_outbox',
+      ).get()).toEqual({ count: 0 });
+    } finally {
+      database.close();
+    }
+  });
+
   it('fails closed when an enforced operation has no idempotency key', async () => {
     const { database, store } = setup();
     try {
@@ -70,6 +91,88 @@ describe('billing admission repository', () => {
         code: 'billing_idempotency_key_required',
         statusCode: 400,
       });
+    } finally {
+      database.close();
+    }
+  });
+
+  it('claims an idempotency key before contacting Control and rejects concurrent replay', async () => {
+    const { database, store } = setup();
+    try {
+      let releaseHold!: (response: Response) => void;
+      const holdResponse = new Promise<Response>((resolve) => {
+        releaseHold = resolve;
+      });
+      const fetchImpl = vi.fn(async () => holdResponse) as unknown as typeof fetch;
+
+      const first = authorizeBillingOperation(store, operation, fetchImpl, 1_000);
+      await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+      await expect(
+        authorizeBillingOperation(store, operation, fetchImpl, 1_001),
+      ).rejects.toMatchObject<BillingAdmissionError>({
+        code: 'billing_operation_replayed',
+        statusCode: 409,
+      });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+      releaseHold(Response.json(
+        { hold: { id: 'hold_concurrent123' } },
+        { status: 201 },
+      ));
+      await expect(first).resolves.toMatchObject({
+        holdId: 'hold_concurrent123',
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it('rejects a completed idempotency replay before contacting Control again', async () => {
+    const { database, store } = setup();
+    try {
+      const fetchImpl = vi.fn(async () => Response.json(
+        { hold: { id: 'hold_replay123' } },
+        { status: 201 },
+      )) as unknown as typeof fetch;
+
+      await authorizeBillingOperation(store, operation, fetchImpl, 1_000);
+      await expect(
+        authorizeBillingOperation(store, operation, fetchImpl, 2_000),
+      ).rejects.toMatchObject<BillingAdmissionError>({
+        code: 'billing_operation_replayed',
+        statusCode: 409,
+      });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('keeps an unknown hold outcome for reconciliation and blocks replay', async () => {
+    const { database, store } = setup();
+    try {
+      const fetchImpl = vi.fn(async () => {
+        throw new TypeError('socket closed after request write');
+      }) as unknown as typeof fetch;
+
+      await expect(authorizeBillingOperation(store, operation, fetchImpl, 1_000))
+        .rejects.toMatchObject<BillingAdmissionError>({
+          code: 'billing_operation_uncertain',
+          statusCode: 503,
+        });
+      expect(database.prepare(
+        `SELECT reconciliation_required, next_attempt_at_ms FROM billing_admission_outbox
+         WHERE idempotency_key = ?`,
+      ).get(operation.idempotencyKey)).toEqual({
+        reconciliation_required: 1,
+        next_attempt_at_ms: null,
+      });
+      await expect(authorizeBillingOperation(store, operation, fetchImpl, 2_000))
+        .rejects.toMatchObject<BillingAdmissionError>({
+          code: 'billing_operation_replayed',
+          statusCode: 409,
+        });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
     } finally {
       database.close();
     }
@@ -141,6 +244,65 @@ describe('billing admission repository', () => {
     }
   });
 
+  it.each([
+    ['capture', 400],
+    ['capture', 404],
+    ['capture', 409],
+    ['release', 400],
+    ['release', 404],
+    ['release', 409],
+  ] as const)(
+    'keeps a rejected %s outcome with status %i in reconciliation',
+    async (outcome, statusCode) => {
+      const { database, store } = setup();
+      try {
+        const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+          if (String(url).endsWith('/holds')) {
+            return Response.json({ hold: { id: 'hold_reconcile123' } }, { status: 201 });
+          }
+          return Response.json(
+            { error: `control rejected ${outcome}` },
+            { status: statusCode },
+          );
+        }) as unknown as typeof fetch;
+
+        const admission = await authorizeBillingOperation(
+          store,
+          {
+            ...operation,
+            idempotencyKey: `request:park:${outcome}:${statusCode}`,
+          },
+          fetchImpl,
+          1_000,
+        );
+        await expect(finalizeBillingOperation(
+          store,
+          admission,
+          outcome,
+          fetchImpl,
+          2_000,
+        )).rejects.toThrow(`billing ${outcome} requires reconciliation`);
+
+        expect(database.prepare(
+          `SELECT status, desired_outcome, reconciliation_required,
+                  next_attempt_at_ms, last_error
+           FROM billing_admission_outbox WHERE id = ?`,
+        ).get(admission.outboxId)).toMatchObject({
+          status: 'failed',
+          desired_outcome: outcome,
+          reconciliation_required: 1,
+          next_attempt_at_ms: null,
+          last_error: expect.stringContaining(`control returned ${statusCode}`),
+        });
+        await expect(flushBillingAdmissionQueue(store, fetchImpl, 10_000)).resolves
+          .toMatchObject({ attempted: 0, reconciliation: 0 });
+        expect(fetchImpl).toHaveBeenCalledTimes(2);
+      } finally {
+        database.close();
+      }
+    },
+  );
+
   it('binds admission and finalization to the authenticated tenant organization', async () => {
     const { database, store } = setup();
     try {
@@ -208,28 +370,36 @@ describe('billing admission repository', () => {
     }
   });
 
-  it('releases an interrupted operation after its admission window', async () => {
+  it('moves an interrupted authorized operation to reconciliation without releasing it', async () => {
     const { database, store } = setup();
     try {
       const fetchImpl = vi.fn(async (url: string | URL | Request) => {
-        if (String(url).endsWith('/holds')) {
-          return Response.json({ hold: { id: 'hold_interrupted' } }, { status: 201 });
-        }
-        expect(String(url)).toContain('/hold_interrupted/release');
-        return Response.json({ replayed: false }, { status: 200 });
+        expect(String(url)).toMatch(/\/holds$/u);
+        return Response.json({ hold: { id: 'hold_interrupted' } }, { status: 201 });
       }) as unknown as typeof fetch;
       await authorizeBillingOperation(store, operation, fetchImpl, 1_000);
+
       await expect(flushBillingAdmissionQueue(
         store,
         fetchImpl,
         1_000 + 15 * 60 * 1000 + 1,
-      )).resolves.toMatchObject({ attempted: 1, released: 1 });
+      )).resolves.toMatchObject({
+        attempted: 0,
+        released: 0,
+        captured: 0,
+        reconciliation: 1,
+      });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
       expect(database.prepare(
-        `SELECT status, desired_outcome FROM billing_admission_outbox
-         WHERE idempotency_key = ?`,
-      ).get(operation.idempotencyKey)).toEqual({
-        status: 'finalized',
-        desired_outcome: 'release',
+        `SELECT status, desired_outcome, reconciliation_required,
+                next_attempt_at_ms, last_error
+         FROM billing_admission_outbox WHERE idempotency_key = ?`,
+      ).get(operation.idempotencyKey)).toMatchObject({
+        status: 'failed',
+        desired_outcome: null,
+        reconciliation_required: 1,
+        next_attempt_at_ms: null,
+        last_error: expect.stringContaining('outcome is uncertain'),
       });
     } finally {
       database.close();

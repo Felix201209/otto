@@ -191,4 +191,49 @@ describe('private deployment schema contributor', () => {
       database.close();
     }
   });
+
+  it('adds reconciliation state to an existing billing admission outbox', () => {
+    const database = new Database(':memory:');
+    try {
+      database.exec(`
+        CREATE TABLE billing_admission_outbox (
+          id TEXT PRIMARY KEY,
+          deployment_id TEXT NOT NULL,
+          organization_id TEXT NOT NULL,
+          hold_id TEXT NOT NULL,
+          module TEXT NOT NULL,
+          units INTEGER NOT NULL CHECK(units > 0),
+          reference_id TEXT NOT NULL,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          desired_outcome TEXT CHECK(desired_outcome IN ('capture', 'release')),
+          status TEXT NOT NULL DEFAULT 'authorized'
+            CHECK(status IN ('authorized', 'pending', 'failed', 'finalized', 'discarded')),
+          attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+          created_at_ms INTEGER NOT NULL,
+          finalized_at_ms INTEGER,
+          next_attempt_at_ms INTEGER,
+          last_error TEXT,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO billing_admission_outbox
+          (id, deployment_id, organization_id, hold_id, module, units,
+           reference_id, idempotency_key, created_at_ms)
+        VALUES
+          ('badm-old', 'dep-old', 'org-old', 'hold_old', 'park_service', 1,
+           'task-old', 'request:old', 1000);
+      `);
+
+      applySchema(database);
+
+      expect(database.prepare(
+        `SELECT id, reconciliation_required
+         FROM billing_admission_outbox WHERE id = 'badm-old'`,
+      ).get()).toEqual({
+        id: 'badm-old',
+        reconciliation_required: 0,
+      });
+    } finally {
+      database.close();
+    }
+  });
 });
