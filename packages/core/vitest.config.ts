@@ -4,9 +4,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  resolve: {
+    // Unit tests exercise workspace sources directly. Production builds still
+    // resolve each package through its explicit ESM export to dist/.
+    alias: {
+      'otto-rpa': fileURLToPath(new URL('../rpa/src/index.ts', import.meta.url)),
+      'otto-workflow': fileURLToPath(
+        new URL('../workflow/src/index.ts', import.meta.url),
+      ),
+    },
+  },
   test: {
     reporters: ['default', 'junit'],
     silent: true,

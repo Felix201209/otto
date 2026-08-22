@@ -166,7 +166,13 @@ describe('LoopDetectionService', () => {
       // 填充内容需要足够长，使得平均距离超过 CONTENT_CHUNK_SIZE * 1.5
       // 默认 maxAllowedDistance 是 1.5 * 500 = 750
       // 如果 fillerContent 长度为 500，则两次重复之间的距离是 1000
-      const fillerContent = generateRandomString(500);
+      // Keep this fixture deterministic. A random filler can occasionally end in
+      // a long run of `b` characters (or be affected by another test's random
+      // mock), creating several adjacent 500-character `b` windows and making
+      // this distance test flaky under the full suite.
+      const fillerContent = Array.from({ length: 500 }, (_, index) =>
+        String.fromCharCode(0x4e00 + index),
+      ).join('');
 
       let isLoop = false;
       for (let i = 0; i < CONTENT_LOOP_THRESHOLD; i++) {

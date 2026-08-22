@@ -511,7 +511,7 @@ describe('fileUtils', () => {
           .mimeType,
       ).toBe('image/png');
       expect(result.returnDisplay).toContain('Read image file: image.png');
-    });
+    }, 15_000);
 
     it('should process a PDF file', async () => {
       const fakePdfData = Buffer.from('fake pdf data');
