@@ -93,7 +93,9 @@ import {
   createOrganizationWorkforceComposition,
   IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,
   IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR,
+  ORGANIZATION_BOOTSTRAP_PROVISIONING_SCHEMA_CONTRIBUTOR,
   getOrganizationPositionRoleMappingFromRepository,
+  hasBootstrapEnterpriseIdentityInRepository,
   listAccountTagsInRepository,
   listDepartmentInvitesForBackup,
   listEmployeesForBackup,
@@ -101,6 +103,7 @@ import {
   migrateLegacyEnterpriseTenant,
   normalizeAccountTags,
   normalizeOrganizationSlug,
+  provisionBootstrapEnterpriseInRepository,
   replaceMigratedAccountTagsInRepository,
   toOrganizationDirectoryView,
   assertAccountPassword as assertIdentityAccountPassword,
@@ -108,6 +111,8 @@ import {
   identitySecretMatches,
   isAcceptableAccountPassword as isAcceptableIdentityAccountPassword,
   migrateLegacyAuthSessions,
+  type BootstrapEnterpriseProvisioningInput,
+  type BootstrapEnterpriseProvisioningResult,
   type EmployeeRecord,
   type OrganizationDepartmentView as IdentityOrganizationDepartmentView,
   type OrganizationDirectoryView,
@@ -248,7 +253,7 @@ const PRIVACY_DELETION_LEDGER_KEY_PATH = path.join(
 );
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
-export const ENTERPRISE_SCHEMA_VERSION = 22;
+export const ENTERPRISE_SCHEMA_VERSION = 23;
 export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
@@ -285,6 +290,7 @@ function initSchema(d: Database): void {
     }),
     ENTERPRISE_SKILL_MARKET_SCHEMA_CONTRIBUTOR,
     IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR,
+    ORGANIZATION_BOOTSTRAP_PROVISIONING_SCHEMA_CONTRIBUTOR,
     createMemberSchemaContributor({
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
     }),
@@ -563,7 +569,8 @@ export const {
   dataDirectory: DATA_DIR,
   enabled: () =>
     process.env.OTTO_FEDERATION_ENABLED === 'true' ||
-    getPrivateDeploymentRuntimeConfiguration()?.capabilities.federation === true,
+    getPrivateDeploymentRuntimeConfiguration()?.capabilities.federation ===
+      true,
   gatewayUrl: () =>
     process.env.OTTO_FEDERATION_GATEWAY_URL?.trim() ||
     getPrivateDeploymentRuntimeConfiguration()?.federationGatewayUrl ||
@@ -952,6 +959,33 @@ export const {
   },
   audit: logAudit,
 });
+
+export function provisionBootstrapEnterprise(
+  input: BootstrapEnterpriseProvisioningInput,
+): BootstrapEnterpriseProvisioningResult {
+  return provisionBootstrapEnterpriseInRepository(
+    {
+      db: getDB,
+      createOrganization,
+      createAccount,
+      issueOrganizationInvite,
+      createUnknownPassword: () => randomBytes(32).toString('base64url'),
+      now: Date.now,
+    },
+    input,
+  );
+}
+
+export function hasBootstrapEnterpriseIdentity(
+  deploymentId: string,
+  organizationId?: string | null,
+): boolean {
+  return hasBootstrapEnterpriseIdentityInRepository(
+    getDB(),
+    deploymentId,
+    organizationId,
+  );
+}
 
 export const {
   ensureDirectMessageContentEncrypted,

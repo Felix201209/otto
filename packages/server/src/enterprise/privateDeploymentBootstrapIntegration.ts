@@ -9,6 +9,7 @@ import {
   createPrivateDeploymentBootstrapCoordinator,
   type PrivateDeploymentBootstrapClaimConfig,
   type PrivateDeploymentBootstrapCoordinator,
+  type PrivateDeploymentReadiness,
 } from '../modules/deployment_lifecycle/index.js';
 import * as db from './db.js';
 
@@ -88,6 +89,18 @@ function readBootstrapSecret(environment: NodeJS.ProcessEnv): string | null {
   return environment.OTTO_DEPLOYMENT_BOOTSTRAP_SECRET?.trim() || null;
 }
 
+export function canConsumePrivateDeploymentBootstrapSecret(
+  readiness: PrivateDeploymentReadiness,
+): boolean {
+  return (
+    readiness.bootstrap.phase === 'activated' &&
+    readiness.canUseLicensedFeatures &&
+    readiness.steps.some(
+      (step) => step.id === 'account_identity' && step.state === 'ready',
+    )
+  );
+}
+
 export function consumePrivateDeploymentBootstrapSecretFile(
   environment: NodeJS.ProcessEnv = process.env,
 ): void {
@@ -161,6 +174,7 @@ export function createEnterprisePrivateDeploymentBootstrap(input: {
   config?: PrivateDeploymentBootstrapClaimConfig | null;
   fetch?: typeof fetch;
   environment?: NodeJS.ProcessEnv;
+  applyProvisioningCommand?: (command: unknown) => void;
 }): PrivateDeploymentBootstrapCoordinator {
   const environment = input.environment ?? process.env;
   const configuredFromEnvironment = input.config === undefined;
@@ -201,6 +215,13 @@ export function createEnterprisePrivateDeploymentBootstrap(input: {
           },
           activeOrganizations: deployment.runtimeHealth.activeOrganizations,
           activeAccounts: deployment.runtimeHealth.activeAccounts,
+          identityReady:
+            deployment.runtimeHealth.activeOrganizations > 0 &&
+            deployment.runtimeHealth.activeAccounts > 0,
+          provisioningIdentityReady: db.hasBootstrapEnterpriseIdentity(
+            deployment.deploymentId,
+            deployment.license.organizationId,
+          ),
           runtimeConfiguration: db.getPrivateDeploymentRuntimeConfiguration(),
           bootstrap,
         };
@@ -208,6 +229,12 @@ export function createEnterprisePrivateDeploymentBootstrap(input: {
       importDeploymentLicense: db.importDeploymentLicense,
       refreshDeploymentLicenseLease: db.refreshDeploymentLicenseLease,
       saveRuntimeConfiguration: db.savePrivateDeploymentRuntimeConfiguration,
+      applyProvisioningCommand(command) {
+        if (!input.applyProvisioningCommand) {
+          throw new Error('bootstrap_provisioning_not_configured');
+        }
+        input.applyProvisioningCommand(command);
+      },
     },
     config,
     { fetch: input.fetch },
@@ -216,7 +243,7 @@ export function createEnterprisePrivateDeploymentBootstrap(input: {
   return {
     async prepare() {
       const result = await coordinator.prepare();
-      if (result.bootstrap.phase === 'activated') {
+      if (canConsumePrivateDeploymentBootstrapSecret(result)) {
         consumePrivateDeploymentBootstrapSecretFile(environment);
       }
       return result;

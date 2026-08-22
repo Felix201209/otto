@@ -13,6 +13,7 @@ import {
   completeControlCommandInRepository,
   assertMonotonicSequence,
   controlCommandExists,
+  ControlCommandIdConflictError,
   type ControlCommandQueueStore,
   type ControlCommandRunResult,
 } from './controlCommandQueue.js';
@@ -77,27 +78,7 @@ export function createControlCommandProcessor(input: {
       if (!fieldCheck.ok) {
         return fieldCheck.code === 'expired' ? { error: 'expired' } : { error: fieldCheck.code };
       }
-      // 3) 幂等重放：同 commandId 已存在 → 直接返回既有收据（序列检查跳过）。
-      if (controlCommandExists(store, envelope.commandId)) {
-        const version = input.executionVersion?.() ?? 1;
-        return {
-          receipt: buildControlCommandReceipt({
-            commandId: envelope.commandId,
-            deploymentId: envelope.deploymentId,
-            executionVersion: version,
-            status: 'accepted',
-            resultSummary: 'replayed',
-            signingPrivateKey: input.signingPrivateKey,
-          }),
-        };
-      }
-      // 4) 单调序列。
-      const mono = assertMonotonicSequence(store, envelope.commandId, envelope.sequence);
-      if (!mono.ok) {
-        return { error: mono.code };
-      }
-      // 5) 幂等入队。
-      const accepted = acceptControlCommandInRepository(store, {
+      const enqueueInput = {
         commandId: envelope.commandId,
         type: envelope.type,
         schemaVersion: envelope.schemaVersion,
@@ -109,7 +90,36 @@ export function createControlCommandProcessor(input: {
         payloadDigest: envelope.payloadDigest,
         payloadJson: JSON.stringify(envelope.payload),
         signature: envelope.signature,
-      });
+      };
+      // 3) 仅完整信封一致的同 commandId 才是幂等重放。
+      if (controlCommandExists(store, envelope.commandId)) {
+        try {
+          const replay = acceptControlCommandInRepository(store, enqueueInput);
+          const version = input.executionVersion?.() ?? 1;
+          return {
+            receipt: buildControlCommandReceipt({
+              commandId: envelope.commandId,
+              deploymentId: envelope.deploymentId,
+              executionVersion: version,
+              status: replay.status,
+              resultSummary: 'replayed',
+              signingPrivateKey: input.signingPrivateKey,
+            }),
+          };
+        } catch (error) {
+          if (error instanceof ControlCommandIdConflictError) {
+            return { error: error.code };
+          }
+          throw error;
+        }
+      }
+      // 4) 单调序列。
+      const mono = assertMonotonicSequence(store, envelope.commandId, envelope.sequence);
+      if (!mono.ok) {
+        return { error: mono.code };
+      }
+      // 5) 幂等入队。
+      const accepted = acceptControlCommandInRepository(store, enqueueInput);
       const version = input.executionVersion?.() ?? 1;
       return {
         receipt: buildControlCommandReceipt({

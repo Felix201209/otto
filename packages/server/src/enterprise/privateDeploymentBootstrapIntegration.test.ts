@@ -7,7 +7,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import type { PrivateDeploymentReadiness } from '../modules/deployment_lifecycle/index.js';
 import {
+  canConsumePrivateDeploymentBootstrapSecret,
   consumePrivateDeploymentBootstrapSecretFile,
   privateDeploymentBootstrapConfigFromEnvironment,
 } from './privateDeploymentBootstrapIntegration.js';
@@ -61,6 +63,40 @@ describe('private deployment bootstrap environment', () => {
         },
       }),
     ).toBeNull();
+  });
+
+  it('only permits secret consumption after activation and account identity readiness', () => {
+    const ready: PrivateDeploymentReadiness = {
+      state: 'ready',
+      canAuthenticate: true,
+      canUseLicensedFeatures: true,
+      bootstrap: {
+        phase: 'activated',
+        lastAttemptAt: '2026-08-22T00:00:00.000Z',
+        lastSuccessAt: '2026-08-22T00:00:00.000Z',
+        errorCode: null,
+      },
+      steps: [{
+        id: 'account_identity',
+        state: 'ready',
+        required: true,
+        message: 'ready',
+      }],
+    };
+
+    expect(canConsumePrivateDeploymentBootstrapSecret(ready)).toBe(true);
+    expect(canConsumePrivateDeploymentBootstrapSecret({
+      ...ready,
+      bootstrap: { ...ready.bootstrap, phase: 'failed' },
+    })).toBe(false);
+    expect(canConsumePrivateDeploymentBootstrapSecret({
+      ...ready,
+      canUseLicensedFeatures: false,
+    })).toBe(false);
+    expect(canConsumePrivateDeploymentBootstrapSecret({
+      ...ready,
+      steps: [{ ...ready.steps[0], state: 'waiting_for_user' }],
+    })).toBe(false);
   });
 
   it('consumes a successful one-time secret file idempotently', () => {

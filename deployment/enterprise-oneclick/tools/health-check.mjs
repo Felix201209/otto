@@ -172,9 +172,7 @@ if (requireDeploymentActivation) {
   if (
     bootstrap.readiness?.canAuthenticate !== true ||
     bootstrap.readiness?.canUseLicensedFeatures !== true ||
-    !['ready', 'ready_for_identity', 'degraded'].includes(
-      bootstrap.readiness?.state,
-    )
+    !['ready', 'degraded'].includes(bootstrap.readiness?.state)
   ) {
     fail(
       `private deployment bootstrap is not ready: ${JSON.stringify(bootstrap)}`,

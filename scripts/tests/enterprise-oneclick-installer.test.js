@@ -162,8 +162,10 @@ describe('enterprise one-click service layout', () => {
     expect(serviceStart).toBeGreaterThan(hardening);
   });
 
-  it('transactionally replaces an expired deployment enrollment secret', () => {
+  it('transactionally installs the enrollment secret in a service-writable directory', () => {
     const installer = readFileSync(INSTALL_SH, 'utf8');
+    const service = readFileSync(SYSTEMD_SERVICE, 'utf8');
+    const readme = readFileSync(README, 'utf8');
     const backup = installer.indexOf(
       'BOOTSTRAP_SECRET_BACKUP="${TXN_DIR}/previous-deployment-bootstrap-secret"',
     );
@@ -178,6 +180,19 @@ describe('enterprise one-click service layout', () => {
     );
     const commitMarker = installer.indexOf('rm -f "$TRANSACTION_MARKER"');
 
+    expect(installer).toContain(
+      'BOOTSTRAP_SECRET_DIR="${DATA_DIR}/bootstrap"',
+    );
+    expect(installer).toContain(
+      'BOOTSTRAP_SECRET_TARGET="${BOOTSTRAP_SECRET_DIR}/deployment-enrollment.secret"',
+    );
+    expect(installer).toContain(
+      'install -d -o otto-enterprise -g otto-enterprise -m 0700',
+    );
+    expect(service).toContain('ReadWritePaths=/var/lib/otto-enterprise');
+    expect(readme).toContain(
+      '/var/lib/otto-enterprise/bootstrap/deployment-enrollment.secret',
+    );
     expect(backup).toBeGreaterThan(-1);
     expect(replacement).toBeGreaterThan(backup);
     expect(rollback).toBeGreaterThan(-1);
@@ -185,6 +200,60 @@ describe('enterprise one-click service layout', () => {
     expect(commitMarker).toBeGreaterThan(successfulCleanup);
     expect(installer).toContain('已有部署登记密钥不是普通文件，拒绝替换');
   });
+
+  it('lets Control create the CEO without a legacy default administrator', () => {
+    const installer = readFileSync(INSTALL_SH, 'utf8');
+    const config = readFileSync(ENV_EXAMPLE, 'utf8');
+
+    expect(installer).toContain(
+      'if [ "$ACCOUNT_COUNT" -eq 0 ] && [ -z "$BOOTSTRAP_SECRET_STAGED" ]; then',
+    );
+    expect(installer).toContain(
+      'if [ "$ACCOUNT_COUNT" -eq 0 ] && [ -z "$BOOTSTRAP_SECRET_STAGED" ] && [ "$OTTO_BOOTSTRAP_PASSWORD" != "auto" ]; then',
+    );
+    expect(config).toContain('仅离线空库时 auto 生成一次性密码');
+  });
+  it('installs Control command trust independently and rolls it back transactionally', () => {
+    const installer = readFileSync(INSTALL_SH, 'utf8');
+    const runtime = readFileSync(RUNTIME_ENTRY, 'utf8');
+    const backup = installer.indexOf(
+      'CONTROL_TRUST_BACKUP="${TXN_DIR}/previous-control-public-keys.json"',
+    );
+    const replacement = installer.indexOf(
+      'install -o root -g otto-enterprise -m 0640 \\\n    "$CONTROL_TRUST_STAGED" "$CONTROL_TRUST_TARGET"',
+    );
+    const successfulCleanup = installer.lastIndexOf(
+      'rm -f "$CONTROL_TRUST_BACKUP"',
+    );
+    const commitMarker = installer.indexOf('rm -f "$TRANSACTION_MARKER"');
+
+    expect(installer).toContain(
+      'OTTO_CONTROL_TRUST_FILE "$CONTROL_TRUST_TARGET"',
+    );
+    expect(installer).toContain('-u OTTO_CONTROL_TRUST_FILE');
+    expect(backup).toBeGreaterThan(-1);
+    expect(replacement).toBeGreaterThan(backup);
+    expect(successfulCleanup).toBeGreaterThan(replacement);
+    expect(commitMarker).toBeGreaterThan(successfulCleanup);
+    expect(runtime).toContain(
+      "'OTTO_CONTROL_TRUST_FILE is required for automatic deployment enrollment'",
+    );
+    expect(runtime).toContain('let bootstrapSecretFileExists = false;');
+    expect(runtime).toContain("if (error?.code !== 'ENOENT') throw error;");
+    expect(runtime).toContain(
+      'if (bootstrapSecretFileExists && !controlTrustFileValue)',
+    );
+    expect(runtime).not.toContain(
+      'process.env.OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE?.trim() &&',
+    );
+    expect(runtime).toMatch(
+      /process\.env\.OTTO_ENTERPRISE_CONTROL_PUBLIC_KEYS\s*=\s*JSON\.stringify\(controlPublicKeys\)/u,
+    );
+    expect(runtime).not.toContain(
+      'OTTO_ENTERPRISE_CONTROL_PUBLIC_KEYS = JSON.stringify(licensePublicKeys)',
+    );
+  });
+
   it('loads License trust only from the signed release and enforces it in production', () => {
     const bundle = readFileSync(BUNDLE_SCRIPT, 'utf8');
     const runtime = readFileSync(RUNTIME_ENTRY, 'utf8');
@@ -269,7 +338,7 @@ describe('enterprise one-click schema contract', () => {
             ) {
               response.end(JSON.stringify({
                 readiness: {
-                  state: 'ready_for_identity',
+                  state: 'ready',
                   canAuthenticate: true,
                   canUseLicensedFeatures: true,
                 },

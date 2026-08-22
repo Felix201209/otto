@@ -134,8 +134,10 @@ export function createCommercialControlComposition(
     getMachineFingerprint: getMachineFingerprintFromRepository,
     getDeploymentLicense: () =>
       getDeploymentLicenseFromRepository(deploymentStore),
-    importDeploymentLicense: (raw: unknown) =>
-      importDeploymentLicenseIntoRepository(deploymentStore, raw),
+    importDeploymentLicense: (
+      raw: unknown,
+      options?: Parameters<typeof importDeploymentLicenseIntoRepository>[2],
+    ) => importDeploymentLicenseIntoRepository(deploymentStore, raw, options),
     importDeploymentLicenseLease: (raw: unknown) =>
       importDeploymentLicenseLeaseIntoRepository(deploymentStore, raw),
     ensureDeploymentLicenseSecretsEncrypted: () =>
@@ -215,11 +217,14 @@ export function createCommercialControlComposition(
         typeof exportDeploymentDiagnosticsFromRepository
       >[1] = {},
     ) => exportDeploymentDiagnosticsFromRepository(deploymentStore, input),
-    isLicenseUsableForOrganizationFeature: (feature: OrganizationFeatureKey) =>
-      isLicenseUsableForOrganizationFeatureInRepository(
-        deploymentStore,
-        feature,
-      ),
+    isLicenseUsableForOrganizationFeature: (
+      feature: OrganizationFeatureKey,
+      organizationId?: string | null,
+    ) => isLicenseUsableForOrganizationFeatureInRepository(
+      deploymentStore,
+      feature,
+      organizationId,
+    ),
     isLicenseRestricted: () => isLicenseRestrictedInRepository(deploymentStore),
   };
 }

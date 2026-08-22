@@ -832,7 +832,7 @@ describe('受保护 vs 公开路由边界', () => {
     await expect(backup.json()).resolves.toMatchObject({
       lastError: null,
       backupCount: 1,
-      latestSchemaVersion: 22,
+      latestSchemaVersion: 23,
     });
 
     const telemetry = await fetch(`${base}/enterprise/deployment/telemetry`, {
@@ -938,6 +938,30 @@ describe('受保护 vs 公开路由边界', () => {
       headers: memberHeaders,
     });
     expect(entitledMessages.status).toBe(200);
+
+    const crossOrganizationMember = db.createAccount({
+      organizationId: org.id,
+      username: 'cross-organization-route-member',
+      password: 'cross-organization-route-password',
+      name: 'Cross Organization Route Member',
+    });
+    const crossOrganizationToken = db.createAuthSession(
+      crossOrganizationMember.id,
+    ).token;
+    const crossOrganizationMessages = await fetch(
+      `${base}/enterprise/messages/unread`,
+      {
+        headers: {
+          authorization: `Bearer ${crossOrganizationToken}`,
+        },
+      },
+    );
+    expect(crossOrganizationMessages.status).toBe(402);
+    await expect(crossOrganizationMessages.json()).resolves.toEqual({
+      error: 'commercial module is not entitled',
+      code: 'commercial_module_not_entitled',
+      feature: 'direct_messages',
+    });
 
     const internalTicket = await fetch(`${base}/enterprise/tickets`, {
       method: 'POST',

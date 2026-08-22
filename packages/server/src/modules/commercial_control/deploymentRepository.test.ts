@@ -61,6 +61,85 @@ function setup() {
 }
 
 describe('private deployment license repository', () => {
+  it('allows a missing organization only for the explicit bootstrap import path', () => {
+    const { database, control, privateKey } = setup();
+    try {
+      const now = Date.now();
+      const payload = {
+        id: 'lic-bootstrap-missing-org',
+        deploymentId: control.getDeploymentId(),
+        organizationId: 'org-bootstrap-new',
+        machineFingerprint: control.getMachineFingerprint(),
+        customerName: 'Bootstrap customer',
+        plan: 'enterprise',
+        expiresAtMs: now + 30 * 24 * 60 * 60 * 1000,
+        seatLimit: 20,
+        modules: ['enterprise_tree'],
+        offline: true,
+        telemetryAllowed: false,
+        issuedAtMs: now,
+      };
+      const envelope = {
+        license: payload,
+        signature: signEd25519Envelope(payload, privateKey),
+      };
+
+      expect(() => control.importDeploymentLicense(envelope)).toThrow(
+        'license organizationId mismatch',
+      );
+      expect(
+        control.importDeploymentLicense(envelope, {
+          allowMissingOrganization: true,
+        }),
+      ).toMatchObject({
+        organizationId: 'org-bootstrap-new',
+        status: 'active',
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it('binds licensed feature execution to the License organization', () => {
+    const { database, control, privateKey } = setup();
+    try {
+      const now = Date.now();
+      const payload = {
+        id: 'lic-org-bound',
+        deploymentId: control.getDeploymentId(),
+        organizationId: 'org-licensed',
+        machineFingerprint: control.getMachineFingerprint(),
+        customerName: 'Organization-bound customer',
+        plan: 'enterprise',
+        expiresAtMs: now + 30 * 24 * 60 * 60 * 1000,
+        seatLimit: 20,
+        modules: ['enterprise_tree'],
+        offline: true,
+        telemetryAllowed: false,
+        issuedAtMs: now,
+      };
+      control.importDeploymentLicense({
+        license: payload,
+        signature: signEd25519Envelope(payload, privateKey),
+      });
+
+      expect(control.isLicenseUsableForOrganizationFeature(
+        'enterprise_tree',
+        'org-licensed',
+      )).toBe(true);
+      expect(control.isLicenseUsableForOrganizationFeature(
+        'enterprise_tree',
+        'org_default',
+      )).toBe(false);
+      expect(control.isLicenseUsableForOrganizationFeature(
+        'enterprise_tree',
+        null,
+      )).toBe(false);
+    } finally {
+      database.close();
+    }
+  });
+
   it('treats an expired signed License as restricted at the execution layer', () => {
     const { database, control, privateKey } = setup();
     try {

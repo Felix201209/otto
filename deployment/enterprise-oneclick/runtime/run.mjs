@@ -72,6 +72,45 @@ process.env.NODE_ENV = 'production';
 process.env.OTTO_LICENSE_ENFORCE = 'true';
 process.env.OTTO_LICENSE_PUBLIC_KEYS = JSON.stringify(licensePublicKeys);
 
+const controlTrustFileValue = process.env.OTTO_CONTROL_TRUST_FILE?.trim();
+const bootstrapSecretFileValue =
+  process.env.OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE?.trim();
+let bootstrapSecretFileExists = false;
+if (bootstrapSecretFileValue) {
+  try {
+    fs.lstatSync(path.resolve(bootstrapSecretFileValue));
+    bootstrapSecretFileExists = true;
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+}
+if (bootstrapSecretFileExists && !controlTrustFileValue) {
+  throw new Error(
+    'OTTO_CONTROL_TRUST_FILE is required for automatic deployment enrollment',
+  );
+}
+if (controlTrustFileValue) {
+  const controlTrustFile = path.resolve(controlTrustFileValue);
+  const controlTrustMetadata = fs.lstatSync(controlTrustFile);
+  if (controlTrustMetadata.isSymbolicLink() || !controlTrustMetadata.isFile()) {
+    throw new Error('OTTO_CONTROL_TRUST_FILE must be a regular file');
+  }
+  const controlPublicKeys = JSON.parse(
+    fs.readFileSync(controlTrustFile, 'utf8'),
+  );
+  if (
+    !Array.isArray(controlPublicKeys) ||
+    controlPublicKeys.length === 0 ||
+    controlPublicKeys.some(
+      (key) => typeof key !== 'string' || !key.includes('BEGIN PUBLIC KEY'),
+    )
+  ) {
+    throw new Error('Control command trust store is invalid');
+  }
+  process.env.OTTO_ENTERPRISE_CONTROL_PUBLIC_KEYS =
+    JSON.stringify(controlPublicKeys);
+}
+
 const { closeEnterpriseDatabase } = await import('./src/enterprise/db.js');
 const { startEnterpriseServer } = await import('./src/enterprise/server.js');
 
