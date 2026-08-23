@@ -12,7 +12,7 @@ const desktopRoot = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(desktopRoot, '../..');
 const mebibyte = 1024 * 1024;
 const lastPublicWindowsInstallerBytes = Number(
-  process.env.OTTO_DESKTOP_BASELINE_INSTALLER_BYTES || 236_706_516,
+  process.env.OTTO_DESKTOP_BASELINE_INSTALLER_BYTES || 125_255_674,
 );
 const maxWindowsInstallerGrowthBytes =
   Number(process.env.OTTO_DESKTOP_MAX_INSTALLER_GROWTH_MB || 12) * mebibyte;
@@ -134,11 +134,11 @@ if (existsSync(winInstaller)) {
   const growth = size - lastPublicWindowsInstallerBytes;
   if (size > maxWindowsInstallerBytes) {
     fail(
-      `Windows installer exceeds 1.9.12-relative budget: ${size} bytes > ${maxWindowsInstallerBytes} bytes (growth ${growth} bytes)`,
+      `Windows installer exceeds the verified 1.9.11-relative budget: ${size} bytes > ${maxWindowsInstallerBytes} bytes (growth ${growth} bytes)`,
     );
   } else {
     note(
-      `Windows installer size ${size} bytes; growth from 1.9.12 is ${growth} bytes; budget ${maxWindowsInstallerBytes} bytes`,
+      `Windows installer size ${size} bytes; growth from verified 1.9.11 is ${growth} bytes; budget ${maxWindowsInstallerBytes} bytes`,
     );
   }
 } else {

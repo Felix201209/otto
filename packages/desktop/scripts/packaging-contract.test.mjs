@@ -270,7 +270,7 @@ describe('desktop packaging contract', () => {
     expect(gate).not.toContain('latest.json win-x64 sha256 mismatch');
   });
 
-  it('enforces the real 1.9.12-relative Windows installer budget after packaging', async () => {
+  it('enforces the verified 1.9.11-relative Windows installer budget after packaging', async () => {
     const [gate, workflow] = await Promise.all([
       readFile(
         path.join(packageRoot, 'scripts', 'release-recovery-gate.mjs'),
@@ -278,12 +278,37 @@ describe('desktop packaging contract', () => {
       ),
       readFile(path.join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8'),
     ]);
-    expect(gate).toContain('236_706_516');
+    expect(gate).toContain('125_255_674');
     expect(gate).toContain('lastPublicWindowsInstallerBytes + maxWindowsInstallerGrowthBytes');
-    expect(gate).toContain('Windows installer exceeds 1.9.12-relative budget');
+    expect(gate).toContain('Windows installer exceeds the verified 1.9.11-relative budget');
     expect(workflow).toContain('Enforce update manifest and installer size budget');
     expect(workflow).toContain('npm run release:gate --workspace=packages/desktop');
-    expect(workflow).toContain("OTTO_DESKTOP_BASELINE_INSTALLER_BYTES: '236706516'");
+    expect(workflow).toContain("OTTO_DESKTOP_BASELINE_INSTALLER_BYTES: '125255674'");
+  });
+
+  it('excludes native build trees and registry SQLite build outputs from desktop artifacts', async () => {
+    const desktopPackage = JSON.parse(
+      await readFile(path.join(packageRoot, 'package.json'), 'utf8'),
+    );
+    const files = desktopPackage.build?.files ?? [];
+    for (const exclusion of [
+      '!**/node_modules/@otto/native/target/**',
+      '!**/node_modules/@otto/native/src/**',
+      '!**/node_modules/@otto/native/node_modules/**',
+      '!**/node_modules/better-sqlite3/build/**',
+      '!**/node_modules/better-sqlite3/deps/**',
+      '!**/node_modules/better-sqlite3/src/**',
+    ]) {
+      expect(files).toContain(exclusion);
+    }
+
+    const verifier = await readFile(
+      path.join(packageRoot, 'scripts', 'verify-packaged-runtime.mjs'),
+      'utf8',
+    );
+    expect(verifier).toContain('rejectAsarPrefix(entries, prefix)');
+    expect(verifier).toContain('node_modules/@otto/native/target');
+    expect(verifier).toContain('node_modules/better-sqlite3/build');
   });
 
   it('discovers every packaged LibreOffice bundle before signing Otto', async () => {

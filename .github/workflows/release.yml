@@ -279,7 +279,7 @@ jobs:
       - name: Enforce update manifest and installer size budget
         run: npm run release:gate --workspace=packages/desktop
         env:
-          OTTO_DESKTOP_BASELINE_INSTALLER_BYTES: '236706516'
+          OTTO_DESKTOP_BASELINE_INSTALLER_BYTES: '125255674'
           OTTO_DESKTOP_MAX_INSTALLER_GROWTH_MB: '12'
           OTTO_DESKTOP_MAX_INSTALLER_MB: '250'
 

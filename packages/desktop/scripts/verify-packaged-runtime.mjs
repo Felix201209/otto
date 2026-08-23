@@ -31,6 +31,16 @@ function requireAsarEntry(entries, archiveEntry) {
   }
 }
 
+function rejectAsarPrefix(entries, archivePrefix) {
+  const normalized = `/${archivePrefix.replaceAll('\\', '/').replace(/^\/+/, '')}`;
+  const found = [...entries].find(
+    (entry) => entry === normalized || entry.startsWith(`${normalized}/`),
+  );
+  if (found) {
+    throw new Error(`packaged runtime contains non-runtime asset ${found}`);
+  }
+}
+
 function expectedSheetJsVersion(specifier) {
   const match = String(specifier).match(/xlsx-(\d+\.\d+\.\d+)\.tgz$/);
   if (!match) {
@@ -71,6 +81,17 @@ export function verifyPackagedRuntime(
     'node_modules/@modelcontextprotocol/sdk/package.json',
   ]) {
     requireAsarEntry(entries, entry);
+  }
+
+  for (const prefix of [
+    'node_modules/@otto/native/target',
+    'node_modules/@otto/native/src',
+    'node_modules/@otto/native/node_modules',
+    'node_modules/better-sqlite3/build',
+    'node_modules/better-sqlite3/deps',
+    'node_modules/better-sqlite3/src',
+  ]) {
+    rejectAsarPrefix(entries, prefix);
   }
 
   const packagedDesktop = readAsarJson(archivePath, 'package.json');
