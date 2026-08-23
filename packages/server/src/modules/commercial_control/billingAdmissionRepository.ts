@@ -66,6 +66,21 @@ interface BillingAdmissionQueueRow {
   attempts: number;
 }
 
+interface BillingAdmissionRecoveryRow {
+  id: string;
+  deployment_id: string;
+  organization_id: string;
+  hold_id: string;
+  module: DeploymentBillingModule;
+  units: number;
+  reference_id: string;
+  idempotency_key: string;
+  desired_outcome: null;
+  attempts: number;
+  created_at_ms: number;
+  next_attempt_at_ms: number | null;
+}
+
 export function getBillingAdmissionQueueSummary(
   store: BillingUsageRepositoryStore,
 ): {
@@ -465,6 +480,154 @@ async function deliverBillingAdmission(
   }
 }
 
+async function recoverUncertainBillingAdmissionClaim(
+  store: BillingUsageRepositoryStore,
+  row: BillingAdmissionRecoveryRow,
+  fetchImpl: typeof fetch,
+  now: number,
+): Promise<'released' | 'reconciliation' | 'discarded' | 'failed'> {
+  const bound = binding(store, row.organization_id);
+  if (
+    !bound ||
+    bound.credentials.enforcement !== 'enforce' ||
+    row.deployment_id !== bound.credentials.deploymentId ||
+    row.organization_id !== bound.body.organizationId ||
+    !row.hold_id.startsWith('pending_')
+  ) {
+    store.db().prepare(
+      `UPDATE billing_admission_outbox
+       SET next_attempt_at_ms = NULL, reconciliation_required = 1,
+           last_error = 'billing admission recovery binding is invalid',
+           updated_at = datetime('now')
+       WHERE id = ?`,
+    ).run(row.id);
+    return 'reconciliation';
+  }
+
+  try {
+    const response = await fetchImpl(bound.credentials.holdEndpoint, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${bound.credentials.leaseToken}`,
+        'content-type': 'application/json',
+        'user-agent': 'Otto-Private-Deployment/1',
+      },
+      body: JSON.stringify({
+        ...bound.body,
+        module: row.module,
+        units: row.units,
+        idempotencyKey: `hold:${row.idempotency_key}`,
+        expiresInSeconds: 900,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) {
+      const detail = await responseError(response);
+      if ([400, 404, 409].includes(response.status)) {
+        store.db().prepare(
+          `UPDATE billing_admission_outbox
+           SET attempts = attempts + 1, next_attempt_at_ms = NULL,
+               reconciliation_required = 1, last_error = ?,
+               updated_at = datetime('now') WHERE id = ?`,
+        ).run(
+          [
+            'billing admission claim requires reconciliation',
+            `control returned ${response.status}`,
+            detail,
+          ].filter(Boolean).join(': '),
+          row.id,
+        );
+        return 'reconciliation';
+      }
+      throw new Error(`billing admission recovery returned ${response.status}`);
+    }
+
+    const payload = await response.json().catch(() => null) as {
+      hold?: { id?: unknown; status?: unknown };
+    } | null;
+    const holdId = typeof payload?.hold?.id === 'string' ? payload.hold.id : '';
+    const holdStatus =
+      typeof payload?.hold?.status === 'string' ? payload.hold.status : 'active';
+    if (!/^hold_[a-zA-Z0-9]+$/u.test(holdId)) {
+      throw new Error('commercial control returned an invalid recovered billing hold');
+    }
+
+    if (holdStatus === 'released' || holdStatus === 'expired') {
+      const discarded = store.db().prepare(
+        `UPDATE billing_admission_outbox
+         SET hold_id = ?, status = 'discarded', attempts = attempts + 1,
+             finalized_at_ms = ?, next_attempt_at_ms = NULL,
+             reconciliation_required = 0, last_error = ?,
+             updated_at = datetime('now')
+         WHERE id = ? AND hold_id = ? AND desired_outcome IS NULL
+           AND reconciliation_required = 1`,
+      ).run(
+        holdId,
+        now,
+        `billing hold was already ${holdStatus}; user operation was not executed`,
+        row.id,
+        row.hold_id,
+      );
+      return discarded.changes === 1 ? 'discarded' : 'reconciliation';
+    }
+
+    if (holdStatus !== 'active') {
+      store.db().prepare(
+        `UPDATE billing_admission_outbox
+         SET attempts = attempts + 1, next_attempt_at_ms = NULL,
+             reconciliation_required = 1, last_error = ?,
+             updated_at = datetime('now') WHERE id = ?`,
+      ).run(
+        `recovered billing hold has unsafe status: ${holdStatus}`,
+        row.id,
+      );
+      return 'reconciliation';
+    }
+
+    const recovered = store.db().prepare(
+      `UPDATE billing_admission_outbox
+       SET hold_id = ?, desired_outcome = 'release', status = 'pending',
+           next_attempt_at_ms = NULL, reconciliation_required = 0,
+           last_error = NULL, updated_at = datetime('now')
+       WHERE id = ? AND hold_id = ? AND desired_outcome IS NULL
+         AND reconciliation_required = 1`,
+    ).run(holdId, row.id, row.hold_id);
+    if (recovered.changes !== 1) return 'reconciliation';
+
+    const delivered = await deliverBillingAdmission(
+      store,
+      {
+        id: row.id,
+        deployment_id: row.deployment_id,
+        organization_id: row.organization_id,
+        hold_id: holdId,
+        module: row.module,
+        units: row.units,
+        reference_id: row.reference_id,
+        idempotency_key: row.idempotency_key,
+        desired_outcome: 'release',
+        attempts: row.attempts,
+      },
+      fetchImpl,
+      now,
+    );
+    if (delivered === 'captured') return 'reconciliation';
+    return delivered;
+  } catch (error) {
+    store.db().prepare(
+      `UPDATE billing_admission_outbox
+       SET status = 'failed', attempts = attempts + 1, next_attempt_at_ms = ?,
+           reconciliation_required = 1, last_error = ?,
+           updated_at = datetime('now') WHERE id = ?`,
+    ).run(
+      now + retryDelayMs(row.attempts + 1),
+      safeErrorMessage(error),
+      row.id,
+    );
+    return 'failed';
+  }
+}
+
 export async function flushBillingAdmissionQueue(
   store: BillingUsageRepositoryStore,
   fetchImpl: typeof fetch = fetch,
@@ -502,6 +665,27 @@ export async function flushBillingAdmissionQueue(
   if (!bound) {
     return { ...result, skippedReason: 'billing_credentials_unavailable' };
   }
+  const recoveryRows = store.db().prepare(
+    `SELECT id, deployment_id, organization_id, hold_id, module, units,
+            reference_id, idempotency_key, desired_outcome, attempts,
+            created_at_ms, next_attempt_at_ms
+     FROM billing_admission_outbox
+     WHERE status = 'failed'
+       AND desired_outcome IS NULL
+       AND reconciliation_required = 1
+       AND hold_id LIKE 'pending_%'
+       AND (next_attempt_at_ms IS NULL OR next_attempt_at_ms <= ?)
+       AND (? IS NULL OR id = ?)
+     ORDER BY created_at_ms ASC LIMIT 50`,
+  ).all(now, onlyId ?? null, onlyId ?? null) as BillingAdmissionRecoveryRow[];
+  result.attempted += recoveryRows.length;
+  for (const row of recoveryRows) {
+    const recoveredClaim = await recoverUncertainBillingAdmissionClaim(
+      store, row, fetchImpl, now,
+    );
+    result[recoveredClaim] += 1;
+  }
+
   const rows = store.db().prepare(
     `SELECT id, deployment_id, organization_id, hold_id, module, units,
             reference_id, idempotency_key, desired_outcome, attempts
@@ -513,7 +697,7 @@ export async function flushBillingAdmissionQueue(
        AND (? IS NULL OR id = ?)
      ORDER BY created_at_ms ASC LIMIT 50`,
   ).all(now, onlyId ?? null, onlyId ?? null) as BillingAdmissionQueueRow[];
-  result.attempted = rows.length;
+  result.attempted += rows.length;
   for (const row of rows) {
     const delivered = await deliverBillingAdmission(store, row, fetchImpl, now);
     result[delivered] += 1;
@@ -530,22 +714,31 @@ export async function finalizeBillingOperation(
 ): Promise<void> {
   if (!admission.required || !admission.holdId || !admission.outboxId) return;
   const existing = store.db().prepare(
-    `SELECT desired_outcome, status FROM billing_admission_outbox WHERE id = ?`,
+    `SELECT desired_outcome, status, reconciliation_required
+     FROM billing_admission_outbox WHERE id = ?`,
   ).get(admission.outboxId) as {
     desired_outcome: 'capture' | 'release' | null;
     status: string;
+    reconciliation_required: number;
   } | undefined;
   if (!existing) throw new Error('billing admission outbox record is missing');
+  if (existing.reconciliation_required === 1) {
+    throw new Error('billing admission requires reconciliation');
+  }
   if (existing.desired_outcome && existing.desired_outcome !== outcome) {
     throw new Error('billing admission already has a conflicting outcome');
   }
   if (existing.status === 'finalized') return;
-  store.db().prepare(
+  const updated = store.db().prepare(
     `UPDATE billing_admission_outbox
      SET desired_outcome = ?, status = 'pending', next_attempt_at_ms = NULL,
          reconciliation_required = 0, last_error = NULL,
-         updated_at = datetime('now') WHERE id = ?`,
+         updated_at = datetime('now')
+     WHERE id = ? AND reconciliation_required = 0`,
   ).run(outcome, admission.outboxId);
+  if (updated.changes !== 1) {
+    throw new Error('billing admission requires reconciliation');
+  }
   const result = await flushBillingAdmissionQueue(
     store,
     fetchImpl,
