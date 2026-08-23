@@ -86,6 +86,10 @@ interface ExecutionReceiptV2Payload {
   policyVersion: 'commercial-v2';
 }
 
+type ExecutionReceiptStatus =
+  | { status: 'missing'; receiptId: string }
+  | { status: 'consumed'; receipt: Record<string, unknown> };
+
 interface BillingUsageQueueRow {
   id: string;
   deployment_id: string;
@@ -531,6 +535,135 @@ function receiptPayload(row: BillingUsageQueueRow): ExecutionReceiptV2Payload | 
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function executionReceiptStatusEndpoint(endpoint: string): string {
+  const url = new URL(endpoint);
+  url.pathname = `${url.pathname.replace(/\/+$/u, '')}/status`;
+  url.search = '';
+  url.hash = '';
+  return url.toString();
+}
+
+async function fetchExecutionReceiptStatus(
+  credentials: DeploymentBillingCredentials,
+  receipt: ExecutionReceiptV2Payload,
+  fetchImpl: typeof fetch,
+): Promise<ExecutionReceiptStatus> {
+  const response = await fetchImpl(
+    executionReceiptStatusEndpoint(credentials.endpoint),
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${credentials.leaseToken}`,
+        'content-type': 'application/json',
+        'user-agent': 'Otto-Private-Deployment/2',
+      },
+      body: JSON.stringify({
+        licenseId: credentials.licenseId,
+        machineFingerprint: credentials.machineFingerprint,
+        deploymentId: receipt.deploymentId,
+        organizationId: receipt.organizationId,
+        receiptId: receipt.receiptId,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      `execution receipt status endpoint returned ${response.status}`,
+    );
+  }
+  const body = await response.json() as unknown;
+  if (!isRecord(body) || !isRecord(body.result)) {
+    throw new Error('execution receipt status response is malformed');
+  }
+  const status = body.result;
+  if (status.status === 'missing' && status.receiptId === receipt.receiptId) {
+    return { status: 'missing', receiptId: receipt.receiptId };
+  }
+  if (status.status === 'consumed' && isRecord(status.receipt)) {
+    return { status: 'consumed', receipt: status.receipt };
+  }
+  throw new Error('execution receipt status response is malformed');
+}
+
+function consumedReceiptMatches(
+  expected: ExecutionReceiptV2Payload,
+  consumed: Record<string, unknown>,
+): boolean {
+  return consumed.version === expected.version
+    && consumed.receiptId === expected.receiptId
+    && consumed.deploymentId === expected.deploymentId
+    && consumed.organizationId === expected.organizationId
+    && consumed.taskId === expected.taskId
+    && consumed.moduleId === expected.moduleId
+    && consumed.units === expected.units
+    && consumed.model === expected.model
+    && consumed.sequence === expected.sequence
+    && consumed.policyVersion === expected.policyVersion;
+}
+
+function renewExpiredReceipt(
+  store: BillingUsageRepositoryStore,
+  row: BillingUsageQueueRow,
+  receipt: ExecutionReceiptV2Payload,
+  signer: BillingReceiptSigner,
+  now: number,
+): {
+  payload: ExecutionReceiptV2Payload;
+  signingKeyId: string;
+  signature: string;
+} {
+  const payload: ExecutionReceiptV2Payload = {
+    ...receipt,
+    issuedAtMs: now,
+    expiresAtMs: now + RECEIPT_VALIDITY_MS,
+  };
+  const signature = signEd25519Envelope(payload, signer.privateKeyPem);
+  const updated = store.db().prepare(
+    `UPDATE billing_usage_outbox
+     SET issued_at_ms = ?, expires_at_ms = ?, signing_key_id = ?,
+         receipt_signature = ?, status = 'queued', next_attempt_at_ms = NULL,
+         last_error = NULL, updated_at = datetime('now')
+     WHERE id = ? AND receipt_id = ? AND sequence = ?
+       AND status IN ('queued', 'failed')`,
+  ).run(
+    payload.issuedAtMs,
+    payload.expiresAtMs,
+    signer.keyId,
+    signature,
+    row.id,
+    payload.receiptId,
+    payload.sequence,
+  );
+  if (Number(updated.changes ?? 0) !== 1) {
+    throw new Error('expired execution receipt changed during renewal');
+  }
+  return { payload, signingKeyId: signer.keyId, signature };
+}
+
+function markExecutionReceiptSent(
+  store: BillingUsageRepositoryStore,
+  row: BillingUsageQueueRow,
+  receipt: ExecutionReceiptV2Payload,
+  now: number,
+  conflictMessage: string,
+): void {
+  const updated = store.db().prepare(
+    `UPDATE billing_usage_outbox
+     SET status = 'sent', sent_at_ms = ?, next_attempt_at_ms = NULL,
+         last_error = NULL, updated_at = datetime('now')
+     WHERE id = ? AND receipt_id = ? AND sequence = ?
+       AND status IN ('queued', 'failed')`,
+  ).run(now, row.id, receipt.receiptId, receipt.sequence);
+  if (Number(updated.changes ?? 0) !== 1) {
+    throw new Error(conflictMessage);
+  }
+}
+
 async function ensureExecutionReceiptKeyRegistered(
   credentials: DeploymentBillingCredentials,
   signer: BillingReceiptSigner,
@@ -621,12 +754,13 @@ export async function flushBillingUsageQueue(
       break;
     }
     result.attempted += 1;
-    const receipt = receiptPayload(row);
+    let receipt = receiptPayload(row);
     if (
       !receipt || row.deployment_id !== credentials.deploymentId ||
       !IDENTIFIER.test(row.organization_id) ||
       !DEPLOYMENT_BILLING_MODULES.includes(row.module) ||
-      !Number.isSafeInteger(row.units) || row.units < 1
+      !Number.isSafeInteger(row.units) || row.units < 1 ||
+      !row.signing_key_id || !row.receipt_signature
     ) {
       store.db().prepare(
         `UPDATE billing_usage_outbox
@@ -643,6 +777,35 @@ export async function flushBillingUsageQueue(
       break;
     }
     try {
+      let signingKeyId = row.signing_key_id;
+      let receiptSignature = row.receipt_signature;
+      if (receipt.expiresAtMs <= now) {
+        const status = await fetchExecutionReceiptStatus(
+          credentials,
+          receipt,
+          fetchImpl,
+        );
+        if (status.status === 'consumed') {
+          if (!consumedReceiptMatches(receipt, status.receipt)) {
+            throw new Error(
+              'consumed execution receipt evidence does not match local queue',
+            );
+          }
+          markExecutionReceiptSent(
+            store,
+            row,
+            receipt,
+            now,
+            'execution receipt changed during consumed reconciliation',
+          );
+          result.sent += 1;
+          continue;
+        }
+        const renewed = renewExpiredReceipt(store, row, receipt, signer, now);
+        receipt = renewed.payload;
+        signingKeyId = renewed.signingKeyId;
+        receiptSignature = renewed.signature;
+      }
       const response = await fetchImpl(credentials.endpoint, {
         method: 'POST',
         headers: {
@@ -655,13 +818,36 @@ export async function flushBillingUsageQueue(
           machineFingerprint: credentials.machineFingerprint,
           envelope: {
             receipt,
-            signingKeyId: row.signing_key_id,
-            signature: row.receipt_signature,
+            signingKeyId,
+            signature: receiptSignature,
           },
         }),
         signal: AbortSignal.timeout(15_000),
       });
       if (!response.ok) {
+        if (response.status === 409) {
+          const status = await fetchExecutionReceiptStatus(
+            credentials,
+            receipt,
+            fetchImpl,
+          );
+          if (status.status === 'consumed') {
+            if (!consumedReceiptMatches(receipt, status.receipt)) {
+              throw new Error(
+                'conflicting consumed execution receipt evidence does not match local queue',
+              );
+            }
+            markExecutionReceiptSent(
+              store,
+              row,
+              receipt,
+              now,
+              'execution receipt changed during conflict reconciliation',
+            );
+            result.sent += 1;
+            continue;
+          }
+        }
         throw new Error(`execution receipt endpoint returned ${response.status}`);
       }
       store.db().prepare(
