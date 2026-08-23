@@ -10,8 +10,27 @@ import { verifyUpdateManifest } from './verify-update-manifest.mjs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(desktopRoot, '../..');
-const maxWindowsInstallerBytes =
-  Number(process.env.OTTO_DESKTOP_MAX_INSTALLER_MB || 160) * 1024 * 1024;
+const mebibyte = 1024 * 1024;
+const lastPublicWindowsInstallerBytes = Number(
+  process.env.OTTO_DESKTOP_BASELINE_INSTALLER_BYTES || 236_706_516,
+);
+const maxWindowsInstallerGrowthBytes =
+  Number(process.env.OTTO_DESKTOP_MAX_INSTALLER_GROWTH_MB || 12) * mebibyte;
+const hardWindowsInstallerLimitBytes =
+  Number(process.env.OTTO_DESKTOP_MAX_INSTALLER_MB || 250) * mebibyte;
+for (const [name, value] of [
+  ['OTTO_DESKTOP_BASELINE_INSTALLER_BYTES', lastPublicWindowsInstallerBytes],
+  ['OTTO_DESKTOP_MAX_INSTALLER_GROWTH_MB', maxWindowsInstallerGrowthBytes],
+  ['OTTO_DESKTOP_MAX_INSTALLER_MB', hardWindowsInstallerLimitBytes],
+]) {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${name} must resolve to a positive finite byte budget`);
+  }
+}
+const maxWindowsInstallerBytes = Math.min(
+  hardWindowsInstallerLimitBytes,
+  lastPublicWindowsInstallerBytes + maxWindowsInstallerGrowthBytes,
+);
 
 const failures = [];
 const notes = [];
@@ -112,9 +131,14 @@ const releaseAssetCandidates = [
 ];
 if (existsSync(winInstaller)) {
   const size = statSync(winInstaller).size;
+  const growth = size - lastPublicWindowsInstallerBytes;
   if (size > maxWindowsInstallerBytes) {
     fail(
-      `Windows installer exceeds limit: ${size} bytes > ${maxWindowsInstallerBytes} bytes`,
+      `Windows installer exceeds 1.9.12-relative budget: ${size} bytes > ${maxWindowsInstallerBytes} bytes (growth ${growth} bytes)`,
+    );
+  } else {
+    note(
+      `Windows installer size ${size} bytes; growth from 1.9.12 is ${growth} bytes; budget ${maxWindowsInstallerBytes} bytes`,
     );
   }
 } else {

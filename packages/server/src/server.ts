@@ -27,7 +27,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { homedir } from 'node:os';
-import { WebSocketServer, type WebSocket } from 'ws';
+import { WebSocket, WebSocketServer } from 'ws';
 import {
   DEFAULT_HOST,
   DEFAULT_PORT,
@@ -456,6 +456,8 @@ export class OttoServer {
   /** 运行期飞书启停的单飞锁：并发 POST 复用同一次操作，防重复 register。 */
   private feishuOpLock: Promise<unknown> = Promise.resolve();
   private readonly conns = new Set<ClientConn>();
+  /** Single liveness sweep; non-OPEN sockets must not retain paid local work. */
+  private connectionLivenessTimer?: ReturnType<typeof setInterval>;
   /** WorkflowRegistry 变化订阅的取消函数（P2 workflow 面板实时广播）。 */
   private workflowUnsub?: () => void;
   /** Agent 通过 local_schedule 改动后，实时推送桌面日历。 */
@@ -524,6 +526,13 @@ export class OttoServer {
         this.isWebSocketRequestAllowed(info.req),
     });
     this.wss.on('connection', (socket) => this.handleConnection(socket));
+    if (this.connectionLivenessTimer) clearInterval(this.connectionLivenessTimer);
+    this.connectionLivenessTimer = setInterval(() => {
+      for (const conn of [...this.conns]) {
+        if (conn.socket.readyState !== WebSocket.OPEN) this.cleanupConnection(conn);
+      }
+    }, 500);
+    this.connectionLivenessTimer.unref();
 
     // 桌面通知不能依赖 UI 当前订阅哪个会话。监听唯一 publish 入口，
     // 只把真实外部 user 入站转为独立全局帧；当前会话的 message_start
@@ -809,6 +818,10 @@ export class OttoServer {
   async stop(): Promise<void> {
     this.externalInboundUnsub?.();
     this.externalInboundUnsub = undefined;
+    if (this.connectionLivenessTimer) {
+      clearInterval(this.connectionLivenessTimer);
+      this.connectionLivenessTimer = undefined;
+    }
     if (this.enterpriseLeaseTimer) {
       clearTimeout(this.enterpriseLeaseTimer);
       this.enterpriseLeaseTimer = undefined;
@@ -2808,20 +2821,30 @@ export class OttoServer {
       });
     });
 
-    socket.on('close', () => {
-      const subscribedIds = [...conn.subscriptions.keys()];
-      for (const unsub of conn.subscriptions.values()) unsub();
-      conn.subscriptions.clear();
-      this.conns.delete(conn);
-      // 断开即止损：该连接订阅过的会话若已无其他存活连接在看，取消其正在跑的轮次
-      // （否则关窗后 agent 继续烧 token；maxTurns=-1 不限回合）。
-      for (const sessionId of subscribedIds) {
-        this.cancelIfOrphaned(sessionId);
-      }
-      if (this.conns.size === 0) {
-        void this.localTasks.cancelAll('desktop_hidden');
-      }
+    socket.on('close', () => this.cleanupConnection(conn));
+    socket.on('error', () => {
+      if (socket.readyState !== WebSocket.CLOSED) socket.terminate();
+      this.cleanupConnection(conn);
     });
+  }
+
+  private cleanupConnection(conn: ClientConn): void {
+    if (!this.conns.delete(conn)) return;
+    const subscribedIds = [...conn.subscriptions.keys()];
+    for (const unsubscribe of conn.subscriptions.values()) unsubscribe();
+    conn.subscriptions.clear();
+    // 断开即止损：该连接订阅过的会话若已无其他存活连接在看，取消其正在跑的轮次
+    // （否则关窗后 agent 继续烧 token；maxTurns=-1 不限回合）。
+    const hasOpenConnections = [...this.conns].some(
+      (current) => current.socket.readyState === WebSocket.OPEN,
+    );
+    if (hasOpenConnections) {
+      for (const sessionId of subscribedIds) this.cancelIfOrphaned(sessionId);
+    } else {
+      // The registry owns the process-wide last-connection transition. Calling
+      // cancelIfOrphaned first would cancel the same runtime twice.
+      void this.localTasks.cancelAll('desktop_hidden');
+    }
   }
 
   /**
@@ -2832,7 +2855,12 @@ export class OttoServer {
     const session = this.store.getSession(sessionId);
     if (!session || session.feishuChatId) return;
     for (const c of this.conns) {
-      if (c.subscriptions.has(sessionId)) return;
+      // CLOSING/CLOSED sockets cannot observe or control the running turn and
+      // must not keep paid work alive while their close handshake is pending.
+      if (
+        c.socket.readyState === WebSocket.OPEN &&
+        c.subscriptions.has(sessionId)
+      ) return;
     }
     this.messageQueues.delete(sessionId);
     this.store.getRuntime(sessionId)?.cancel();
@@ -4381,8 +4409,8 @@ function browserBridgeScript(clientToken: string): string {
     skillShareList: () => Promise.resolve({ text: '浏览器模式暂未接入部门共享 Skill。' }),
     skillMarketplace: () => Promise.resolve({ text: '浏览器模式暂未接入公司 Skill 市场。' }),
     setLocalTestUrl: () => Promise.resolve(),
-    appVersion: () => Promise.resolve('1.9.12'),
-    updateCheck: () => Promise.resolve({ status: 'up-to-date', currentVersion: '1.9.12', latestVersion: null }),
+    appVersion: () => Promise.resolve('1.9.13'),
+    updateCheck: () => Promise.resolve({ status: 'up-to-date', currentVersion: '1.9.13', latestVersion: null }),
     updateDownload: () => Promise.resolve({ ok: false, error: '浏览器模式不支持下载安装包。' }),
     updateCancel: () => Promise.resolve(),
     updateInstall: () => Promise.resolve({ ok: false, message: '浏览器模式不支持安装更新。' }),

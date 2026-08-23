@@ -27,6 +27,18 @@ const LEGAL_DOCUMENTS = [
   { id: 'privacy' as const, version: '2026-08-03', hash: 'b'.repeat(64) },
 ];
 
+function serverPreparationProps(serverUrl: string) {
+  const preparation = {
+    serverUrl: serverUrl.replace(/\/+$/u, ''),
+    legacy: true,
+    readiness: null,
+  };
+  return {
+    preparation,
+    onPrepareServer: async () => preparation,
+  };
+}
+
 describe('企业首次注册输入规则', () => {
   it('普通注册不需要邀请码，加入企业时才校验邀请码', () => {
     expect(sanitizeSmsCode('04a27 319')).toBe('042731');
@@ -59,7 +71,7 @@ describe('登录页能力打字机', () => {
 describe('专业登录入口', () => {
   it('登录和注册首页都不暴露企业服务器地址', () => {
     render(
-      <EnterpriseLoginPage
+      <EnterpriseLoginPage {...serverPreparationProps('https://59.110.154.44:7777/company')}
         initialServerUrl="https://59.110.154.44:7777/company"
         busy={false}
         error={null}
@@ -89,7 +101,7 @@ describe('专业登录入口', () => {
 
   it('默认清晰区分密码登录、验证码登录、普通注册和使用邀请码加入企业', () => {
     render(
-      <EnterpriseLoginPage
+      <EnterpriseLoginPage {...serverPreparationProps('https://59.110.154.44:7777')}
         initialServerUrl="https://59.110.154.44:7777"
         busy={false}
         error={null}
@@ -131,7 +143,7 @@ describe('专业登录入口', () => {
   it('登录请求使用应用配置的服务器地址且不在首页暴露', async () => {
     const onPasswordLogin = vi.fn(async () => undefined);
     render(
-      <EnterpriseLoginPage
+      <EnterpriseLoginPage {...serverPreparationProps('https://old.enterprise.test')}
         initialServerUrl="https://old.enterprise.test"
         busy={false}
         error={null}
@@ -173,7 +185,7 @@ describe('专业登录入口', () => {
       legalDocuments: LEGAL_DOCUMENTS,
     }));
     render(
-      <EnterpriseLoginPage
+      <EnterpriseLoginPage {...serverPreparationProps('https://enterprise.otto.test')}
         initialServerUrl="https://enterprise.otto.test"
         busy={false}
         error={null}
@@ -202,7 +214,7 @@ describe('专业登录入口', () => {
     }));
     const onSmsLogin = vi.fn(async () => undefined);
     render(
-      <EnterpriseLoginPage
+      <EnterpriseLoginPage {...serverPreparationProps('https://enterprise.otto.test')}
         initialServerUrl="https://enterprise.otto.test"
         busy={false}
         error={null}
@@ -247,7 +259,7 @@ describe('专业登录入口', () => {
       legalDocuments: LEGAL_DOCUMENTS,
     }));
     render(
-      <EnterpriseLoginPage
+      <EnterpriseLoginPage {...serverPreparationProps('https://enterprise.otto.test')}
         initialServerUrl="https://enterprise.otto.test"
         busy={false}
         error={null}
@@ -304,7 +316,7 @@ describe('专业登录入口', () => {
       onClearError: () => undefined,
     };
     const view = render(
-      <EnterpriseLoginPage {...props} initialInviteCode="Ab3D-k9Pq-Z7xY" />,
+      <EnterpriseLoginPage {...serverPreparationProps(props.initialServerUrl)} {...props} initialInviteCode="Ab3D-k9Pq-Z7xY" />,
     );
 
     expect(screen.getByRole('heading', { name: '加入企业' })).toBeTruthy();
@@ -317,7 +329,7 @@ describe('专业登录入口', () => {
       inviteCode: 'Ab3D-k9Pq-Z7xY',
     }));
 
-    view.rerender(<EnterpriseLoginPage {...props} initialInviteCode="Wz8Y-m3Na-Q5pB" />);
+    view.rerender(<EnterpriseLoginPage {...serverPreparationProps(props.initialServerUrl)} {...props} initialInviteCode="Wz8Y-m3Na-Q5pB" />);
     expect((screen.getByLabelText('企业邀请码') as HTMLInputElement).value).toBe('Wz8Y-m3Na-Q5pB');
     expect(screen.queryByText('将加入「星河科技」')).toBeNull();
   });
@@ -338,7 +350,7 @@ describe('专业登录入口', () => {
     const onPasswordLogin = vi.fn(() => loginPending);
     const onClearError = vi.fn();
     render(
-      <EnterpriseLoginPage
+      <EnterpriseLoginPage {...serverPreparationProps('https://enterprise.otto.test')}
         initialServerUrl="https://enterprise.otto.test"
         busy={false}
         error="账号或密码错误"
@@ -397,7 +409,7 @@ describe('专业登录入口', () => {
       finishRequest = resolve;
     });
     render(
-      <EnterpriseLoginPage
+      <EnterpriseLoginPage {...serverPreparationProps('https://enterprise.otto.test')}
         initialServerUrl="https://enterprise.otto.test"
         busy={false}
         error={null}

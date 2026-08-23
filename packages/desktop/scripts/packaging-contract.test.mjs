@@ -270,6 +270,22 @@ describe('desktop packaging contract', () => {
     expect(gate).not.toContain('latest.json win-x64 sha256 mismatch');
   });
 
+  it('enforces the real 1.9.12-relative Windows installer budget after packaging', async () => {
+    const [gate, workflow] = await Promise.all([
+      readFile(
+        path.join(packageRoot, 'scripts', 'release-recovery-gate.mjs'),
+        'utf8',
+      ),
+      readFile(path.join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8'),
+    ]);
+    expect(gate).toContain('236_706_516');
+    expect(gate).toContain('lastPublicWindowsInstallerBytes + maxWindowsInstallerGrowthBytes');
+    expect(gate).toContain('Windows installer exceeds 1.9.12-relative budget');
+    expect(workflow).toContain('Enforce update manifest and installer size budget');
+    expect(workflow).toContain('npm run release:gate --workspace=packages/desktop');
+    expect(workflow).toContain("OTTO_DESKTOP_BASELINE_INSTALLER_BYTES: '236706516'");
+  });
+
   it('discovers every packaged LibreOffice bundle before signing Otto', async () => {
     const appPath = await mkdtemp(path.join(os.tmpdir(), 'otto-after-pack-'));
     try {

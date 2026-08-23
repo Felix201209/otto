@@ -331,7 +331,7 @@ if (!previewWindow.otto) {
     notificationShow: () => Promise.resolve(),
     notificationMarkRead: () => Promise.resolve(),
     notificationGetUnread: () => Promise.resolve([]),
-    appVersion: () => Promise.resolve('1.9.12-browser-preview'),
+    appVersion: () => Promise.resolve('1.9.13-browser-preview'),
     openExternal: () => Promise.resolve(),
     openPath: () => Promise.resolve(),
     inspectLocalPath: () =>
@@ -350,7 +350,7 @@ if (!previewWindow.otto) {
     updateCheck: () =>
       Promise.resolve({
         status: 'up-to-date',
-        currentVersion: '1.9.12',
+        currentVersion: '1.9.13',
         latestVersion: null,
       }),
     updateDownload: () =>

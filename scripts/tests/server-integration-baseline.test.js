@@ -73,7 +73,8 @@ describe('server integration baseline', () => {
     expect(
       validateServerIntegrationBaseline({ rootDir, ledger: changed }),
     ).toContain(
-      'release.databaseMigration.schemaTo=21 does not match enterprise schema=22',
+      'release.databaseMigration.schemaTo=21 does not match enterprise schema=' +
+        String(ledger.release.databaseMigration.schemaTo),
     );
   });
 

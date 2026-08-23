@@ -823,7 +823,7 @@ describe('受保护 vs 公开路由边界', () => {
       },
       dataProtection: { enabled: true, retentionDays: 30, minimumRetained: 3 },
       runtime: {
-        database: { ready: true, schemaVersion: 22 },
+        database: { ready: true, schemaVersion: 23 },
         smsConfigured: false,
       },
     });

@@ -11,21 +11,21 @@ on a reviewed `release/*` branch or a version tag; feature and experiment
 branches are never direct release sources.
 
 The current integration candidate contains the fetched `origin/internal` tip
-`cfc17d3fa434b0265b8803dd6b51436b2cc6d1af`. Historical integration anchor
+`30e2adab7bf9d647ff69965bbbbcf1044b3e3014`. Historical integration anchor
 `1874681db2f108aa6a9b6d47ee62578d4ce37ac2` remains in the ledger so earlier
 source dispositions stay auditable. This reviewed short-lived release branch
-maps the integrated candidate to product version `1.9.12`; `internal` remains
+maps the integrated candidate to product version `1.9.13`; `internal` remains
 on its independent 1.10.x development line. The candidate includes the reviewed
 SQLCipher/E2EE work, MLS attachments, macOS packaging fixes and the nine 1.9.11
 transition release changes.
 
 | Contract                          | Authoritative value | Source                                     |
 | --------------------------------- | ------------------- | ------------------------------------------ |
-| Desktop/client version            | `1.9.12`            | `packages/desktop/package.json`            |
-| Enterprise server product version | `1.9.12`            | root `package.json`                        |
+| Desktop/client version            | `1.9.13`            | `packages/desktop/package.json`            |
+| Enterprise server product version | `1.9.13`            | root `package.json`                        |
 | Internal server package version   | `0.1.0`             | `packages/server/package.json`             |
 | Enterprise HTTP API               | `4`                 | `packages/server/src/enterprise/server.ts` |
-| Enterprise schema                 | `22`                | `packages/server/src/enterprise/db.ts`     |
+| Enterprise schema                 | `23`                | `packages/server/src/enterprise/db.ts`     |
 | Public capabilities               | 50 exact IDs        | `ENTERPRISE_CAPABILITIES`                  |
 | Product modules                   | 17 exact IDs        | `packages/server/src/productModules.ts`    |
 

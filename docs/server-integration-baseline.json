@@ -87,6 +87,60 @@
         "reason": "The original ledger tooling was retained and upgraded for the current schema and descendant release policy."
       },
       {
+        "name": "origin/release/1.9.12-transition",
+        "tip": "452fc9e6bfa82db0409e1a8cadbc6947ee2ed2a6",
+        "disposition": "rewritten",
+        "integrationCommits": [
+          "9dd97a65072669a478ba7eb74fc103298fea0c9b",
+          "e763bfce0f9454b656fdefe299cd14f5f930161f",
+          "873cd217165f3af62d7b0aea6fdaaf8ee4839641",
+          "2db8512dd71bf36eeb20a1f5457578317726158a",
+          "1e429ac693485ac90599d082550bed17be738bdd",
+          "522ddc58f03a6aa48dd02b2a9bf0ab52b4f3e65f",
+          "0bfd34c95327128c92840da87cb41d2c6b4c8814"
+        ],
+        "capabilities": [
+          "1.9.12 update continuity",
+          "managed model gateway",
+          "verified SQLCipher runtime custody",
+          "transition release provenance"
+        ],
+        "reason": "All seven release changes were replayed on the reviewed safety baseline. The SQLCipher commit was conflict-resolved without weakening native-asset verification."
+      },
+      {
+        "name": "origin/fix/background-model-zero-default",
+        "tip": "47dafe5dff5542c041593932090ecaf8fc6222f0",
+        "disposition": "integrated",
+        "integrationCommits": ["47dafe5dff5542c041593932090ecaf8fc6222f0"],
+        "capabilities": [
+          "zero paid background model calls by default",
+          "manual tool authorization default",
+          "fail-closed backup key custody",
+          "idempotent model and A2A retries",
+          "desktop disconnect task cancellation"
+        ],
+        "reason": "The complete twelve-commit safety line is an ancestor of the candidate and is the primary 1.9.13 patch source."
+      },
+      {
+        "name": "origin/agent/private-deployment-center-1.10.2-final",
+        "tip": "ebaa1746b6f4613e7c783e8679c0a1d112c2118f",
+        "disposition": "rewritten",
+        "integrationCommits": [
+          "16f71abb7e3cb512bbc29e0c49e420cd374681c6",
+          "e0fc008b1c492832fbde45724b96f32dbcb00116",
+          "c8639391065332afc859a52df255afd9c4cb8295",
+          "6cbfffe0fc50783a133413fc18baad8836df04c9",
+          "84127162a2115821405ef79331326e6fffaf6a14"
+        ],
+        "capabilities": [
+          "one-time deployment enrollment secret",
+          "licensed enterprise and CEO bootstrap",
+          "license rollback protection",
+          "commercial billing idempotency"
+        ],
+        "reason": "All five commits were replayed in dependency order and conflict-resolved against the safety and 1.9.12 release lines."
+      },
+      {
         "name": "origin/codex/e2ee-openmls",
         "tip": "61f55a61f8d9def1ad983ada00c815ff4a575b11",
         "disposition": "retired",
@@ -105,8 +159,8 @@
     ]
   },
   "release": {
-    "clientVersion": "1.9.12",
-    "serverVersion": "1.9.12",
+    "clientVersion": "1.9.13",
+    "serverVersion": "1.9.13",
     "serverPackageVersion": "0.1.0",
     "apiVersion": 4,
     "enterpriseSchemaVersion": 23,
@@ -198,7 +252,7 @@
       "id": "latest_internal_parent",
       "status": "verified",
       "evidence": [
-        "The candidate contains the fetched origin/internal tip cfc17d3fa434b0265b8803dd6b51436b2cc6d1af as an ancestor; authority baseline 1874681db2f108aa6a9b6d47ee62578d4ce37ac2 remains the historical integration anchor."
+        "The candidate contains the fetched origin/internal tip 30e2adab7bf9d647ff69965bbbbcf1044b3e3014 as an ancestor; authority baseline 1874681db2f108aa6a9b6d47ee62578d4ce37ac2 remains the historical integration anchor."
       ]
     },
     {
@@ -212,7 +266,8 @@
       "id": "version_schema_capability_mapping",
       "status": "verified",
       "evidence": [
-        \      ]
+        "The validator binds product version 1.9.13, Enterprise API 4, schema 23, capabilities and product modules to source constants."
+      ]
     },
     {
       "id": "automated_candidate_verification",
