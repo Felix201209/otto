@@ -1,0 +1,72 @@
+{
+  "format": "otto-aliyun-plan-definitions-v1",
+  "templateVersion": "0.2.0-local-preview",
+  "plans": {
+    "trial": {
+      "templateFile": "trial.json",
+      "availabilityZones": 1,
+      "statelessServers": 1,
+      "instanceType": "ecs.c7.large",
+      "systemDiskSize": 40,
+      "database": {
+        "class": "pg.n2.2c.1m",
+        "storage": 20,
+        "category": "Basic",
+        "multiAz": false,
+        "backupRetentionDays": 7,
+        "deletionProtection": false
+      },
+      "cache": {
+        "class": "redis.master.small.default",
+        "secondaryZone": false
+      },
+      "objectStorage": {
+        "redundancy": "LRS"
+      }
+    },
+    "standard": {
+      "templateFile": "standard.json",
+      "availabilityZones": 2,
+      "statelessServers": 2,
+      "instanceType": "ecs.c7.xlarge",
+      "systemDiskSize": 80,
+      "database": {
+        "class": "pg.n2.2c.2m",
+        "storage": 100,
+        "category": "HighAvailability",
+        "multiAz": true,
+        "backupRetentionDays": 14,
+        "deletionProtection": true
+      },
+      "cache": {
+        "class": "redis.master.mid.default",
+        "secondaryZone": true
+      },
+      "objectStorage": {
+        "redundancy": "ZRS"
+      }
+    },
+    "ha": {
+      "templateFile": "high-availability.json",
+      "availabilityZones": 2,
+      "statelessServers": 2,
+      "instanceType": "ecs.c7.2xlarge",
+      "systemDiskSize": 120,
+      "database": {
+        "class": "pg.n4.2c.2m",
+        "storage": 200,
+        "category": "HighAvailability",
+        "multiAz": true,
+        "backupRetentionDays": 30,
+        "deletionProtection": true
+      },
+      "cache": {
+        "class": "redis.master.large.default",
+        "secondaryZone": true
+      },
+      "objectStorage": {
+        "redundancy": "ZRS"
+      }
+    }
+  }
+}

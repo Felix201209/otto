@@ -1,0 +1,692 @@
+{
+  "ROSTemplateFormatVersion": "2015-09-01",
+  "Description": {
+    "zh-cn": "Otto ha 套餐私有化部署基础设施本地预览模板",
+    "en": "Otto ha private deployment infrastructure local preview"
+  },
+  "Parameters": {
+    "DeploymentId": {
+      "Type": "String",
+      "AllowedPattern": "^[a-z0-9][a-z0-9-]{7,31}$",
+      "Description": "Unpredictable deployment identifier issued by Otto Control."
+    },
+    "OrderId": {
+      "Type": "String",
+      "MinLength": 8,
+      "MaxLength": 128
+    },
+    "IdempotencyKey": {
+      "Type": "String",
+      "MinLength": 16,
+      "MaxLength": 128,
+      "NoEcho": true
+    },
+    "TemplateVersion": {
+      "Type": "String",
+      "Default": "0.2.0-local-preview"
+    },
+    "ZoneId": {
+      "Type": "String",
+      "AssociationProperty": "ALIYUN::ECS::Instance:ZoneId"
+    },
+    "EnterpriseDisplayName": {
+      "Type": "String",
+      "MinLength": 1,
+      "MaxLength": 64
+    },
+    "DomainMode": {
+      "Type": "String",
+      "AllowedValues": [
+        "managed",
+        "existing"
+      ],
+      "Default": "managed"
+    },
+    "DomainName": {
+      "Type": "String",
+      "Default": "",
+      "MaxLength": 253
+    },
+    "OttoImageId": {
+      "Type": "String",
+      "AssociationProperty": "ALIYUN::ECS::Image::ImageId",
+      "Description": "Pinned Compute Nest image artifact. Never accept latest or an arbitrary URL."
+    },
+    "DatabaseCredentialRef": {
+      "Type": "ALIYUN::OOS::SecretParameter::Value",
+      "NoEcho": true,
+      "Description": "OOS encrypted parameter reference supplied by the deployment control plane."
+    },
+    "CacheCredentialRef": {
+      "Type": "ALIYUN::OOS::SecretParameter::Value",
+      "NoEcho": true,
+      "Description": "OOS encrypted parameter reference supplied by the deployment control plane."
+    },
+    "SecondaryZoneId": {
+      "Type": "String",
+      "AssociationProperty": "ALIYUN::ECS::Instance:ZoneId"
+    }
+  },
+  "Resources": {
+    "Vpc": {
+      "Type": "ALIYUN::ECS::VPC",
+      "Properties": {
+        "VpcName": {
+          "Fn::Join": [
+            "-",
+            [
+              "otto",
+              {
+                "Ref": "DeploymentId"
+              },
+              "vpc"
+            ]
+          ]
+        },
+        "CidrBlock": "10.42.0.0/16"
+      }
+    },
+    "VSwitchPrimary": {
+      "Type": "ALIYUN::ECS::VSwitch",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "ZoneId": {
+          "Ref": "ZoneId"
+        },
+        "CidrBlock": "10.42.1.0/24",
+        "VSwitchName": {
+          "Fn::Join": [
+            "-",
+            [
+              "otto",
+              {
+                "Ref": "DeploymentId"
+              },
+              "vsw-a"
+            ]
+          ]
+        }
+      }
+    },
+    "SecurityGroup": {
+      "Type": "ALIYUN::ECS::SecurityGroup",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "SecurityGroupName": {
+          "Fn::Join": [
+            "-",
+            [
+              "otto",
+              {
+                "Ref": "DeploymentId"
+              },
+              "server-sg"
+            ]
+          ]
+        },
+        "SecurityGroupType": "enterprise",
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "all",
+            "DestCidrIp": "0.0.0.0/0",
+            "PortRange": "-1/-1",
+            "Priority": 100
+          }
+        ]
+      }
+    },
+    "PrivateServiceIngress": {
+      "Type": "ALIYUN::ECS::SecurityGroupIngress",
+      "Properties": {
+        "SecurityGroupId": {
+          "Ref": "SecurityGroup"
+        },
+        "IpProtocol": "tcp",
+        "PortRange": "7777/7777",
+        "SourceCidrIp": "10.42.0.0/16",
+        "Priority": 10
+      }
+    },
+    "DataEncryptionKey": {
+      "Type": "ALIYUN::KMS::Key",
+      "Properties": {
+        "KeySpec": "Aliyun_AES_256",
+        "KeyUsage": "ENCRYPT/DECRYPT",
+        "Enable": true,
+        "EnableAutomaticRotation": true,
+        "RotationInterval": "90d",
+        "DeletionProtection": true,
+        "PendingWindowInDays": 30,
+        "Description": "Otto private deployment data encryption key"
+      }
+    },
+    "ObjectStorage": {
+      "Type": "ALIYUN::OSS::Bucket",
+      "DependsOn": "DataEncryptionKey",
+      "Properties": {
+        "BucketName": {
+          "Fn::Join": [
+            "-",
+            [
+              "otto",
+              {
+                "Ref": "DeploymentId"
+              },
+              "data"
+            ]
+          ]
+        },
+        "AccessControl": "private",
+        "BlockPublicAccess": true,
+        "DeletionForce": false,
+        "StorageClass": "Standard",
+        "RedundancyType": "ZRS",
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        },
+        "ServerSideEncryptionConfiguration": {
+          "SSEAlgorithm": "KMS",
+          "KMSMasterKeyID": {
+            "Fn::GetAtt": [
+              "DataEncryptionKey",
+              "KeyId"
+            ]
+          }
+        },
+        "Tags": {
+          "otto:deployment-id": {
+            "Ref": "DeploymentId"
+          }
+        }
+      }
+    },
+    "ServerRole": {
+      "Type": "ALIYUN::RAM::Role",
+      "Properties": {
+        "RoleName": {
+          "Fn::Join": [
+            "-",
+            [
+              "otto",
+              {
+                "Ref": "DeploymentId"
+              },
+              "server-role"
+            ]
+          ]
+        },
+        "MaxSessionDuration": 3600,
+        "DeletionForce": true,
+        "AssumeRolePolicyDocument": {
+          "Version": "1",
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "ecs.aliyuncs.com"
+                ]
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "otto-object-storage",
+            "PolicyDocument": {
+              "Version": "1",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "oss:GetObject",
+                    "oss:PutObject",
+                    "oss:DeleteObject",
+                    "oss:ListObjects"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Join": [
+                        "",
+                        [
+                          "acs:oss:*:*:",
+                          {
+                            "Fn::Join": [
+                              "-",
+                              [
+                                "otto",
+                                {
+                                  "Ref": "DeploymentId"
+                                },
+                                "data"
+                              ]
+                            ]
+                          }
+                        ]
+                      ]
+                    },
+                    {
+                      "Fn::Join": [
+                        "",
+                        [
+                          "acs:oss:*:*:",
+                          {
+                            "Fn::Join": [
+                              "-",
+                              [
+                                "otto",
+                                {
+                                  "Ref": "DeploymentId"
+                                },
+                                "data"
+                              ]
+                            ]
+                          },
+                          "/*"
+                        ]
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "Database": {
+      "Type": "ALIYUN::RDS::DBInstance",
+      "DependsOn": [
+        "VSwitchPrimary",
+        "SecurityGroup"
+      ],
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "Engine": "PostgreSQL",
+        "EngineVersion": "16.0",
+        "DBInstanceClass": "pg.n4.2c.2m",
+        "DBInstanceStorage": 200,
+        "DBInstanceStorageType": "cloud_essd",
+        "Category": "HighAvailability",
+        "PayType": "Postpaid",
+        "ZoneId": {
+          "Ref": "ZoneId"
+        },
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "VSwitchId": {
+          "Fn::Join": [
+            ",",
+            [
+              {
+                "Ref": "VSwitchPrimary"
+              },
+              {
+                "Ref": "VSwitchSecondary"
+              }
+            ]
+          ]
+        },
+        "InstanceNetworkType": "VPC",
+        "DBInstanceNetType": "Intranet",
+        "AllocatePublicConnection": false,
+        "SecurityIPList": "10.42.0.0/16",
+        "SecurityGroupId": {
+          "Ref": "SecurityGroup"
+        },
+        "MasterUsername": "otto_admin",
+        "MasterUserPassword": {
+          "Ref": "DatabaseCredentialRef"
+        },
+        "MultiAZ": true,
+        "BackupRetentionPeriod": 30,
+        "DeletionProtection": true,
+        "SlaveZoneIds": [
+          {
+            "Ref": "SecondaryZoneId"
+          }
+        ]
+      }
+    },
+    "Cache": {
+      "Type": "ALIYUN::REDIS::Instance",
+      "DependsOn": [
+        "VSwitchPrimary",
+        "SecurityGroup"
+      ],
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "VSwitchId": {
+          "Ref": "VSwitchPrimary"
+        },
+        "ZoneId": {
+          "Ref": "ZoneId"
+        },
+        "InstanceClass": "redis.master.large.default",
+        "EngineVersion": "7.0",
+        "InstanceName": {
+          "Fn::Join": [
+            "-",
+            [
+              "otto",
+              {
+                "Ref": "DeploymentId"
+              },
+              "cache"
+            ]
+          ]
+        },
+        "ChargeType": "PostPaid",
+        "EvictionPolicy": "noeviction",
+        "VpcPasswordFree": false,
+        "Password": {
+          "Ref": "CacheCredentialRef"
+        },
+        "SecurityGroupId": {
+          "Ref": "SecurityGroup"
+        },
+        "SSLEnabled": "Enable",
+        "TLSProtocol": "TLSv1.2",
+        "DeletionForce": false,
+        "SecondaryZoneId": {
+          "Ref": "SecondaryZoneId"
+        }
+      }
+    },
+    "VSwitchSecondary": {
+      "Type": "ALIYUN::ECS::VSwitch",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "ZoneId": {
+          "Ref": "SecondaryZoneId"
+        },
+        "CidrBlock": "10.42.2.0/24",
+        "VSwitchName": {
+          "Fn::Join": [
+            "-",
+            [
+              "otto",
+              {
+                "Ref": "DeploymentId"
+              },
+              "vsw-b"
+            ]
+          ]
+        }
+      }
+    },
+    "OttoServerPrimary": {
+      "Type": "ALIYUN::ECS::InstanceGroup",
+      "DependsOn": [
+        "ServerRole",
+        "SecurityGroup"
+      ],
+      "Properties": {
+        "MaxAmount": 1,
+        "InstanceType": "ecs.c7.2xlarge",
+        "ImageId": {
+          "Ref": "OttoImageId"
+        },
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "VSwitchId": {
+          "Ref": "VSwitchPrimary"
+        },
+        "ZoneId": {
+          "Ref": "ZoneId"
+        },
+        "SecurityGroupId": {
+          "Ref": "SecurityGroup"
+        },
+        "RamRoleName": {
+          "Fn::GetAtt": [
+            "ServerRole",
+            "RoleName"
+          ]
+        },
+        "InstanceChargeType": "PostPaid",
+        "NetworkType": "vpc",
+        "AllocatePublicIP": false,
+        "InternetMaxBandwidthOut": 0,
+        "SystemDiskCategory": "cloud_essd",
+        "SystemDiskSize": 120,
+        "SystemDiskEncrypted": "true",
+        "SystemDiskKMSKeyId": {
+          "Fn::GetAtt": [
+            "DataEncryptionKey",
+            "KeyId"
+          ]
+        },
+        "DeletionProtection": true,
+        "SecurityEnhancementStrategy": "Active",
+        "InstanceName": {
+          "Fn::Join": [
+            "-",
+            [
+              "otto",
+              {
+                "Ref": "DeploymentId"
+              },
+              "server-a"
+            ]
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "otto:deployment-id",
+            "Value": {
+              "Ref": "DeploymentId"
+            }
+          },
+          {
+            "Key": "otto:template-version",
+            "Value": {
+              "Ref": "TemplateVersion"
+            }
+          }
+        ]
+      }
+    },
+    "OttoServerSecondary": {
+      "Type": "ALIYUN::ECS::InstanceGroup",
+      "DependsOn": [
+        "ServerRole",
+        "SecurityGroup"
+      ],
+      "Properties": {
+        "MaxAmount": 1,
+        "InstanceType": "ecs.c7.2xlarge",
+        "ImageId": {
+          "Ref": "OttoImageId"
+        },
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "VSwitchId": {
+          "Ref": "VSwitchSecondary"
+        },
+        "ZoneId": {
+          "Ref": "SecondaryZoneId"
+        },
+        "SecurityGroupId": {
+          "Ref": "SecurityGroup"
+        },
+        "RamRoleName": {
+          "Fn::GetAtt": [
+            "ServerRole",
+            "RoleName"
+          ]
+        },
+        "InstanceChargeType": "PostPaid",
+        "NetworkType": "vpc",
+        "AllocatePublicIP": false,
+        "InternetMaxBandwidthOut": 0,
+        "SystemDiskCategory": "cloud_essd",
+        "SystemDiskSize": 120,
+        "SystemDiskEncrypted": "true",
+        "SystemDiskKMSKeyId": {
+          "Fn::GetAtt": [
+            "DataEncryptionKey",
+            "KeyId"
+          ]
+        },
+        "DeletionProtection": true,
+        "SecurityEnhancementStrategy": "Active",
+        "InstanceName": {
+          "Fn::Join": [
+            "-",
+            [
+              "otto",
+              {
+                "Ref": "DeploymentId"
+              },
+              "server-b"
+            ]
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "otto:deployment-id",
+            "Value": {
+              "Ref": "DeploymentId"
+            }
+          },
+          {
+            "Key": "otto:template-version",
+            "Value": {
+              "Ref": "TemplateVersion"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "DeploymentId": {
+      "Value": {
+        "Ref": "DeploymentId"
+      }
+    },
+    "OrderId": {
+      "Value": {
+        "Ref": "OrderId"
+      }
+    },
+    "TemplateVersion": {
+      "Value": {
+        "Ref": "TemplateVersion"
+      }
+    },
+    "VpcId": {
+      "Value": {
+        "Ref": "Vpc"
+      }
+    },
+    "ServerInstanceIds": {
+      "Value": [
+        {
+          "Fn::GetAtt": [
+            "OttoServerPrimary",
+            "InstanceIds"
+          ]
+        },
+        {
+          "Fn::GetAtt": [
+            "OttoServerSecondary",
+            "InstanceIds"
+          ]
+        }
+      ]
+    },
+    "DatabaseInstanceId": {
+      "Value": {
+        "Fn::GetAtt": [
+          "Database",
+          "DBInstanceId"
+        ]
+      }
+    },
+    "CacheInstanceId": {
+      "Value": {
+        "Fn::GetAtt": [
+          "Cache",
+          "InstanceId"
+        ]
+      }
+    },
+    "OssBucketRef": {
+      "Value": {
+        "Fn::GetAtt": [
+          "ObjectStorage",
+          "Name"
+        ]
+      }
+    },
+    "KmsKeyRef": {
+      "Value": {
+        "Fn::GetAtt": [
+          "DataEncryptionKey",
+          "KeyId"
+        ]
+      }
+    }
+  },
+  "Metadata": {
+    "Otto": {
+      "Plan": "ha",
+      "Stage": "local-preview",
+      "RealDeploymentEnabled": false,
+      "RequiredFollowUp": [
+        "CLOUD-02",
+        "CLOUD-03",
+        "CLOUD-04",
+        "CLOUD-05",
+        "QA-10"
+      ]
+    },
+    "ALIYUN::ROS::Interface": {
+      "Hidden": [
+        "DeploymentId",
+        "OrderId",
+        "IdempotencyKey",
+        "TemplateVersion",
+        "OttoImageId",
+        "DatabaseCredentialRef",
+        "CacheCredentialRef"
+      ],
+      "ParameterGroups": [
+        {
+          "Parameters": [
+            "ZoneId",
+            "SecondaryZoneId"
+          ],
+          "Label": {
+            "default": "Network"
+          }
+        },
+        {
+          "Parameters": [
+            "EnterpriseDisplayName",
+            "DomainMode",
+            "DomainName"
+          ],
+          "Label": {
+            "default": "Otto"
+          }
+        }
+      ]
+    }
+  }
+}

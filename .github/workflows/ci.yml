@@ -83,6 +83,15 @@ jobs:
           npm run validate:boundaries
           npm run size:source:check
 
+      - name: Validate Aliyun deployment assets
+        run: |
+          npm run deployment:aliyun:generate:check
+          npm run deployment:aliyun:validate
+          npm run test:scripts -- --run scripts/tests/aliyun-deployment-contract.test.js
+
+      - name: Scan Aliyun deployment assets for secrets
+        run: npm run deployment:aliyun:security
+
       # 先 build 再 typecheck：packages/server 的 tsconfig 用
       # TS project references 指向 packages/core（"references": [{ "path":
       # "../core" }]），tsc --noEmit 需要 core/dist/index.d.ts 已存在，否则

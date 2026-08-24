@@ -2,10 +2,14 @@
   "format": "otto-aliyun-compute-nest-contract-v1",
   "provider": "aliyun-compute-nest",
   "realDeploymentEnabled": false,
-  "templateVersion": "0.1.0-local-contract",
+  "templateVersion": "0.2.0-local-preview",
   "supportedRegions": ["cn-hangzhou", "cn-shanghai", "cn-beijing", "cn-shenzhen"],
   "parameters": {
-    "allowed": ["region", "zone", "plan", "enterpriseDisplayName", "domainMode", "domainName"],
+    "allowed": ["region", "zone", "secondaryZone", "plan", "enterpriseDisplayName", "domainMode", "domainName"],
+    "systemManaged": [
+      "deploymentId", "orderId", "idempotencyKey", "templateVersion",
+      "ottoImageId", "databaseCredentialRef", "cacheCredentialRef"
+    ],
     "forbidden": [
       "password", "secret", "accessKey", "accessKeySecret", "license", "token",
       "privateKey", "databaseUrl", "redisUrl", "ossEndpoint"
@@ -41,8 +45,26 @@
     "tls": { "minimumVersion": "1.2", "httpsRequired": true, "hsts": true },
     "ssh": { "defaultEnabled": false }
   },
+  "templates": {
+    "stage": "local-preview",
+    "generatedFrom": "deployment/aliyun/plan-definitions.json",
+    "files": {
+      "trial": "deployment/aliyun/templates/ros/trial.json",
+      "standard": "deployment/aliyun/templates/ros/standard.json",
+      "ha": "deployment/aliyun/templates/ros/high-availability.json"
+    },
+    "requiredResourceTypes": [
+      "ALIYUN::ECS::VPC", "ALIYUN::ECS::VSwitch", "ALIYUN::ECS::SecurityGroup",
+      "ALIYUN::ECS::InstanceGroup", "ALIYUN::RDS::DBInstance", "ALIYUN::REDIS::Instance",
+      "ALIYUN::OSS::Bucket", "ALIYUN::KMS::Key", "ALIYUN::RAM::Role"
+    ]
+  },
   "outputs": {
-    "allowed": ["deploymentId", "orderId", "templateVersion", "postgresSecretRef", "tairSecretRef", "ossBucketRef", "kmsKeyRef", "privateEndpoints", "publicHttpsOrigin"],
+    "allowed": [
+      "deploymentId", "orderId", "templateVersion", "vpcId", "serverInstanceIds",
+      "databaseInstanceId", "cacheInstanceId", "ossBucketRef", "kmsKeyRef",
+      "privateEndpoints", "publicHttpsOrigin"
+    ],
     "forbidden": ["password", "secretValue", "accessKeySecret", "license", "privateKey", "connectionString"]
   },
   "secrets": { "delivery": "secrets-manager-kms-reference", "plaintextAllowed": false, "missingDependencyAction": "fail-closed" },
@@ -63,5 +85,9 @@
       "rolled_back": ["provisioning", "failed"]
     }
   },
-  "evidence": { "realCloudRunRequiredForCompletion": true, "localContractValidationIsNotStagingEvidence": true }
+  "evidence": {
+    "realCloudRunRequiredForCompletion": true,
+    "localContractValidationIsNotStagingEvidence": true,
+    "remainingCloudIssues": ["CLOUD-02", "CLOUD-03", "CLOUD-04", "CLOUD-05", "QA-10"]
+  }
 }
