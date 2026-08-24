@@ -47,6 +47,9 @@ Otto 的发布链路分成三段：先检查异常，再构建 GitHub Release �
 - blockmap
 - `latest.json`
 - `otto-enterprise-oneclick-v<version>-<build>.tar.gz`
+- `otto-enterprise-oneclick-v<version>-<build>.tar.gz.sig`
+- `otto-aliyun-server-artifact-v<version>-<build>.json`
+- `otto-aliyun-server-artifact-v<version>-<build>.json.sig`
 - `.sha256`
 - `.sig`
 

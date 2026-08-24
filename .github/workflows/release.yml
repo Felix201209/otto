@@ -301,9 +301,16 @@ jobs:
         run: npm run bundle:enterprise
         env:
           OTTO_LICENSE_PUBLIC_KEYS: ${{ secrets.OTTO_LICENSE_PUBLIC_KEYS }}
-          OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY: ${{ secrets.OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY }}
           OTTO_ALLOW_UNSIGNED_ENTERPRISE_PACKAGE: ${{ inputs.unsigned_transition && '1' || '0' }}
+          OTTO_DEFER_ENTERPRISE_SIGNING: ${{ inputs.unsigned_transition && '0' || '1' }}
           OTTO_RELEASE_CHANNEL: ${{ inputs.release_channel || 'stable' }}
+
+      - name: Sign enterprise package and cloud artifact index
+        if: ${{ inputs.unsigned_transition != true }}
+        run: npm run sign:aliyun:server
+        env:
+          OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY: ${{ secrets.OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY }}
+          OTTO_RELEASE_SEQUENCE: ${{ github.run_number }}
 
       - name: Verify release artifacts
         id: artifacts
@@ -317,6 +324,8 @@ jobs:
           ENTERPRISE_ARCHIVE="$(ls deliverables/otto-enterprise-oneclick-v${VERSION}-*.tar.gz | head -n 1)"
           ENTERPRISE_SHA="${ENTERPRISE_ARCHIVE}.sha256"
           ENTERPRISE_SIGNATURE="${ENTERPRISE_ARCHIVE}.sig"
+          ALIYUN_INDEX="$(ls deliverables/otto-aliyun-server-artifact-v${VERSION}-*.json 2>/dev/null | head -n 1 || true)"
+          ALIYUN_INDEX_SIGNATURE="${ALIYUN_INDEX}.sig"
           test -f "$ENTERPRISE_ARCHIVE"
           test -f "$ENTERPRISE_SHA"
           sha256sum -c "$ENTERPRISE_SHA"
@@ -333,11 +342,26 @@ jobs:
           )
           if [ "${{ inputs.unsigned_transition }}" = "true" ]; then
             test ! -f "$ENTERPRISE_SIGNATURE"
+            test -z "$ALIYUN_INDEX"
           else
             test -f "$ENTERPRISE_SIGNATURE"
+            test -f "$ALIYUN_INDEX"
+            test -f "$ALIYUN_INDEX_SIGNATURE"
             node scripts/verify-enterprise-package-signature.mjs \
               "$ENTERPRISE_ARCHIVE" "$ENTERPRISE_SIGNATURE"
-            RELEASE_FILES+=("$ENTERPRISE_SIGNATURE")
+            node scripts/verify-aliyun-server-artifact.mjs \
+              "$ALIYUN_INDEX" "$ALIYUN_INDEX_SIGNATURE" \
+              --architecture linux-x64 \
+              --minimum-release-sequence "${{ github.run_number }}"
+            node scripts/verify-aliyun-server-artifact.mjs \
+              "$ALIYUN_INDEX" "$ALIYUN_INDEX_SIGNATURE" \
+              --architecture linux-arm64 \
+              --minimum-release-sequence "${{ github.run_number }}"
+            RELEASE_FILES+=(
+              "$ENTERPRISE_SIGNATURE"
+              "$ALIYUN_INDEX"
+              "$ALIYUN_INDEX_SIGNATURE"
+            )
           fi
           test -f "$DESKTOP_RELEASE/Otto-${VERSION}-arm64.dmg"
           test -f "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg"
@@ -396,6 +420,8 @@ jobs:
             deliverables/otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz
             deliverables/otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz.sha256
             deliverables/otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz.sig
+            deliverables/otto-aliyun-server-artifact-v${{ steps.version.outputs.version }}-*.json
+            deliverables/otto-aliyun-server-artifact-v${{ steps.version.outputs.version }}-*.json.sig
           retention-days: 30
 
       - name: Create draft GitHub release
@@ -521,6 +547,8 @@ jobs:
           ARCHIVE="$(find release-download -type f -name 'otto-enterprise-oneclick-v${{ needs.build.outputs.version }}-*.tar.gz' -print -quit)"
           CHECKSUM="$(find release-download -type f -name 'otto-enterprise-oneclick-v${{ needs.build.outputs.version }}-*.tar.gz.sha256' -print -quit)"
           SIGNATURE="$(find release-download -type f -name 'otto-enterprise-oneclick-v${{ needs.build.outputs.version }}-*.tar.gz.sig' -print -quit)"
+          ALIYUN_INDEX="$(find release-download -type f -name 'otto-aliyun-server-artifact-v${{ needs.build.outputs.version }}-*.json' -print -quit)"
+          ALIYUN_INDEX_SIGNATURE="$(find release-download -type f -name 'otto-aliyun-server-artifact-v${{ needs.build.outputs.version }}-*.json.sig' -print -quit)"
           test -n "$ARCHIVE"
           test -n "$CHECKSUM"
           cp "$ARCHIVE" "$CHECKSUM" enterprise-upload/
@@ -528,7 +556,17 @@ jobs:
             test -z "$SIGNATURE"
           else
             test -n "$SIGNATURE"
-            cp "$SIGNATURE" enterprise-upload/
+            test -n "$ALIYUN_INDEX"
+            test -n "$ALIYUN_INDEX_SIGNATURE"
+            cp "$SIGNATURE" "$ALIYUN_INDEX" "$ALIYUN_INDEX_SIGNATURE" enterprise-upload/
+            cp \
+              scripts/aliyun-server-artifact.mjs \
+              scripts/aliyun-server-artifact-files.mjs \
+              scripts/verify-aliyun-server-artifact.mjs \
+              scripts/verify-enterprise-package-signature.mjs \
+              enterprise-upload/
+            printf '%s\n' "$OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY" > \
+              enterprise-upload/otto-enterprise-signing-public.pem
           fi
           cd enterprise-upload
           sha256sum -c ./*.sha256
@@ -558,7 +596,7 @@ jobs:
           ssh -i ~/.ssh/id_deploy -p "${DEPLOY_PORT}" \
             "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
             "mkdir -p '$REMOTE_DIR'"
-          scp -i ~/.ssh/id_deploy -P "${DEPLOY_PORT}" enterprise-upload/otto-enterprise-oneclick-v${{ needs.build.outputs.version }}-* \
+          scp -i ~/.ssh/id_deploy -P "${DEPLOY_PORT}" enterprise-upload/* \
             "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:$REMOTE_DIR/"
 
       - name: Install or upgrade on server
@@ -571,6 +609,24 @@ jobs:
              cd '$REMOTE_DIR'
              sha256sum -c ./*.sha256
              ARCHIVE=\$(ls otto-enterprise-oneclick-v${{ needs.build.outputs.version }}-*.tar.gz | head -n 1)
+             if [ "${{ inputs.unsigned_transition }}" != "true" ]; then
+               INDEX=\$(ls otto-aliyun-server-artifact-v${{ needs.build.outputs.version }}-*.json | head -n 1)
+               case \$(uname -m) in
+                 x86_64) OTTO_ARCH=linux-x64 ;;
+                 aarch64|arm64) OTTO_ARCH=linux-arm64 ;;
+                 *) echo "unsupported server architecture: \$(uname -m)" >&2; exit 1 ;;
+               esac
+               MIN_SEQUENCE=1
+               if [ -f /var/lib/otto-enterprise/release-sequence ]; then
+                 MIN_SEQUENCE=\$(cat /var/lib/otto-enterprise/release-sequence)
+               fi
+               node ./verify-aliyun-server-artifact.mjs \
+                 "\$INDEX" "\$INDEX.sig" \
+                 --trusted-public-key-file ./otto-enterprise-signing-public.pem \
+                 --architecture "\$OTTO_ARCH" \
+                 --minimum-release-sequence "\$MIN_SEQUENCE"
+               NEW_SEQUENCE=\$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).releaseSequence" "\$INDEX")
+             fi
              rm -rf unpack
              mkdir unpack
              tar -xzf \"\$ARCHIVE\" -C unpack
@@ -579,6 +635,11 @@ jobs:
                sudo -S \"\$PKG_DIR/upgrade.sh\" --config '${DEPLOY_CONFIG_PATH}'
              else
                sudo -S \"\$PKG_DIR/install.sh\" --config '${DEPLOY_CONFIG_PATH}'
+             fi
+             if [ "${{ inputs.unsigned_transition }}" != "true" ]; then
+               sudo -n mkdir -p /var/lib/otto-enterprise
+               printf '%s\n' "\$NEW_SEQUENCE" | sudo -n tee \
+                 /var/lib/otto-enterprise/release-sequence >/dev/null
              fi"
 
   deploy-update-mirror:

@@ -70,6 +70,9 @@ if (
       ),
     ) ||
   manifest.database.futureSchemaPolicy !== 'reject' ||
+  typeof manifest.supplyChain !== 'object' ||
+  manifest.supplyChain === null ||
+  Array.isArray(manifest.supplyChain) ||
   (!allowLegacySqlite &&
     (manifest.database.encryption !== 'sqlcipher-required' ||
       manifest.database.nativeRuntime !== 'node' ||
@@ -112,6 +115,68 @@ for (const relative of expectedFiles) {
   if (actual !== expected) fail(`SHA-256 不匹配：${relative}`);
 }
 
+const supplyChainFiles = {
+  sbom: 'sbom.cdx.json',
+  licenses: 'THIRD-PARTY-LICENSES.json',
+  provenance: 'provenance.json',
+};
+for (const [kind, expectedPath] of Object.entries(supplyChainFiles)) {
+  const entry = manifest.supplyChain[kind];
+  if (
+    entry?.path !== expectedPath ||
+    !/^[0-9a-f]{64}$/.test(entry.sha256 || '') ||
+    manifest.files[expectedPath] !== entry.sha256
+  ) {
+    fail(`supply-chain ${kind} 引用不正确`);
+  }
+}
+
+let sbom;
+let licenses;
+let provenance;
+try {
+  [sbom, licenses, provenance] = await Promise.all([
+    readFile(path.join(root, supplyChainFiles.sbom), 'utf8').then(JSON.parse),
+    readFile(path.join(root, supplyChainFiles.licenses), 'utf8').then(
+      JSON.parse,
+    ),
+    readFile(path.join(root, supplyChainFiles.provenance), 'utf8').then(
+      JSON.parse,
+    ),
+  ]);
+} catch (error) {
+  fail(
+    `无法解析供应链元数据：${error instanceof Error ? error.message : String(error)}`,
+  );
+}
+if (
+  sbom?.bomFormat !== 'CycloneDX' ||
+  sbom.specVersion !== '1.5' ||
+  sbom.metadata?.component?.name !== 'otto-enterprise-server' ||
+  sbom.metadata.component.version !== manifest.version ||
+  !Array.isArray(sbom.components)
+) {
+  fail('CycloneDX SBOM 格式不正确');
+}
+if (
+  licenses?.format !== 'otto-enterprise-license-inventory-v1' ||
+  licenses.product?.version !== manifest.version ||
+  !Array.isArray(licenses.components)
+) {
+  fail('许可证清单格式不正确');
+}
+if (
+  provenance?.format !== 'otto-enterprise-build-provenance-v1' ||
+  provenance.source?.commit !== manifest.sourceCommit ||
+  provenance.source?.sourceInputSha256 !== manifest.sourceInputSha256 ||
+  provenance.source?.sourceDiffSha256 !== manifest.sourceDiffSha256 ||
+  provenance.invocation?.version !== manifest.version ||
+  JSON.stringify(provenance.runtime) !== JSON.stringify(manifest.runtime) ||
+  JSON.stringify(provenance.database) !== JSON.stringify(manifest.database)
+) {
+  fail('构建 provenance 与 release manifest 不一致');
+}
+
 process.stdout.write(
   `${JSON.stringify({
     ok: true,
@@ -120,6 +185,7 @@ process.stdout.write(
     buildCommit: manifest.buildCommit,
     sourceCommit: manifest.sourceCommit,
     database: manifest.database,
+    supplyChain: manifest.supplyChain,
     fileCount: expectedFiles.length,
   })}\n`,
 );
