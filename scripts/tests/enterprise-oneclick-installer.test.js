@@ -72,6 +72,57 @@ function mode(target) {
   return statSync(target).mode & 0o777;
 }
 
+function writeSupplyChainFixture(root, manifest) {
+  const documents = {
+    'sbom.cdx.json': {
+      bomFormat: 'CycloneDX',
+      specVersion: '1.5',
+      version: 1,
+      metadata: {
+        component: {
+          type: 'application',
+          name: 'otto-enterprise-server',
+          version: manifest.version,
+        },
+      },
+      components: [],
+    },
+    'THIRD-PARTY-LICENSES.json': {
+      format: 'otto-enterprise-license-inventory-v1',
+      product: {
+        name: 'otto-enterprise-server',
+        version: manifest.version,
+        license: 'Apache-2.0',
+      },
+      components: [],
+    },
+    'provenance.json': {
+      format: 'otto-enterprise-build-provenance-v1',
+      source: {
+        commit: manifest.sourceCommit,
+        sourceInputSha256: manifest.sourceInputSha256,
+        sourceDiffSha256: manifest.sourceDiffSha256,
+      },
+      invocation: { version: manifest.version },
+      runtime: manifest.runtime,
+      database: manifest.database,
+    },
+  };
+  manifest.supplyChain = {};
+  const kindByFile = {
+    'sbom.cdx.json': 'sbom',
+    'THIRD-PARTY-LICENSES.json': 'licenses',
+    'provenance.json': 'provenance',
+  };
+  for (const [file, document] of Object.entries(documents)) {
+    const content = `${JSON.stringify(document)}\n`;
+    writeFileSync(path.join(root, file), content);
+    const digest = createHash('sha256').update(content).digest('hex');
+    manifest.files[file] = digest;
+    manifest.supplyChain[kindByFile[file]] = { path: file, sha256: digest };
+  }
+}
+
 function readFirstLine(stream) {
   return new Promise((resolve, reject) => {
     let buffer = '';
@@ -180,9 +231,7 @@ describe('enterprise one-click service layout', () => {
     );
     const commitMarker = installer.indexOf('rm -f "$TRANSACTION_MARKER"');
 
-    expect(installer).toContain(
-      'BOOTSTRAP_SECRET_DIR="${DATA_DIR}/bootstrap"',
-    );
+    expect(installer).toContain('BOOTSTRAP_SECRET_DIR="${DATA_DIR}/bootstrap"');
     expect(installer).toContain(
       'BOOTSTRAP_SECRET_TARGET="${BOOTSTRAP_SECRET_DIR}/deployment-enrollment.secret"',
     );
@@ -601,6 +650,12 @@ describe('enterprise one-click schema contract', () => {
         releaseChannel: 'transition',
         buildCommit: '0'.repeat(40),
         sourceCommit: '1'.repeat(40),
+        sourceInputSha256: '2'.repeat(64),
+        sourceDiffSha256: '3'.repeat(64),
+        runtime: {
+          node: '22.23.1',
+          supportedArchitectures: ['linux-x64', 'linux-arm64'],
+        },
         database: {
           schemaFrom: SUPPORTED_SCHEMA_VERSIONS,
           schemaTo: ENTERPRISE_SCHEMA_VERSION,
@@ -617,6 +672,7 @@ describe('enterprise one-click schema contract', () => {
       manifest.files['package.json'] = createHash('sha256')
         .update(runtimePackage)
         .digest('hex');
+      writeSupplyChainFixture(sandbox, manifest);
       const manifestPath = path.join(sandbox, 'manifest.json');
       writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
 
@@ -633,6 +689,27 @@ describe('enterprise one-click schema contract', () => {
           futureSchemaPolicy: 'reject',
         },
       });
+
+      const provenancePath = path.join(sandbox, 'provenance.json');
+      const forgedProvenance = JSON.parse(readFileSync(provenancePath, 'utf8'));
+      forgedProvenance.source.commit = 'f'.repeat(40);
+      const forgedProvenanceContent = `${JSON.stringify(forgedProvenance)}\n`;
+      writeFileSync(provenancePath, forgedProvenanceContent);
+      const forgedProvenanceHash = createHash('sha256')
+        .update(forgedProvenanceContent)
+        .digest('hex');
+      manifest.files['provenance.json'] = forgedProvenanceHash;
+      manifest.supplyChain.provenance.sha256 = forgedProvenanceHash;
+      writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
+      const forged = spawnSync(process.execPath, [VERIFY_RELEASE, sandbox], {
+        encoding: 'utf8',
+      });
+      expect(forged.status).toBe(3);
+      expect(forged.stderr).toContain(
+        '构建 provenance 与 release manifest 不一致',
+      );
+      writeSupplyChainFixture(sandbox, manifest);
+      writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
 
       manifest.releaseChannel = 'lstc';
       writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
@@ -660,6 +737,7 @@ describe('enterprise one-click schema contract', () => {
       delete manifest.database.nativeRuntime;
       delete manifest.database.nativeRuntimeVersion;
       delete manifest.database.nativeTargets;
+      writeSupplyChainFixture(sandbox, manifest);
       writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
       const plaintextByDefault = spawnSync(
         process.execPath,
@@ -674,6 +752,7 @@ describe('enterprise one-click schema contract', () => {
       );
       expect(plaintextUpgrade.status, plaintextUpgrade.stderr).toBe(0);
       manifest.database = sqlCipherContract;
+      writeSupplyChainFixture(sandbox, manifest);
 
       manifest.database.schemaFrom = [2, 3, 4];
       writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);

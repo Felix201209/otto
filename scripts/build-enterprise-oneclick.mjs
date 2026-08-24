@@ -1,12 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process';
-import {
-  createHash,
-  createPrivateKey,
-  createPublicKey,
-  sign,
-} from 'node:crypto';
+import { createHash, createPublicKey } from 'node:crypto';
 import {
   chmodSync,
   cpSync,
@@ -23,6 +18,8 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { supportedEnterpriseSchemaVersions } from './enterprise-release-contract.mjs';
+import { writeEnterpriseSupplyChainDocuments } from './enterprise-supply-chain.mjs';
+import { bundleRuntimeDependencyClosure } from './runtime-dependency-bundler.mjs';
 import {
   REQUIRED_SQLCIPHER_NODE_TARGETS,
   verifySqlCipherMatrixManifest,
@@ -50,6 +47,12 @@ const outputDir = path.join(repoRoot, 'deliverables');
 const rootPackage = JSON.parse(
   readFileSync(path.join(repoRoot, 'package.json'), 'utf8'),
 );
+const serverPackage = JSON.parse(
+  readFileSync(
+    path.join(repoRoot, 'packages', 'server', 'package.json'),
+    'utf8',
+  ),
+);
 const version = rootPackage.version;
 const enterpriseDbSource = readFileSync(
   path.join(repoRoot, 'packages', 'server', 'src', 'enterprise', 'db.ts'),
@@ -65,6 +68,19 @@ if (!schemaVersionMatch) {
 }
 const schemaVersion = Number(schemaVersionMatch[1]);
 const supportedSchemaFrom = supportedEnterpriseSchemaVersions(schemaVersion);
+const runtimeContract = {
+  node: '22.23.1',
+  supportedArchitectures: ['linux-x64', 'linux-arm64'],
+};
+const databaseContract = {
+  schemaFrom: supportedSchemaFrom,
+  schemaTo: schemaVersion,
+  futureSchemaPolicy: 'reject',
+  encryption: 'sqlcipher-required',
+  nativeRuntime: 'node',
+  nativeRuntimeVersion: runtimeContract.node,
+  nativeTargets: [...REQUIRED_SQLCIPHER_NODE_TARGETS],
+};
 const releaseChannel = process.env.OTTO_RELEASE_CHANNEL?.trim() || 'stable';
 if (!['stable', 'transition'].includes(releaseChannel)) {
   throw new Error('OTTO_RELEASE_CHANNEL must be either stable or transition');
@@ -72,13 +88,19 @@ if (!['stable', 'transition'].includes(releaseChannel)) {
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const allowUnsignedEnterprisePackage =
   process.env.OTTO_ALLOW_UNSIGNED_ENTERPRISE_PACKAGE === '1';
-const enterpriseSigningPrivateKey = process.env
-  .OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY_FILE
-  ? readFileSync(process.env.OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY_FILE, 'utf8')
-  : process.env.OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY?.replace(/\\n/g, '\n');
-if (!enterpriseSigningPrivateKey && !allowUnsignedEnterprisePackage) {
+const deferEnterpriseSigning =
+  process.env.OTTO_DEFER_ENTERPRISE_SIGNING === '1';
+const enterpriseSigningConfigured = Boolean(
+  process.env.OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY_FILE ||
+  process.env.OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY,
+);
+if (
+  !enterpriseSigningConfigured &&
+  !allowUnsignedEnterprisePackage &&
+  !deferEnterpriseSigning
+) {
   throw new Error(
-    'enterprise package signing key missing; set OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY(_FILE), or explicitly allow an unsigned local build',
+    'enterprise package signing key missing; use a deferred isolated signing stage, or explicitly allow an unsigned local build',
   );
 }
 
@@ -125,21 +147,35 @@ const licensePublicKeys = parseLicensePublicKeys(
 );
 
 function run(command, args, options = {}) {
+  const {
+    allowSigningSecrets = false,
+    capture = false,
+    env: requestedEnvironment,
+    ...spawnOptions
+  } = options;
+  const childEnvironment = {
+    ...(requestedEnvironment || process.env),
+  };
+  if (!allowSigningSecrets) {
+    delete childEnvironment.OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY;
+    delete childEnvironment.OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY_FILE;
+  }
   const result = spawnSync(command, args, {
     cwd: repoRoot,
     encoding: 'utf8',
-    stdio: options.capture ? 'pipe' : 'inherit',
-    ...options,
+    stdio: capture ? 'pipe' : 'inherit',
+    ...spawnOptions,
+    env: childEnvironment,
   });
   if (result.status !== 0) {
-    const detail = options.capture
+    const detail = capture
       ? `${result.stdout || ''}${result.stderr || ''}`
       : '';
     throw new Error(
       `${command} ${args.join(' ')} failed (${result.status})\n${detail}`,
     );
   }
-  return options.capture ? String(result.stdout).trim() : '';
+  return capture ? String(result.stdout).trim() : '';
 }
 
 function sha(bufferOrString, algorithm = 'sha256') {
@@ -270,6 +306,13 @@ const sourceScope = [
   'deployment/enterprise-oneclick',
   'native/sqlcipher-node',
   'scripts/build-enterprise-oneclick.mjs',
+  'scripts/aliyun-server-artifact.mjs',
+  'scripts/aliyun-server-artifact-files.mjs',
+  'scripts/enterprise-supply-chain.mjs',
+  'scripts/runtime-dependency-bundler.mjs',
+  'scripts/sign-enterprise-package.mjs',
+  'scripts/sign-aliyun-server-artifact.mjs',
+  'scripts/verify-aliyun-server-artifact.mjs',
   'scripts/verify-enterprise-package-signature.mjs',
   'scripts/verify-sqlcipher-native-assets.mjs',
 ];
@@ -294,18 +337,23 @@ const sourceInputFiles = [
   'packages/core/tsconfig.json',
   'packages/core/src/services/aliyunSmsSender.ts',
   'scripts/build-enterprise-oneclick.mjs',
+  'scripts/aliyun-server-artifact.mjs',
+  'scripts/aliyun-server-artifact-files.mjs',
+  'scripts/enterprise-supply-chain.mjs',
+  'scripts/runtime-dependency-bundler.mjs',
+  'scripts/sign-enterprise-package.mjs',
+  'scripts/sign-aliyun-server-artifact.mjs',
+  'scripts/verify-aliyun-server-artifact.mjs',
   'scripts/verify-enterprise-package-signature.mjs',
   'scripts/verify-sqlcipher-native-assets.mjs',
   ...filesBelow(sqlCipherNodeRoot).map((relative) =>
     path.join('native/sqlcipher-node', relative),
   ),
   ...filesBelow(sourceDir)
-    .filter((relative) =>
-      !isEnrollmentSecretArtifact(path.join(sourceDir, relative)),
+    .filter(
+      (relative) => !isEnrollmentSecretArtifact(path.join(sourceDir, relative)),
     )
-    .map((relative) =>
-      path.join('deployment/enterprise-oneclick', relative),
-    ),
+    .map((relative) => path.join('deployment/enterprise-oneclick', relative)),
 ].sort();
 const sourceInputHashes = Object.fromEntries(
   sourceInputFiles.map((relative) => [
@@ -317,6 +365,10 @@ const sourceInputIdentity = sourceInputFiles
   .map((relative) => `${relative}\0${sourceInputHashes[relative]}\n`)
   .join('');
 const sourceInputSha256 = sha(sourceInputIdentity);
+const sourceDiff = run('git', ['diff', '--binary', '--', ...sourceScope], {
+  capture: true,
+});
+const sourceDiffSha256 = sha(sourceDiff);
 
 const temporaryRoot = mkdtempSync(
   path.join(os.tmpdir(), 'otto-enterprise-oneclick-'),
@@ -478,6 +530,14 @@ export class FeatureFlagManager {
       2,
     )}\n`,
   );
+  const externalRuntimeDependencies = Object.keys(
+    serverPackage.dependencies || {},
+  ).filter((name) => name !== 'otto-core' && name !== 'better-sqlite3');
+  const runtimeDependencies = bundleRuntimeDependencyClosure({
+    repoRoot,
+    releaseRoot,
+    directDependencies: externalRuntimeDependencies,
+  });
   const betterSqliteSource = path.join(
     repoRoot,
     'node_modules',
@@ -507,6 +567,11 @@ export class FeatureFlagManager {
         private: true,
         type: 'module',
         engines: { node: '>=22.16.0 <23' },
+        dependencies: {
+          ...runtimeDependencies.directVersions,
+          'better-sqlite3': serverPackage.dependencies['better-sqlite3'],
+          'otto-core': '1.1.0-enterprise-adapter',
+        },
       },
       null,
       2,
@@ -535,6 +600,18 @@ export class FeatureFlagManager {
     `${JSON.stringify(licensePublicKeys, null, 2)}\n`,
     { mode: 0o644 },
   );
+  const supplyChain = writeEnterpriseSupplyChainDocuments({
+    releaseRoot,
+    version,
+    releaseChannel,
+    sourceCommit,
+    sourceTreeDirty,
+    sourceInputSha256,
+    sourceDiffSha256,
+    builderRuntime: process.version,
+    runtime: runtimeContract,
+    database: databaseContract,
+  });
 
   const smokeDataRoot = path.join(temporaryRoot, 'smoke-data');
   mkdirSync(smokeDataRoot, { recursive: true });
@@ -567,9 +644,6 @@ export class FeatureFlagManager {
     .map((relative) => `${relative}\0${fileHashes[relative]}\n`)
     .join('');
   const buildCommit = sha(contentIdentity, 'sha1');
-  const sourceDiff = run('git', ['diff', '--binary', '--', ...sourceScope], {
-    capture: true,
-  });
   const manifest = {
     format: 'otto-enterprise-release-v1',
     version,
@@ -578,22 +652,12 @@ export class FeatureFlagManager {
     buildIdentityKind: 'release-content-sha1',
     sourceCommit,
     sourceTreeDirty,
-    sourceDiffSha256: sha(sourceDiff),
+    sourceDiffSha256,
     sourceInputSha256,
     builtAt: new Date().toISOString(),
-    runtime: {
-      node: '22.23.1',
-      supportedArchitectures: ['linux-x64', 'linux-arm64'],
-    },
-    database: {
-      schemaFrom: supportedSchemaFrom,
-      schemaTo: schemaVersion,
-      futureSchemaPolicy: 'reject',
-      encryption: 'sqlcipher-required',
-      nativeRuntime: 'node',
-      nativeRuntimeVersion: '22.23.1',
-      nativeTargets: [...REQUIRED_SQLCIPHER_NODE_TARGETS],
-    },
+    runtime: runtimeContract,
+    database: databaseContract,
+    supplyChain,
     files: fileHashes,
   };
   writeFileSync(
@@ -721,33 +785,26 @@ export class FeatureFlagManager {
   }
   const archiveHash = shaFile(archive);
   writeFileSync(checksum, `${archiveHash}  ${path.basename(archive)}\n`);
-  if (!enterpriseSigningPrivateKey) {
+  if (!enterpriseSigningConfigured) {
     console.warn(
-      '[bundle] unsigned enterprise package explicitly allowed for local use',
+      deferEnterpriseSigning
+        ? '[bundle] package signing deferred to the isolated signing stage'
+        : '[bundle] unsigned enterprise package explicitly allowed for local use',
     );
   } else {
-    const privateKey = createPrivateKey(enterpriseSigningPrivateKey);
-    const publicKey = createPublicKey(privateKey);
-    const publicKeyPem = publicKey
-      .export({ format: 'pem', type: 'spki' })
-      .toString();
-    const publicKeyDer = publicKey.export({ format: 'der', type: 'spki' });
-    writeFileSync(
-      signaturePath,
-      `${JSON.stringify(
+    const signingResult = JSON.parse(
+      run(
+        process.execPath,
+        [
+          path.join(repoRoot, 'scripts', 'sign-enterprise-package.mjs'),
+          archive,
+        ],
         {
-          format: 'otto-enterprise-package-signature-v1',
-          algorithm: 'Ed25519',
-          file: path.basename(archive),
-          sha256: archiveHash,
-          keyId: sha(publicKeyDer).slice(0, 16),
-          signature: sign(null, readFileSync(archive), privateKey).toString(
-            'base64url',
-          ),
+          allowSigningSecrets: true,
+          capture: true,
+          env: process.env,
         },
-        null,
-        2,
-      )}\n`,
+      ),
     );
     run(
       process.execPath,
@@ -763,7 +820,7 @@ export class FeatureFlagManager {
       {
         env: {
           ...process.env,
-          OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY: publicKeyPem,
+          OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY: signingResult.publicKey,
         },
       },
     );

@@ -118,3 +118,9 @@ test-results-*.md
 
 # One-time private deployment enrollment secrets must stay outside Git.
 deployment/enterprise-oneclick/config/deployment-enrollment-secret*
+
+# Rendered Aliyun deployment inputs may contain tenant-specific references.
+deployment/aliyun/rendered/
+deployment/aliyun/secrets/
+deployment/aliyun/config/*.local.*
+deployment/aliyun/evidence/private/

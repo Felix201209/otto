@@ -7,7 +7,7 @@ name: CI
 
 on:
   pull_request:
-    branches: [internal, main]
+    branches: [internal, main, 'release/**']
   push:
     branches: [internal]
 
@@ -82,6 +82,15 @@ jobs:
           npm run validate:integration-baseline -- --verify-git-refs
           npm run validate:boundaries
           npm run size:source:check
+
+      - name: Validate Aliyun deployment assets
+        run: |
+          npm run deployment:aliyun:generate:check
+          npm run deployment:aliyun:validate
+          npm run test:scripts -- --run scripts/tests/aliyun-deployment-contract.test.js
+
+      - name: Scan Aliyun deployment assets for secrets
+        run: npm run deployment:aliyun:security
 
       # 先 build 再 typecheck：packages/server 的 tsconfig 用
       # TS project references 指向 packages/core（"references": [{ "path":
