@@ -10,6 +10,8 @@ This document captures engineering-level knowledge for developers working on or 
 
 See [architecture.md](./architecture.md) for the high-level system design.
 
+- [DSH full-feature runtime integration plan](./dsh-full-feature-runtime-integration-plan.md)
+
 ## Building & testing
 
 - [Build workflow](./build-workflow.md) — build scripts and pipeline
