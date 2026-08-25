@@ -14,14 +14,13 @@ import type {
   CustomAgentDefinition,
   CustomAgentDraft,
 } from '../customAgents.js';
-import { FilePreview, type FileEntry } from './FilePreview.js';
 import { GeneratedIcon } from './GeneratedIcon.js';
 import { openParkServices, useParkBrand } from './ParkServicesPlugin.js';
 import type { CentralEnterpriseRole } from '../state/centralEnterpriseIdentity.js';
 import { getEnterpriseOrganizationFeatures } from '../state/enterpriseOrganizationFeatures.js';
 import { IconChevron, IconChevronDown } from './icons.js';
 
-type TabType = 'agents' | 'documents' | 'memory' | 'worklog';
+type TabType = 'agents' | 'memory' | 'worklog';
 type KnowledgeView = 'knowledge' | 'timeline';
 
 // server 构建产物更新前也保持 renderer 可独立 typecheck；字段由当前协议快照提供。
@@ -69,14 +68,12 @@ interface EnterpriseKnowledgeRevision {
 
 const TAB_LABEL: Record<TabType, string> = {
   agents: '专家',
-  documents: '文档',
   memory: '企业记忆',
   worklog: '工作日志',
 };
 
 const TAB_ARIA_LABEL: Record<TabType, string> = {
   agents: '专家',
-  documents: '文档',
   memory: '企业记忆',
   worklog: '工作日志',
 };
@@ -166,8 +163,8 @@ export function RightPanel({
   const [enterpriseSkillMarketEnabled, setEnterpriseSkillMarketEnabled] = useState(false);
   const tabs = useMemo<TabType[]>(
     () => mode === 'enterprise' && enterpriseKnowledgeEnabled
-      ? ['agents', 'documents', 'memory', 'worklog']
-      : ['agents', 'documents', 'worklog'],
+      ? ['agents', 'memory', 'worklog']
+      : ['agents', 'worklog'],
     [enterpriseKnowledgeEnabled, mode],
   );
   const [activeTab, setActiveTab] = useState<TabType>('agents');
@@ -183,9 +180,6 @@ export function RightPanel({
   const [collabTab, setCollabTab] = useState<'company' | 'friends'>('company');
   const [friendName, setFriendName] = useState('');
   const [friendNote, setFriendNote] = useState('');
-  const [documentFiles, setDocumentFiles] = useState<FileEntry[]>([]);
-  const [documentsLoading, setDocumentsLoading] = useState(false);
-  const [documentsError, setDocumentsError] = useState('');
   const [workSummary, setWorkSummary] = useState<{
     summary: string;
     date: string;
@@ -269,66 +263,6 @@ export function RightPanel({
       setWorklogLoading(false);
     }
   }, []);
-
-  const decodeDocumentText = useCallback((data: string, mimeType: string): string => {
-    if (!mimeType.startsWith('text/') && !/markdown|json|xml|csv|javascript|typescript/i.test(mimeType)) {
-      return '';
-    }
-    const binary = atob(data);
-    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-    return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-  }, []);
-
-  const documentExportName = useCallback((file: FileEntry): string => {
-    const dot = file.name.lastIndexOf('.');
-    const base = dot > 0 ? file.name.slice(0, dot) : file.name;
-    const ext = file.exportFormat || (dot > 0 ? file.name.slice(dot + 1).toLowerCase() : 'md');
-    return base + '.edited.' + ext;
-  }, []);
-
-  const selectDocumentFiles = useCallback(async (): Promise<void> => {
-    setDocumentsLoading(true);
-    setDocumentsError('');
-    try {
-      const paths = await window.otto.selectFiles();
-      if (paths.length === 0) return;
-      const loaded = await Promise.all(paths.map(async (filePath): Promise<FileEntry> => {
-        const file = await window.otto.readFilePath(filePath);
-        if (/\.(pdf|docx?|md|markdown|txt|json|csv|xml|html?|css|jsx?|tsx?|log|ya?ml)$/i.test(file.fileName)) {
-          const extracted = await window.otto.extractEditableDocument(file.filePath);
-          return {
-            id: file.filePath,
-            name: file.fileName,
-            path: file.filePath,
-            size: file.size,
-            mimeType: file.mimeType,
-            content: extracted.content,
-            source: extracted.message,
-            editableText: true,
-            exportFormat: extracted.sourceFormat,
-          };
-        }
-        return {
-          id: file.filePath,
-          name: file.fileName,
-          path: file.filePath,
-          size: file.size,
-          mimeType: file.mimeType,
-          content: decodeDocumentText(file.data, file.mimeType),
-          source: '本机文档',
-        };
-      }));
-      setDocumentFiles((current) => {
-        const byId = new Map(current.map((item) => [item.id, item]));
-        for (const item of loaded) byId.set(item.id, item);
-        return [...byId.values()];
-      });
-    } catch (error) {
-      setDocumentsError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setDocumentsLoading(false);
-    }
-  }, [decodeDocumentText]);
 
   const refreshEnterpriseKnowledge = useCallback(async (): Promise<void> => {
     if (mode !== 'enterprise' || !enterpriseOrganizationId) return;
@@ -834,35 +768,6 @@ export function RightPanel({
                 </article>
               ))}
             </div>
-          </div>
-        ) : null}
-
-        {activeTab === 'documents' ? (
-          <div className="otto-documents-panel">
-            <div className="otto-worklog-panel__head">
-              <div>
-                <strong>文档</strong>
-                <span>打开、编辑与导出本地文件</span>
-              </div>
-              <button type="button" disabled={documentsLoading} onClick={() => void selectDocumentFiles()}>
-                {documentsLoading ? '读取中' : '选择文件'}
-              </button>
-            </div>
-            {documentsError ? (
-              <div className="otto-right-panel__empty">文档读取失败：{documentsError}</div>
-            ) : null}
-            <FilePreview
-              files={documentFiles}
-              editable
-              onOpenExternal={(file) => void window.otto.openPath(file.path)}
-              onSaveTextFile={(file, content) => {
-                if (file.exportFormat === 'docx' || file.exportFormat === 'pdf') {
-                  return window.otto.exportEditedDocument(file.path, documentExportName(file), content)
-                    .then((result) => result?.path ?? null);
-                }
-                return window.otto.saveTextFile(file.name, content);
-              }}
-            />
           </div>
         ) : null}
 

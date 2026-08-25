@@ -81,7 +81,7 @@ const STEPS: Record<UiMode, readonly GuideStep[]> = {
   work: [
     {
       title: '对话与工作区并排协作',
-      description: '中间处理当前任务，右侧持续展示专家、文档、记忆和日志，不必来回切页。',
+      description: '中间处理当前任务，右侧持续展示专家、记忆和日志，不必来回切页。',
       tip: '适合需要边沟通、边查看资料和工作状态的连续任务。',
       selector: '.otto-content-layout',
       placement: 'center',
@@ -89,7 +89,7 @@ const STEPS: Record<UiMode, readonly GuideStep[]> = {
     },
     {
       title: '右侧工作区会一直陪着你',
-      description: '切换专家、查看文档、企业记忆和工作日志时，当前对话仍保留在中间。',
+      description: '切换专家、查看企业记忆和工作日志时，当前对话仍保留在中间。',
       tip: '点击右侧标签即可切换内容，面板也可以随时收起。',
       selector: '.otto-right-panel',
       placement: 'left',

@@ -89,7 +89,7 @@ export function UiModeGuide({ onSelect }: UiModeGuideProps): React.JSX.Element {
             <UiModePreview mode="conversational" />
             <span className="otto-ui-guide__option-copy">
               <strong>对话式 UI</strong>
-              <small>专注当前对话，专家、文档和记忆按需进入独立页面。</small>
+              <small>专注当前对话，专家和记忆按需进入独立页面。</small>
               <b>选择对话式 UI</b>
             </span>
           </button>
@@ -97,7 +97,7 @@ export function UiModeGuide({ onSelect }: UiModeGuideProps): React.JSX.Element {
             <UiModePreview mode="work" />
             <span className="otto-ui-guide__option-copy">
               <strong>工作式 UI</strong>
-              <small>聊天和工作区同时展示，右侧常驻专家、文档、记忆与日志。</small>
+              <small>聊天和工作区同时展示，右侧常驻专家、记忆与日志。</small>
               <b>选择工作式 UI</b>
             </span>
           </button>

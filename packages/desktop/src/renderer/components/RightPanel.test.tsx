@@ -49,29 +49,6 @@ function installBridge(
   const pending = new Promise<never>(() => undefined);
   const openPath = vi.fn(async () => undefined);
   const saveTextFile = vi.fn(async () => '/tmp/edited-worklog.md');
-  const selectFiles = vi.fn(async () => ['/tmp/enterprise-summary.md']);
-  const readFilePath = vi.fn(async () => ({
-    filePath: '/tmp/enterprise-summary.md',
-    fileName: 'enterprise-summary.md',
-    size: 24,
-    mimeType: 'text/markdown',
-    data: Buffer.from('# 企业总结\n\n初稿。', 'utf8').toString('base64'),
-  }));
-  const extractEditableDocument = vi.fn(async () => ({
-    filePath: '/tmp/enterprise-summary.md',
-    fileName: 'enterprise-summary.md',
-    sourceFormat: 'markdown' as 'text' | 'markdown' | 'docx' | 'pdf',
-    editableFormat: 'markdown' as const,
-    content: '# 企业总结\n\n初稿。',
-    readonly: false,
-    message: '已读取文本文件。',
-  }));
-  const exportEditedDocument = vi.fn(async () => ({
-    ok: true,
-    path: '/tmp/enterprise-summary.edited.docx',
-    format: 'docx' as const,
-    message: '已保存编辑稿：enterprise-summary.edited.docx',
-  }));
   const enterpriseKnowledgeList = vi.fn(async (): Promise<unknown[]> => []);
   const enterpriseKnowledgeRecord = vi.fn(async () => ({
     status: 'added' as const,
@@ -122,18 +99,10 @@ function installBridge(
     workLogReport,
     openPath,
     saveTextFile,
-    selectFiles,
-    readFilePath,
-    extractEditableDocument,
-    exportEditedDocument,
   };
   return {
     openPath,
     saveTextFile,
-    selectFiles,
-    readFilePath,
-    extractEditableDocument,
-    exportEditedDocument,
     workLogReport,
     enterpriseKnowledgeList,
     enterpriseKnowledgeRecord,
@@ -203,6 +172,15 @@ function enterpriseWorkspace(): ProductWorkspaceSnapshot {
 }
 
 describe('RightPanel fixed Agent catalog', () => {
+  it('不再展示独立的文档 Tab 页面', () => {
+    installBridge();
+
+    render(<RightPanel busy={false} />);
+
+    expect(screen.queryByRole('tab', { name: '文档' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '选择文件' })).toBeNull();
+  });
+
   it('不再展示常驻的常用命令说明区', () => {
     installBridge();
 
@@ -426,102 +404,11 @@ describe('RightPanel fixed Agent catalog', () => {
 
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
       '专家',
-      '文档',
       '工作日志',
     ]);
     expect(screen.queryByText('企业记忆')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Skill 专区' })).toBeNull();
     expect(screen.queryByRole('button', { name: /企业与好友/ })).toBeNull();
-  });
-
-  it('loads, edits, and saves a text document from the right panel', async () => {
-    const { extractEditableDocument, readFilePath, saveTextFile, selectFiles } = installBridge();
-    render(<RightPanel busy={false} />);
-
-    fireEvent.click(screen.getByRole('tab', { name: '文档' }));
-    fireEvent.click(screen.getByRole('button', { name: '选择文件' }));
-
-    expect(selectFiles).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(readFilePath).toHaveBeenCalledWith('/tmp/enterprise-summary.md'));
-    await waitFor(() => expect(extractEditableDocument).toHaveBeenCalledWith('/tmp/enterprise-summary.md'));
-    const editor = await screen.findByLabelText('编辑 /tmp/enterprise-summary.md');
-    fireEvent.change(editor, { target: { value: '# 企业总结\n\n终稿。' } });
-    fireEvent.click(screen.getByRole('button', { name: /保存/ }));
-
-    await waitFor(() => expect(saveTextFile).toHaveBeenCalledWith(
-      'enterprise-summary.md',
-      expect.stringContaining('终稿。'),
-    ));
-  });
-
-  it('exports an edited PDF document from the right panel', async () => {
-    const { exportEditedDocument, extractEditableDocument, readFilePath, selectFiles } = installBridge();
-    selectFiles.mockResolvedValueOnce(['/tmp/readiness.pdf']);
-    readFilePath.mockResolvedValueOnce({
-      filePath: '/tmp/readiness.pdf',
-      fileName: 'readiness.pdf',
-      size: 8192,
-      mimeType: 'application/pdf',
-      data: '',
-    });
-    extractEditableDocument.mockResolvedValueOnce({
-      filePath: '/tmp/readiness.pdf',
-      fileName: 'readiness.pdf',
-      sourceFormat: 'pdf' as const,
-      editableFormat: 'markdown' as const,
-      content: '# 验收清单\n\n待确认。',
-      readonly: false,
-      message: '已从 PDF 提取可编辑文本。',
-    });
-    render(<RightPanel busy={false} />);
-
-    fireEvent.click(screen.getByRole('tab', { name: '文档' }));
-    fireEvent.click(screen.getByRole('button', { name: '选择文件' }));
-
-    const editor = await screen.findByLabelText('编辑 /tmp/readiness.pdf');
-    fireEvent.change(editor, { target: { value: '# 验收清单\n\n已确认。' } });
-    fireEvent.click(screen.getByRole('button', { name: /保存/ }));
-
-    await waitFor(() => expect(exportEditedDocument).toHaveBeenCalledWith(
-      '/tmp/readiness.pdf',
-      'readiness.edited.pdf',
-      expect.stringContaining('已确认。'),
-    ));
-  });
-
-  it('exports an edited Word document from the right panel', async () => {
-    const { exportEditedDocument, extractEditableDocument, readFilePath, selectFiles } = installBridge();
-    selectFiles.mockResolvedValueOnce(['/tmp/proposal.docx']);
-    readFilePath.mockResolvedValueOnce({
-      filePath: '/tmp/proposal.docx',
-      fileName: 'proposal.docx',
-      size: 4096,
-      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      data: '',
-    });
-    extractEditableDocument.mockResolvedValueOnce({
-      filePath: '/tmp/proposal.docx',
-      fileName: 'proposal.docx',
-      sourceFormat: 'docx' as const,
-      editableFormat: 'markdown' as const,
-      content: '# 方案\n\n初稿。',
-      readonly: false,
-      message: '已从 Word 提取可编辑文本。',
-    });
-    render(<RightPanel busy={false} />);
-
-    fireEvent.click(screen.getByRole('tab', { name: '文档' }));
-    fireEvent.click(screen.getByRole('button', { name: '选择文件' }));
-
-    const editor = await screen.findByLabelText('编辑 /tmp/proposal.docx');
-    fireEvent.change(editor, { target: { value: '# 方案\n\n终稿。' } });
-    fireEvent.click(screen.getByRole('button', { name: /保存/ }));
-
-    await waitFor(() => expect(exportEditedDocument).toHaveBeenCalledWith(
-      '/tmp/proposal.docx',
-      'proposal.edited.docx',
-      expect.stringContaining('终稿。'),
-    ));
   });
 
   it('中心返回未加入园区时不显示宏创园区入口，不读取旧本机品牌', async () => {
@@ -587,7 +474,7 @@ describe('RightPanel fixed Agent catalog', () => {
 
     await waitFor(() => {
       expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-        '专家', '文档', '企业记忆', '工作日志',
+        '专家', '企业记忆', '工作日志',
       ]);
     });
     fireEvent.click(screen.getByRole('button', { name: 'Skill 专区' }));
