@@ -79,8 +79,9 @@ import type {
   AtoaPeerIdentity,
   AtoaPermissionDecision,
 } from './enterpriseAtoaCoordinator.js';
-import { processEnterpriseAtoaRequest } from './enterpriseAtoaCoordinator.js';
+import { processDurableEnterpriseAtoaRequest } from './enterpriseAtoaDurableCoordinator.js';
 import { collectAuthorizedAtoaContext } from './a2aContext.js';
+import { submitDurableEnterpriseAtoaResponse } from './enterpriseAtoaDurableResponse.js';
 import { buildEnterpriseKnowledgePromptContext } from './enterpriseKnowledgePromptContext.js';
 import { AtoaConsultDialog } from './components/AtoaConsultDialog.js';
 import { executeEnterpriseCollaborationRelay } from './enterpriseCollaborationRelay.js';
@@ -112,11 +113,12 @@ import {
   type CustomAgentDefinition,
   type CustomAgentDraft,
 } from './customAgents.js';
+import { startVisiblePolling } from './visiblePolling.js';
 
 /** 启动后静默检查更新的延迟：让 server 连接 / 首屏渲染先跑完，不抢启动窗口。 */
 const SILENT_UPDATE_CHECK_DELAY_MS = 15_000;
 /** 企业私聊后台未读轮询；只取摘要，不把消息提前标已读。 */
-const ENTERPRISE_UNREAD_POLL_INTERVAL_MS = 5_000;
+const ENTERPRISE_UNREAD_POLL_INTERVAL_MS = 15_000;
 const ENTERPRISE_PRESENCE_HEARTBEAT_MS = 20_000;
 
 /** 主内容区当前视图：对话 / 专家 / 工作台 / 组织架构 / 我的消息 / 我的工作 / 设置——均为整页。 */
@@ -153,6 +155,8 @@ export function App(): React.JSX.Element {
       <EnterpriseLoginPage
         initialServerUrl={auth.state.serverUrl}
         initialInviteCode={auth.state.registrationIntent?.inviteCode}
+        preparation={auth.state.preparation}
+        onPrepareServer={auth.actions.prepareServer}
         busy={auth.state.busy}
         error={auth.state.error}
         onPasswordLogin={auth.actions.loginWithPassword}
@@ -342,11 +346,10 @@ function OttoWorkspaceApp({
       }
     };
 
-    void poll();
-    const timer = window.setInterval(() => void poll(), ENTERPRISE_UNREAD_POLL_INTERVAL_MS);
+    const stopPolling = startVisiblePolling(poll, ENTERPRISE_UNREAD_POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      stopPolling();
       setEnterpriseUnreadCounts({});
       for (const sessionId of federationMarkers.keys()) {
         void window.otto.notificationMarkRead(sessionId).catch(() => undefined);
@@ -358,7 +361,6 @@ function OttoWorkspaceApp({
 
   useEffect(() => {
     if (account.accountType === 'personal') return undefined;
-    let cancelled = false;
     const beat = async (): Promise<void> => {
       try {
         await window.otto.enterprisePresenceHeartbeat?.();
@@ -366,13 +368,9 @@ function OttoWorkspaceApp({
       }
     };
 
-    void beat();
-    const timer = window.setInterval(() => {
-      if (!cancelled) void beat();
-    }, ENTERPRISE_PRESENCE_HEARTBEAT_MS);
+    const stopPolling = startVisiblePolling(beat, ENTERPRISE_PRESENCE_HEARTBEAT_MS);
     return () => {
-      cancelled = true;
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [account.accountType, account.id, account.organizationId]);
 
@@ -418,8 +416,11 @@ function OttoWorkspaceApp({
         preview: '你的 Otto 收到一条企业协作请求，等待授权处理',
       }).catch(() => undefined);
       try {
-        await processEnterpriseAtoaRequest({
+        await processDurableEnterpriseAtoaRequest({
           request,
+          ledger: {
+            execute: window.otto.enterpriseAtoaResponseLedger,
+          },
           requestPermission: requestAtoaPermission,
           collectContext: (sources, authorizedMessageIds) =>
             collectAuthorizedAtoaContext({
@@ -469,14 +470,13 @@ function OttoWorkspaceApp({
       }
     };
 
-    void poll();
-    const timer = window.setInterval(() => void poll(), 8_000);
+    const stopPolling = startVisiblePolling(poll, 15_000);
     return () => {
       cancelled = true;
       abortController.abort();
       permissionResolver.current?.({ kind: 'deny' });
       permissionResolver.current = null;
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [
     account.accountType,
@@ -594,6 +594,41 @@ function OttoWorkspaceApp({
           return;
         }
 
+        const responseKey = {
+          scope: 'enterprise-federation-atoa-v1',
+          contactId: task.contact.id,
+          requestMessageId: task.message.id,
+          requestMaterial: task.message.content,
+        } as const;
+        const responseLedger = {
+          execute: window.otto.enterpriseAtoaResponseLedger,
+        };
+        const persistedResponse = await responseLedger.execute({
+          action: 'load',
+          key: responseKey,
+        });
+        if (persistedResponse) {
+          const replay = await submitDurableEnterpriseAtoaResponse({
+            key: responseKey,
+            ledger: responseLedger,
+            signal: abortController.signal,
+            generate: async () => {
+              throw new Error('Persisted federation A2A response must not be regenerated');
+            },
+            submit: (response) =>
+              window.otto.enterpriseFederationAtoaRespond({
+                contactId: task.contact.id,
+                requestMessageId: task.message.id,
+                answer: response.answer,
+                grantedSources: response.grantedSources,
+              }),
+          });
+          if (replay.outcome === 'aborted') return;
+          contextCache.delete(contextKey(task));
+          await window.otto.notificationMarkRead(notificationId);
+          return;
+        }
+
         let context = contextCache.get(contextKey(task));
         if (!context) {
           let sources = task.grantedSources;
@@ -624,27 +659,40 @@ function OttoWorkspaceApp({
           }, messages);
         }
 
-        let answer: string;
-        try {
-          answer = await askLocalPeerOtto({
-            question: task.request.question,
-            workContext: context.context,
-            mode: task.request.mode,
-            initiatorProposal: task.request.initiatorProposal,
-            requestId: `federation-a2a-${task.message.id}`,
-            clientMessageId: `federation-a2a-reply-${task.message.id}`,
-            signal: abortController.signal,
-          });
-        } catch {
-          if (abortController.signal.aborted) return;
-          answer = '本机 Otto 本次未能完成回答，请稍后重试或直接联系本人。';
-        }
-        await window.otto.enterpriseFederationAtoaRespond({
-          contactId: task.contact.id,
-          requestMessageId: task.message.id,
-          answer,
-          grantedSources: context.loadedSources,
+        const durable = await submitDurableEnterpriseAtoaResponse({
+          key: responseKey,
+          ledger: responseLedger,
+          signal: abortController.signal,
+          generate: async () => {
+            let answer: string;
+            try {
+              answer = await askLocalPeerOtto({
+                question: task.request.question,
+                workContext: context.context,
+                mode: task.request.mode,
+                initiatorProposal: task.request.initiatorProposal,
+                requestId: `federation-a2a-${task.message.id}`,
+                clientMessageId: `federation-a2a-reply-${task.message.id}`,
+                signal: abortController.signal,
+              });
+            } catch (error) {
+              if (abortController.signal.aborted) throw error;
+              answer = '本机 Otto 本次未能完成回答，请稍后重试或直接联系本人。';
+            }
+            return {
+              answer,
+              grantedSources: context.loadedSources,
+            };
+          },
+          submit: (response) =>
+            window.otto.enterpriseFederationAtoaRespond({
+              contactId: task.contact.id,
+              requestMessageId: task.message.id,
+              answer: response.answer,
+              grantedSources: response.grantedSources,
+            }),
         });
+        if (durable.outcome === 'aborted') return;
         contextCache.delete(contextKey(task));
         await window.otto.notificationMarkRead(notificationId);
       } catch {
@@ -667,13 +715,12 @@ function OttoWorkspaceApp({
       }
     };
 
-    void poll();
-    const timer = window.setInterval(() => void poll(), 8_000);
+    const stopPolling = startVisiblePolling(poll, 15_000);
     return () => {
       cancelled = true;
       abortController.abort();
       contextCache.clear();
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [
     account.accountType,
@@ -1218,6 +1265,7 @@ function OttoWorkspaceApp({
               identityLabel={centralIdentity.identityLabel}
               modelManagementLabel="模型与个人 API 设置"
               busy={busy}
+              connected={state.connection === 'connected'}
               onSend={handleSend}
               onCancel={actions.cancel}
               onSetModel={actions.setModel}

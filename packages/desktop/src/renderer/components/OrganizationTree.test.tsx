@@ -993,7 +993,7 @@ describe('OrganizationTree', () => {
     }, { timeout: 3_000 });
 
     scrollIntoView.mockClear();
-    const messagePoll = intervals.find((interval) => interval.delay === 2_000);
+    const messagePoll = intervals.find((interval) => interval.delay === 5_000);
     expect(messagePoll).toBeTruthy();
     await act(async () => {
       messagePoll!.callback();

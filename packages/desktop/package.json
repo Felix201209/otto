@@ -1,6 +1,6 @@
 {
   "name": "otto-desktop",
-  "version": "1.10.1",
+  "version": "1.9.13",
   "description": "Otto Desktop - Electron app shell (main + preload + renderer reusing webview DOM UI)",
   "author": "Otto",
   "license": "Apache-2.0",
@@ -49,7 +49,7 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "css-loader": "^7.1.2",
-    "electron": "^43.1.0",
+    "electron": "43.2.0",
     "electron-builder": "26.15.3",
     "html-webpack-plugin": "^5.6.3",
     "jsdom": "^26.1.0",
@@ -79,7 +79,7 @@
         ]
       }
     ],
-    "electronVersion": "43.1.0",
+    "electronVersion": "43.2.0",
     "afterPack": "scripts/after-pack.cjs",
     "directories": {
       "output": "release",
@@ -101,6 +101,16 @@
       "!**/node_modules/**/examples/**",
       "!**/node_modules/**/example/**",
       "!**/node_modules/@vscode/ripgrep/**",
+      "!**/node_modules/@otto/native/target/**",
+      "!**/node_modules/@otto/native/src/**",
+      "!**/node_modules/@otto/native/node_modules/**",
+      "!**/node_modules/@otto/native/Cargo.toml",
+      "!**/node_modules/@otto/native/Cargo.lock",
+      "!**/node_modules/@otto/native/tsconfig.json",
+      "!**/node_modules/better-sqlite3/build/**",
+      "!**/node_modules/better-sqlite3/deps/**",
+      "!**/node_modules/better-sqlite3/src/**",
+      "!**/node_modules/better-sqlite3/binding.gyp",
       "!**/node_modules/@larksuiteoapi/node-sdk/es/**",
       "!**/node_modules/@larksuiteoapi/node-sdk/types/**",
       "!**/node_modules/js-tiktoken/dist/**/*.cjs",

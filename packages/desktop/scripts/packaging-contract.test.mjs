@@ -174,9 +174,16 @@ describe('desktop packaging contract', () => {
     expect(script).toContain("'--config.mac.notarize=false'");
     expect(script).toContain("'--config.dmg.sign=false'");
     expect(script).toContain("CSC_IDENTITY_AUTO_DISCOVERY: 'false'");
-    expect(workflow).toContain('unsigned_mac_transition:');
+    expect(workflow).toContain('unsigned_transition:');
     expect(workflow).toContain(
-      "OTTO_ALLOW_UNSIGNED_MAC: ${{ inputs.unsigned_mac_transition && '1' || '0' }}",
+      "OTTO_ALLOW_UNSIGNED_MAC: ${{ inputs.unsigned_transition && '1' || '0' }}",
+    );
+    expect(workflow).toContain(
+      "OTTO_ALLOW_UNSIGNED_ENTERPRISE_PACKAGE: ${{ inputs.unsigned_transition && '1' || '0' }}",
+    );
+    expect(workflow).toContain('if: ${{ inputs.unsigned_transition != true }}');
+    expect(workflow).toContain(
+      'Unsigned artifacts are permitted only for the transition release channel.',
     );
   });
 
@@ -220,7 +227,10 @@ describe('desktop packaging contract', () => {
       workflow.indexOf('name: Create draft GitHub release'),
     );
     expect(workflow).toContain("if: github.repository == 'Felix201209/otto'");
-    expect(workflow).toContain('token: ${{ secrets.OTTO_RELEASES_TOKEN }}');
+    expect(workflow).toContain(
+      'OTTO_RELEASES_TOKEN: ${{ secrets.OTTO_RELEASES_TOKEN }}',
+    );
+    expect(workflow).toContain('token: ${{ env.OTTO_RELEASES_TOKEN }}');
     expect(workflow).not.toContain(
       'secrets.OTTO_RELEASES_TOKEN || secrets.GITHUB_TOKEN',
     );
@@ -234,8 +244,9 @@ describe('desktop packaging contract', () => {
       "needs.verify-windows-signature.result == 'success'",
     );
     expect(deliveryScript).toContain("['stapler', 'validate', appPath]");
-    expect(workflow).not.toContain('This release is unsigned');
-    expect(workflow).not.toContain('OTTO_ALLOW_UNSIGNED_ENTERPRISE_PACKAGE');
+    expect(workflow).toContain(
+      'This transition release uses unsigned Windows, macOS, and enterprise artifacts.',
+    );
     expect(workflow).toContain(
       'node scripts/verify-enterprise-package-signature.mjs',
     );
@@ -257,6 +268,47 @@ describe('desktop packaging contract', () => {
     expect(gate).toContain('releaseAssetCandidates.some(existsSync)');
     expect(gate).not.toContain("manifest.assets?.['win-x64']");
     expect(gate).not.toContain('latest.json win-x64 sha256 mismatch');
+  });
+
+  it('enforces the verified 1.9.11-relative Windows installer budget after packaging', async () => {
+    const [gate, workflow] = await Promise.all([
+      readFile(
+        path.join(packageRoot, 'scripts', 'release-recovery-gate.mjs'),
+        'utf8',
+      ),
+      readFile(path.join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8'),
+    ]);
+    expect(gate).toContain('125_255_674');
+    expect(gate).toContain('lastPublicWindowsInstallerBytes + maxWindowsInstallerGrowthBytes');
+    expect(gate).toContain('Windows installer exceeds the verified 1.9.11-relative budget');
+    expect(workflow).toContain('Enforce update manifest and installer size budget');
+    expect(workflow).toContain('npm run release:gate --workspace=packages/desktop');
+    expect(workflow).toContain("OTTO_DESKTOP_BASELINE_INSTALLER_BYTES: '125255674'");
+  });
+
+  it('excludes native build trees and registry SQLite build outputs from desktop artifacts', async () => {
+    const desktopPackage = JSON.parse(
+      await readFile(path.join(packageRoot, 'package.json'), 'utf8'),
+    );
+    const files = desktopPackage.build?.files ?? [];
+    for (const exclusion of [
+      '!**/node_modules/@otto/native/target/**',
+      '!**/node_modules/@otto/native/src/**',
+      '!**/node_modules/@otto/native/node_modules/**',
+      '!**/node_modules/better-sqlite3/build/**',
+      '!**/node_modules/better-sqlite3/deps/**',
+      '!**/node_modules/better-sqlite3/src/**',
+    ]) {
+      expect(files).toContain(exclusion);
+    }
+
+    const verifier = await readFile(
+      path.join(packageRoot, 'scripts', 'verify-packaged-runtime.mjs'),
+      'utf8',
+    );
+    expect(verifier).toContain('rejectAsarPrefix(entries, prefix)');
+    expect(verifier).toContain('node_modules/@otto/native/target');
+    expect(verifier).toContain('node_modules/better-sqlite3/build');
   });
 
   it('discovers every packaged LibreOffice bundle before signing Otto', async () => {

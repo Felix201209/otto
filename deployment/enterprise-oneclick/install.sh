@@ -73,14 +73,20 @@ OTTO_BOOTSTRAP_PASSWORD="${OTTO_BOOTSTRAP_PASSWORD:-auto}"
 OTTO_BOOTSTRAP_NAME="${OTTO_BOOTSTRAP_NAME:-系统管理员}"
 OTTO_ALLOW_SMS_DISABLED="${OTTO_ALLOW_SMS_DISABLED:-0}"
 OTTO_BACKUP_ENCRYPTION_KEY="${OTTO_BACKUP_ENCRYPTION_KEY:-auto}"
+OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE="${OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE:-}"
 OTTO_BACKUP_INTERVAL_HOURS="${OTTO_BACKUP_INTERVAL_HOURS:-24}"
 OTTO_BACKUP_RETENTION_DAYS="${OTTO_BACKUP_RETENTION_DAYS:-30}"
 OTTO_BACKUP_MINIMUM_RETAINED="${OTTO_BACKUP_MINIMUM_RETAINED:-3}"
 OTTO_BACKUP_REPLICA_DIR="${OTTO_BACKUP_REPLICA_DIR:-}"
 OTTO_DISK_MIN_FREE_MB="${OTTO_DISK_MIN_FREE_MB:-2048}"
+OTTO_DATABASE_ENCRYPTION_KEY_FILE="${OTTO_DATABASE_ENCRYPTION_KEY_FILE:-}"
 OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE="${OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE:-}"
 OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE="${OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE:-}"
 OTTO_FIELD_ENCRYPTION_KEY_FILE="${OTTO_FIELD_ENCRYPTION_KEY_FILE:-}"
+OTTO_CONTROL_URL="${OTTO_CONTROL_URL:-}"
+OTTO_CONTROL_TRUST_FILE="${OTTO_CONTROL_TRUST_FILE:-}"
+OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE="${OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE:-}"
+OTTO_DEPLOYMENT_KIND="${OTTO_DEPLOYMENT_KIND:-self-hosted}"
 OTTO_TELEMETRY_ENDPOINT="${OTTO_TELEMETRY_ENDPOINT:-}"
 OTTO_TELEMETRY_RETENTION_DAYS="${OTTO_TELEMETRY_RETENTION_DAYS:-90}"
 OTTO_FEDERATION_ENABLED="${OTTO_FEDERATION_ENABLED:-false}"
@@ -88,6 +94,7 @@ OTTO_FEDERATION_GATEWAY_URL="${OTTO_FEDERATION_GATEWAY_URL:-}"
 OTTO_FEDERATION_DISPLAY_NAME="${OTTO_FEDERATION_DISPLAY_NAME:-}"
 OTTO_FEDERATION_POLL_INTERVAL_MS="${OTTO_FEDERATION_POLL_INTERVAL_MS:-10000}"
 OTTO_FEDERATION_SIGNING_KEY_FILE="${OTTO_FEDERATION_SIGNING_KEY_FILE:-}"
+OTTO_EDGE_GATEWAY_URL="${OTTO_EDGE_GATEWAY_URL:-}"
 OTTO_DATA_CONTROLLER_NAME="${OTTO_DATA_CONTROLLER_NAME:-}"
 OTTO_PRIVACY_CONTACT="${OTTO_PRIVACY_CONTACT:-}"
 OTTO_LEGAL_DOCUMENTS_APPROVED="${OTTO_LEGAL_DOCUMENTS_APPROVED:-false}"
@@ -174,10 +181,59 @@ if [ -n "$OTTO_BACKUP_REPLICA_DIR" ] \
   && [ "$OTTO_BACKUP_REPLICA_DIR" != "/var/backups/otto-enterprise" ]; then
   otto_die "一键部署的异地备份挂载点固定为 /var/backups/otto-enterprise"
 fi
+if [ -n "$OTTO_BACKUP_REPLICA_DIR" ] && [ -z "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" ]; then
+  otto_die "启用异地备份时必须配置独立的 OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE"
+fi
+if [ -n "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" ]; then
+  [[ "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" = /* ]] || otto_die "OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE 必须使用绝对路径"
+  recovery_parent="$(dirname -- "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE")"
+  [ -d "$recovery_parent" ] && [ ! -L "$recovery_parent" ] || otto_die "备份恢复密钥目录必须预先挂载为真实目录"
+  if [ -e "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" ] || [ -L "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" ]; then
+    [ -f "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" ] && [ ! -L "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" ] || otto_die "备份恢复密钥必须是普通文件且不能是符号链接"
+  fi
+  case "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" in
+    "$DATA_DIR"|"$DATA_DIR"/*) otto_die "备份恢复密钥不能放在 Otto 数据目录内" ;;
+  esac
+  if [ -n "$OTTO_BACKUP_REPLICA_DIR" ]; then
+    case "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" in
+      "$OTTO_BACKUP_REPLICA_DIR"|"$OTTO_BACKUP_REPLICA_DIR"/*) otto_die "备份恢复密钥不能放在备份副本目录内" ;;
+    esac
+  fi
+fi
 case "$OTTO_TELEMETRY_ENDPOINT" in
   ""|https://*) ;;
   *) otto_die "OTTO_TELEMETRY_ENDPOINT 必须为空或使用 HTTPS" ;;
 esac
+case "$OTTO_EDGE_GATEWAY_URL" in
+  ""|https://*) ;;
+  *) otto_die "OTTO_EDGE_GATEWAY_URL 必须为空或使用 HTTPS" ;;
+esac
+case "$OTTO_CONTROL_URL" in
+  ""|https://*) ;;
+  *) otto_die "OTTO_CONTROL_URL 必须为空或使用 HTTPS" ;;
+esac
+if [ -n "${OTTO_DEPLOYMENT_BOOTSTRAP_SECRET:-}" ]; then
+  otto_die "不再接受内联部署登记密钥；请使用权限受限的 OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE"
+fi
+unset OTTO_DEPLOYMENT_BOOTSTRAP_SECRET
+if [ -n "$OTTO_CONTROL_TRUST_FILE" ]; then
+  [[ "$OTTO_CONTROL_TRUST_FILE" = /* ]] \
+    || otto_die "OTTO_CONTROL_TRUST_FILE 必须使用绝对路径"
+  [ -f "$OTTO_CONTROL_TRUST_FILE" ] \
+    && [ ! -L "$OTTO_CONTROL_TRUST_FILE" ] \
+    || otto_die "Control 公钥文件必须是普通文件且不能是符号链接"
+fi
+if [ -n "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE" ]; then
+  [[ "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE" = /* ]] \
+    || otto_die "OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE 必须使用绝对路径"
+  [ -f "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE" ] \
+    && [ ! -L "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE" ] \
+    || otto_die "部署登记密钥文件必须是普通文件且不能是符号链接"
+  [ -n "$OTTO_CONTROL_URL" ] \
+    || otto_die "提供部署登记密钥文件时必须同时配置 OTTO_CONTROL_URL"
+  [ -n "$OTTO_CONTROL_TRUST_FILE" ] \
+    || otto_die "提供部署登记密钥文件时必须同时配置独立 OTTO_CONTROL_TRUST_FILE"
+fi
 for key_variable in \
   OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE \
   OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE \
@@ -190,6 +246,16 @@ for key_variable in \
   [ "$(wc -c < "$key_path")" -eq 32 ] \
     || otto_die "${key_variable} 必须包含恰好 32 字节原始密钥"
 done
+if [ -n "$OTTO_DATABASE_ENCRYPTION_KEY_FILE" ]; then
+  [[ "$OTTO_DATABASE_ENCRYPTION_KEY_FILE" = /* ]] \
+    || otto_die "OTTO_DATABASE_ENCRYPTION_KEY_FILE 必须使用绝对路径"
+  [ -f "$OTTO_DATABASE_ENCRYPTION_KEY_FILE" ] \
+    && [ ! -L "$OTTO_DATABASE_ENCRYPTION_KEY_FILE" ] \
+    || otto_die "OTTO_DATABASE_ENCRYPTION_KEY_FILE 必须指向普通文件且不能是符号链接"
+  DATABASE_KEY_BYTES="$(wc -c < "$OTTO_DATABASE_ENCRYPTION_KEY_FILE")"
+  [ "$DATABASE_KEY_BYTES" -ge 32 ] && [ "$DATABASE_KEY_BYTES" -le 65536 ] \
+    || otto_die "OTTO_DATABASE_ENCRYPTION_KEY_FILE 大小不在允许范围内"
+fi
 if [ "$OTTO_ALLOW_SMS_DISABLED" = "0" ]; then
   for key in \
     ALIYUN_SMS_ACCESS_KEY_ID \
@@ -304,6 +370,19 @@ DEPLOY_CREATED=0
 CURRENT_CREATED=0
 DATA_CREATED=0
 CONFIG_CREATED=0
+DATABASE_KEY_CREATED=0
+BOOTSTRAP_SECRET_CREATED=0
+BOOTSTRAP_SECRET_REPLACED=0
+BOOTSTRAP_SECRET_STAGED=""
+BOOTSTRAP_SECRET_TARGET=""
+BOOTSTRAP_SECRET_BACKUP=""
+BOOTSTRAP_SECRET_DIR=""
+BOOTSTRAP_SECRET_DIR_CREATED=0
+CONTROL_TRUST_STAGED=""
+CONTROL_TRUST_TARGET=""
+CONTROL_TRUST_BACKUP=""
+CONTROL_TRUST_CREATED=0
+CONTROL_TRUST_REPLACED=0
 RUNTIME_LINK_CREATED=0
 RUNTIME_DIR_CREATED=0
 TRANSACTION_MARKER_CREATED=0
@@ -345,6 +424,38 @@ cleanup() {
     if [ "$CONFIG_CREATED" -eq 1 ] && [ -f "${CONFIG_DIR}/enterprise.env" ]; then
       mv "${CONFIG_DIR}/enterprise.env" "${TXN_DIR}/failed-enterprise.env"
     fi
+    if [ "$DATABASE_KEY_CREATED" -eq 1 ] \
+      && [ -f "${CONFIG_DIR}/database-sqlcipher.key" ]; then
+      mv "${CONFIG_DIR}/database-sqlcipher.key" \
+        "${TXN_DIR}/failed-database-sqlcipher.key"
+    fi
+    if [ "$BOOTSTRAP_SECRET_CREATED" -eq 1 ] \
+      && { [ -e "$BOOTSTRAP_SECRET_TARGET" ] || [ -L "$BOOTSTRAP_SECRET_TARGET" ]; }; then
+      rm -f "$BOOTSTRAP_SECRET_TARGET"
+    fi
+    if [ "$BOOTSTRAP_SECRET_REPLACED" -eq 1 ] \
+      && [ -f "$BOOTSTRAP_SECRET_BACKUP" ] \
+      && [ ! -L "$BOOTSTRAP_SECRET_BACKUP" ]; then
+      install -o otto-enterprise -g otto-enterprise -m 0600 \
+        "$BOOTSTRAP_SECRET_BACKUP" "$BOOTSTRAP_SECRET_TARGET"
+      rm -f "$BOOTSTRAP_SECRET_BACKUP"
+    fi
+    if [ "$BOOTSTRAP_SECRET_DIR_CREATED" -eq 1 ] \
+      && [ -d "$BOOTSTRAP_SECRET_DIR" ] \
+      && [ ! -L "$BOOTSTRAP_SECRET_DIR" ]; then
+      rmdir "$BOOTSTRAP_SECRET_DIR" >/dev/null 2>&1 || true
+    fi
+    if [ "$CONTROL_TRUST_CREATED" -eq 1 ] \
+      && { [ -e "$CONTROL_TRUST_TARGET" ] || [ -L "$CONTROL_TRUST_TARGET" ]; }; then
+      rm -f "$CONTROL_TRUST_TARGET"
+    fi
+    if [ "$CONTROL_TRUST_REPLACED" -eq 1 ] \
+      && [ -f "$CONTROL_TRUST_BACKUP" ] \
+      && [ ! -L "$CONTROL_TRUST_BACKUP" ]; then
+      install -o root -g otto-enterprise -m 0640 \
+        "$CONTROL_TRUST_BACKUP" "$CONTROL_TRUST_TARGET"
+      rm -f "$CONTROL_TRUST_BACKUP"
+    fi
     if [ "$RUNTIME_LINK_CREATED" -eq 1 ] && [ -L "${INSTALL_ROOT}/runtime/current" ]; then
       mv "${INSTALL_ROOT}/runtime/current" "${TXN_DIR}/failed-runtime-link"
     fi
@@ -375,6 +486,12 @@ cleanup() {
   elif [ "$status" -eq 0 ]; then
     rm -rf "$TXN_DIR"
   fi
+  if [ -n "$BOOTSTRAP_SECRET_STAGED" ]; then
+    rm -f "$BOOTSTRAP_SECRET_STAGED"
+  fi
+  if [ -n "$CONTROL_TRUST_STAGED" ]; then
+    rm -f "$CONTROL_TRUST_STAGED"
+  fi
 }
 trap cleanup EXIT
 
@@ -396,12 +513,55 @@ if ! NODE_PATH="$(otto_resolve_node "$PREFERRED_NODE")"; then
   NODE_PATH="$(otto_install_node_runtime "${TXN_DIR}/runtime")"
 fi
 
+if [ -n "$OTTO_CONTROL_TRUST_FILE" ]; then
+  CONTROL_TRUST_STAGED="${TXN_DIR}/control-public-keys.json"
+  cp --no-dereference "$OTTO_CONTROL_TRUST_FILE" "$CONTROL_TRUST_STAGED"
+  chmod 0600 "$CONTROL_TRUST_STAGED"
+  "$NODE_PATH" --input-type=module - "$CONTROL_TRUST_STAGED" <<'NODE'
+import { readFileSync } from 'node:fs';
+const keys = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+if (
+  !Array.isArray(keys) ||
+  keys.length === 0 ||
+  keys.some((key) => typeof key !== 'string' || !key.includes('BEGIN PUBLIC KEY'))
+) {
+  throw new Error('Control command trust store is invalid');
+}
+NODE
+fi
+
+if [ -n "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE" ]; then
+  BOOTSTRAP_SECRET_STAGED="${TXN_DIR}/deployment-enrollment-secret"
+  "$NODE_PATH" "${SCRIPT_DIR}/tools/stage-enrollment-secret.mjs" \
+    "$OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE" "$BOOTSTRAP_SECRET_STAGED"
+fi
+
 RELEASE_INFO="$("$NODE_PATH" "${SCRIPT_DIR}/tools/verify-release.mjs" "${SCRIPT_DIR}/release")"
 RELEASE_VERSION="$("$NODE_PATH" -e "const x=JSON.parse(process.argv[1]);console.log(x.version)" "$RELEASE_INFO")"
 BUILD_ID="$("$NODE_PATH" -e "const x=JSON.parse(process.argv[1]);console.log(x.buildCommit)" "$RELEASE_INFO")"
 RELEASE_SCHEMA_TO="$("$NODE_PATH" -e "const x=JSON.parse(process.argv[1]);console.log(x.database.schemaTo)" "$RELEASE_INFO")"
 RELEASE_NAME="${RELEASE_VERSION}-${BUILD_ID:0:12}"
 TARGET_RELEASE="${INSTALL_ROOT}/releases/${RELEASE_NAME}"
+RUNTIME_ARCH="$(otto_arch)"
+SQLCIPHER_RELEASE_BINDING="${SCRIPT_DIR}/release/native/sqlcipher/linux-${RUNTIME_ARCH}/better_sqlite3.node"
+[ -f "$SQLCIPHER_RELEASE_BINDING" ] && [ ! -L "$SQLCIPHER_RELEASE_BINDING" ] \
+  || otto_die "部署包缺少当前架构的 SQLCipher Node.js 原生产物：linux-${RUNTIME_ARCH}" 3
+MANAGED_DATABASE_KEY_PATH="${CONFIG_DIR}/database-sqlcipher.key"
+if [ -z "$OTTO_DATABASE_ENCRYPTION_KEY_FILE" ]; then
+  CANARY_DATABASE_KEY="${TXN_DIR}/database-sqlcipher.key"
+  "$NODE_PATH" --input-type=module -e \
+    "import { randomBytes } from 'node:crypto'; import { writeFileSync } from 'node:fs'; writeFileSync(process.argv[1], randomBytes(32), { flag: 'wx', mode: 0o600 });" \
+    "$CANARY_DATABASE_KEY"
+  OTTO_DATABASE_ENCRYPTION_KEY_FILE="$CANARY_DATABASE_KEY"
+  DATABASE_KEY_MANAGED=1
+else
+  DATABASE_KEY_MANAGED=0
+fi
+export OTTO_DATABASE_ENCRYPTION="required"
+export OTTO_DATABASE_ENCRYPTION_KEY_FILE
+export OTTO_DATABASE_ENCRYPTION_KEY_ID="oneclick-offline-database-key"
+export OTTO_DATABASE_ENCRYPTION_KEY_READONLY="true"
+export OTTO_SQLCIPHER_NATIVE_BINDING="$SQLCIPHER_RELEASE_BINDING"
 
 if [ "$CURRENT_EXISTS" -eq 1 ]; then
   CURRENT_INFO="$("$NODE_PATH" "${SCRIPT_DIR}/tools/verify-release.mjs" "$CURRENT_REAL")"
@@ -491,6 +651,8 @@ if (
 }
 NODE
   IMPORT_INFO="$("$NODE_PATH" "${SCRIPT_DIR}/tools/db-tool.mjs" inspect "$MIGRATION_DB")"
+  IMPORT_INSPECTION="${TXN_DIR}/migration-inspection.json"
+  printf '%s\n' "$IMPORT_INFO" > "$IMPORT_INSPECTION"
   IMPORT_SCHEMA="$("$NODE_PATH" -e \
     "const x=JSON.parse(process.argv[1]);console.log(x.userVersion)" "$IMPORT_INFO")"
   [ "$IMPORT_SCHEMA" -ge 2 ] && [ "$IMPORT_SCHEMA" -le "$RELEASE_SCHEMA_TO" ] \
@@ -519,12 +681,12 @@ export OTTO_APP_VERSION="$RELEASE_VERSION"
 export OTTO_BUILD_COMMIT="$BUILD_ID"
 export ALIYUN_SMS_PROVIDER="${ALIYUN_SMS_PROVIDER:-pnvs}"
 
-"$NODE_PATH" "${SCRIPT_DIR}/tools/migrate-check.mjs" "${SCRIPT_DIR}/release" "$CANARY_DIR"
-MIGRATED_INFO="$("$NODE_PATH" "${SCRIPT_DIR}/tools/db-tool.mjs" inspect "${CANARY_DIR}/data.db")"
+MIGRATION_CHECK_ARGS=("${SCRIPT_DIR}/release" "$CANARY_DIR")
 if [ -n "$MIGRATION_DB" ]; then
-  "$NODE_PATH" "${SCRIPT_DIR}/tools/db-tool.mjs" \
-    compare "$MIGRATION_DB" "${CANARY_DIR}/data.db" >/dev/null
+  MIGRATION_CHECK_ARGS+=(--baseline "$IMPORT_INSPECTION")
 fi
+MIGRATED_INFO="$("$NODE_PATH" "${SCRIPT_DIR}/tools/migrate-check.mjs" \
+  "${MIGRATION_CHECK_ARGS[@]}")"
 
 ACCOUNT_COUNT="$("$NODE_PATH" -e \
   "const x=JSON.parse(process.argv[1]);console.log(x.rowCounts.accounts||0)" "$MIGRATED_INFO")"
@@ -532,7 +694,7 @@ if [ "$OTTO_ENTERPRISE_ADMIN_TOKEN" != "auto" ]; then
   [ "${#OTTO_ENTERPRISE_ADMIN_TOKEN}" -ge 32 ] \
     || otto_die "OTTO_ENTERPRISE_ADMIN_TOKEN 至少 32 个字符" 3
 fi
-if [ "$ACCOUNT_COUNT" -eq 0 ] && [ "$OTTO_BOOTSTRAP_PASSWORD" != "auto" ]; then
+if [ "$ACCOUNT_COUNT" -eq 0 ] && [ -z "$BOOTSTRAP_SECRET_STAGED" ] && [ "$OTTO_BOOTSTRAP_PASSWORD" != "auto" ]; then
   [ "${#OTTO_BOOTSTRAP_PASSWORD}" -ge 8 ] \
     || otto_die "空库的 OTTO_BOOTSTRAP_PASSWORD 至少 8 个字符" 3
 fi
@@ -562,7 +724,6 @@ if ! command -v curl >/dev/null 2>&1 \
     ca-certificates curl
 fi
 
-RUNTIME_ARCH="$(otto_arch)"
 TEMP_RUNTIME_DIR="${TXN_DIR}/runtime/node-v${OTTO_NODE_VERSION}-linux-${RUNTIME_ARCH}"
 mkdir -p "${INSTALL_ROOT}/runtime"
 NODE_RUNTIME_DIR="${INSTALL_ROOT}/runtime/node-v${OTTO_NODE_VERSION}-linux-${RUNTIME_ARCH}"
@@ -621,8 +782,8 @@ fi
   || otto_die "OTTO_ENTERPRISE_ADMIN_TOKEN 至少 32 个字符"
 export OTTO_ENTERPRISE_ADMIN_TOKEN
 
-if [ "$ACCOUNT_COUNT" -eq 0 ]; then
-  otto_log "迁移库没有账号，创建首个管理员"
+if [ "$ACCOUNT_COUNT" -eq 0 ] && [ -z "$BOOTSTRAP_SECRET_STAGED" ]; then
+  otto_log "离线空库没有账号，创建首个本地管理员"
   if [ "$OTTO_BOOTSTRAP_PASSWORD" = "auto" ]; then
     OTTO_BOOTSTRAP_PASSWORD="$(otto_random_secret "$NODE_PATH")"
     BOOTSTRAP_CREDENTIALS="${TXN_DIR}/bootstrap-credentials.txt"
@@ -634,11 +795,17 @@ if [ "$ACCOUNT_COUNT" -eq 0 ]; then
     || otto_die "OTTO_BOOTSTRAP_PASSWORD 至少 8 个字符"
   export OTTO_BOOTSTRAP_USERNAME OTTO_BOOTSTRAP_PASSWORD OTTO_BOOTSTRAP_NAME
   "$NODE_PATH" "${TARGET_RELEASE}/src/enterprise/bin.js" --bootstrap-admin
-  "$NODE_PATH" "${SCRIPT_DIR}/tools/db-tool.mjs" inspect "${CANARY_DIR}/data.db" >/dev/null
+  "$NODE_PATH" "${SCRIPT_DIR}/tools/migrate-check.mjs" \
+    "$TARGET_RELEASE" "$CANARY_DIR" >/dev/null
 fi
 
 otto_log "启动 127.0.0.1:17777 隔离 canary"
-"$NODE_PATH" "${TARGET_RELEASE}/run.mjs" >"${TXN_DIR}/canary.log" 2>&1 &
+env \
+  -u OTTO_CONTROL_URL \
+  -u OTTO_CONTROL_ORIGIN \
+  -u OTTO_CONTROL_TRUST_FILE \
+  -u OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE \
+  "$NODE_PATH" "${TARGET_RELEASE}/run.mjs" >"${TXN_DIR}/canary.log" 2>&1 &
 CANARY_PID=$!
 canary_cleanup() {
   if kill -0 "$CANARY_PID" >/dev/null 2>&1; then
@@ -653,6 +820,8 @@ for _ in $(seq 1 20); do
     http://127.0.0.1:17777 "$RELEASE_VERSION" "$BUILD_ID" \
     "$RELEASE_SCHEMA_TO" \
     "$([ "$OTTO_ALLOW_SMS_DISABLED" = "1" ] && printf 'allow-sms-disabled' || printf 'require-sms')" \
+    "$OTTO_ENTERPRISE_ADMIN_TOKEN" \
+    allow-unactivated-deployment \
     >/dev/null 2>&1; then
     CANARY_OK=1
     break
@@ -680,14 +849,84 @@ done
 mkdir -p "$DATA_DIR" "$CONFIG_DIR"
 chown otto-enterprise:otto-enterprise "$DATA_DIR"
 chmod 0700 "$DATA_DIR"
+chown root:otto-enterprise "$CONFIG_DIR"
+chmod 0750 "$CONFIG_DIR"
+if [ "$DATABASE_KEY_MANAGED" -eq 1 ]; then
+  install -o root -g otto-enterprise -m 0640 \
+    "$OTTO_DATABASE_ENCRYPTION_KEY_FILE" "$MANAGED_DATABASE_KEY_PATH"
+  OTTO_DATABASE_ENCRYPTION_KEY_FILE="$MANAGED_DATABASE_KEY_PATH"
+  DATABASE_KEY_CREATED=1
+else
+  runuser -u otto-enterprise -- test -r "$OTTO_DATABASE_ENCRYPTION_KEY_FILE" \
+    || otto_die "otto-enterprise 服务账号无法读取外部 SQLCipher 密钥"
+fi
 if [ -n "$OTTO_BACKUP_REPLICA_DIR" ]; then
   mkdir -p "$OTTO_BACKUP_REPLICA_DIR"
   chown otto-enterprise:otto-enterprise "$OTTO_BACKUP_REPLICA_DIR"
   chmod 0700 "$OTTO_BACKUP_REPLICA_DIR"
 fi
+if [ -n "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" ]; then
+  RECOVERY_KEY_CREATED=0
+  if [ ! -e "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" ]; then
+    "$NODE_PATH" --input-type=module -e "import fs from 'node:fs'; const value=process.argv[1]; const key=/^[0-9a-f]{64}$/i.test(value)?Buffer.from(value,'hex'):Buffer.from(value,'base64'); fs.writeFileSync(process.argv[2], key.toString('base64')+'\n', { flag:'wx', mode:0o600 });" "$OTTO_BACKUP_ENCRYPTION_KEY" "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" || otto_die "无法写入独立备份恢复密钥"
+    RECOVERY_KEY_CREATED=1
+  fi
+  "$NODE_PATH" --input-type=module -e "import fs from 'node:fs'; const parse=(value)=>/^[0-9a-f]{64}$/i.test(value)?Buffer.from(value,'hex'):Buffer.from(value,'base64'); const active=parse(process.argv[1]); const recovery=parse(fs.readFileSync(process.argv[2],'utf8').trim()); if(active.length!==32||recovery.length!==32||!active.equals(recovery))process.exit(1);" "$OTTO_BACKUP_ENCRYPTION_KEY" "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" || otto_die "独立备份恢复密钥与当前归档密钥不一致"
+  if [ "$RECOVERY_KEY_CREATED" -eq 1 ]; then
+    chown otto-enterprise:otto-enterprise "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE"
+    chmod 0600 "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE"
+  fi
+  runuser -u otto-enterprise -- test -r "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" || otto_die "otto-enterprise 服务账号无法读取独立备份恢复密钥"
+fi # 独立恢复密钥托管已核验
 install -o otto-enterprise -g otto-enterprise -m 0600 \
   "${CANARY_DIR}/data.db" "${DATA_DIR}/data.db"
 DATA_CREATED=1
+
+if [ -n "$CONTROL_TRUST_STAGED" ]; then
+  CONTROL_TRUST_TARGET="${CONFIG_DIR}/control-public-keys.json"
+  if [ -e "$CONTROL_TRUST_TARGET" ] || [ -L "$CONTROL_TRUST_TARGET" ]; then
+    [ -f "$CONTROL_TRUST_TARGET" ] && [ ! -L "$CONTROL_TRUST_TARGET" ] \
+      || otto_die "已有 Control 公钥文件不是普通文件，拒绝替换"
+    CONTROL_TRUST_BACKUP="${TXN_DIR}/previous-control-public-keys.json"
+    mv "$CONTROL_TRUST_TARGET" "$CONTROL_TRUST_BACKUP"
+    chmod 0600 "$CONTROL_TRUST_BACKUP"
+    CONTROL_TRUST_REPLACED=1
+  fi
+  install -o root -g otto-enterprise -m 0640 \
+    "$CONTROL_TRUST_STAGED" "$CONTROL_TRUST_TARGET"
+  CONTROL_TRUST_CREATED=1
+  rm -f "$CONTROL_TRUST_STAGED"
+  CONTROL_TRUST_STAGED=""
+fi
+
+if [ -n "$BOOTSTRAP_SECRET_STAGED" ]; then
+  BOOTSTRAP_SECRET_DIR="${DATA_DIR}/bootstrap"
+  if [ -e "$BOOTSTRAP_SECRET_DIR" ] || [ -L "$BOOTSTRAP_SECRET_DIR" ]; then
+    [ -d "$BOOTSTRAP_SECRET_DIR" ] && [ ! -L "$BOOTSTRAP_SECRET_DIR" ] \
+      || otto_die "部署登记密钥目录必须是普通目录且不能是符号链接"
+    [ "$(stat -c '%U:%G:%a' "$BOOTSTRAP_SECRET_DIR")" = \
+      "otto-enterprise:otto-enterprise:700" ] \
+      || otto_die "部署登记密钥目录必须属于 otto-enterprise 且权限为 0700"
+  else
+    install -d -o otto-enterprise -g otto-enterprise -m 0700 \
+      "$BOOTSTRAP_SECRET_DIR"
+    BOOTSTRAP_SECRET_DIR_CREATED=1
+  fi
+  BOOTSTRAP_SECRET_TARGET="${BOOTSTRAP_SECRET_DIR}/deployment-enrollment.secret"
+  if [ -e "$BOOTSTRAP_SECRET_TARGET" ] || [ -L "$BOOTSTRAP_SECRET_TARGET" ]; then
+    [ -f "$BOOTSTRAP_SECRET_TARGET" ] && [ ! -L "$BOOTSTRAP_SECRET_TARGET" ] \
+      || otto_die "已有部署登记密钥不是普通文件，拒绝替换"
+    BOOTSTRAP_SECRET_BACKUP="${TXN_DIR}/previous-deployment-bootstrap-secret"
+    mv "$BOOTSTRAP_SECRET_TARGET" "$BOOTSTRAP_SECRET_BACKUP"
+    chmod 0600 "$BOOTSTRAP_SECRET_BACKUP"
+    BOOTSTRAP_SECRET_REPLACED=1
+  fi
+  install -o otto-enterprise -g otto-enterprise -m 0600 \
+    "$BOOTSTRAP_SECRET_STAGED" "$BOOTSTRAP_SECRET_TARGET"
+  BOOTSTRAP_SECRET_CREATED=1
+  rm -f "$BOOTSTRAP_SECRET_STAGED"
+  BOOTSTRAP_SECRET_STAGED=""
+fi
 
 write_env() {
   local output="$1"
@@ -715,14 +954,24 @@ write_env "$ENV_TEMP" \
   OTTO_APP_VERSION "$RELEASE_VERSION" \
   OTTO_BUILD_COMMIT "$BUILD_ID" \
   OTTO_BACKUP_ENCRYPTION_KEY "$OTTO_BACKUP_ENCRYPTION_KEY" \
+  OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" \
   OTTO_BACKUP_INTERVAL_HOURS "$OTTO_BACKUP_INTERVAL_HOURS" \
   OTTO_BACKUP_RETENTION_DAYS "$OTTO_BACKUP_RETENTION_DAYS" \
   OTTO_BACKUP_MINIMUM_RETAINED "$OTTO_BACKUP_MINIMUM_RETAINED" \
   OTTO_BACKUP_REPLICA_DIR "$OTTO_BACKUP_REPLICA_DIR" \
   OTTO_DISK_MIN_FREE_MB "$OTTO_DISK_MIN_FREE_MB" \
+  OTTO_DATABASE_ENCRYPTION "required" \
+  OTTO_DATABASE_ENCRYPTION_KEY_FILE "$OTTO_DATABASE_ENCRYPTION_KEY_FILE" \
+  OTTO_DATABASE_ENCRYPTION_KEY_ID "oneclick-offline-database-key" \
+  OTTO_DATABASE_ENCRYPTION_KEY_READONLY "true" \
+  OTTO_SQLCIPHER_NATIVE_BINDING "${INSTALL_ROOT}/current/native/sqlcipher/linux-${RUNTIME_ARCH}/better_sqlite3.node" \
   OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE "$OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE" \
   OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE "$OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE" \
   OTTO_FIELD_ENCRYPTION_KEY_FILE "$OTTO_FIELD_ENCRYPTION_KEY_FILE" \
+  OTTO_CONTROL_URL "$OTTO_CONTROL_URL" \
+  OTTO_CONTROL_TRUST_FILE "$CONTROL_TRUST_TARGET" \
+  OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE "$BOOTSTRAP_SECRET_TARGET" \
+  OTTO_DEPLOYMENT_KIND "$OTTO_DEPLOYMENT_KIND" \
   OTTO_TELEMETRY_ENDPOINT "$OTTO_TELEMETRY_ENDPOINT" \
   OTTO_TELEMETRY_RETENTION_DAYS "$OTTO_TELEMETRY_RETENTION_DAYS" \
   OTTO_FEDERATION_ENABLED "$OTTO_FEDERATION_ENABLED" \
@@ -730,6 +979,7 @@ write_env "$ENV_TEMP" \
   OTTO_FEDERATION_DISPLAY_NAME "$OTTO_FEDERATION_DISPLAY_NAME" \
   OTTO_FEDERATION_POLL_INTERVAL_MS "$OTTO_FEDERATION_POLL_INTERVAL_MS" \
   OTTO_FEDERATION_SIGNING_KEY_FILE "$OTTO_FEDERATION_SIGNING_KEY_FILE" \
+  OTTO_EDGE_GATEWAY_URL "$OTTO_EDGE_GATEWAY_URL" \
   OTTO_DATA_CONTROLLER_NAME "$OTTO_DATA_CONTROLLER_NAME" \
   OTTO_PRIVACY_CONTACT "$OTTO_PRIVACY_CONTACT" \
   OTTO_LEGAL_DOCUMENTS_APPROVED "$OTTO_LEGAL_DOCUMENTS_APPROVED" \
@@ -818,6 +1068,7 @@ if [ "$OTTO_CADDY_MODE" = "managed" ]; then
       "$OTTO_ENTERPRISE_PUBLIC_URL" "$RELEASE_VERSION" "$BUILD_ID" \
       "$RELEASE_SCHEMA_TO" \
       "$([ "$OTTO_ALLOW_SMS_DISABLED" = "1" ] && printf 'allow-sms-disabled' || printf 'require-sms')" \
+      "$OTTO_ENTERPRISE_ADMIN_TOKEN" \
       >/dev/null 2>&1; then
       EDGE_OK=1
       break
@@ -844,6 +1095,15 @@ if [ -f "${TXN_DIR}/bootstrap-credentials.txt" ]; then
   BOOTSTRAP_CREDENTIALS_FINAL="/root/otto-enterprise-bootstrap-${TRANSACTION_ID}.txt"
 else
   BOOTSTRAP_CREDENTIALS_FINAL=""
+fi
+
+if [ "$BOOTSTRAP_SECRET_REPLACED" -eq 1 ]; then
+  rm -f "$BOOTSTRAP_SECRET_BACKUP"
+  BOOTSTRAP_SECRET_REPLACED=0
+fi
+if [ "$CONTROL_TRUST_REPLACED" -eq 1 ]; then
+  rm -f "$CONTROL_TRUST_BACKUP"
+  CONTROL_TRUST_REPLACED=0
 fi
 
 rm -f "$TRANSACTION_MARKER"

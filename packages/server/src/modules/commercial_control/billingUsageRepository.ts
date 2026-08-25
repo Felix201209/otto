@@ -51,6 +51,7 @@ export interface BillingUsageRepositoryStore {
   db(): Database;
   deploymentId(): string;
   credentials(): DeploymentBillingCredentials | null;
+  billingEnforcement?(): 'disabled' | 'enforce';
   fieldCipher?: EncryptedFieldCipher;
 }
 

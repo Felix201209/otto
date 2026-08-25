@@ -132,3 +132,20 @@ export interface PrivateDeploymentStatus {
     avgLatencyMs: number | null;
   };
 }
+
+export interface PrivateDeploymentRuntimeConfiguration {
+  controlOrigin: string;
+  capabilities: {
+    billing: boolean;
+    telemetry: boolean;
+    federation: boolean;
+    updates: boolean;
+    modelGateway: boolean;
+    storage: boolean;
+  };
+  federationGatewayUrl: string | null;
+  modelGatewayUrl: string | null;
+  telemetryEndpoint: string | null;
+  updateDistributionId: string | null;
+  activatedAt: string;
+}

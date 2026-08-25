@@ -127,6 +127,7 @@ export interface EnterpriseMlsPrivateMessageCoordinator {
     eventId: string,
   ): Promise<void>;
   listActiveConversationPeers(): Promise<string[]>;
+  listUnreadConversationPeers(): Promise<string[]>;
 }
 
 export interface EnterpriseMlsAttachmentObjectTransport {
@@ -874,7 +875,7 @@ export class EnterpriseMlsPrivateMessageService {
 
   async listUnread(): Promise<StoredEnterpriseMlsPrivateMessage[]> {
     const scope = this.coordinator.activeScope();
-    const peers = await this.coordinator.listActiveConversationPeers();
+    const peers = await this.coordinator.listUnreadConversationPeers();
     for (const peerAccountId of peers) {
       const establishment =
         await this.coordinator.establishDirectSession(peerAccountId);

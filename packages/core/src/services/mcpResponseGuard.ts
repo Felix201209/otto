@@ -106,6 +106,17 @@ export interface MCPResponseGuardResult {
   estimatedTokens: number;
 }
 
+interface TempFileRecord {
+  createdAt: number;
+  failedDeleteAttempts: number;
+  nextDeleteAttemptAt: number;
+}
+
+const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+const MAX_DELETE_RETRY_DELAY_MS = 60 * 60 * 1000;
+const MANAGED_TEMP_FILE_PATTERN =
+  /^mcp-response-[a-z0-9_-]+-(\d{10,})\.(?:html|json|txt)$/i;
+
 /**
  * MCP响应保护服务
  * 防止大型MCP响应导致Token计算异常
@@ -117,7 +128,12 @@ export class MCPResponseGuard {
   private readonly tempDir: string;
   private readonly enableTempFileStorage: boolean;
   private readonly tempFileTTL: number;
-  private tempFiles: Map<string, number> = new Map(); // 文件路径 -> 创建时间
+  private tempFiles: Map<string, TempFileRecord> = new Map();
+  private cleanupTimer: ReturnType<typeof setInterval> | undefined;
+  private disposed = false;
+  private activeOperations = 0;
+  private readonly idleWaiters: Array<() => void> = [];
+  private disposePromise: Promise<void> | undefined;
 
   constructor(config: MCPResponseGuardConfig = {}) {
     this.maxResponseSize = config.maxResponseSize ?? 100 * 1024; // 100KB - 激进限制
@@ -137,8 +153,11 @@ export class MCPResponseGuard {
       }
     }
 
-    // 启动清理任务
-    this.startCleanupTask();
+    if (this.enableTempFileStorage && fs.existsSync(this.tempDir)) {
+      this.discoverOrphanedTempFiles();
+      this.cleanupExpiredTempFiles();
+      this.startCleanupTask();
+    }
   }
 
   /**
@@ -196,6 +215,32 @@ export class MCPResponseGuard {
     toolName: string = 'unknown',
     currentContextUsage: number = 50,
     contentGenerator?: ContentGenerator
+  ): Promise<MCPResponseGuardResult> {
+    this.assertActive();
+    this.activeOperations += 1;
+    try {
+      return await this.guardResponseActive(
+        parts,
+        config,
+        toolName,
+        currentContextUsage,
+        contentGenerator,
+      );
+    } finally {
+      this.activeOperations -= 1;
+      if (this.activeOperations === 0) {
+        const waiters = this.idleWaiters.splice(0);
+        for (const resolve of waiters) resolve();
+      }
+    }
+  }
+
+  private async guardResponseActive(
+    parts: Part[],
+    config: Config,
+    toolName: string,
+    currentContextUsage: number,
+    contentGenerator?: ContentGenerator,
   ): Promise<MCPResponseGuardResult> {
     // 简化后的参数处理
     const actualToolName = toolName || 'unknown';
@@ -417,7 +462,12 @@ export class MCPResponseGuard {
         logger.info(`[MCPResponseGuard] Stored response as JSON file: ${filePath}`);
       }
 
-      this.tempFiles.set(filePath, timestamp);
+      this.tempFiles.set(filePath, {
+        createdAt: timestamp,
+        failedDeleteAttempts: 0,
+        nextDeleteAttemptAt: timestamp + this.tempFileTTL,
+      });
+      this.startCleanupTask();
 
       // 构建指导消息（会根据文件类型调整说明）
       const guidanceMessage = this.buildFileGuidanceMessage(
@@ -982,10 +1032,93 @@ read_file(
    * 启动定期清理任务
    */
   private startCleanupTask(): void {
-    // 每5分钟检查一次并清理过期的临时文件
-    setInterval(() => {
+    if (this.disposed || this.cleanupTimer || this.tempFiles.size === 0) return;
+    this.cleanupTimer = setInterval(() => {
       this.cleanupExpiredTempFiles();
-    }, 5 * 60 * 1000);
+    }, CLEANUP_INTERVAL_MS);
+    this.cleanupTimer.unref?.();
+  }
+
+  /** 停止清理任务并释放对当前实例的计时器引用。 */
+  private stopCleanupTask(): void {
+    if (!this.cleanupTimer) return;
+    clearInterval(this.cleanupTimer);
+    this.cleanupTimer = undefined;
+  }
+
+  private assertActive(): void {
+    if (!this.disposed) return;
+    throw new Error('MCPResponseGuard has been disposed');
+  }
+
+  /**
+   * 只认领本类写入、且 realpath 仍位于受管目录内的普通文件。
+   * 其他文件、目录和符号链接都不会在启动扫描中被删除。
+   */
+  private discoverOrphanedTempFiles(): void {
+    try {
+      const realTempDir = fs.realpathSync(this.tempDir);
+      const entries = fs.readdirSync(this.tempDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile() || entry.isSymbolicLink()) continue;
+        const match = MANAGED_TEMP_FILE_PATTERN.exec(entry.name);
+        if (!match) continue;
+
+        const filePath = path.join(this.tempDir, entry.name);
+        try {
+          const realFilePath = fs.realpathSync(filePath);
+          if (path.dirname(realFilePath) !== realTempDir) continue;
+          const stat = fs.lstatSync(filePath);
+          if (!stat.isFile() || stat.isSymbolicLink()) continue;
+
+          const timestampFromName = Number(match[1]);
+          const createdAt = Number.isSafeInteger(timestampFromName)
+            ? timestampFromName
+            : stat.mtimeMs;
+          this.tempFiles.set(filePath, {
+            createdAt,
+            failedDeleteAttempts: 0,
+            nextDeleteAttemptAt: createdAt + this.tempFileTTL,
+          });
+        } catch (error) {
+          logger.warn(
+            `[MCPResponseGuard] Failed to inspect orphan temp file ${filePath}: ${error}`,
+          );
+        }
+      }
+    } catch (error) {
+      logger.warn(`[MCPResponseGuard] Failed to scan temp directory: ${error}`);
+    }
+  }
+
+  private deleteTrackedFile(
+    filePath: string,
+    record: TempFileRecord,
+    now: number,
+    force: boolean,
+  ): void {
+    if (!force && now < record.nextDeleteAttemptAt) return;
+    try {
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        logger.info(`[MCPResponseGuard] Cleaned up temp file: ${filePath}`);
+      }
+      this.tempFiles.delete(filePath);
+    } catch (error) {
+      const failedDeleteAttempts = record.failedDeleteAttempts + 1;
+      const retryDelay = Math.min(
+        CLEANUP_INTERVAL_MS * 2 ** Math.max(0, failedDeleteAttempts - 1),
+        MAX_DELETE_RETRY_DELAY_MS,
+      );
+      this.tempFiles.set(filePath, {
+        ...record,
+        failedDeleteAttempts,
+        nextDeleteAttemptAt: now + retryDelay,
+      });
+      logger.warn(
+        `[MCPResponseGuard] Failed to delete temp file ${filePath}; retrying in ${retryDelay}ms: ${error}`,
+      );
+    }
   }
 
   /**
@@ -993,41 +1126,42 @@ read_file(
    */
   private cleanupExpiredTempFiles(): void {
     const now = Date.now();
-    const filesToDelete: string[] = [];
-
-    for (const [filePath, createdTime] of this.tempFiles.entries()) {
-      if (now - createdTime > this.tempFileTTL) {
-        filesToDelete.push(filePath);
+    for (const [filePath, record] of this.tempFiles.entries()) {
+      if (now - record.createdAt >= this.tempFileTTL) {
+        this.deleteTrackedFile(filePath, record, now, false);
       }
     }
 
-    for (const filePath of filesToDelete) {
-      try {
-        if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
-          logger.info(`[MCPResponseGuard] Cleaned up expired temp file: ${filePath}`);
-        }
-        this.tempFiles.delete(filePath);
-      } catch (error) {
-        logger.warn(`[MCPResponseGuard] Failed to delete temp file ${filePath}: ${error}`);
-      }
-    }
+    if (this.tempFiles.size === 0) this.stopCleanupTask();
   }
 
   /**
    * 手动清理所有临时文件
    */
   async cleanup(): Promise<void> {
-    for (const filePath of this.tempFiles.keys()) {
-      try {
-        if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
-        }
-      } catch (error) {
-        logger.warn(`[MCPResponseGuard] Failed to cleanup temp file ${filePath}: ${error}`);
-      }
+    this.stopCleanupTask();
+    const now = Date.now();
+    for (const [filePath, record] of this.tempFiles.entries()) {
+      this.deleteTrackedFile(filePath, record, now, true);
     }
-    this.tempFiles.clear();
+    if (!this.disposed && this.tempFiles.size > 0) this.startCleanupTask();
+  }
+
+  /**
+   * 永久释放守卫。可重复调用；释放后拒绝继续处理响应。
+   */
+  dispose(): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
+    this.disposed = true;
+    this.disposePromise = (async () => {
+      if (this.activeOperations > 0) {
+        await new Promise<void>((resolve) => {
+          this.idleWaiters.push(resolve);
+        });
+      }
+      await this.cleanup();
+    })();
+    return this.disposePromise;
   }
 
   /**
@@ -1038,5 +1172,21 @@ read_file(
   }
 }
 
-// 导出单例
-export const globalMCPResponseGuard = new MCPResponseGuard();
+let globalMCPResponseGuard: MCPResponseGuard | undefined;
+
+/** 按需获取进程级守卫，避免每个会话创建自己的清理定时器。 */
+export function getGlobalMCPResponseGuard(): MCPResponseGuard {
+  globalMCPResponseGuard ??= new MCPResponseGuard();
+  return globalMCPResponseGuard;
+}
+
+/**
+ * 统一停机入口。先断开全局引用，再等待旧守卫的在途操作完成并清理文件。
+ * 后续重启 Server 时会由 getter 创建全新守卫。
+ */
+export async function disposeGlobalMCPResponseGuard(): Promise<void> {
+  const guard = globalMCPResponseGuard;
+  if (!guard) return;
+  await guard.dispose();
+  if (globalMCPResponseGuard === guard) globalMCPResponseGuard = undefined;
+}

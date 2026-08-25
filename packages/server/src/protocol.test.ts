@@ -57,6 +57,21 @@ describe('isClientToServer 守卫', () => {
 });
 
 describe('validateClientPayload 形状校验（第二道闸）', () => {
+  it('后台模型任务设置只接受显式布尔值', () => {
+    expect(
+      validateClientPayload({
+        type: 'set_setting',
+        payload: { key: 'backgroundModelTasksEnabled', value: true },
+      }),
+    ).toBeNull();
+    expect(
+      validateClientPayload({
+        type: 'set_setting',
+        payload: { key: 'backgroundModelTasksEnabled', value: 'true' },
+      }),
+    ).toContain('布尔');
+  });
+
   it('合法 send_user_message → null（通过）', () => {
     expect(
       validateClientPayload({
@@ -197,6 +212,22 @@ describe('validateClientPayload 形状校验（第二道闸）', () => {
         payload: { sessionId: 's1', model: 'm1' },
       }),
     ).toBeNull();
+    expect(
+      validateClientPayload({
+        type: 'set_model',
+        payload: {
+          sessionId: 's1',
+          model: 'm2',
+          confirmedUnknownOutcomeRequestId: 'otto-model-request-1',
+        },
+      }),
+    ).toBeNull();
+    expect(
+      validateClientPayload({
+        type: 'set_model',
+        payload: { sessionId: 's1', model: 'm2', confirmedUnknownOutcomeRequestId: '   ' },
+      }),
+    ).not.toBeNull();
   });
 
   it('save_custom_model：必填字段缺失 → 拒绝；齐全 → 通过', () => {

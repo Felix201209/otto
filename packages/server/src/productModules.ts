@@ -11,6 +11,7 @@ export const ORGANIZATION_FEATURE_KEYS = [
   'feishu_auto_reply',
   'direct_messages',
   'atoa',
+  'model_gateway',
   'knowledge',
   'skill_market',
 ] as const;
@@ -55,7 +56,9 @@ export const PRODUCT_MODULES = [
     runtimeSurfaces: ['core', 'server', 'adapters'],
     dependencies: ['data_platform'],
     dataOwnership: ['model configuration metadata', 'normalized token usage'],
-    licenseCapabilities: [],
+    licenseCapabilities: [
+      { id: 'model_gateway', features: ['model_gateway'] },
+    ],
     updateComponents: ['model_catalog'],
   },
   {

@@ -18,6 +18,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { Config, CustomModelConfig } from 'otto-core';
 import {
   AskUserQuestionTool,
+  ModelRequestSafetyError,
   ToolConfirmationOutcome,
   generateCustomModelId,
 } from 'otto-core';
@@ -330,7 +331,7 @@ describe('CoreSessionRuntime 流式落库与收口对账', () => {
     );
   });
 
-  it('模型网络失败且没有备用模型时返回可操作提示，不暴露 fetch failed', async () => {
+  it('模型网络结果未知时停止自动切换并显示对账请求编号', async () => {
     async function* stream(): AsyncGenerator<unknown> {
       yield await Promise.reject(new TypeError('fetch failed'));
     }
@@ -352,14 +353,15 @@ describe('CoreSessionRuntime 流式落库与收口对账', () => {
       .getHistory(session.sessionId)
       .find((message) => message.role === 'assistant');
     const error = frames.find((frame) => frame.type === 'error');
-    const expected =
-      '当前模型连接失败，已重试但仍无法访问其 API。请在模型菜单切换到其他模型，或在设置中检查 Base URL、API Key 和网络代理。';
-    expect(assistant?.content).toEqual([{ type: 'text', value: expected }]);
-    expect(error?.type === 'error' && error.payload.message).toBe(expected);
+    const message = error?.type === 'error' ? error.payload.message : '';
+    expect(assistant?.content).toEqual([{ type: 'text', value: message }]);
+    expect(message).toContain('当前模型请求的结果未知');
+    expect(message).toContain('请求编号：');
+    expect(error?.type === 'error' && error.payload.code).toBe('model_outcome_unknown');
     expect(JSON.stringify(frames)).not.toContain('fetch failed');
   });
 
-  it('首个 token 前网络失败时自动切到不同接口的备用模型并完成回复', async () => {
+  it('首个 token 前结果未知时也不自动切到备用模型', async () => {
     const brokenModel: CustomModelConfig = {
       displayName: 'DeepSeek',
       provider: 'openai',
@@ -377,7 +379,6 @@ describe('CoreSessionRuntime 流式落库与收口对账', () => {
       enabled: true,
     };
     const brokenId = generateCustomModelId(brokenModel);
-    const fallbackId = generateCustomModelId(fallbackModel);
     let currentModel = brokenId;
     const switchModel = vi.fn(async (model: string) => {
       currentModel = model;
@@ -426,23 +427,69 @@ describe('CoreSessionRuntime 流式落库与收口对账', () => {
 
     await runtime.run([{ type: 'text', value: '你好' }], 'local');
 
-    expect(switchModel).toHaveBeenCalledWith(
-      fallbackId,
-      expect.any(AbortSignal),
-    );
-    expect(store.getSession(session.sessionId)?.model).toBe(fallbackId);
+    expect(switchModel).not.toHaveBeenCalled();
+    expect(store.getSession(session.sessionId)?.model).toBe(brokenId);
     const assistant = store
       .getHistory(session.sessionId)
       .find((message) => message.role === 'assistant');
-    expect(assistant?.content).toEqual([
-      { type: 'text', value: 'FALLBACK_OK' },
-    ]);
-    expect(frames.some((frame) => frame.type === 'error')).toBe(false);
-    const complete = frames.find((frame) => frame.type === 'chat_complete');
-    expect(complete?.type === 'chat_complete' && complete.payload.text).toBe(
-      'FALLBACK_OK',
-    );
+    expect(JSON.stringify(assistant?.content)).not.toContain('FALLBACK_OK');
+    const error = frames.find((frame) => frame.type === 'error');
+    expect(error?.type === 'error' && error.payload.code)
+      .toBe('model_outcome_unknown');
   });
+  it('透传 Edge 请求编号并阻止未确认的供应商切换', async () => {
+    const requestId = 'otto-model-00000000-0000-4000-8000-000000000001';
+    const providerRequestId = 'provider-request-123';
+    async function* stream(): AsyncGenerator<unknown> {
+      yield await Promise.reject(new ModelRequestSafetyError({
+        message: 'edge request outcome unknown',
+        requestId,
+        requestState: 'unknown_outcome',
+        providerRequestId,
+      }));
+    }
+    const switchModel = vi.fn(async (model: string) => ({
+      success: true,
+      modelName: model,
+    }));
+    const config = {
+      initialize: async () => undefined,
+      refreshAuth: async () => undefined,
+      getToolRegistry: async () => ({
+        discoverMcpTools: async () => undefined,
+        getFunctionDeclarations: () => [],
+      }),
+      getOttoClient: () => ({
+        getChat: async () => ({ sendMessageStream: async () => stream() }),
+        switchModel,
+      }),
+      getModel: () => 'primary-model',
+      getMaxSessionTurns: () => 10,
+    } as unknown as Config;
+    const store = new InMemorySessionStore();
+    const session = store.createSession({ title: '结果未知', model: 'primary-model' });
+    const frames: ServerToClient[] = [];
+    store.subscribe(session.sessionId, (frame) => frames.push(frame));
+    const runtime = new CoreSessionRuntime(
+      store, session.sessionId, config, noOpWorkLogger,
+    );
+    await runtime.initialize();
+
+    await runtime.run([{ type: 'text', value: '你好' }], 'local');
+
+    const error = frames.find((frame) => frame.type === 'error');
+    expect(error?.type === 'error' && error.payload.modelRequestSafety).toEqual({
+      requestId,
+      requestState: 'unknown_outcome',
+      providerRequestId,
+      requiresProviderSwitchConfirmation: true,
+    });
+    await expect(runtime.setModel('secondary-model')).rejects.toThrow('必须明确确认');
+    expect(switchModel).not.toHaveBeenCalled();
+    await expect(runtime.setModel('secondary-model', requestId)).resolves.toBeUndefined();
+    expect(switchModel).toHaveBeenCalledWith('secondary-model', expect.any(AbortSignal));
+  });
+
 
   it('流式中途增量落库（getHistory 有已累积文本）+ chat_complete 带定稿全文', async () => {
     const store = new InMemorySessionStore();

@@ -92,7 +92,9 @@ interface RpaRuntime {
   module: RpaRuntimeModule;
   store: unknown;
   artifacts: unknown;
-  driver: unknown;
+  driver: {
+    closeRun?(runId: string): Promise<void>;
+  };
 }
 
 function containsSecret(value: unknown): boolean {
@@ -196,11 +198,24 @@ export class RpaRunTool extends BaseTool<RpaRunToolParams, ToolResult> {
     };
   }
 
-  async execute(params: RpaRunToolParams, _signal: AbortSignal): Promise<ToolResult> {
+  async execute(params: RpaRunToolParams, signal: AbortSignal): Promise<ToolResult> {
     const error = this.validateToolParams(params);
     if (error) return { llmContent: error, returnDisplay: error };
+    if (signal.aborted) return this.cancelledResult();
+    let abortListener: (() => void) | undefined;
     try {
       const runner = await this.runner(params.action === 'start' ? [params.workflow!] : []);
+      signal.throwIfAborted();
+      if (params.run_id) {
+        abortListener = () => {
+          void this.closeActiveRun(params.run_id!).catch(() => undefined);
+        };
+        signal.addEventListener('abort', abortListener, { once: true });
+        if (signal.aborted) {
+          abortListener();
+          signal.throwIfAborted();
+        }
+      }
       let run: RpaRunSummarySource | null;
       switch (params.action) {
         case 'start':
@@ -224,12 +239,32 @@ export class RpaRunTool extends BaseTool<RpaRunToolParams, ToolResult> {
         default:
           throw new Error(`Unsupported RPA operation: ${params.action}`);
       }
+      // A late driver result must not be presented as success after the desktop
+      // has hidden/exited and revoked the owning runtime.
+      signal.throwIfAborted();
       const output = JSON.stringify(summarize(run));
       return { llmContent: `rpa_run OK: ${output}`, returnDisplay: `rpa_run OK: ${output}` };
     } catch (caught) {
+      if (signal.aborted || (caught instanceof Error && caught.name === 'AbortError')) {
+        return this.cancelledResult();
+      }
       const message = caught instanceof Error ? caught.message : String(caught);
       return { llmContent: `rpa_run FAIL: ${message}`, returnDisplay: `rpa_run FAIL: ${message}` };
+    } finally {
+      if (abortListener) signal.removeEventListener('abort', abortListener);
     }
+  }
+
+  private cancelledResult(): ToolResult {
+    return {
+      llmContent: 'rpa_run CANCELLED: desktop task authorization was revoked.',
+      returnDisplay: 'RPA 已取消：桌面任务授权已撤销。',
+    };
+  }
+
+  private async closeActiveRun(runId: string): Promise<void> {
+    const runtime = await this.runtime();
+    await runtime.driver.closeRun?.(runId);
   }
 
   private async status(runId: string): Promise<RpaRunSummarySource | null> {
@@ -269,7 +304,9 @@ export class RpaRunTool extends BaseTool<RpaRunToolParams, ToolResult> {
       module,
       store: new module.FileRpaRunStore(path.join(directory, 'runs')),
       artifacts: new module.FileRpaArtifactStore(path.join(directory, 'artifacts')),
-      driver: new module.RunScopedWebDriver(new module.PlaywrightWebSessionFactory()),
+      driver: new module.RunScopedWebDriver(
+        new module.PlaywrightWebSessionFactory(),
+      ) as RpaRuntime['driver'],
     };
   }
 }

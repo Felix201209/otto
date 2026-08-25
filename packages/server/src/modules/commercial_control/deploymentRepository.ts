@@ -567,15 +567,20 @@ export function getDeploymentLicense(
 ): DeploymentLicenseView {
   const row = store.db()
     .prepare(
-      'SELECT * FROM deployment_license ORDER BY updated_at DESC LIMIT 1',
+      'SELECT * FROM deployment_license ORDER BY revision DESC, issued_at_ms DESC, updated_at DESC LIMIT 1',
     )
     .get() as DeploymentLicenseRow | undefined;
   return toDeploymentLicenseView(store, row ?? null);
 }
 
+export interface DeploymentLicenseImportOptions {
+  allowMissingOrganization?: boolean;
+}
+
 export function importDeploymentLicense(
   store: DeploymentRepositoryStore,
   raw: unknown,
+  options: DeploymentLicenseImportOptions = {},
 ): DeploymentLicenseView {
   const envelope = safeJsonObject(raw);
   const payload = safeJsonObject(envelope.license ?? envelope.payload);
@@ -606,7 +611,9 @@ export function importDeploymentLicense(
   const organization = store.db()
     .prepare('SELECT id FROM organizations WHERE id = ?')
     .get(organizationId) as { id: string } | undefined;
-  if (!organization) throw new Error('license organizationId mismatch');
+  if (!organization && !options.allowMissingOrganization) {
+    throw new Error('license organizationId mismatch');
+  }
   const modules = Array.isArray(payload.modules)
     ? [...new Set(payload.modules
         .filter((item): item is string => typeof item === 'string' && item.length > 0)
@@ -627,6 +634,8 @@ export function importDeploymentLicense(
   );
   const seatLimit = Math.max(0, Math.floor(Number(payload.seatLimit ?? 0)));
   const revision = Math.max(1, Math.floor(Number(payload.revision ?? 1)));
+  const revokedAtMs = payload.revokedAtMs == null
+    ? null : Number(payload.revokedAtMs);
   const gracePeriodMs = Math.max(0, Math.floor(Number(payload.gracePeriodMs ?? 0)));
   const seatEnforcement = payload.seatEnforcement === 'enforce' ? 'enforce' : 'monitor';
   const offline = payload.offline !== false;
@@ -643,6 +652,8 @@ export function importDeploymentLicense(
     throw new Error('license expiresAt must be after issuedAt');
   if (seatLimit <= 0) throw new Error('license seatLimit must be positive');
   if (!Number.isFinite(revision)) throw new Error('license revision invalid');
+  if (revokedAtMs != null && (!Number.isFinite(revokedAtMs) || revokedAtMs <= 0))
+    throw new Error('license revokedAtMs invalid');
   if (!Number.isFinite(gracePeriodMs) || gracePeriodMs > 30 * 24 * 60 * 60 * 1000)
     throw new Error('license gracePeriodMs invalid');
   if (offline && seatEnforcement === 'enforce')
@@ -651,6 +662,30 @@ export function importDeploymentLicense(
     throw new Error('offline license cannot enforce real-time billing');
   if (modules.length === 0) throw new Error('license modules required');
   const id = String(payload.id || `lic_${randomUUID().replace(/-/g, '')}`);
+  const installed = store.db().prepare(
+    `SELECT id, revision, raw_json FROM deployment_license
+     ORDER BY revision DESC, issued_at_ms DESC, updated_at DESC LIMIT 1`,
+  ).get() as { id: string; revision: number; raw_json: string } | undefined;
+  if (installed) {
+    if (revision < installed.revision) {
+      throw new Error('license revision rollback rejected');
+    }
+    if (revision === installed.revision) {
+      let isExactReplay = false;
+      try {
+        const installedPayload = restoreLicensePayload(
+          store,
+          safeJsonObject(JSON.parse(installed.raw_json)),
+          installed.id,
+        );
+        isExactReplay = canonicalJson(installedPayload) === canonicalJson(payload);
+      } catch {
+        isExactReplay = false;
+      }
+      if (!isExactReplay) throw new Error('license revision conflict');
+      return getDeploymentLicense(store);
+    }
+  }
   const telemetryAllowed = payload.telemetryAllowed !== false;
   if (
     telemetryAllowed &&
@@ -740,7 +775,7 @@ export function importDeploymentLicense(
       offline ? 1 : 0,
       telemetryAllowed ? 1 : 0,
       issuedAtMs,
-      payload.revokedAtMs == null ? null : Number(payload.revokedAtMs),
+      revokedAtMs,
       signature,
       verification.keyId,
       offline ? null : leaseEndpoint,
@@ -787,14 +822,38 @@ export function importDeploymentLicenseLease(
     throw new Error('license lease machineFingerprint mismatch');
   const issuedAtMs = Number(payload.issuedAtMs);
   const expiresAtMs = Number(payload.expiresAtMs);
+  const revokedAtMs = payload.revokedAtMs == null
+    ? null
+    : Number(payload.revokedAtMs);
   if (!Number.isFinite(issuedAtMs) || !Number.isFinite(expiresAtMs))
     throw new Error('license lease timestamps invalid');
+  if (issuedAtMs <= 0 || expiresAtMs <= issuedAtMs)
+    throw new Error('license lease timestamps invalid');
+  if (revokedAtMs != null && (!Number.isFinite(revokedAtMs) || revokedAtMs <= 0))
+    throw new Error('license lease revokedAtMs invalid');
   if (issuedAtMs > Date.now() + 5 * 60 * 1000 || expiresAtMs <= Date.now())
     throw new Error('license lease is not active');
   if (expiresAtMs - issuedAtMs > 24 * 60 * 60 * 1000)
     throw new Error('license lease duration exceeds 24 hours');
   const leaseId = String(payload.id || '');
   if (!leaseId) throw new Error('license lease id required');
+  const installedLease = getLicenseLeaseRow(store, license.id);
+  if (installedLease) {
+    if (issuedAtMs < installedLease.issued_at_ms) {
+      throw new Error('license lease rollback rejected');
+    }
+    if (issuedAtMs === installedLease.issued_at_ms) {
+      let isExactReplay = false;
+      try {
+        isExactReplay = canonicalJson(JSON.parse(installedLease.raw_json))
+          === canonicalJson(payload);
+      } catch {
+        isExactReplay = false;
+      }
+      if (!isExactReplay) throw new Error('license lease conflict');
+      return getDeploymentLicense(store);
+    }
+  }
   const refreshedAtMs = Date.now();
   store.db()
     .prepare(
@@ -825,7 +884,7 @@ export function importDeploymentLicenseLease(
       getMachineFingerprint(),
       issuedAtMs,
       expiresAtMs,
-      payload.revokedAtMs == null ? null : Number(payload.revokedAtMs),
+      revokedAtMs,
       signature,
       verification.keyId,
       JSON.stringify(payload),
@@ -1052,6 +1111,16 @@ export interface DeploymentUpdatePolicyCredentials {
   leaseToken: string;
 }
 
+export interface DeploymentEdgeGatewayCredentials {
+  licenseId: string;
+  deploymentId: string;
+  organizationId: string;
+  machineFingerprint: string;
+  leaseEndpoint: string;
+  leaseToken: string;
+  edgeGatewayUrl: string;
+}
+
 /** Returns decrypted credentials only to the in-process commercial control composition. */
 export function getDeploymentUpdatePolicyCredentials(
   store: DeploymentRepositoryStore,
@@ -1069,6 +1138,49 @@ export function getDeploymentUpdatePolicyCredentials(
     machineFingerprint: getMachineFingerprint(),
     leaseEndpoint: license.lease.endpoint,
     leaseToken,
+  };
+}
+
+/**
+ * Returns deployment-scoped secrets only to the in-process model gateway
+ * broker. Neither the account client nor the local Agent receives leaseToken.
+ */
+export function getDeploymentEdgeGatewayCredentials(
+  store: DeploymentRepositoryStore,
+): DeploymentEdgeGatewayCredentials | null {
+  const license = getDeploymentLicense(store);
+  if (
+    license.id === 'unlicensed' ||
+    license.offline ||
+    !license.organizationId ||
+    !license.lease.endpoint ||
+    license.lease.status !== 'active' ||
+    ['missing', 'invalid', 'revoked', 'expired'].includes(license.status)
+  ) {
+    return null;
+  }
+  const payload = latestLicensePayload(store);
+  const leaseToken = payload.leaseToken;
+  const edgeGatewayUrl =
+    process.env.OTTO_EDGE_GATEWAY_URL?.trim() ||
+    (typeof payload.edgeGatewayUrl === 'string'
+      ? payload.edgeGatewayUrl.trim()
+      : '');
+  if (
+    typeof leaseToken !== 'string' ||
+    leaseToken.length < 32 ||
+    !edgeGatewayUrl
+  ) {
+    return null;
+  }
+  return {
+    licenseId: license.id,
+    deploymentId: license.deploymentId,
+    organizationId: license.organizationId,
+    machineFingerprint: getMachineFingerprint(),
+    leaseEndpoint: license.lease.endpoint,
+    leaseToken,
+    edgeGatewayUrl,
   };
 }
 
@@ -1127,6 +1239,7 @@ export function createDeploymentBillingUsageStore(
     db: store.db,
     deploymentId: () => getDeploymentId(store),
     credentials: () => getDeploymentBillingCredentials(store),
+    billingEnforcement: () => getDeploymentLicense(store).billingEnforcement,
     fieldCipher: store.fieldCipher,
   };
 }
@@ -1594,10 +1707,17 @@ export function exportDeploymentDiagnostics(
 export function isLicenseUsableForOrganizationFeature(
   store: DeploymentRepositoryStore,
   feature: OrganizationFeatureKey,
+  organizationId?: string | null,
 ): boolean {
   const license = getDeploymentLicense(store);
   if (!license.enforce && ['active', 'expiring', 'grace'].includes(license.status)) return true;
   if (!['active', 'expiring', 'grace'].includes(license.status)) return false;
+  if (
+    organizationId !== undefined &&
+    (!organizationId || license.organizationId !== organizationId)
+  ) {
+    return false;
+  }
   for (const moduleName of license.modules) {
     if (LICENSE_MODULE_FEATURES[moduleName]?.includes(feature)) return true;
   }

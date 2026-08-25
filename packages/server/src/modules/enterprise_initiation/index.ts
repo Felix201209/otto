@@ -8,3 +8,5 @@ export * from './firstLoginToken.js';
 export * from './enterpriseInitiationType.js';
 export * from './enterpriseInitiationRepository.js';
 export * from './enterpriseInitiationComposition.js';
+export * from './enterpriseInitiationPayload.js';
+export * from './enterpriseInitiationCommandExecutor.js';

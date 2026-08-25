@@ -103,6 +103,13 @@ export interface OttoState {
     previousModel: string | null;
     previousSessionModel?: string;
   };
+  /** 上一模型请求结果未知时，切换供应商前必须由用户明确确认。 */
+  pendingProviderSwitchRisk?: {
+    sessionId: string;
+    requestId: string;
+    providerRequestId?: string;
+    requiresProviderSwitchConfirmation: true;
+  };
   /** Latest versioned lifecycle event; the protocol is the source of truth. */
   runtimeActivity?: Extract<ServerToClient, { type: 'runtime_activity' }>['payload'];
 }
@@ -123,7 +130,6 @@ const initialState: OttoState = {
   pendingCreateRequestId: null,
   unreadSessions: [],
 };
-
 // ── reducer action ────────────────────────────────────────────────────────
 
 type Action =
@@ -639,6 +645,10 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
           modelsLoaded: true,
           currentModel: activeModel ?? state.currentModel,
           pendingModelSwitch,
+          pendingProviderSwitchRisk:
+            confirmed && state.pendingProviderSwitchRisk?.sessionId === pending.sessionId
+              ? undefined
+              : state.pendingProviderSwitchRisk,
         };
       }
       // 服务器确认的 current 始终优先（set_model/handleSetModel 发回的权威值）。
@@ -681,6 +691,15 @@ function applyFrame(state: OttoState, frame: ServerToClient): OttoState {
         : {
             ...settleInFlight(state, frame.payload.sessionId),
             lastError: frame.payload.message,
+            pendingProviderSwitchRisk:
+              frame.payload.code === 'model_outcome_unknown'
+                && frame.payload.sessionId
+                && frame.payload.modelRequestSafety
+                ? {
+                    sessionId: frame.payload.sessionId,
+                    ...frame.payload.modelRequestSafety,
+                  }
+                : state.pendingProviderSwitchRisk,
           };
 
     case 'feishu_push_result':
@@ -822,6 +841,8 @@ export function useOttoStore(
   sessionsRef.current = state.sessions;
   const currentModelRef = useRef<string | null>(null);
   currentModelRef.current = state.currentModel;
+  const providerSwitchRiskRef = useRef(state.pendingProviderSwitchRisk);
+  providerSwitchRiskRef.current = state.pendingProviderSwitchRisk;
   // 专家启动关联：launchRef 记「正在等 create_session 回来的新会话 + 开场消息」；新会话到达后
   // 转存到 kickoffRef，等它被选中且连接就绪时再发开场消息（见下方 kickoff effect）。
   const launchRef = useRef<{ kickoff: string; source: MessageSource } | null>(
@@ -1220,9 +1241,26 @@ export function useOttoStore(
     }
     const sessionModel = sessionsRef.current[sessionId]?.model ?? currentModelRef.current;
     if (model === sessionModel) return;
+    const risk = providerSwitchRiskRef.current;
+    let confirmedUnknownOutcomeRequestId: string | undefined;
+    if (risk?.sessionId === sessionId && risk.requiresProviderSwitchConfirmation) {
+      const providerEvidence = risk.providerRequestId
+        ? `\n供应商请求编号：${risk.providerRequestId}`
+        : '';
+      const confirmed = window.confirm(
+        `上一家模型供应商可能已经收到请求并产生费用。切换模型会再次发送后续内容，可能造成重复计费，并让另一家供应商接触相同数据。\n\nOtto 请求编号：${risk.requestId}${providerEvidence}\n\n仍然切换吗？`,
+      );
+      if (!confirmed) return;
+      confirmedUnknownOutcomeRequestId = risk.requestId;
+    }
     // 乐观更新：不等服务器确认，立即更新 UI
     dispatch({ kind: 'set_optimistic_model', model, sessionId });
-    transport.send({ type: 'set_model', payload: { sessionId, model } });
+    transport.send({
+      type: 'set_model',
+      payload: { sessionId, model, ...(confirmedUnknownOutcomeRequestId
+        ? { confirmedUnknownOutcomeRequestId }
+        : {}) },
+    });
   }, []);
 
   const cancel = useCallback(() => {
@@ -1239,6 +1277,10 @@ export function useOttoStore(
     ) => {
       const sessionId = activeRef.current;
       if (!sessionId) return;
+      if (connectionRef.current !== 'connected') {
+        dispatch({ kind: 'local_error', message: '未连接，工具授权未提交；恢复后请重新确认' });
+        return;
+      }
       transport.send({
         type: 'tool_confirmation_response',
         payload: { sessionId, callId, outcome, payload },

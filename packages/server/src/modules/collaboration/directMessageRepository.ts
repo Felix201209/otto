@@ -506,6 +506,13 @@ export function sendDirectMessageInRepository(
     }
     throw error;
   }
+  for (const key of storedObjectKeys) {
+    try {
+      store.attachmentObjectStore?.markCommitted(key);
+    } catch {
+      // The committed database reference remains authoritative and protects it.
+    }
+  }
   const row = database
     .prepare('SELECT * FROM direct_messages WHERE id = ?')
     .get(id) as DirectMessageRow;

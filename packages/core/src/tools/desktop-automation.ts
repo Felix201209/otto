@@ -1,8 +1,7 @@
 /**
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
-import { exec } from 'child_process';
-import { promisify } from 'util';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import os from 'os';
 import {
   BaseTool, ToolResult, ToolCallConfirmationDetails,
@@ -11,10 +10,9 @@ import {
 import { Type } from '@google/genai';
 import { SchemaValidator } from '../utils/schemaValidator.js';
 import { Config, ApprovalMode } from '../config/config.js';
-import { ProcessGuard } from '../utils/process-guard.js';
+import { executeAutomationProcess } from './automation-process.js';
 import { DoctorService } from '../services/doctor.js';
 
-const execAsync = promisify(exec);
 
 /** mac 上依赖 cliclick 的动作（键鼠/输入类）。窗口类走 osascript，不在此拦。 */
 const CLICLICK_ACTIONS: ReadonlySet<string> = new Set([
@@ -62,12 +60,18 @@ function fail<T extends ToolResult>(action: string, reason: string): T {
 
 export class DesktopAutomationTool extends BaseTool<DesktopAutomationToolParams, ToolResult> {
   static readonly Name: string = 'desktop_automation';
+  private readonly executionSignals = new AsyncLocalStorage<AbortSignal>();
 
   /**
    * DoctorService 只读复用：仅在键鼠/输入类动作（需要 cliclick）执行前体检。
    * 窗口管理等走 osascript 的动作不查 cliclick。可注入以便测试。
    */
-  constructor(private readonly config: Config, private readonly doctor: DoctorService = new DoctorService()) {
+  constructor(
+    private readonly config: Config,
+    private readonly doctor: DoctorService = new DoctorService(),
+    private readonly processExecutor: typeof executeAutomationProcess =
+      executeAutomationProcess,
+  ) {
     const desc = `Cross-platform desktop automation (macOS+Windows). 17 actions.
 
 EXAMPLES:
@@ -152,7 +156,8 @@ DEPENDENCIES: macOS needs cliclick (brew install cliclick). Windows needs nothin
       command:'desktop_automation('+p.action+')', rootCommand:'desktop_automation', onConfirm: async ()=>{}};
   }
 
-  async execute(p: DesktopAutomationToolParams, _s: AbortSignal): Promise<ToolResult> {
+  async execute(p: DesktopAutomationToolParams, signal: AbortSignal): Promise<ToolResult> {
+    signal.throwIfAborted();
     const logLabel = 'desktop_automation.'+p.action;
     console.time(logLabel);
     const err = this.validateToolParams(p);
@@ -163,11 +168,14 @@ DEPENDENCIES: macOS needs cliclick (brew install cliclick). Windows needs nothin
     const isMac = os.platform()==='darwin';
     if (isMac && CLICLICK_ACTIONS.has(p.action)) {
       const depErr = await this.preflightCliclick();
+      signal.throwIfAborted();
       if (depErr) { console.timeEnd(logLabel); return fail(p.action, depErr); }
     }
 
-    try {
-      let r = '';
+    return this.executionSignals.run(signal, async () => {
+      try {
+        signal.throwIfAborted();
+        let r = '';
       switch (p.action) {
         case 'launch_app': r=isMac?await this.macLaunch(p):await this.winLaunch(p); break;
         case 'quit_app': r=isMac?await this.macQuit(p):await this.winQuit(p); break;
@@ -193,8 +201,29 @@ DEPENDENCIES: macOS needs cliclick (brew install cliclick). Windows needs nothin
     } catch (e: unknown) {
       console.timeEnd(logLabel);
       const m = e instanceof Error ? e.message : String(e);
-      return fail(p.action, m);
-    }
+        return fail(p.action, m);
+      }
+    });
+  }
+
+  private rethrowIfCancelled(): void {
+    this.executionSignals.getStore()?.throwIfAborted();
+  }
+
+  private runCommand(
+    command: string,
+    options: { maxBuffer?: number; timeoutMs?: number; ignoreAbort?: boolean } = {},
+  ): Promise<{ stdout: string; stderr: string }> {
+    const activeSignal = options.ignoreAbort
+      ? undefined
+      : this.executionSignals.getStore();
+    activeSignal?.throwIfAborted();
+    return this.processExecutor({
+      command,
+      signal: activeSignal,
+      maxBuffer: options.maxBuffer,
+      timeoutMs: options.timeoutMs,
+    });
   }
 
   /**
@@ -223,16 +252,16 @@ DEPENDENCIES: macOS needs cliclick (brew install cliclick). Windows needs nothin
   private esc(s: string): string { return s.replace(/"/g,'\\"'); }
   private async osa(script: string, jxa=false): Promise<string> {
     const cmd = 'osascript '+(jxa?'-l JavaScript ':'')+" -e '"+script.replace(/'/g,"'\\''")+"'";
-    const result = await ProcessGuard.exec({ command: cmd, maxBuffer: 10*1024*1024, timeoutMs: 15000 });
+    const result = await this.runCommand(cmd, { maxBuffer: 10*1024*1024, timeoutMs: 15000 });
     return result.stdout.trim();
   }
   private async macScreenSize(): Promise<{w:number;h:number}> {
-    try { const o=await this.osa('tell application "Finder" to get bounds of window of desktop'); const m=o.match(/(\d+),\s*(\d+)$/); if(m) return {w:+m[1],h:+m[2]}; } catch {}
+    try { const o=await this.osa('tell application "Finder" to get bounds of window of desktop'); const m=o.match(/(\d+),\s*(\d+)$/); if(m) return {w:+m[1],h:+m[2]}; } catch { this.rethrowIfCancelled(); }
     return {w:1920,h:1080};
   }
   private async macLaunch(p: DesktopAutomationToolParams): Promise<string> {
     const t=p.app_path||p.app_name!;
-    await execAsync(p.app_path?'open "'+this.esc(t)+'"':'open -a "'+this.esc(t)+'"');
+    await this.runCommand(p.app_path?'open "'+this.esc(t)+'"':'open -a "'+this.esc(t)+'"');
     return 'Launched: '+t;
   }
   private async macQuit(p: DesktopAutomationToolParams): Promise<string> {
@@ -258,21 +287,21 @@ DEPENDENCIES: macOS needs cliclick (brew install cliclick). Windows needs nothin
     const sc=scripts[op];
     if(!sc) throw new Error('Unknown window operation: '+op);
     try { await this.osa(sc); }
-    catch(e) { throw new Error('App not running or has no windows: '+app+' ('+(e instanceof Error?e.message:'')+')'); }
+    catch(e) { this.rethrowIfCancelled(); throw new Error('App not running or has no windows: '+app+' ('+(e instanceof Error?e.message:'')+')'); }
     return 'Window '+op+': '+app;
   }
   private async macKeys(keys: string, modifiers?: string): Promise<string> {
     const combo = modifiers ? modifiers.replace(/\s+/g,'').split(',').filter(Boolean).join(',') : '';
     const isCombo = /^(cmd|ctrl|alt|option|shift|win|meta|command|control)(\+(cmd|ctrl|alt|option|shift|win|meta|command|control))*\+[a-z0-9]$/i.test(keys);
     if (isCombo) {
-      await execAsync('cliclick kp:'+combo.replace(/,/g,'+')+keys.toLowerCase().replace(/\s+/g,''));
+      await this.runCommand('cliclick kp:'+combo.replace(/,/g,'+')+keys.toLowerCase().replace(/\s+/g,''));
     } else {
-      await execAsync('cliclick t:"'+keys.replace(/"/g,'\\"')+'"');
+      await this.runCommand('cliclick t:"'+keys.replace(/"/g,'\\"')+'"');
     }
     return 'Keys: '+(modifiers?modifiers+'+':'')+keys;
   }
   private async macTypeText(t: string): Promise<string> {
-    await execAsync('cliclick t:"'+t.replace(/"/g,'\\"')+'"');
+    await this.runCommand('cliclick t:"'+t.replace(/"/g,'\\"')+'"');
     return 'Typed: '+t.substring(0,80);
   }
   private async macHotkey(keys: string): Promise<string> {
@@ -286,37 +315,43 @@ DEPENDENCIES: macOS needs cliclick (brew install cliclick). Windows needs nothin
   }
   private async macClick(x:number,y:number,b:string,ct:string): Promise<string> {
     const pre=b==='right'?'rc:':b==='middle'?'mc:':ct==='double'?'dc:':'c:';
-    await execAsync('cliclick '+pre+x+','+y);
+    await this.runCommand('cliclick '+pre+x+','+y);
     return 'Click '+b+' '+ct+' at ('+x+','+y+')';
   }
   private async macDrag(x:number,y:number,tx:number,ty:number,dur:number): Promise<string> {
-    await execAsync('cliclick dd:'+x+','+y);
-    const steps=Math.max(Math.ceil(dur/30),5);
-    for(let i=1;i<=steps;i++){
-      const cx=x+Math.round((tx-x)*i/steps); const cy=y+Math.round((ty-y)*i/steps);
-      await execAsync('cliclick dm:'+cx+','+cy);
-      await new Promise(r=>setTimeout(r,Math.floor(dur/steps)));
+    await this.runCommand('cliclick dd:'+x+','+y);
+    try {
+      const steps=Math.max(Math.ceil(dur/30),5);
+      for(let i=1;i<=steps;i++){
+        const cx=x+Math.round((tx-x)*i/steps); const cy=y+Math.round((ty-y)*i/steps);
+        await this.runCommand('cliclick dm:'+cx+','+cy);
+        await new Promise(r=>setTimeout(r,Math.floor(dur/steps)));
+      }
+    } finally {
+      await this.runCommand('cliclick du:'+tx+','+ty, {
+        ignoreAbort: true,
+        timeoutMs: 2_000,
+      }).catch(() => undefined);
     }
-    await execAsync('cliclick du:'+tx+','+ty);
     return 'Drag ('+x+','+y+') -> ('+tx+','+ty+')';
   }
   private async macScroll(amount: number): Promise<string> {
     const dir = amount > 0 ? 'wu:' : 'wd:';
-    for (let i=0;i<Math.abs(amount);i++) await execAsync('cliclick '+dir+'0,0');
+    for (let i=0;i<Math.abs(amount);i++) await this.runCommand('cliclick '+dir+'0,0');
     return 'Scrolled '+(amount>0?'up':'down')+' '+Math.abs(amount)+' clicks';
   }
   private async macScreenshot(out?: string): Promise<string> {
     const p=out||os.homedir()+'/Desktop/screenshot_'+Date.now()+'.png';
-    await execAsync('screencapture -x "'+p+'"');
+    await this.runCommand('screencapture -x "'+p+'"');
     return 'Screenshot saved: '+p;
   }
   private async macClipboard(text?: string): Promise<string> {
     if(!text||text==='read') {
-      const {stdout}=await execAsync('pbpaste');
+      const {stdout}=await this.runCommand('pbpaste');
       return 'Clipboard read: '+stdout.trim().substring(0,200);
     }
-    const child=exec('pbcopy'); child.stdin!.write(text); child.stdin!.end();
-    await new Promise<void>((res,rej)=>{ child.on('close',c=>c===0?res():rej(new Error('pbcopy exit '+c))); child.on('error',rej); });
+    const encoded=Buffer.from(text,'utf8').toString('base64');
+    await this.runCommand("printf '%s' '"+encoded+"' | base64 --decode | pbcopy");
     return 'Clipboard set: '+text.substring(0,80);
   }
   private async macScript(script: string): Promise<string> {
@@ -334,13 +369,13 @@ DEPENDENCIES: macOS needs cliclick (brew install cliclick). Windows needs nothin
   }
   private async macScreenInfo(): Promise<string> {
     const {w,h}=await this.macScreenSize();
-    try { const o=await execAsync('system_profiler SPDisplaysDataType 2>/dev/null',{maxBuffer:1024*1024}); return 'Primary: '+w+'x'+h+'\n'+o.stdout.trim(); }
-    catch { return 'Primary: '+w+'x'+h; }
+    try { const o=await this.runCommand('system_profiler SPDisplaysDataType 2>/dev/null',{maxBuffer:1024*1024}); return 'Primary: '+w+'x'+h+'\n'+o.stdout.trim(); }
+    catch { this.rethrowIfCancelled(); return 'Primary: '+w+'x'+h; }
   }
   private async macWaitForApp(app: string, timeout: number): Promise<string> {
     const deadline=Date.now()+timeout;
     while(Date.now()<deadline){
-      try { await execAsync('pgrep -x "'+this.esc(app)+'"'); return 'App running: '+app; } catch {}
+      try { await this.runCommand('pgrep -x "'+this.esc(app)+'"'); return 'App running: '+app; } catch { this.rethrowIfCancelled(); }
       await new Promise(r=>setTimeout(r,500));
     }
     throw new Error('Timeout after '+timeout+'ms: '+app+' did not start');
@@ -350,14 +385,30 @@ DEPENDENCIES: macOS needs cliclick (brew install cliclick). Windows needs nothin
       'set p to position of window 1\nset s to size of window 1\n'+
       'return (item 1 of p) & "," & (item 2 of p) & "," & (item 1 of s) & "," & (item 2 of s) & "\\n"\nend tell\nend tell';
     try { return 'Position: '+await this.osa(sc); }
-    catch { throw new Error('Cannot get position. App not running? '+app); }
+    catch { this.rethrowIfCancelled(); throw new Error('Cannot get position. App not running? '+app); }
   }
 
   // ============================ Windows ============================
-  private async ps(cmd: string): Promise<string> {
+  private async ps(
+    cmd: string,
+    options: { ignoreAbort?: boolean; timeoutMs?: number } = {},
+  ): Promise<string> {
     const enc=Buffer.from(WIN32_PINVOKE+'\n'+cmd,'utf16le').toString('base64');
-    const result=await ProcessGuard.exec({command:'powershell -NoProfile -NonInteractive -EncodedCommand '+enc, maxBuffer:10*1024*1024, timeoutMs:60000});
+    const result=await this.runCommand('powershell -NoProfile -NonInteractive -EncodedCommand '+enc, {
+      maxBuffer:10*1024*1024,
+      timeoutMs:options.timeoutMs ?? 60000,
+      ignoreAbort:options.ignoreAbort,
+    });
     return result.stdout.trim();
+  }
+  private async releaseWindowsInput(): Promise<void> {
+    await this.ps(
+      '[Win32Api]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero);'+
+      '[Win32Api]::mouse_event(0x0010,0,0,0,[UIntPtr]::Zero);'+
+      '[Win32Api]::mouse_event(0x0040,0,0,0,[UIntPtr]::Zero);'+
+      '0x11,0x12,0x10,0x5B|%{[Win32Api]::keybd_event($_,0,2,[UIntPtr]::Zero)}',
+      { ignoreAbort: true, timeoutMs: 2_000 },
+    ).then(() => undefined, () => undefined);
   }
   private pe(s: string): string { return s.replace(/`/g,'``').replace(/"/g,'`"').replace(/\$/g,'`$'); }
   private wpn(n: string): string { return n.replace(/\.exe$/i,''); }
@@ -408,18 +459,30 @@ $h=$t.MainWindowHandle; if($h -eq [IntPtr]::Zero){throw "No main window: ${this.
     const pu=mods.reverse().map(m=>'[Win32Api]::keybd_event('+(VK[m]||m.charCodeAt(0))+',0,2,[UIntPtr]::Zero)').join(';');
     const kd='[Win32Api]::keybd_event('+(VK[key]||key.toUpperCase().charCodeAt(0))+',0,0,[UIntPtr]::Zero)';
     const ku='[Win32Api]::keybd_event('+(VK[key]||key.toUpperCase().charCodeAt(0))+',0,2,[UIntPtr]::Zero)';
-    await this.ps(`${pd};Start-Sleep -ms 30;${kd};Start-Sleep -ms 50;${ku};Start-Sleep -ms 30;${pu}`);
+    try {
+      await this.ps(`${pd};Start-Sleep -ms 30;${kd};Start-Sleep -ms 50;${ku};Start-Sleep -ms 30;${pu}`);
+    } finally {
+      await this.releaseWindowsInput();
+    }
     return 'Hotkey: '+keys;
   }
   private async winClick(x:number,y:number,b:string,ct:string): Promise<string> {
     const f: Record<string,string>={left:'0x0002',right:'0x0008',middle:'0x0020'};
     const d=f[b]||'0x0002'; const u=(parseInt(d, 16)*2).toString();
     const clicks=ct==='double'?2:1;
-    await this.ps(`[Win32Api]::SetCursorPos(${x},${y});1..${clicks}|%{[Win32Api]::mouse_event(${d},0,0,0,[UIntPtr]::Zero);Start-Sleep -ms 20;[Win32Api]::mouse_event(${u},0,0,0,[UIntPtr]::Zero);Start-Sleep -ms 30}`);
+    try {
+      await this.ps(`[Win32Api]::SetCursorPos(${x},${y});1..${clicks}|%{[Win32Api]::mouse_event(${d},0,0,0,[UIntPtr]::Zero);Start-Sleep -ms 20;[Win32Api]::mouse_event(${u},0,0,0,[UIntPtr]::Zero);Start-Sleep -ms 30}`);
+    } finally {
+      await this.releaseWindowsInput();
+    }
     return 'Click '+b+' '+ct+' at ('+x+','+y+')';
   }
   private async winDrag(x:number,y:number,tx:number,ty:number,dur:number): Promise<string> {
-    await this.ps(`[Win32Api]::SetCursorPos(${x},${y});[Win32Api]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero);$s=[Math]::Max([Math]::Ceiling(${dur}/30),5);for($i=1;$i -le $s;$i++){$cx=${x}+[Math]::Round((${tx}-${x})*$i/$s);$cy=${y}+[Math]::Round((${ty}-${y})*$i/$s);[Win32Api]::SetCursorPos($cx,$cy);Start-Sleep -ms [Math]::Floor(${dur}/$s)}[Win32Api]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)`);
+    try {
+      await this.ps(`[Win32Api]::SetCursorPos(${x},${y});[Win32Api]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero);$s=[Math]::Max([Math]::Ceiling(${dur}/30),5);for($i=1;$i -le $s;$i++){$cx=${x}+[Math]::Round((${tx}-${x})*$i/$s);$cy=${y}+[Math]::Round((${ty}-${y})*$i/$s);[Win32Api]::SetCursorPos($cx,$cy);Start-Sleep -ms [Math]::Floor(${dur}/$s)}[Win32Api]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)`);
+    } finally {
+      await this.releaseWindowsInput();
+    }
     return 'Drag ('+x+','+y+') -> ('+tx+','+ty+')';
   }
   private async winScroll(amount: number): Promise<string> {

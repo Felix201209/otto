@@ -8,7 +8,10 @@ import { cp, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-import { createEncryptedBackupArchive } from './encryptedBackupArchive.js';
+import {
+  createEncryptedBackupArchive,
+  verifyEncryptedBackupArchiveKey,
+} from './encryptedBackupArchive.js';
 import type { EncryptedObjectStore } from './encryptedObjectStore.js';
 import { Database, type DatabaseHandle } from './sqliteCompat.js';
 
@@ -61,9 +64,12 @@ export interface DataProtectionServiceOptions {
   replicaDirectory?: string | null;
   encryptionKey?: string;
   encryptionKeyPath?: string;
+  /** Separate offline/secret-volume custody copy; never place beside backup archives. */
+  encryptionKeyRecoveryPath?: string;
   intervalHours?: number;
   retentionDays?: number;
   minimumRetained?: number;
+  orphanGraceMs?: number;
   minimumFreeBytes?: number;
   appVersion?: () => string;
   buildCommit?: () => string;
@@ -92,8 +98,12 @@ export function parseDataProtectionEncryptionKey(value: string): Buffer {
 export function loadOrCreateDataProtectionEncryptionKey(
   options: Pick<
     DataProtectionServiceOptions,
-    'dataDirectory' | 'encryptionKey' | 'encryptionKeyPath'
+    | 'dataDirectory'
+    | 'encryptionKey'
+    | 'encryptionKeyPath'
+    | 'encryptionKeyRecoveryPath'
   >,
+  hasExistingBackups = false,
 ): Buffer {
   if (options.encryptionKey?.trim()) {
     return parseDataProtectionEncryptionKey(options.encryptionKey);
@@ -109,6 +119,23 @@ export function loadOrCreateDataProtectionEncryptionKey(
     }
     return parseDataProtectionEncryptionKey(fs.readFileSync(keyPath, 'utf8'));
   }
+  const recoveryPath = options.encryptionKeyRecoveryPath?.trim()
+    ? path.resolve(options.encryptionKeyRecoveryPath)
+    : null;
+  if (recoveryPath && fs.existsSync(recoveryPath)) {
+    const metadata = fs.lstatSync(recoveryPath);
+    if (metadata.isSymbolicLink() || !metadata.isFile()) {
+      throw new Error('backup encryption recovery key path is unsafe');
+    }
+    return parseDataProtectionEncryptionKey(
+      fs.readFileSync(recoveryPath, 'utf8'),
+    );
+  }
+  if (hasExistingBackups) {
+    throw new Error(
+      'backup encryption key is unavailable for existing backups',
+    );
+  }
   fs.mkdirSync(path.dirname(keyPath), { recursive: true, mode: 0o700 });
   const key = randomBytes(32);
   fs.writeFileSync(keyPath, `${key.toString('base64')}\n`, {
@@ -121,7 +148,10 @@ export function loadOrCreateDataProtectionEncryptionKey(
 export function loadExistingDataProtectionEncryptionKey(
   options: Pick<
     DataProtectionServiceOptions,
-    'dataDirectory' | 'encryptionKey' | 'encryptionKeyPath'
+    | 'dataDirectory'
+    | 'encryptionKey'
+    | 'encryptionKeyPath'
+    | 'encryptionKeyRecoveryPath'
   >,
 ): Buffer {
   if (options.encryptionKey?.trim()) {
@@ -131,8 +161,21 @@ export function loadExistingDataProtectionEncryptionKey(
     options.encryptionKeyPath ??
       path.join(options.dataDirectory, 'backup-encryption.key'),
   );
-  if (!fs.existsSync(keyPath))
-    throw new Error('backup encryption key is unavailable');
+  if (!fs.existsSync(keyPath)) {
+    const recoveryPath = options.encryptionKeyRecoveryPath?.trim()
+      ? path.resolve(options.encryptionKeyRecoveryPath)
+      : null;
+    if (!recoveryPath || !fs.existsSync(recoveryPath)) {
+      throw new Error('backup encryption key is unavailable');
+    }
+    const recoveryMetadata = fs.lstatSync(recoveryPath);
+    if (recoveryMetadata.isSymbolicLink() || !recoveryMetadata.isFile()) {
+      throw new Error('backup encryption recovery key path is unsafe');
+    }
+    return parseDataProtectionEncryptionKey(
+      fs.readFileSync(recoveryPath, 'utf8'),
+    );
+  }
   const metadata = fs.lstatSync(keyPath);
   if (metadata.isSymbolicLink() || !metadata.isFile()) {
     throw new Error('backup encryption key path is unsafe');
@@ -250,6 +293,170 @@ function readPersistedStatus(
   }
 }
 
+interface BackupKeyCustodyMarker {
+  format: 1;
+  keyId: string;
+  adoptedAt: string;
+}
+
+function backupEncryptionKeyId(key: Buffer): string {
+  return createHash('sha256').update(key).digest('hex');
+}
+
+function backupKeyCustodyMarkerPath(dataDirectory: string): string {
+  return path.join(dataDirectory, 'backup-key-custody.json');
+}
+
+function readBackupKeyCustodyMarker(
+  dataDirectory: string,
+): BackupKeyCustodyMarker | null {
+  const markerPath = backupKeyCustodyMarkerPath(dataDirectory);
+  if (!fs.existsSync(markerPath)) return null;
+  const metadata = fs.lstatSync(markerPath);
+  if (metadata.isSymbolicLink() || !metadata.isFile()) {
+    throw new Error('backup encryption key custody marker is unsafe');
+  }
+  let parsed: Partial<BackupKeyCustodyMarker>;
+  try {
+    parsed = JSON.parse(
+      fs.readFileSync(markerPath, 'utf8'),
+    ) as Partial<BackupKeyCustodyMarker>;
+  } catch {
+    throw new Error('backup encryption key custody marker is invalid');
+  }
+  if (parsed.format !== 1 || !/^[0-9a-f]{64}$/.test(parsed.keyId ?? '')) {
+    throw new Error('backup encryption key custody marker is invalid');
+  }
+  return parsed as BackupKeyCustodyMarker;
+}
+
+function writeBackupKeyCustodyMarker(
+  dataDirectory: string,
+  keyId: string,
+  adoptedAt: string,
+): void {
+  const markerPath = backupKeyCustodyMarkerPath(dataDirectory);
+  const temporary = `${markerPath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
+  fs.writeFileSync(
+    temporary,
+    `${JSON.stringify({ format: 1, keyId, adoptedAt }, null, 2)}\n`,
+    { flag: 'wx', mode: 0o600 },
+  );
+  fs.renameSync(temporary, markerPath);
+}
+
+function pathIsWithin(root: string, candidate: string): boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return (
+    relative === '' ||
+    (!path.isAbsolute(relative) &&
+      relative !== '..' &&
+      !relative.startsWith(`..${path.sep}`))
+  );
+}
+
+function ensureBackupEncryptionKeyRecovery(
+  options: DataProtectionServiceOptions,
+  key: Buffer,
+  backupDirectory: string,
+  replicaDirectory: string | null,
+): boolean {
+  const configured = options.encryptionKeyRecoveryPath?.trim();
+  if (!configured) return false;
+  const recoveryPath = path.resolve(configured);
+  const recoveryDirectory = path.dirname(recoveryPath);
+  if (!fs.existsSync(recoveryDirectory)) {
+    throw new Error('backup encryption recovery key directory is unavailable');
+  }
+  const recoveryDirectoryMetadata = fs.lstatSync(recoveryDirectory);
+  if (
+    recoveryDirectoryMetadata.isSymbolicLink() ||
+    !recoveryDirectoryMetadata.isDirectory()
+  ) {
+    throw new Error('backup encryption recovery key directory is unsafe');
+  }
+  const resolvedRecoveryPath = path.join(
+    fs.realpathSync(recoveryDirectory),
+    path.basename(recoveryPath),
+  );
+  const protectedRoots = [
+    options.dataDirectory,
+    backupDirectory,
+    replicaDirectory,
+  ]
+    .filter((entry): entry is string => Boolean(entry))
+    .map((root) =>
+      fs.existsSync(root) ? fs.realpathSync(root) : path.resolve(root),
+    );
+  if (protectedRoots.some((root) => pathIsWithin(root, resolvedRecoveryPath))) {
+    throw new Error(
+      'backup encryption recovery key must be outside data and backup directories',
+    );
+  }
+  if (fs.existsSync(resolvedRecoveryPath)) {
+    const metadata = fs.lstatSync(resolvedRecoveryPath);
+    if (metadata.isSymbolicLink() || !metadata.isFile()) {
+      throw new Error('backup encryption recovery key path is unsafe');
+    }
+    const recoveryKey = parseDataProtectionEncryptionKey(
+      fs.readFileSync(resolvedRecoveryPath, 'utf8'),
+    );
+    if (!recoveryKey.equals(key)) {
+      throw new Error(
+        'backup encryption recovery key does not match active key',
+      );
+    }
+    return true;
+  }
+  fs.writeFileSync(resolvedRecoveryPath, `${key.toString('base64')}\n`, {
+    flag: 'wx',
+    mode: 0o600,
+  });
+  return true;
+}
+
+async function ensureBackupKeyContinuity(input: {
+  dataDirectory: string;
+  key: Buffer;
+  hasHistoricalEvidence: boolean;
+  latestHistoricalArchive: string | null;
+  now: Date;
+}): Promise<string> {
+  const keyId = backupEncryptionKeyId(input.key);
+  const marker = readBackupKeyCustodyMarker(input.dataDirectory);
+  if (marker) {
+    if (marker.keyId !== keyId) {
+      throw new Error(
+        'backup encryption key changed without an authorized rotation',
+      );
+    }
+    return keyId;
+  }
+  if (input.hasHistoricalEvidence) {
+    if (!input.latestHistoricalArchive) {
+      throw new Error(
+        'backup key custody marker is missing and no historical archive is available',
+      );
+    }
+    try {
+      await verifyEncryptedBackupArchiveKey({
+        archivePath: input.latestHistoricalArchive,
+        key: input.key,
+      });
+    } catch {
+      throw new Error(
+        'backup encryption key cannot decrypt historical backups',
+      );
+    }
+  }
+  writeBackupKeyCustodyMarker(
+    input.dataDirectory,
+    keyId,
+    input.now.toISOString(),
+  );
+  return keyId;
+}
+
 function positiveInteger(value: number | undefined, fallback: number): number {
   return Number.isFinite(value) && value! >= 1 ? Math.floor(value!) : fallback;
 }
@@ -279,6 +486,10 @@ export function createDataProtectionService(
   const intervalHours = positiveInteger(options.intervalHours, 24);
   const retentionDays = positiveInteger(options.retentionDays, 30);
   const minimumRetained = positiveInteger(options.minimumRetained, 3);
+  const orphanGraceMs = options.orphanGraceMs ?? 24 * 60 * 60 * 1_000;
+  if (!Number.isSafeInteger(orphanGraceMs) || orphanGraceMs < 60_000) {
+    throw new Error('local attachment orphan grace period is invalid');
+  }
   const minimumFreeBytes = Math.max(
     64 * 1024 * 1024,
     positiveInteger(options.minimumFreeBytes, 2 * 1024 ** 3),
@@ -368,8 +579,14 @@ export function createDataProtectionService(
     await rename(temporary, target);
   };
 
-  const replicate = async (archivePath: string) => {
+  const replicate = async (
+    archivePath: string,
+    recoveryMaterialConfigured: boolean,
+  ) => {
     if (!replicaDirectory) return;
+    if (!recoveryMaterialConfigured) {
+      throw new Error('backup replica recovery key custody is not configured');
+    }
     const target = path.join(replicaDirectory, path.basename(archivePath));
     const temporary = `${target}.${process.pid}.tmp`;
     await cp(archivePath, temporary, { force: false, errorOnExist: true });
@@ -387,10 +604,10 @@ export function createDataProtectionService(
 
   function sweepOrphanAttachments(): number {
     ensureRuntimeDirectories();
+    const database = options.getDatabase();
     const referenced = new Set(
       (
-        options
-          .getDatabase()
+        database
           .prepare(
             `SELECT storage_key FROM direct_message_attachments
            WHERE storage_backend = 'encrypted-filesystem' AND storage_key IS NOT NULL`,
@@ -398,9 +615,32 @@ export function createDataProtectionService(
           .all() as Array<{ storage_key: string }>
       ).map((row) => row.storage_key),
     );
+    const referenceCheck = database.prepare(
+      `SELECT 1 AS referenced FROM direct_message_attachments
+       WHERE storage_backend = 'encrypted-filesystem' AND storage_key = ?
+       LIMIT 1`,
+    );
+    const cutoff = now().getTime() - orphanGraceMs;
+    const isProtected = (
+      metadata: ReturnType<EncryptedObjectStore['inspect']>,
+    ): boolean =>
+      metadata === null ||
+      !Number.isFinite(metadata.lastModifiedAtMs) ||
+      metadata.lastModifiedAtMs >= cutoff ||
+      (metadata.pendingSinceMs !== null &&
+        (!Number.isFinite(metadata.pendingSinceMs) ||
+          metadata.pendingSinceMs >= cutoff));
     let removed = 0;
     for (const key of options.attachmentObjectStore.listKeys()) {
       if (referenced.has(key)) continue;
+      if (isProtected(options.attachmentObjectStore.inspect(key))) continue;
+      // Recheck the authoritative row immediately before deletion. A writer
+      // creates its pending marker before publishing the object and removes it
+      // only after COMMIT, closing the object-write/metadata-commit race.
+      if (referenceCheck.get(key) as { referenced: number } | undefined) {
+        continue;
+      }
+      if (isProtected(options.attachmentObjectStore.inspect(key))) continue;
       options.attachmentObjectStore.delete(key);
       removed += 1;
     }
@@ -431,6 +671,32 @@ export function createDataProtectionService(
       `.backup-${process.pid}-${randomBytes(6).toString('hex')}`,
     );
     try {
+      const historicalBackups = [
+        ...listBackupFiles(backupDirectory),
+        ...(replicaDirectory ? listBackupFiles(replicaDirectory) : []),
+      ].sort((left, right) => right.createdAt - left.createdAt);
+      const hasHistoricalEvidence =
+        historicalBackups.length > 0 ||
+        Boolean(status.lastSuccessAt) ||
+        Boolean(status.latestBackupSha256) ||
+        fs.existsSync(backupKeyCustodyMarkerPath(options.dataDirectory));
+      const backupEncryptionKey = loadOrCreateDataProtectionEncryptionKey(
+        options,
+        hasHistoricalEvidence,
+      );
+      const backupKeyId = await ensureBackupKeyContinuity({
+        dataDirectory: options.dataDirectory,
+        key: backupEncryptionKey,
+        hasHistoricalEvidence,
+        latestHistoricalArchive: historicalBackups[0]?.path ?? null,
+        now: now(),
+      });
+      const recoveryMaterialConfigured = ensureBackupEncryptionKeyRecovery(
+        options,
+        backupEncryptionKey,
+        backupDirectory,
+        replicaDirectory,
+      );
       refreshCapacity();
       const estimatedBytes =
         (fs.existsSync(options.databasePath)
@@ -481,6 +747,8 @@ export function createDataProtectionService(
         appVersion: options.appVersion?.() ?? 'unknown',
         buildCommit: options.buildCommit?.() ?? 'unknown',
         attachmentObjects: objectKeys.length,
+        backupKeyId,
+        backupKeyRecoveryConfigured: recoveryMaterialConfigured,
       };
       fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, {
         mode: 0o600,
@@ -545,14 +813,14 @@ export function createDataProtectionService(
       const result = await createEncryptedBackupArchive({
         files,
         targetPath: archivePath,
-        key: loadOrCreateDataProtectionEncryptionKey(options),
+        key: backupEncryptionKey,
       });
       const metadata = { ...manifest, ...result, archiveName };
       await writeMetadata(archivePath, metadata);
       let lastReplicaAt = status.lastReplicaAt;
       let lastReplicaError: string | null = null;
       try {
-        await replicate(archivePath);
+        await replicate(archivePath, recoveryMaterialConfigured);
         if (replicaDirectory) lastReplicaAt = now().toISOString();
       } catch (error) {
         lastReplicaError =

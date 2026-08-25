@@ -2,9 +2,15 @@
  * @license Copyright 2026 Felix SPDX-License-Identifier: Apache-2.0
  */
 
+import { createHash } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import * as db from './db.js';
+import { commercialFeatureForEnterpriseRoute } from '../modules/authorization/index.js';
+import {
+  BillingAdmissionError,
+  commercialBillingOperationForRoute,
+} from '../modules/commercial_control/index.js';
 import type { RepairNotificationSender } from '../modules/integration_adapters/index.js';
 import { isParkRequestServiceId } from '../modules/park_services/index.js';
 
@@ -15,6 +21,7 @@ interface TicketRouteDeps {
   res: ServerResponse;
   repairSmsSender: RepairNotificationSender | null;
   repairFeishuSender: RepairNotificationSender | null;
+  billingFetch: typeof fetch;
   extractToken(req: IncomingMessage): string;
   readBody(req: IncomingMessage): Promise<Record<string, unknown>>;
   sendJSON(res: ServerResponse, status: number, data: unknown): void;
@@ -111,6 +118,7 @@ export async function handleTicketRoute({
   res,
   repairSmsSender,
   repairFeishuSender,
+  billingFetch,
   extractToken,
   readBody,
   sendJSON,
@@ -142,14 +150,20 @@ export async function handleTicketRoute({
       return true;
     }
     const isParkRequest = isParkRequestServiceId(serviceId);
+    const commercialFeature = commercialFeatureForEnterpriseRoute(path, {
+      ticketServiceId: serviceId,
+    });
     if (
-      isParkRequest &&
-      !db.isLicenseUsableForOrganizationFeature('park_service')
+      commercialFeature
+      && !db.isLicenseUsableForOrganizationFeature(
+        commercialFeature,
+        account.organizationId,
+      )
     ) {
       sendJSON(res, 402, {
         error: 'commercial module is not entitled',
         code: 'commercial_module_not_entitled',
-        feature: 'park_service',
+        feature: commercialFeature,
       });
       return true;
     }
@@ -169,6 +183,56 @@ export async function handleTicketRoute({
         return true;
       }
     }
+
+    const billingOperation = commercialBillingOperationForRoute(path, method, {
+      ticketServiceId: serviceId,
+    });
+    if (billingOperation) {
+      const rawIdempotencyKey = req.headers['x-otto-idempotency-key'];
+      const idempotencyKey = Array.isArray(rawIdempotencyKey)
+        ? rawIdempotencyKey[0] ?? ''
+        : rawIdempotencyKey ?? '';
+      const referenceId = `op_${createHash('sha256')
+        .update(`${method}\0${path}\0${idempotencyKey}`, 'utf8')
+        .digest('hex')}`;
+      try {
+        const admission = await db.authorizeBillingOperation(
+          {
+            ...billingOperation,
+            organizationId: account.organizationId,
+            idempotencyKey,
+            referenceId,
+          },
+          billingFetch,
+        );
+        if (admission.required) {
+          res.setHeader('X-Otto-Billing-Admission', admission.holdId ?? 'required');
+          res.once('finish', () => {
+            const outcome = res.statusCode >= 200 && res.statusCode < 400
+              ? 'capture'
+              : 'release';
+            void db.finalizeBillingOperation(admission, outcome, billingFetch)
+              .catch((error: unknown) => {
+                console.error('[Otto Enterprise] ticket billing finalization failed', {
+                  outcome,
+                  message: error instanceof Error ? error.message : String(error),
+                });
+              });
+          });
+        }
+      } catch (error) {
+        if (error instanceof BillingAdmissionError) {
+          sendJSON(res, error.statusCode, {
+            error: error.message,
+            code: error.code,
+            module: billingOperation.module,
+          });
+          return true;
+        }
+        throw error;
+      }
+    }
+
     const targetTags = serviceId === 'repair'
       ? ['维修工作人员']
       : isParkRequest
@@ -332,7 +396,10 @@ export async function handleTicketRoute({
     }
     sendJSON(res, 200, {
       tickets: db.listTicketsForAccount(account.id)
-        .filter((ticket) => !ticket.parkId || db.isLicenseUsableForOrganizationFeature('park_service'))
+        .filter((ticket) => !ticket.parkId || db.isLicenseUsableForOrganizationFeature(
+          'park_service',
+          account.organizationId,
+        ))
         .filter((ticket) => db.isTicketFeatureEnabledForAccount(ticket.id, account.id)),
     });
     return true;
@@ -346,7 +413,10 @@ export async function handleTicketRoute({
     }
     sendJSON(res, 200, {
       tickets: db.listTicketInbox(account.id)
-        .filter((ticket) => !ticket.parkId || db.isLicenseUsableForOrganizationFeature('park_service'))
+        .filter((ticket) => !ticket.parkId || db.isLicenseUsableForOrganizationFeature(
+          'park_service',
+          account.organizationId,
+        ))
         .filter((ticket) => db.isTicketFeatureEnabledForAccount(ticket.id, account.id)),
     });
     return true;
@@ -368,7 +438,10 @@ export async function handleTicketRoute({
     }
     if (
       currentTicket.parkId &&
-      !db.isLicenseUsableForOrganizationFeature('park_service')
+      !db.isLicenseUsableForOrganizationFeature(
+        'park_service',
+        account.organizationId,
+      )
     ) {
       sendJSON(res, 402, {
         error: 'commercial module is not entitled',

@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   createEncryptedBackupArchive,
   extractEncryptedBackupArchive,
+  verifyEncryptedBackupArchiveKey,
 } from './encryptedBackupArchive.js';
 
 const temporaryDirectories: string[] = [];
@@ -86,6 +87,18 @@ describe('encrypted backup archive', () => {
       key: Buffer.alloc(32, 1),
       files: [{ sourcePath: source, archivePath: 'safe/source' }],
     });
+    await expect(
+      verifyEncryptedBackupArchiveKey({
+        archivePath,
+        key: Buffer.alloc(32, 1),
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      verifyEncryptedBackupArchiveKey({
+        archivePath,
+        key: Buffer.alloc(32, 2),
+      }),
+    ).rejects.toThrow();
     await expect(
       extractEncryptedBackupArchive({
         archivePath,

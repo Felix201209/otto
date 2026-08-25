@@ -810,6 +810,42 @@ describe('EnterpriseClient', () => {
       'https://enterprise.otto.test/enterprise/e2ee/mls/inbound-conversations?deviceId=device-1&limit=500&afterPeerAccountId=peer-0499',
     );
   });
+  it('falls back safely when an older server ignores the conversation-head request', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          ...API_V2_HEALTH,
+          capabilities: [
+            ...API_V2_HEALTH.capabilities,
+            'e2ee_mls_transport_v1',
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          account: ACCOUNT,
+          token: 'session-token',
+          expiresAt: '2099-01-01',
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, { peerAccountIds: ['acc_other', 'acc_peer'] }),
+      );
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(
+      client.listMlsInboundConversationHeads('device-1'),
+    ).resolves.toBeNull();
+    expect(fetchMock.mock.calls.at(-1)?.[0]).toBe(
+      'https://enterprise.otto.test/enterprise/e2ee/mls/inbound-conversations?deviceId=device-1&limit=500&includeHeads=1',
+    );
+  });
 
   it('treats an empty peer KeyPackage inventory as a recoverable transport state', async () => {
     const fetchMock = vi
@@ -867,6 +903,100 @@ describe('EnterpriseClient', () => {
     expect((fetchMock.mock.calls[2]?.[1] as RequestInit).headers).toMatchObject({
       authorization: 'Bearer session-token',
     });
+  });
+
+  it('只向本机可信层返回账号绑定的短期模型网关凭据', async () => {
+    const expiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          ...API_V2_HEALTH,
+          capabilities: [
+            ...API_V2_HEALTH.capabilities,
+            'managed_model_gateway_v1',
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          account: ACCOUNT,
+          token: 'session-token',
+          expiresAt: '2099-01-01',
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          gateway: {
+            baseUrl: 'https://edge.otto.test/v1/',
+            accessToken: 'edge-short-token-at-least-thirty-two-characters',
+            expiresAt,
+            allowedModels: ['otto:deepseek', 'otto:qwen'],
+          },
+        }),
+      );
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(client.getManagedModelGatewayAccess()).resolves.toEqual({
+      baseUrl: 'https://edge.otto.test/v1',
+      accessToken: 'edge-short-token-at-least-thirty-two-characters',
+      expiresAt,
+      allowedModels: ['otto:deepseek', 'otto:qwen'],
+    });
+    const request = fetchMock.mock.calls[2];
+    expect(request?.[0]).toBe(
+      'https://enterprise.otto.test/enterprise/model-gateway/access-token',
+    );
+    expect((request?.[1] as RequestInit).headers).toMatchObject({
+      authorization: 'Bearer session-token',
+    });
+    expect((request?.[1] as RequestInit).body).toBe('{}');
+  });
+
+  it('拒绝企业服务器返回的非 HTTPS 网关或失效短令牌', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          ...API_V2_HEALTH,
+          capabilities: [
+            ...API_V2_HEALTH.capabilities,
+            'managed_model_gateway_v1',
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          account: ACCOUNT,
+          token: 'session-token',
+          expiresAt: '2099-01-01',
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          gateway: {
+            baseUrl: 'http://edge.otto.test/v1',
+            accessToken: 'edge-short-token-at-least-thirty-two-characters',
+            expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+            allowedModels: ['otto:deepseek'],
+          },
+        }),
+      );
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(client.getManagedModelGatewayAccess()).rejects.toThrow(
+      /安全要求/,
+    );
   });
 
   it('保留 HTTPS 部署路径前缀，并在前缀下请求全部企业接口', async () => {

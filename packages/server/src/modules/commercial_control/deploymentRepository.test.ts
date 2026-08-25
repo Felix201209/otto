@@ -61,6 +61,170 @@ function setup() {
 }
 
 describe('private deployment license repository', () => {
+  it('allows a missing organization only for the explicit bootstrap import path', () => {
+    const { database, control, privateKey } = setup();
+    try {
+      const now = Date.now();
+      const payload = {
+        id: 'lic-bootstrap-missing-org',
+        deploymentId: control.getDeploymentId(),
+        organizationId: 'org-bootstrap-new',
+        machineFingerprint: control.getMachineFingerprint(),
+        customerName: 'Bootstrap customer',
+        plan: 'enterprise',
+        expiresAtMs: now + 30 * 24 * 60 * 60 * 1000,
+        seatLimit: 20,
+        modules: ['enterprise_tree'],
+        offline: true,
+        telemetryAllowed: false,
+        issuedAtMs: now,
+      };
+      const envelope = {
+        license: payload,
+        signature: signEd25519Envelope(payload, privateKey),
+      };
+
+      expect(() => control.importDeploymentLicense(envelope)).toThrow(
+        'license organizationId mismatch',
+      );
+      expect(
+        control.importDeploymentLicense(envelope, {
+          allowMissingOrganization: true,
+        }),
+      ).toMatchObject({
+        organizationId: 'org-bootstrap-new',
+        status: 'active',
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it('rejects signed License rollback and same-revision replacement', () => {
+    const { database, control, privateKey } = setup();
+    try {
+      const now = Date.now();
+      const current = {
+        id: 'lic-monotonic',
+        revision: 2,
+        deploymentId: control.getDeploymentId(),
+        organizationId: 'org-licensed',
+        machineFingerprint: control.getMachineFingerprint(),
+        customerName: 'Monotonic customer',
+        plan: 'enterprise',
+        expiresAtMs: now + 90 * 24 * 60 * 60 * 1000,
+        seatLimit: 20,
+        modules: ['enterprise_tree'],
+        offline: true,
+        telemetryAllowed: false,
+        issuedAtMs: now,
+      };
+      const currentEnvelope = {
+        license: current,
+        signature: signEd25519Envelope(current, privateKey),
+      };
+      expect(control.importDeploymentLicense(currentEnvelope)).toMatchObject({
+        id: current.id,
+        revision: 2,
+      });
+      expect(control.importDeploymentLicense(currentEnvelope)).toMatchObject({
+        id: current.id,
+        revision: 2,
+      });
+
+      const rollback = { ...current, revision: 1, issuedAtMs: now - 1_000 };
+      expect(() => control.importDeploymentLicense({
+        license: rollback,
+        signature: signEd25519Envelope(rollback, privateKey),
+      })).toThrow('license revision rollback rejected');
+
+      const sameRevisionReplacement = { ...current, seatLimit: 200 };
+      expect(() => control.importDeploymentLicense({
+        license: sameRevisionReplacement,
+        signature: signEd25519Envelope(sameRevisionReplacement, privateKey),
+      })).toThrow('license revision conflict');
+
+      const olderDifferentId = {
+        ...current,
+        id: 'lic-old-different-id',
+        revision: 1,
+      };
+      expect(() => control.importDeploymentLicense({
+        license: olderDifferentId,
+        signature: signEd25519Envelope(olderDifferentId, privateKey),
+      })).toThrow('license revision rollback rejected');
+
+      expect(control.getDeploymentLicense()).toMatchObject({
+        id: current.id,
+        revision: 2,
+        seatLimit: 20,
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it('rejects a signed License with an invalid revocation timestamp', () => {
+    const { database, control, privateKey } = setup();
+    try {
+      const now = Date.now();
+      const payload = {
+        id: 'lic-invalid-revocation', revision: 1,
+        deploymentId: control.getDeploymentId(), organizationId: 'org-licensed',
+        machineFingerprint: control.getMachineFingerprint(), customerName: 'Customer',
+        plan: 'enterprise', expiresAtMs: now + 86_400_000, seatLimit: 10,
+        modules: ['enterprise_tree'], offline: true, telemetryAllowed: false,
+        issuedAtMs: now, revokedAtMs: 'not-a-number',
+      };
+      expect(() => control.importDeploymentLicense({
+        license: payload,
+        signature: signEd25519Envelope(payload, privateKey),
+      })).toThrow('license revokedAtMs invalid');
+    } finally {
+      database.close();
+    }
+  });
+
+  it('binds licensed feature execution to the License organization', () => {
+    const { database, control, privateKey } = setup();
+    try {
+      const now = Date.now();
+      const payload = {
+        id: 'lic-org-bound',
+        deploymentId: control.getDeploymentId(),
+        organizationId: 'org-licensed',
+        machineFingerprint: control.getMachineFingerprint(),
+        customerName: 'Organization-bound customer',
+        plan: 'enterprise',
+        expiresAtMs: now + 30 * 24 * 60 * 60 * 1000,
+        seatLimit: 20,
+        modules: ['enterprise_tree'],
+        offline: true,
+        telemetryAllowed: false,
+        issuedAtMs: now,
+      };
+      control.importDeploymentLicense({
+        license: payload,
+        signature: signEd25519Envelope(payload, privateKey),
+      });
+
+      expect(control.isLicenseUsableForOrganizationFeature(
+        'enterprise_tree',
+        'org-licensed',
+      )).toBe(true);
+      expect(control.isLicenseUsableForOrganizationFeature(
+        'enterprise_tree',
+        'org_default',
+      )).toBe(false);
+      expect(control.isLicenseUsableForOrganizationFeature(
+        'enterprise_tree',
+        null,
+      )).toBe(false);
+    } finally {
+      database.close();
+    }
+  });
+
   it('treats an expired signed License as restricted at the execution layer', () => {
     const { database, control, privateKey } = setup();
     try {
@@ -350,6 +514,47 @@ describe('private deployment license repository', () => {
         status: 'active',
         lease: { required: true, status: 'active' },
       });
+      expect(
+        control.importDeploymentLicenseLease({
+          lease: leasePayload,
+          signature: signEd25519Envelope(leasePayload, privateKey),
+        }),
+      ).toMatchObject({
+        status: 'active',
+        lease: { required: true, status: 'active' },
+      });
+
+      const olderLease = {
+        ...leasePayload,
+        id: 'lease-older',
+        issuedAtMs: now - 60_000,
+        expiresAtMs: now + 9 * 60 * 1000,
+      };
+      expect(() => control.importDeploymentLicenseLease({
+        lease: olderLease,
+        signature: signEd25519Envelope(olderLease, privateKey),
+      })).toThrow('license lease rollback rejected');
+
+      const sameTimestampReplacement = {
+        ...leasePayload,
+        id: 'lease-replacement',
+        expiresAtMs: leasePayload.expiresAtMs + 60_000,
+      };
+      expect(() => control.importDeploymentLicenseLease({
+        lease: sameTimestampReplacement,
+        signature: signEd25519Envelope(sameTimestampReplacement, privateKey),
+      })).toThrow('license lease conflict');
+
+      const invalidRevocation = {
+        ...leasePayload,
+        id: 'lease-invalid-revocation',
+        issuedAtMs: now + 1,
+        revokedAtMs: 'not-a-number',
+      };
+      expect(() => control.importDeploymentLicenseLease({
+        lease: invalidRevocation,
+        signature: signEd25519Envelope(invalidRevocation, privateKey),
+      })).toThrow('license lease revokedAtMs invalid');
     } finally {
       database.close();
     }

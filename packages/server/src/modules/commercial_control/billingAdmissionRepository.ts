@@ -10,10 +10,13 @@ import type {
 } from './billingUsageRepository.js';
 
 const IDEMPOTENCY_KEY = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,159}$/u;
-const UNKNOWN_OPERATION_RELEASE_MS = 15 * 60 * 1000;
+const UNKNOWN_OPERATION_RECONCILIATION_MS = 15 * 60 * 1000;
 
 export type BillingAdmissionErrorCode =
   | 'billing_idempotency_key_required'
+  | 'billing_idempotency_conflict'
+  | 'billing_operation_replayed'
+  | 'billing_operation_uncertain'
   | 'insufficient_credits'
   | 'billing_policy_unavailable'
   | 'commercial_control_unavailable';
@@ -44,6 +47,7 @@ export interface BillingAdmissionFlushResult {
   attempted: number;
   captured: number;
   released: number;
+  reconciliation: number;
   discarded: number;
   failed: number;
   skippedReason: string | null;
@@ -69,6 +73,7 @@ export function getBillingAdmissionQueueSummary(
   pending: number;
   failed: number;
   finalized: number;
+  reconciliation: number;
   discarded: number;
   lastError: string | null;
 } {
@@ -84,11 +89,16 @@ export function getBillingAdmissionQueueSummary(
      WHERE status IN ('failed', 'discarded') AND last_error IS NOT NULL
      ORDER BY created_at_ms DESC LIMIT 1`,
   ).get() as { last_error: string } | undefined;
+  const reconciliation = store.db().prepare(
+    `SELECT COUNT(*) AS count FROM billing_admission_outbox
+     WHERE reconciliation_required = 1`,
+  ).get() as { count: number };
   const summary = {
     authorized: 0,
     pending: 0,
     failed: 0,
     finalized: 0,
+    reconciliation: reconciliation.count,
     discarded: 0,
     lastError: latestFailure?.last_error ?? null,
   };
@@ -126,17 +136,25 @@ function binding(store: BillingUsageRepositoryStore, organizationId?: string) {
   };
 }
 
-function persistAuthorizedAdmission(
+interface BillingAdmissionClaim {
+  id: string;
+  provisionalHoldId: string;
+}
+
+function claimBillingAdmission(
   store: BillingUsageRepositoryStore,
-  admission: Omit<BillingAdmission, 'required' | 'outboxId'> & { holdId: string },
+  admission: Omit<BillingAdmission, 'required' | 'outboxId' | 'holdId'>,
   now: number,
-): string {
+): BillingAdmissionClaim {
   const bound = binding(store, admission.organizationId);
   if (!bound) throw new Error('billing admission credentials disappeared');
   const id = `badm_${createHash('sha256')
     .update(`${bound.credentials.deploymentId}\0${admission.idempotencyKey}`, 'utf8')
     .digest('hex')}`;
-  store.db().prepare(
+  const provisionalHoldId = `pending_${createHash('sha256')
+    .update(id, 'utf8')
+    .digest('hex')}`;
+  const inserted = store.db().prepare(
     `INSERT OR IGNORE INTO billing_admission_outbox
       (id, deployment_id, organization_id, hold_id, module, units, reference_id,
        idempotency_key, status, created_at_ms)
@@ -145,37 +163,86 @@ function persistAuthorizedAdmission(
     id,
     bound.credentials.deploymentId,
     admission.organizationId,
-    admission.holdId,
+    provisionalHoldId,
     admission.module,
     admission.units,
     admission.referenceId,
     admission.idempotencyKey,
     now,
   );
+  if (inserted.changes === 1) return { id, provisionalHoldId };
+
   const existing = store.db().prepare(
-    `SELECT id, deployment_id, organization_id, hold_id, module, units,
-            reference_id, idempotency_key
+    `SELECT id, deployment_id, organization_id, module, units, reference_id
      FROM billing_admission_outbox WHERE idempotency_key = ?`,
-  ).get(admission.idempotencyKey) as Omit<
-    BillingAdmissionQueueRow,
-    'desired_outcome' | 'attempts'
-  > | undefined;
+  ).get(admission.idempotencyKey) as {
+    id: string;
+    deployment_id: string;
+    organization_id: string;
+    module: DeploymentBillingModule;
+    units: number;
+    reference_id: string;
+  } | undefined;
   if (
     !existing ||
     existing.deployment_id !== bound.credentials.deploymentId ||
     existing.organization_id !== admission.organizationId ||
-    existing.hold_id !== admission.holdId ||
     existing.module !== admission.module ||
     existing.units !== admission.units ||
     existing.reference_id !== admission.referenceId
   ) {
     throw new BillingAdmissionError(
-      'billing_policy_unavailable',
+      'billing_idempotency_conflict',
       409,
       'idempotency key is already bound to a different operation',
     );
   }
-  return existing.id;
+  throw new BillingAdmissionError(
+    'billing_operation_replayed',
+    409,
+    'this billing operation is already in progress or has been processed',
+  );
+}
+
+function abandonBillingAdmissionClaim(
+  store: BillingUsageRepositoryStore,
+  claim: BillingAdmissionClaim,
+): void {
+  store.db().prepare(
+    `DELETE FROM billing_admission_outbox WHERE id = ? AND hold_id = ?`,
+  ).run(claim.id, claim.provisionalHoldId);
+}
+
+function markBillingAdmissionClaimUncertain(
+  store: BillingUsageRepositoryStore,
+  claim: BillingAdmissionClaim,
+  message: string,
+): void {
+  store.db().prepare(
+    `UPDATE billing_admission_outbox
+     SET status = 'failed', reconciliation_required = 1,
+         next_attempt_at_ms = NULL, last_error = ?, updated_at = datetime('now')
+     WHERE id = ? AND hold_id = ?`,
+  ).run(safeErrorMessage(message), claim.id, claim.provisionalHoldId);
+}
+
+function completeBillingAdmissionClaim(
+  store: BillingUsageRepositoryStore,
+  claim: BillingAdmissionClaim,
+  holdId: string,
+): void {
+  const updated = store.db().prepare(
+    `UPDATE billing_admission_outbox
+     SET hold_id = ?, updated_at = datetime('now')
+     WHERE id = ? AND hold_id = ? AND reconciliation_required = 0`,
+  ).run(holdId, claim.id, claim.provisionalHoldId);
+  if (updated.changes !== 1) {
+    throw new BillingAdmissionError(
+      'billing_operation_uncertain',
+      503,
+      'billing admission claim changed while Control was processing it',
+    );
+  }
 }
 
 export async function authorizeBillingOperation(
@@ -191,12 +258,21 @@ export async function authorizeBillingOperation(
   now = Date.now(),
 ): Promise<BillingAdmission> {
   const credentials = store.credentials();
+  const enforcement =
+    credentials?.enforcement ?? store.billingEnforcement?.() ?? 'disabled';
   const organizationId = input.organizationId ?? credentials?.organizationId ?? '';
   const operation = { ...input, organizationId };
-  const bound = binding(store, organizationId);
-  if (!credentials || credentials.enforcement === 'disabled') {
+  if (enforcement === 'disabled') {
     return { required: false, outboxId: null, holdId: null, ...operation };
   }
+  if (!credentials) {
+    throw new BillingAdmissionError(
+      'billing_policy_unavailable',
+      503,
+      'billing enforcement is enabled but billing credentials are unavailable',
+    );
+  }
+  const bound = binding(store, organizationId);
   if (!bound) {
     throw new BillingAdmissionError(
       'billing_policy_unavailable',
@@ -211,8 +287,10 @@ export async function authorizeBillingOperation(
       'a valid x-otto-idempotency-key header is required',
     );
   }
+  const claim = claimBillingAdmission(store, operation, now);
+  let response: Response;
   try {
-    const response = await fetchImpl(bound.credentials.holdEndpoint, {
+    response = await fetchImpl(bound.credentials.holdEndpoint, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${bound.credentials.leaseToken}`,
@@ -228,51 +306,78 @@ export async function authorizeBillingOperation(
       }),
       signal: AbortSignal.timeout(15_000),
     });
-    if (!response.ok) {
-      const error = await responseError(response);
-      if (response.status === 409 && error.includes('insufficient available credits')) {
-        throw new BillingAdmissionError(
-          'insufficient_credits',
-          402,
-          'insufficient credits for this operation',
-        );
-      }
-      if (response.status === 409) {
-        throw new BillingAdmissionError(
-          'billing_policy_unavailable',
-          503,
-          'billing rate or policy is not ready',
-        );
-      }
+  } catch (error) {
+    markBillingAdmissionClaimUncertain(
+      store,
+      claim,
+      error instanceof Error ? error.message : String(error),
+    );
+    throw new BillingAdmissionError(
+      'billing_operation_uncertain',
+      503,
+      'billing admission outcome is unknown and requires reconciliation',
+    );
+  }
+  if (!response.ok) {
+    const error = await responseError(response);
+    if (response.status === 409 && error.includes('insufficient available credits')) {
+      abandonBillingAdmissionClaim(store, claim);
+      throw new BillingAdmissionError(
+        'insufficient_credits',
+        402,
+        'insufficient credits for this operation',
+      );
+    }
+    if (response.status === 409) {
+      abandonBillingAdmissionClaim(store, claim);
+      throw new BillingAdmissionError(
+        'billing_policy_unavailable',
+        503,
+        'billing rate or policy is not ready',
+      );
+    }
+    if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
+      abandonBillingAdmissionClaim(store, claim);
       throw new BillingAdmissionError(
         'commercial_control_unavailable',
         response.status === 401 ? 402 : 503,
         'commercial control rejected the billing admission',
       );
     }
-    const result = await response.json() as { hold?: { id?: unknown } };
-    const holdId = typeof result.hold?.id === 'string' ? result.hold.id : '';
-    if (!/^hold_[a-zA-Z0-9]+$/u.test(holdId)) {
-      throw new BillingAdmissionError(
-        'commercial_control_unavailable',
-        503,
-        'commercial control returned an invalid billing hold',
-      );
-    }
-    const outboxId = persistAuthorizedAdmission(
+    markBillingAdmissionClaimUncertain(
       store,
-      { holdId, ...operation },
-      now,
+      claim,
+      `Control returned ${response.status}: ${error}`,
     );
-    return { required: true, outboxId, holdId, ...operation };
-  } catch (error) {
-    if (error instanceof BillingAdmissionError) throw error;
     throw new BillingAdmissionError(
-      'commercial_control_unavailable',
+      'billing_operation_uncertain',
       503,
-      'commercial control is temporarily unavailable',
+      'billing admission outcome is unknown and requires reconciliation',
     );
   }
+  const result = await response.json().catch(() => null) as {
+    hold?: { id?: unknown };
+  } | null;
+  const holdId = typeof result?.hold?.id === 'string' ? result.hold.id : '';
+  if (!/^hold_[a-zA-Z0-9]+$/u.test(holdId)) {
+    markBillingAdmissionClaimUncertain(store, claim, 'Control returned an invalid hold');
+    throw new BillingAdmissionError(
+      'billing_operation_uncertain',
+      503,
+      'commercial control returned an invalid billing hold',
+    );
+  }
+  try {
+    completeBillingAdmissionClaim(store, claim, holdId);
+  } catch (error) {
+    markBillingAdmissionClaimUncertain(
+      store,
+      claim,
+      error instanceof Error ? error.message : String(error),
+    );
+    throw error;
+  }
+  return { required: true, outboxId: claim.id, holdId, ...operation };
 }
 
 async function deliverBillingAdmission(
@@ -280,7 +385,7 @@ async function deliverBillingAdmission(
   row: BillingAdmissionQueueRow,
   fetchImpl: typeof fetch,
   now: number,
-): Promise<'captured' | 'released' | 'discarded' | 'failed'> {
+): Promise<'captured' | 'released' | 'reconciliation' | 'discarded' | 'failed'> {
   const bound = binding(store, row.organization_id);
   if (!bound || bound.credentials.enforcement !== 'enforce') return 'failed';
   if (
@@ -319,19 +424,29 @@ async function deliverBillingAdmission(
     });
     if (!response.ok) {
       if ([400, 404, 409].includes(response.status)) {
+        const detail = await responseError(response);
         store.db().prepare(
           `UPDATE billing_admission_outbox
-           SET status = 'discarded', attempts = attempts + 1, last_error = ?,
-               updated_at = datetime('now') WHERE id = ?`,
-        ).run(`billing ${row.desired_outcome} was rejected (${response.status})`, row.id);
-        return 'discarded';
+           SET status = 'failed', attempts = attempts + 1,
+               next_attempt_at_ms = NULL, reconciliation_required = 1,
+               last_error = ?, updated_at = datetime('now') WHERE id = ?`,
+        ).run(
+          [
+            `billing ${row.desired_outcome} requires reconciliation`,
+            `control returned ${response.status}`,
+            detail,
+          ].filter(Boolean).join(': '),
+          row.id,
+        );
+        return 'reconciliation';
       }
       throw new Error(`billing ${row.desired_outcome} returned ${response.status}`);
     }
     store.db().prepare(
       `UPDATE billing_admission_outbox
        SET status = 'finalized', attempts = attempts + 1, finalized_at_ms = ?,
-           next_attempt_at_ms = NULL, last_error = NULL, updated_at = datetime('now')
+           next_attempt_at_ms = NULL, reconciliation_required = 0,
+           last_error = NULL, updated_at = datetime('now')
        WHERE id = ?`,
     ).run(now, row.id);
     return row.desired_outcome === 'capture' ? 'captured' : 'released';
@@ -339,7 +454,8 @@ async function deliverBillingAdmission(
     store.db().prepare(
       `UPDATE billing_admission_outbox
        SET status = 'failed', attempts = attempts + 1, next_attempt_at_ms = ?,
-           last_error = ?, updated_at = datetime('now') WHERE id = ?`,
+           reconciliation_required = 0, last_error = ?,
+           updated_at = datetime('now') WHERE id = ?`,
     ).run(
       now + retryDelayMs(row.attempts + 1),
       safeErrorMessage(error),
@@ -359,6 +475,7 @@ export async function flushBillingAdmissionQueue(
     attempted: 0,
     captured: 0,
     released: 0,
+    reconciliation: 0,
     discarded: 0,
     failed: 0,
     skippedReason: null,
@@ -367,16 +484,23 @@ export async function flushBillingAdmissionQueue(
     `DELETE FROM billing_admission_outbox
      WHERE status IN ('finalized', 'discarded') AND created_at_ms < ?`,
   ).run(now - 90 * 24 * 60 * 60 * 1000);
-  store.db().prepare(
+  const recovered = store.db().prepare(
     `UPDATE billing_admission_outbox
-     SET desired_outcome = 'release', status = 'pending',
-         last_error = 'recovered an interrupted operation; releasing hold',
+     SET status = 'failed', next_attempt_at_ms = NULL,
+         reconciliation_required = 1,
+         last_error = 'billing outcome is uncertain after interrupted execution; manual reconciliation required',
          updated_at = datetime('now')
      WHERE status = 'authorized' AND created_at_ms <= ?`,
-  ).run(now - UNKNOWN_OPERATION_RELEASE_MS);
+  ).run(now - UNKNOWN_OPERATION_RECONCILIATION_MS);
+  result.reconciliation += Number(recovered.changes);
   const bound = binding(store);
-  if (!bound || bound.credentials.enforcement !== 'enforce') {
+  const enforcement =
+    bound?.credentials.enforcement ?? store.billingEnforcement?.() ?? 'disabled';
+  if (enforcement !== 'enforce') {
     return { ...result, skippedReason: 'billing_enforcement_disabled' };
+  }
+  if (!bound) {
+    return { ...result, skippedReason: 'billing_credentials_unavailable' };
   }
   const rows = store.db().prepare(
     `SELECT id, deployment_id, organization_id, hold_id, module, units,
@@ -384,6 +508,7 @@ export async function flushBillingAdmissionQueue(
      FROM billing_admission_outbox
      WHERE status IN ('pending', 'failed')
        AND desired_outcome IS NOT NULL
+       AND reconciliation_required = 0
        AND (next_attempt_at_ms IS NULL OR next_attempt_at_ms <= ?)
        AND (? IS NULL OR id = ?)
      ORDER BY created_at_ms ASC LIMIT 50`,
@@ -418,7 +543,8 @@ export async function finalizeBillingOperation(
   store.db().prepare(
     `UPDATE billing_admission_outbox
      SET desired_outcome = ?, status = 'pending', next_attempt_at_ms = NULL,
-         last_error = NULL, updated_at = datetime('now') WHERE id = ?`,
+         reconciliation_required = 0, last_error = NULL,
+         updated_at = datetime('now') WHERE id = ?`,
   ).run(outcome, admission.outboxId);
   const result = await flushBillingAdmissionQueue(
     store,
@@ -426,6 +552,9 @@ export async function finalizeBillingOperation(
     now,
     admission.outboxId,
   );
+  if (result.reconciliation > 0) {
+    throw new Error(`billing ${outcome} requires reconciliation`);
+  }
   if (result.failed > 0) {
     throw new Error(`billing ${outcome} is queued for retry`);
   }

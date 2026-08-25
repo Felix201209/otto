@@ -72,6 +72,15 @@ export interface AcceptedControlCommand {
   replayed: boolean;
 }
 
+export class ControlCommandIdConflictError extends Error {
+  readonly code = 'command_id_conflict';
+
+  constructor() {
+    super('command_id_conflict');
+    this.name = 'ControlCommandIdConflictError';
+  }
+}
+
 export interface QueuedControlCommandRow {
   command_id: string;
   type: string;
@@ -130,9 +139,74 @@ function ensureTable(database: Database): void {
   `);
 }
 
+function commandMatchesStoredEnvelope(
+  existing: QueuedControlCommandRow,
+  input: ControlCommandEnqueueInput,
+): boolean {
+  return (
+    existing.type === input.type &&
+    existing.schema_version === input.schemaVersion &&
+    existing.sequence === input.sequence &&
+    existing.deployment_id === input.deploymentId &&
+    existing.issued_at === input.issuedAt &&
+    existing.expires_at === input.expiresAt &&
+    existing.idempotency_key === (input.idempotencyKey ?? null) &&
+    existing.payload_digest === input.payloadDigest &&
+    existing.signature === input.signature &&
+    existing.payload_json === (input.payloadJson ?? null)
+  );
+}
+
+function replayExistingCommand(
+  existing: QueuedControlCommandRow,
+  input: ControlCommandEnqueueInput,
+): AcceptedControlCommand {
+  if (!commandMatchesStoredEnvelope(existing, input)) {
+    throw new ControlCommandIdConflictError();
+  }
+  return {
+    commandId: existing.command_id,
+    status: existing.status,
+    attempt: existing.attempt,
+    replayed: true,
+  };
+}
+
+function parseControlCommandTimestamp(value: string): number {
+  const milliseconds = Date.parse(value);
+  if (!Number.isFinite(milliseconds)) {
+    throw new Error('control_command_timestamp_invalid');
+  }
+  return milliseconds;
+}
+
+function expireQueuedControlCommands(database: Database, now: number): void {
+  const rows = database.prepare(
+    `SELECT command_id, expires_at
+     FROM control_command_queue
+     WHERE status IN ('accepted', 'running')`,
+  ).all() as Array<Pick<
+    QueuedControlCommandRow,
+    'command_id' | 'expires_at'
+  >>;
+  const expire = database.prepare(
+    `UPDATE control_command_queue
+     SET status = 'expired', locked_until_ms = NULL
+     WHERE command_id = ? AND status IN ('accepted', 'running')`,
+  );
+
+  for (const row of rows) {
+    const expiresAtMs = Date.parse(row.expires_at);
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs <= now) {
+      expire.run(row.command_id);
+    }
+  }
+}
+
 /**
  * 接受（入队）一个已通过字段与签名校验的指令。
- * - 幂等：同 commandId 已存在 → 返回既有状态 + replayed=true；
+ * - 幂等：同 commandId 且完整信封一致 → 返回既有状态 + replayed=true；
+ * - 冲突：同 commandId 的任一持久化信封字段不同 → command_id_conflict；
  * - 单调序列：commandId 的 sequence 必须 > 已见最大序列，否则拒绝；
  * - 过期：入队即标记 expired 且不执行。
  */
@@ -142,31 +216,44 @@ export function acceptControlCommandInRepository(
 ): AcceptedControlCommand {
   const database = store.db();
   ensureTable(database);
+  parseControlCommandTimestamp(input.issuedAt);
+  const expiresMs = parseControlCommandTimestamp(input.expiresAt);
 
-  // 幂等：已存在直接返回。
   const existing = database.prepare(
-    'SELECT command_id, status, attempt FROM control_command_queue WHERE command_id = ?',
-  ).get(input.commandId) as { command_id: string; status: ControlCommandStatus; attempt: number } | undefined;
-  if (existing) {
-    return { commandId: existing.command_id, status: existing.status, attempt: existing.attempt, replayed: true };
-  }
+    'SELECT * FROM control_command_queue WHERE command_id = ?',
+  ).get(input.commandId) as QueuedControlCommandRow | undefined;
+  if (existing) return replayExistingCommand(existing, input);
 
   const now = store.now();
-  const expiresMs = Date.parse(input.expiresAt);
   const status: ControlCommandStatus = expiresMs <= now ? 'expired' : 'accepted';
 
-  database.prepare(
-    `INSERT INTO control_command_queue
-       (command_id, type, schema_version, sequence, deployment_id, issued_at,
-        expires_at, idempotency_key, payload_digest, signature, payload_json, status, attempt, max_sequence)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-  ).run(
-    input.commandId, input.type, input.schemaVersion, input.sequence,
-    input.deploymentId, input.issuedAt, input.expiresAt,
-    input.idempotencyKey ?? null, input.payloadDigest, input.signature,
-    input.payloadJson ?? null, status, input.sequence,
-  );
-  return { commandId: input.commandId, status, attempt: 0, replayed: false };
+  try {
+    database.prepare(
+      `INSERT INTO control_command_queue
+         (command_id, type, schema_version, sequence, deployment_id, issued_at,
+          expires_at, idempotency_key, payload_digest, signature, payload_json, status, attempt, max_sequence)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+    ).run(
+      input.commandId, input.type,
+      input.schemaVersion, input.sequence,
+      input.deploymentId, input.issuedAt,
+      input.expiresAt, input.idempotencyKey ?? null,
+      input.payloadDigest, input.signature,
+      input.payloadJson ?? null, status, input.sequence,
+    );
+  } catch (error) {
+    const raced = database.prepare(
+      'SELECT * FROM control_command_queue WHERE command_id = ?',
+    ).get(input.commandId) as QueuedControlCommandRow | undefined;
+    if (!raced) throw error;
+    return replayExistingCommand(raced, input);
+  }
+  return {
+    commandId: input.commandId,
+    status,
+    attempt: 0,
+    replayed: false,
+  };
 }
 
 /** 领取一个可执行指令（exclusive execution）。返回 null 表示暂无。 */
@@ -177,11 +264,13 @@ export function claimPendingControlCommand(
   const database = store.db();
   ensureTable(database);
   const now = store.now();
-  // 清理过期且尚未领取的指令。
+  expireQueuedControlCommands(database, now);
+  // 进程崩溃后，仍在业务时间窗内的过期 running 租约重新进入队列。
   database.prepare(
-    `UPDATE control_command_queue SET status = 'expired'
-     WHERE status = 'accepted' AND expires_at IS NOT NULL
-       AND julianday(expires_at) * 86400000 < ?`,
+    `UPDATE control_command_queue
+     SET status = 'accepted', locked_until_ms = NULL
+     WHERE status = 'running' AND locked_until_ms IS NOT NULL
+       AND locked_until_ms <= ?`,
   ).run(now);
 
   const row = database.prepare(

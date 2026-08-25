@@ -48,32 +48,6 @@ import {
   IconFolder,
 } from './icons.js';
 
-async function blobToWav(blob: Blob): Promise<Uint8Array> {
-  const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-  const context = new AudioCtx();
-  try {
-    const decoded = await context.decodeAudioData(await blob.arrayBuffer());
-    const frames = decoded.length;
-    const mono = new Float32Array(frames);
-    for (let c = 0; c < decoded.numberOfChannels; c++) {
-      const channel = decoded.getChannelData(c);
-      for (let i = 0; i < frames; i++) mono[i] += channel[i] / decoded.numberOfChannels;
-    }
-    const out = new ArrayBuffer(44 + frames * 2);
-    const view = new DataView(out);
-    const text = (offset: number, value: string) => { for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i)); };
-    text(0, 'RIFF'); view.setUint32(4, 36 + frames * 2, true); text(8, 'WAVE'); text(12, 'fmt ');
-    view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
-    view.setUint32(24, decoded.sampleRate, true); view.setUint32(28, decoded.sampleRate * 2, true);
-    view.setUint16(32, 2, true); view.setUint16(34, 16, true); text(36, 'data'); view.setUint32(40, frames * 2, true);
-    for (let i = 0; i < frames; i++) {
-      const sample = Math.max(-1, Math.min(1, mono[i]));
-      view.setInt16(44 + i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
-    }
-    return new Uint8Array(out);
-  } finally { void context.close(); }
-}
-
 function readBlobText(blob: Blob): Promise<string> {
   if (typeof blob.text === 'function') return blob.text();
   return new Promise((resolve, reject) => {
@@ -210,6 +184,8 @@ interface ComposerProps {
   currentModel: string | null;
   /** 当前选中会话 id：切换会话后据此自动聚焦 textarea，避免手动再点一下。 */
   sessionId?: string | null;
+  /** 当前 preload WebSocket 是否真实连通；断线时禁止修改执行授权。 */
+  connected?: boolean;
   /** 整体禁用（无选中会话）：textarea 与发送按钮都禁用。 */
   disabled?: boolean;
   /** 禁用原因，显示在输入框与按钮提示中。 */
@@ -268,6 +244,7 @@ export function Composer({
   models,
   currentModel,
   sessionId,
+  connected = true,
   disabled,
   disabledReason,
   busy = false,
@@ -296,12 +273,23 @@ export function Composer({
   const [text, setText] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [authorizationOpen, setAuthorizationOpen] = useState(false);
-  const [globalAuto, setGlobalAuto] = useState(
-    () => localStorage.getItem('otto.authorization.global-auto') !== '0',
+  const [initialAuthorizationPreference] = useState(() => {
+    const stored = localStorage.getItem('otto.authorization.global-auto');
+    return {
+      globalAuto: stored === '1',
+      // 缺失或非法值可能来自旧版错误默认；首次获得会话时必须纠正服务端。
+      needsManualMigration: stored !== '0' && stored !== '1',
+    };
+  });
+  const [globalAuto, setGlobalAuto] = useState(initialAuthorizationPreference.globalAuto);
+  const authorizationMigrationPendingRef = useRef(
+    initialAuthorizationPreference.needsManualMigration,
   );
   const [sessionAuthorization, setSessionAuthorization] = useState<Record<string, 'manual' | 'auto'>>({});
   const authorizationStateRef = useRef({ globalAuto, sessionAuthorization });
   authorizationStateRef.current = { globalAuto, sessionAuthorization };
+  const authorizationConnectedRef = useRef(connected);
+  authorizationConnectedRef.current = connected;
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachmentSizes, setAttachmentSizes] = useState<Record<string, number>>({});
   const [attaching, setAttaching] = useState(false);
@@ -309,103 +297,10 @@ export function Composer({
   const [dragOver, setDragOver] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const composerRef = useRef<HTMLDivElement>(null);
-  const [recording, setRecording] = useState(false);
-  const [, setVoiceProcessing] = useState(false);
-  const [voiceError, setVoiceError] = useState<string | null>(null);
-  const [voiceSeconds, setVoiceSeconds] = useState(0);
-  const [voiceWave, setVoiceWave] = useState<number[]>(() => Array.from({ length: 34 }, (_, i) => 8 + (i % 5) * 3));
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const voiceChunksRef = useRef<Blob[]>([]);
-  const voiceTimerRef = useRef<number | null>(null);
-  const voiceMeterFrameRef = useRef<number | null>(null);
-  const voiceMeterContextRef = useRef<AudioContext | null>(null);
   // 斜杠命令面板：当前高亮项下标。面板是否可见由 slashCommands.length>0 && !disabled 决定。
   const [slashIndex, setSlashIndex] = useState(0);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const stopVoiceMeter = (): void => {
-    if (voiceTimerRef.current !== null) window.clearInterval(voiceTimerRef.current);
-    voiceTimerRef.current = null;
-    if (voiceMeterFrameRef.current !== null) cancelAnimationFrame(voiceMeterFrameRef.current);
-    voiceMeterFrameRef.current = null;
-    if (voiceMeterContextRef.current) void voiceMeterContextRef.current.close();
-    voiceMeterContextRef.current = null;
-  };
-
-  React.useEffect(() => () => stopVoiceMeter(), []);
-
-  const startVoiceMeter = (stream: MediaStream): void => {
-    setVoiceSeconds(0);
-    voiceTimerRef.current = window.setInterval(() => setVoiceSeconds((v) => v + 1), 1000);
-    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtx) return;
-    try {
-      const context = new AudioCtx();
-      const analyser = context.createAnalyser();
-      analyser.fftSize = 128;
-      analyser.smoothingTimeConstant = 0.72;
-      context.createMediaStreamSource(stream).connect(analyser);
-      voiceMeterContextRef.current = context;
-      const samples = new Uint8Array(analyser.frequencyBinCount);
-      const draw = (): void => {
-        analyser.getByteTimeDomainData(samples);
-        const next = Array.from({ length: 34 }, (_, i) => {
-          const index = Math.floor((i / 34) * samples.length);
-          return Math.max(4, Math.min(36, Math.abs(samples[index] - 128) * 1.8 + 4));
-        });
-        setVoiceWave(next);
-        voiceMeterFrameRef.current = requestAnimationFrame(draw);
-      };
-      draw();
-    } catch {
-      // 计时仍可用；极少数系统不支持 WebAudio 时只展示轻微动画波形。
-    }
-  };
-
-  const insertVoiceText = (value: string): void => {
-    const el = taRef.current;
-    const start = el?.selectionStart ?? text.length;
-    const end = el?.selectionEnd ?? start;
-    const spacer = start > 0 && !/\s$/.test(text.slice(0, start)) ? ' ' : '';
-    const next = text.slice(0, start) + spacer + value + text.slice(end);
-    setText(next);
-    requestAnimationFrame(() => {
-      if (!el) return;
-      const pos = start + spacer.length + value.length;
-      el.focus(); el.setSelectionRange(pos, pos);
-      el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
-    });
-  };
-
-  const startVoice = async (): Promise<void> => {
-    setVoiceError(null);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      const recorder = new MediaRecorder(stream);
-      recorderRef.current = recorder;
-      voiceChunksRef.current = [];
-      recorder.ondataavailable = (event) => { if (event.data.size > 0) voiceChunksRef.current.push(event.data); };
-      recorder.onstop = () => {
-        stopVoiceMeter(); setRecording(false); setVoiceProcessing(true);
-        const blob = new Blob(voiceChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
-        stream.getTracks().forEach((track) => track.stop());
-        void blobToWav(blob)
-          .then((wav) => window.otto.voiceTranscribe(wav, 'audio/wav'))
-          .then((result) => insertVoiceText(result.text))
-          .catch((e) => setVoiceError(e instanceof Error ? e.message : String(e)))
-          .finally(() => setVoiceProcessing(false));
-      };
-      recorder.start(120); startVoiceMeter(stream); setRecording(true);
-    } catch (e) { setVoiceError(e instanceof Error ? e.message : '无法使用麦克风'); }
-  };
-
-  const toggleVoice = (): void => {
-    if (recording) recorderRef.current?.stop();
-    else void startVoice();
-  };
-
-  const formattedVoiceTime = `${Math.floor(voiceSeconds / 60)}:${String(voiceSeconds % 60).padStart(2, '0')}`;
 
   const authorizationKind = globalAuto
     ? 'global'
@@ -419,19 +314,40 @@ export function Composer({
       : '手动授权';
 
   React.useEffect(() => {
-    if (globalAuto && sessionId) {
+    if (!sessionId || !connected) return;
+    if (authorizationMigrationPendingRef.current) {
+      // 在发送前完成本地迁移，StrictMode 重放 effect 时也只会执行一次。
+      authorizationMigrationPendingRef.current = false;
+      localStorage.setItem('otto.authorization.global-auto', '0');
+    }
+    if (globalAuto) {
       transport.send({
         type: 'set_authorization_mode',
         payload: { sessionId, mode: 'auto', scope: 'all' },
       });
+      return;
     }
-  }, [globalAuto, sessionId]);
+
+    // 每次重连或切换会话都先清除服务端可能残留的 auto 状态，再按当前
+    // 用户选择恢复本会话授权。断线期间的旧授权帧不会被重放。
+    transport.send({
+      type: 'set_authorization_mode',
+      payload: { sessionId, mode: 'manual', scope: 'all' },
+    });
+    if (sessionAuthorization[sessionId] === 'auto') {
+      transport.send({
+        type: 'set_authorization_mode',
+        payload: { sessionId, mode: 'auto', scope: 'session' },
+      });
+    }
+  }, [connected, globalAuto, sessionAuthorization, sessionId]);
 
   React.useEffect(() => {
     const departingSessionId = sessionId;
     return () => {
       const state = authorizationStateRef.current;
       if (departingSessionId
+        && authorizationConnectedRef.current
         && !state.globalAuto
         && state.sessionAuthorization[departingSessionId] === 'auto') {
         transport.send({
@@ -444,32 +360,24 @@ export function Composer({
 
   const pickAuthorization = (kind: 'manual' | 'session' | 'global'): void => {
     if (!sessionId) return;
+    if (!connected) {
+      setAttachError('连接已断开，授权模式未修改；恢复连接后请重试');
+      setAuthorizationOpen(false);
+      return;
+    }
+    setAttachError(null);
     if (kind === 'global') {
       localStorage.setItem('otto.authorization.global-auto', '1');
       setGlobalAuto(true);
       setSessionAuthorization({});
-      transport.send({ type: 'set_authorization_mode', payload: { sessionId, mode: 'auto', scope: 'all' } });
     } else if (kind === 'session') {
-      const wasGlobal = globalAuto;
       localStorage.setItem('otto.authorization.global-auto', '0');
       setGlobalAuto(false);
-      if (wasGlobal) {
-        transport.send({
-          type: 'set_authorization_mode',
-          payload: { sessionId, mode: 'manual', scope: 'all' },
-        });
-      }
       setSessionAuthorization((prev) => ({ ...prev, [sessionId]: 'auto' }));
-      transport.send({ type: 'set_authorization_mode', payload: { sessionId, mode: 'auto', scope: 'session' } });
     } else {
-      const wasGlobal = globalAuto;
       localStorage.setItem('otto.authorization.global-auto', '0');
       setGlobalAuto(false);
       setSessionAuthorization((prev) => ({ ...prev, [sessionId]: 'manual' }));
-      transport.send({
-        type: 'set_authorization_mode',
-        payload: { sessionId, mode: 'manual', scope: wasGlobal ? 'all' : 'session' },
-      });
     }
     setAuthorizationOpen(false);
   };
@@ -1155,23 +1063,6 @@ export function Composer({
           />
         ) : null}
 
-        {recording ? (
-          <div className="otto-voice-recorder" role="group" aria-label="语音录音中">
-            <div className="otto-voice-recorder__wave" aria-hidden>
-              <span className="otto-voice-recorder__baseline" />
-              {voiceWave.map((height, index) => (
-                <span key={index} className="otto-voice-recorder__bar" style={{ height: `${height}px` }} />
-              ))}
-            </div>
-            <span className="otto-voice-recorder__time" aria-label="录音时长">{formattedVoiceTime}</span>
-            <button type="button" className="otto-voice-recorder__stop" aria-label="停止录音" title="停止并转成文字" onClick={toggleVoice}>
-              <IconStop size={14} />
-            </button>
-            <button type="button" className="otto-send" aria-label="完成录音" title="完成录音并转成文字" onClick={toggleVoice}>
-              <IconArrowUp size={17} />
-            </button>
-          </div>
-        ) : (<>
         <textarea
           ref={taRef}
           className="otto-composer__textarea"
@@ -1287,8 +1178,6 @@ export function Composer({
             </button>
           )}
         </div>
-        </>)}
-        {voiceError ? <div className="otto-composer__voice-error" role="alert">{voiceError}</div> : null}
       </div>
 
       {/* 极简键位提示：让首次使用者知道 Enter/Shift+Enter 的分工。无会话时不显示（避免噪声）。 */}

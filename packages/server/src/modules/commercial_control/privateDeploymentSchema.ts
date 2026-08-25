@@ -159,6 +159,8 @@ export const PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor =
         finalized_at_ms INTEGER,
         next_attempt_at_ms INTEGER,
         last_error TEXT,
+        reconciliation_required INTEGER NOT NULL DEFAULT 0
+          CHECK(reconciliation_required IN (0, 1)),
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
 
@@ -246,6 +248,21 @@ export const PRIVATE_DEPLOYMENT_SCHEMA_CONTRIBUTOR: DatabaseSchemaContributor =
       addBillingColumn('policy_version', 'TEXT');
       addBillingColumn('signing_key_id', 'TEXT');
       addBillingColumn('receipt_signature', 'TEXT');
+
+      const billingAdmissionColumns = new Set(
+        (
+          database.prepare('PRAGMA table_info(billing_admission_outbox)').all() as Array<{
+            name: string;
+          }>
+        ).map((column) => column.name),
+      );
+      if (!billingAdmissionColumns.has('reconciliation_required')) {
+        database.exec(
+          `ALTER TABLE billing_admission_outbox
+           ADD COLUMN reconciliation_required INTEGER NOT NULL DEFAULT 0
+           CHECK(reconciliation_required IN (0, 1))`,
+        );
+      }
 
       database.exec(`
         CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_usage_receipt_id

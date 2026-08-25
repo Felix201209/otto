@@ -1206,6 +1206,13 @@ export function sendE2eeDirectMessageInRepository(
     }
     throw error;
   }
+  for (const key of storedObjectKeys) {
+    try {
+      store.attachmentObjectStore?.markCommitted(key);
+    } catch {
+      // The committed database reference remains authoritative and protects it.
+    }
+  }
   return messageView(
     database,
     database

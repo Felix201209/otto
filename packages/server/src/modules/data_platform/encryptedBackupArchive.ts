@@ -9,6 +9,7 @@ import {
   randomBytes,
 } from 'node:crypto';
 import fs from 'node:fs';
+import { Writable } from 'node:stream';
 import { open, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -135,6 +136,57 @@ async function readExact(
     offset += result.bytesRead;
   }
   return buffer;
+}
+
+/** Verifies the AES-GCM key without writing decrypted backup content to disk. */
+export async function verifyEncryptedBackupArchiveKey(input: {
+  archivePath: string;
+  key: Buffer;
+}): Promise<void> {
+  if (input.key.length !== 32)
+    throw new Error('backup encryption key is invalid');
+  const archivePath = path.resolve(input.archivePath);
+  const metadata = fs.lstatSync(archivePath);
+  const prefixBytes = OUTER_MAGIC.length + NONCE_BYTES;
+  if (
+    metadata.isSymbolicLink() ||
+    !metadata.isFile() ||
+    metadata.size <= prefixBytes + TAG_BYTES
+  ) {
+    throw new Error('backup archive is invalid');
+  }
+  const sourceHandle = await open(archivePath, 'r');
+  let prefix: Buffer;
+  let tag: Buffer;
+  try {
+    prefix = await readExact(sourceHandle, prefixBytes, 0);
+    tag = await readExact(sourceHandle, TAG_BYTES, metadata.size - TAG_BYTES);
+  } finally {
+    await sourceHandle.close();
+  }
+  if (!prefix.subarray(0, OUTER_MAGIC.length).equals(OUTER_MAGIC)) {
+    throw new Error('backup archive format is invalid');
+  }
+  const decipher = createDecipheriv(
+    'aes-256-gcm',
+    input.key,
+    prefix.subarray(OUTER_MAGIC.length),
+  );
+  decipher.setAAD(OUTER_MAGIC);
+  decipher.setAuthTag(tag);
+  const discard = new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  });
+  await pipeline(
+    fs.createReadStream(archivePath, {
+      start: prefixBytes,
+      end: metadata.size - TAG_BYTES - 1,
+    }),
+    decipher,
+    discard,
+  );
 }
 
 export async function extractEncryptedBackupArchive(input: {

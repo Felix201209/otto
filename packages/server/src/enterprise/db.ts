@@ -93,7 +93,9 @@ import {
   createOrganizationWorkforceComposition,
   IDENTITY_ORGANIZATION_SCHEMA_CONTRIBUTOR,
   IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR,
+  ORGANIZATION_BOOTSTRAP_PROVISIONING_SCHEMA_CONTRIBUTOR,
   getOrganizationPositionRoleMappingFromRepository,
+  hasBootstrapEnterpriseIdentityInRepository,
   listAccountTagsInRepository,
   listDepartmentInvitesForBackup,
   listEmployeesForBackup,
@@ -101,6 +103,7 @@ import {
   migrateLegacyEnterpriseTenant,
   normalizeAccountTags,
   normalizeOrganizationSlug,
+  provisionBootstrapEnterpriseInRepository,
   replaceMigratedAccountTagsInRepository,
   toOrganizationDirectoryView,
   assertAccountPassword as assertIdentityAccountPassword,
@@ -108,6 +111,8 @@ import {
   identitySecretMatches,
   isAcceptableAccountPassword as isAcceptableIdentityAccountPassword,
   migrateLegacyAuthSessions,
+  type BootstrapEnterpriseProvisioningInput,
+  type BootstrapEnterpriseProvisioningResult,
   type EmployeeRecord,
   type OrganizationDepartmentView as IdentityOrganizationDepartmentView,
   type OrganizationDirectoryView,
@@ -248,7 +253,7 @@ const PRIVACY_DELETION_LEDGER_KEY_PATH = path.join(
 );
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
-export const ENTERPRISE_SCHEMA_VERSION = 22;
+export const ENTERPRISE_SCHEMA_VERSION = 23;
 export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
@@ -285,6 +290,7 @@ function initSchema(d: Database): void {
     }),
     ENTERPRISE_SKILL_MARKET_SCHEMA_CONTRIBUTOR,
     IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR,
+    ORGANIZATION_BOOTSTRAP_PROVISIONING_SCHEMA_CONTRIBUTOR,
     createMemberSchemaContributor({
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
     }),
@@ -385,6 +391,8 @@ const dataProtection = createDataProtectionService({
   encryptionKey: process.env.OTTO_BACKUP_ENCRYPTION_KEY,
   encryptionKeyPath: process.env.OTTO_BACKUP_ENCRYPTION_KEY_FILE,
   intervalHours: Number(process.env.OTTO_BACKUP_INTERVAL_HOURS || 24),
+  encryptionKeyRecoveryPath:
+    process.env.OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE,
   retentionDays: Number(process.env.OTTO_BACKUP_RETENTION_DAYS || 30),
   minimumRetained: Number(process.env.OTTO_BACKUP_MINIMUM_RETAINED || 3),
   minimumFreeBytes:
@@ -458,6 +466,8 @@ export function getOperationsSecurityStatus() {
 export const getDatabaseReadiness = dataPlatform.getReadiness;
 export const getDatabaseEncryptionStatus =
   dataPlatform.getDatabaseEncryptionStatus;
+export const createEnterpriseDatabaseSnapshot =
+  dataPlatform.createDatabaseSnapshot;
 export const rotateDatabaseEncryptionKey = dataPlatform.rotateDatabaseKey;
 
 export const getDataProtectionStatus = dataProtection.getStatus;
@@ -486,6 +496,7 @@ export const {
   getDeploymentId,
   getMachineFingerprint,
   getDeploymentLicense,
+  getDeploymentEdgeGatewayCredentials,
   importDeploymentLicense,
   importDeploymentLicenseLease,
   refreshDeploymentLicenseLease,
@@ -504,6 +515,8 @@ export const {
   ingestTelemetryBatch,
   ensureDeploymentLicenseSecretsEncrypted,
   getPrivateDeploymentStatus,
+  getPrivateDeploymentRuntimeConfiguration,
+  savePrivateDeploymentRuntimeConfiguration,
   exportDeploymentDiagnostics,
   isLicenseUsableForOrganizationFeature,
   isLicenseRestricted,
@@ -559,8 +572,14 @@ export const {
   fieldCipher,
   deploymentId: getDeploymentId,
   dataDirectory: DATA_DIR,
-  enabled: () => process.env.OTTO_FEDERATION_ENABLED === 'true',
-  gatewayUrl: () => process.env.OTTO_FEDERATION_GATEWAY_URL?.trim() || null,
+  enabled: () =>
+    process.env.OTTO_FEDERATION_ENABLED === 'true' ||
+    getPrivateDeploymentRuntimeConfiguration()?.capabilities.federation ===
+      true,
+  gatewayUrl: () =>
+    process.env.OTTO_FEDERATION_GATEWAY_URL?.trim() ||
+    getPrivateDeploymentRuntimeConfiguration()?.federationGatewayUrl ||
+    null,
   publicOrigin: () => process.env.OTTO_ENTERPRISE_PUBLIC_URL?.trim() || null,
   displayName: () =>
     process.env.OTTO_FEDERATION_DISPLAY_NAME?.trim() ||
@@ -946,6 +965,33 @@ export const {
   audit: logAudit,
 });
 
+export function provisionBootstrapEnterprise(
+  input: BootstrapEnterpriseProvisioningInput,
+): BootstrapEnterpriseProvisioningResult {
+  return provisionBootstrapEnterpriseInRepository(
+    {
+      db: getDB,
+      createOrganization,
+      createAccount,
+      issueOrganizationInvite,
+      createUnknownPassword: () => randomBytes(32).toString('base64url'),
+      now: Date.now,
+    },
+    input,
+  );
+}
+
+export function hasBootstrapEnterpriseIdentity(
+  deploymentId: string,
+  organizationId?: string | null,
+): boolean {
+  return hasBootstrapEnterpriseIdentityInRepository(
+    getDB(),
+    deploymentId,
+    organizationId,
+  );
+}
+
 export const {
   ensureDirectMessageContentEncrypted,
   getDirectMessageAttachment,
@@ -962,6 +1008,7 @@ export const {
   listMlsTransportEvents,
   getMlsAttachmentSession,
   listMlsInboundConversationPeers,
+  listMlsInboundConversationHeads,
   cleanupExpiredMlsResources,
   listE2eeDirectMessages,
   listPendingE2eeAtoaRequests,
@@ -1131,6 +1178,14 @@ const modelGateway = createModelGatewayComposition({
   createId: randomUUID,
   onRecordedUsage(input) {
     if (input.totalTokens < 1) return;
+    // Otto 托管模型由 Edge 的签名 ExecutionReceipt 唯一结算。客户端上报只保留
+    // 企业用量统计，不能再次进入 billing outbox，避免重复扣费。
+    if (
+      input.model?.startsWith('otto:') ||
+      input.model?.startsWith('custom:openai:otto:')
+    ) {
+      return;
+    }
     const digest = createHash('sha256')
       .update(
         [getDeploymentId(), input.organizationId, input.messageId].join('\0'),

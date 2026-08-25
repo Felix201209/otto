@@ -2141,6 +2141,25 @@ impl MlsKernel {
         });
         Ok(pending)
     }
+    pub fn list_pending_received_application_peers(
+        &self,
+        raw_scope: &str,
+    ) -> Result<Vec<String>, String> {
+        let scope = validate_scope(raw_scope)?;
+        self.require_identity(&scope)?;
+        let mut peers = HashSet::new();
+        for pending in self.pending_received_applications.values() {
+            if self.conversation_routes.get(&pending.conversation_id)
+                != Some(&pending.peer_account_id)
+            {
+                return Err("MLS application inbox state is inconsistent".into());
+            }
+            peers.insert(pending.peer_account_id.clone());
+        }
+        let mut peers = peers.into_iter().collect::<Vec<_>>();
+        peers.sort();
+        Ok(peers)
+    }
 
     pub fn acknowledge_received_application(
         &mut self,
@@ -3628,6 +3647,12 @@ mod tests {
         assert_eq!(pending_received.len(), 2);
         assert_eq!(pending_received[0].sequence, 7);
         assert_eq!(pending_received[1].sequence, 8);
+        assert_eq!(
+            restored_bob
+                .list_pending_received_application_peers(bob_scope)
+                .unwrap(),
+            vec!["alice".to_string()]
+        );
         restored_bob
             .acknowledge_received_application(
                 bob_scope,

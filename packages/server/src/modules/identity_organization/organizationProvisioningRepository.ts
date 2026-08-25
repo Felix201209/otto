@@ -16,6 +16,7 @@ export interface OrganizationProvisioningOrganizationView {
 }
 
 export interface CreateOrganizationInput {
+  id?: string;
   name: string;
   slug?: string;
   now?: number;
@@ -99,7 +100,7 @@ export function createOrganizationInRepository<
   const slug = normalizeOrganizationSlug(
     input.slug || `company-${store.createDefaultSlugSuffix()}`,
   );
-  const id = store.createOrganizationId();
+  const id = input.id ?? store.createOrganizationId();
   const database = store.db();
   database.exec('SAVEPOINT create_organization');
   try {

@@ -12,6 +12,7 @@ import {
   flushTelemetryQueue as flushTelemetryQueueInRepository,
   createDeploymentBillingUsageStore,
   getDeploymentId as getDeploymentIdFromRepository,
+  getDeploymentEdgeGatewayCredentials as getDeploymentEdgeGatewayCredentialsFromRepository,
   getDeploymentLicense as getDeploymentLicenseFromRepository,
   getDeploymentUpdatePolicyCredentials,
   getMachineFingerprint as getMachineFingerprintFromRepository,
@@ -44,6 +45,11 @@ import {
   updateModuleUpdateDescriptorInStore,
   type ModuleUpdateDescriptorInput,
 } from './moduleUpdateRepository.js';
+import {
+  getPrivateDeploymentRuntimeConfiguration,
+  savePrivateDeploymentRuntimeConfiguration,
+} from './privateDeploymentConfigurationRepository.js';
+import type { PrivateDeploymentRuntimeConfiguration } from './deploymentTypes.js';
 
 export interface CommercialControlCompositionOptions {
   db(): Database;
@@ -84,7 +90,10 @@ export function createCommercialControlComposition(
     defaultOrganizationId: options.defaultOrganizationId,
     licenseEnforcementEnabled: options.licenseEnforcementEnabled,
     licenseVerificationPublicKeys: options.licenseVerificationPublicKeys,
-    telemetryEndpoint: options.telemetryEndpoint,
+    telemetryEndpoint: () =>
+      options.telemetryEndpoint() ??
+      getPrivateDeploymentRuntimeConfiguration(settings)?.telemetryEndpoint ??
+      null,
     telemetryIngestSecret: options.telemetryIngestSecret,
     telemetryRetentionDays: options.telemetryRetentionDays,
     fieldCipher: options.fieldCipher,
@@ -126,8 +135,12 @@ export function createCommercialControlComposition(
     getMachineFingerprint: getMachineFingerprintFromRepository,
     getDeploymentLicense: () =>
       getDeploymentLicenseFromRepository(deploymentStore),
-    importDeploymentLicense: (raw: unknown) =>
-      importDeploymentLicenseIntoRepository(deploymentStore, raw),
+    getDeploymentEdgeGatewayCredentials: () =>
+      getDeploymentEdgeGatewayCredentialsFromRepository(deploymentStore),
+    importDeploymentLicense: (
+      raw: unknown,
+      options?: Parameters<typeof importDeploymentLicenseIntoRepository>[2],
+    ) => importDeploymentLicenseIntoRepository(deploymentStore, raw, options),
     importDeploymentLicenseLease: (raw: unknown) =>
       importDeploymentLicenseLeaseIntoRepository(deploymentStore, raw),
     ensureDeploymentLicenseSecretsEncrypted: () =>
@@ -197,16 +210,24 @@ export function createCommercialControlComposition(
     ),
     getPrivateDeploymentStatus: () =>
       getPrivateDeploymentStatusFromRepository(deploymentStore),
+    getPrivateDeploymentRuntimeConfiguration: () =>
+      getPrivateDeploymentRuntimeConfiguration(settings),
+    savePrivateDeploymentRuntimeConfiguration: (
+      configuration: PrivateDeploymentRuntimeConfiguration,
+    ) => savePrivateDeploymentRuntimeConfiguration(settings, configuration),
     exportDeploymentDiagnostics: (
       input: Parameters<
         typeof exportDeploymentDiagnosticsFromRepository
       >[1] = {},
     ) => exportDeploymentDiagnosticsFromRepository(deploymentStore, input),
-    isLicenseUsableForOrganizationFeature: (feature: OrganizationFeatureKey) =>
-      isLicenseUsableForOrganizationFeatureInRepository(
-        deploymentStore,
-        feature,
-      ),
+    isLicenseUsableForOrganizationFeature: (
+      feature: OrganizationFeatureKey,
+      organizationId?: string | null,
+    ) => isLicenseUsableForOrganizationFeatureInRepository(
+      deploymentStore,
+      feature,
+      organizationId,
+    ),
     isLicenseRestricted: () => isLicenseRestrictedInRepository(deploymentStore),
   };
 }

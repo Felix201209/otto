@@ -33,6 +33,7 @@ import type { SessionRuntime } from './sessions.js';
 import type {
   ApiResponse,
   HealthInfo,
+  ModelInfo,
   ServerToClient,
   SessionSummary,
   OttoMessage,
@@ -135,6 +136,9 @@ describe('会话运行时模型边界', () => {
     expect(resolveSessionRuntimeModel('enterprise', customModel)).toBe(customModel);
     expect(resolveSessionRuntimeModel('personal', customModel)).toBe(customModel);
     expect(resolveSessionRuntimeModel('enterprise', 'otto:managed')).toBeUndefined();
+    expect(
+      resolveSessionRuntimeModel('enterprise', 'otto:deepseek', true),
+    ).toBe('otto:deepseek');
   });
 });
 
@@ -223,6 +227,45 @@ describe('OttoServer WS（v1.7 产品工作区）', () => {
     expect(models.payload.models[0].managed).not.toBe(true);
     expect(models.payload.current).toBe(models.payload.models[0].id);
     client.close();
+  });
+
+  it('仅向持有有效企业短令牌的账号展示网关允许的托管模型', async () => {
+    const synced = await fetch(`${baseUrl}/internal/enterprise-identity`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${server.controlToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        account: authenticatedAccount({
+          managedModelGateway: {
+            baseUrl: 'https://edge.otto.test/v1',
+            accessToken: 'edge-short-token-at-least-thirty-two-characters',
+            expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+            allowedModels: ['otto:deepseek'],
+          },
+        }),
+      }),
+    });
+    expect(synced.status).toBe(200);
+
+    const models = await getJson<ModelInfo[]>(`${baseUrl}/models`);
+    expect(models.status).toBe(200);
+    expect(models.body.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'otto:deepseek',
+          source: 'otto',
+          managed: true,
+          enabled: true,
+        }),
+      ]),
+    );
+    expect(models.body.data).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'otto:qwen' }),
+      ]),
+    );
   });
 
   it('企业视图下仍允许内部成员保存和删除个人 BYOK 模型', async () => {
@@ -1628,8 +1671,8 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
   let baseUrl: string;
 
   beforeEach(() => {
-    // shouldMock() = mock || loadCustomModels().length===0。要走 runtimeFactory，
-    // 必须让机器「看起来配了 BYO-key 模型」，否则空 HOME 会降级到 mockEcho。
+    // 非 mock 路径只允许使用显式启用的 BYOK 模型。测试必须完整声明 enabled，
+    // 避免依赖其他用例留下的模型缓存，也保持无启用模型时 fail closed。
     const dir = path.join(tmpHome, '.otto-user');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(
@@ -1640,8 +1683,9 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
             displayName: 'Test',
             provider: 'openai',
             baseUrl: 'https://example.com/v1',
-            apiKey: 'sk-x',
+            apiKey: '{env:OTTO_TEST_MODEL_API_KEY}',
             modelId: 'gpt-test',
+            enabled: true,
           },
         ],
       }),
@@ -2048,6 +2092,21 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
     }
   }
 
+  async function closeAndWait(client: WsClient, timeoutMs = 2000): Promise<void> {
+    if (client.ws.readyState === WebSocket.CLOSED) return;
+    const closed = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('WebSocket 关闭握手超时')), timeoutMs);
+      client.ws.once('close', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+    // A desktop process disappearing is a transport disconnect, not a UI-level
+    // graceful handshake. terminate() makes the server close event deterministic on Node 24.
+    if (client.ws.readyState !== WebSocket.CLOSED) client.ws.terminate();
+    await closed;
+  }
+
   it('最后一个订阅连接断开 → cancel 当前轮；仍有其他连接订阅则不取消', async () => {
     const { factory, calls } = makeHangingRuntime();
     server = new OttoServer({
@@ -2075,12 +2134,11 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
     await waitUntil(() => calls.run === 1);
 
     // c1 断开：c2 仍订阅 → 不取消。
-    c1.close();
-    await new Promise((r) => setTimeout(r, 150));
+    await closeAndWait(c1);
     expect(calls.cancel).toBe(0);
 
     // c2 也断开：已无存活订阅连接 → 取消当前轮。
-    c2.close();
+    await closeAndWait(c2);
     await waitUntil(() => calls.cancel === 1);
     expect(calls.cancel).toBe(1);
   });
@@ -2110,8 +2168,7 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
     });
     await waitUntil(() => calls.run === 1);
 
-    c.close();
-    await new Promise((r) => setTimeout(r, 150));
+    await closeAndWait(c);
     expect(calls.cancel).toBe(0);
   });
 
@@ -2179,7 +2236,12 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
     expect(server.store.getHistory(s.sessionId)).toHaveLength(1);
     expect(calls.run).toBe(1);
     expect(c.frames.filter((f) => f.type === 'message_start')).toHaveLength(1);
-    c.close();
+
+    await closeAndWait(c);
+    await waitUntil(() => calls.cancel === 1);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(calls.run).toBe(1);
+    expect(server.store.getHistory(s.sessionId)).toHaveLength(1);
   });
 });
 
@@ -2268,7 +2330,7 @@ describe('OttoServer set_model 真实生效语义', () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 30));
 
-    expect(setModel).toHaveBeenCalledWith(targetId);
+    expect(setModel).toHaveBeenCalledWith(targetId, undefined);
     expect(store.getSession(session.sessionId)?.model).toBe(oldId);
     expect(
       client.frames.some(
@@ -2343,7 +2405,7 @@ describe('OttoServer set_model 真实生效语义', () => {
       type: 'models_list',
       payload: { current: targetId },
     });
-    expect(setModel).toHaveBeenCalledWith(targetId);
+    expect(setModel).toHaveBeenCalledWith(targetId, undefined);
     expect(store.getSession(session.sessionId)?.model).toBe(targetId);
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining('[model-switch] preference persistence failed'),

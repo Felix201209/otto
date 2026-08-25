@@ -226,6 +226,33 @@ export function PrefsPanel({
 
           <div className="otto-hub__setting">
             <div className="otto-hub__setting-text">
+              <div className="otto-hub__field-label">后台智能分析</div>
+              <div className="otto-hub__field-hint">
+                允许 Otto 在空闲时使用当前模型自动压缩上下文、分析工作习惯和生成 Skill 候选；可能使用个人 API 并产生费用。默认关闭。
+              </div>
+            </div>
+            <button
+              type="button"
+              aria-label="后台智能分析"
+              className={
+                'otto-hub__toggle' +
+                (s.backgroundModelTasksEnabled ? ' is-on' : '')
+              }
+              onClick={() =>
+                actions.setSetting(
+                  'backgroundModelTasksEnabled',
+                  !s.backgroundModelTasksEnabled,
+                )
+              }
+              aria-pressed={s.backgroundModelTasksEnabled}
+            >
+              <span className="otto-hub__toggle-knob" />
+              {s.backgroundModelTasksEnabled ? '已开启' : '已关闭'}
+            </button>
+          </div>
+
+          <div className="otto-hub__setting">
+            <div className="otto-hub__setting-text">
               <div className="otto-hub__field-label">偏好语言</div>
               <div className="otto-hub__field-hint">
                 影响 Otto 回复所用的语言（留空 = 跟随对话自动判断）。

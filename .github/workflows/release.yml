@@ -17,8 +17,8 @@ on:
         required: false
         type: boolean
         default: false
-      unsigned_mac_transition:
-        description: 'Build unsigned macOS transition artifacts when Apple signing is unavailable.'
+      unsigned_transition:
+        description: 'Allow unsigned desktop and enterprise artifacts for an explicit transition release only.'
         required: false
         type: boolean
         default: false
@@ -45,7 +45,7 @@ concurrency:
 
 env:
   NODE_VERSION: '22.23.1'
-  ELECTRON_VERSION: '43.1.0'
+  ELECTRON_VERSION: '43.2.0'
   SQLCIPHER_SOURCE_REVISION: e2a6040f2ae5cfff2b3e08eb3320007d93cdf3fc
   RELEASES_REPO: Felix201209/otto-releases
   UPDATE_MIRROR_ASSET_BASE_URL: 'https://59.110.154.44:7777/downloads'
@@ -109,6 +109,12 @@ jobs:
           name: sqlcipher-native-matrix
           path: native/sqlcipher
 
+      - name: Download verified enterprise Node.js SQLCipher matrix
+        uses: actions/download-artifact@v7
+        with:
+          name: sqlcipher-node-native-matrix
+          path: native/sqlcipher-node
+
       - name: Verify SQLCipher native matrix before packaging
         shell: bash
         env:
@@ -124,6 +130,18 @@ jobs:
             gh attestation verify "$binding" --repo "$GITHUB_REPOSITORY"
           done < <(find native/sqlcipher -type f -name better_sqlite3.node -print0)
           gh attestation verify native/sqlcipher/matrix-manifest.json \
+            --repo "$GITHUB_REPOSITORY"
+          node scripts/verify-sqlcipher-native-assets.mjs \
+            --root native/sqlcipher-node \
+            --runtime node \
+            --expected-build-commit "$GITHUB_SHA" \
+            --expected-source-revision "$SQLCIPHER_SOURCE_REVISION" \
+            --expected-runtime-version "$NODE_VERSION" \
+            --require-matrix-manifest
+          while IFS= read -r -d '' binding; do
+            gh attestation verify "$binding" --repo "$GITHUB_REPOSITORY"
+          done < <(find native/sqlcipher-node -type f -name better_sqlite3.node -print0)
+          gh attestation verify native/sqlcipher-node/matrix-manifest.json \
             --repo "$GITHUB_REPOSITORY"
 
       - name: Resolve release version
@@ -147,6 +165,16 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Validate transition signing exception
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.unsigned_transition }}" = "true" ] \
+            && [ "${{ inputs.release_channel || 'stable' }}" != "transition" ]; then
+            echo "Unsigned artifacts are permitted only for the transition release channel." >&2
+            exit 1
+          fi
 
       - name: Require a release source based on the latest internal commit
         shell: bash
@@ -177,6 +205,7 @@ jobs:
           test -n "$LICENSE_PUBLIC_KEYS"
 
       - name: Require desktop signing and notarization custody
+        if: ${{ inputs.unsigned_transition != true }}
         shell: bash
         env:
           MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
@@ -245,10 +274,17 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          OTTO_ALLOW_UNSIGNED_MAC: ${{ inputs.unsigned_mac_transition && '1' || '0' }}
+          OTTO_ALLOW_UNSIGNED_MAC: ${{ inputs.unsigned_transition && '1' || '0' }}
+
+      - name: Enforce update manifest and installer size budget
+        run: npm run release:gate --workspace=packages/desktop
+        env:
+          OTTO_DESKTOP_BASELINE_INSTALLER_BYTES: '125255674'
+          OTTO_DESKTOP_MAX_INSTALLER_GROWTH_MB: '12'
+          OTTO_DESKTOP_MAX_INSTALLER_MB: '250'
 
       - name: Verify signed macOS disk images
-        if: ${{ inputs.unsigned_mac_transition != true }}
+        if: ${{ inputs.unsigned_transition != true }}
         shell: bash
         run: |
           set -euo pipefail
@@ -266,6 +302,7 @@ jobs:
         env:
           OTTO_LICENSE_PUBLIC_KEYS: ${{ secrets.OTTO_LICENSE_PUBLIC_KEYS }}
           OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY: ${{ secrets.OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY }}
+          OTTO_ALLOW_UNSIGNED_ENTERPRISE_PACKAGE: ${{ inputs.unsigned_transition && '1' || '0' }}
           OTTO_RELEASE_CHANNEL: ${{ inputs.release_channel || 'stable' }}
 
       - name: Verify release artifacts
@@ -282,10 +319,26 @@ jobs:
           ENTERPRISE_SIGNATURE="${ENTERPRISE_ARCHIVE}.sig"
           test -f "$ENTERPRISE_ARCHIVE"
           test -f "$ENTERPRISE_SHA"
-          test -f "$ENTERPRISE_SIGNATURE"
           sha256sum -c "$ENTERPRISE_SHA"
-          node scripts/verify-enterprise-package-signature.mjs \
-            "$ENTERPRISE_ARCHIVE" "$ENTERPRISE_SIGNATURE"
+          RELEASE_FILES=(
+            "$DESKTOP_RELEASE/Otto-${VERSION}-arm64.dmg"
+            "$DESKTOP_RELEASE/Otto-${VERSION}-arm64.dmg.blockmap"
+            "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg"
+            "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg.blockmap"
+            "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe"
+            "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe.blockmap"
+            "$DESKTOP_RELEASE/latest.json"
+            "$ENTERPRISE_ARCHIVE"
+            "$ENTERPRISE_SHA"
+          )
+          if [ "${{ inputs.unsigned_transition }}" = "true" ]; then
+            test ! -f "$ENTERPRISE_SIGNATURE"
+          else
+            test -f "$ENTERPRISE_SIGNATURE"
+            node scripts/verify-enterprise-package-signature.mjs \
+              "$ENTERPRISE_ARCHIVE" "$ENTERPRISE_SIGNATURE"
+            RELEASE_FILES+=("$ENTERPRISE_SIGNATURE")
+          fi
           test -f "$DESKTOP_RELEASE/Otto-${VERSION}-arm64.dmg"
           test -f "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg"
           test -f "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe"
@@ -293,17 +346,7 @@ jobs:
           node packages/desktop/scripts/verify-update-manifest.mjs "$DESKTOP_RELEASE" "$VERSION"
           {
             echo "files<<EOF"
-            printf '%s\n' \
-              "$DESKTOP_RELEASE/Otto-${VERSION}-arm64.dmg" \
-              "$DESKTOP_RELEASE/Otto-${VERSION}-arm64.dmg.blockmap" \
-              "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg" \
-              "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg.blockmap" \
-              "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe" \
-              "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe.blockmap" \
-              "$DESKTOP_RELEASE/latest.json" \
-              "$ENTERPRISE_ARCHIVE" \
-              "$ENTERPRISE_SHA" \
-              "$ENTERPRISE_SIGNATURE"
+            printf '%s\n' "${RELEASE_FILES[@]}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -321,14 +364,24 @@ jobs:
             echo
             echo "Source commit: \`${GITHUB_SHA}\`"
             echo
+            if [ "${{ inputs.release_channel || 'stable' }}" = "transition" ]; then
+              echo "This is a short transition release, not an LTS/LSTC release."
+              echo
+            fi
             echo "### Windows no-proxy download"
             echo
             echo "[Download Windows x64 installer from the Otto mirror](${UPDATE_MIRROR_ASSET_BASE_URL}/Otto-Setup-${VERSION}-win-x64.exe)"
             echo
             echo "SHA256: \`${INSTALLER_SHA}\`"
             echo
-            echo "Windows Authenticode and macOS Developer ID/notarization are mandatory release gates."
-            echo "The release workflow also verifies SHA-256 checksums, SQLCipher provenance and SBOMs, the desktop update manifest, the enterprise Ed25519 package signature, and the License public-key trust anchor."
+            if [ "${{ inputs.unsigned_transition }}" = "true" ]; then
+              echo "This transition release uses unsigned Windows, macOS, and enterprise artifacts. Verify the published SHA-256 values before installation."
+              echo "Unsigned transition artifacts are never permitted for the stable release channel."
+            else
+              echo "Windows Authenticode and macOS Developer ID/notarization are mandatory release gates."
+              echo "The enterprise package is protected by an Ed25519 detached signature."
+            fi
+            echo "The release workflow also verifies SHA-256 checksums, SQLCipher provenance and SBOMs, the desktop update manifest, and the License public-key trust anchor."
             echo
             echo "Desktop installers, update manifest, and enterprise one-click package are attached to this release."
           } > "$NOTES_FILE"
@@ -346,11 +399,13 @@ jobs:
           retention-days: 30
 
       - name: Create draft GitHub release
-        if: github.repository == 'Felix201209/otto'
+        if: github.repository == 'Felix201209/otto' && env.OTTO_RELEASES_TOKEN != ''
         uses: softprops/action-gh-release@v2
+        env:
+          OTTO_RELEASES_TOKEN: ${{ secrets.OTTO_RELEASES_TOKEN }}
         with:
           repository: ${{ env.RELEASES_REPO }}
-          token: ${{ secrets.OTTO_RELEASES_TOKEN }}
+          token: ${{ env.OTTO_RELEASES_TOKEN }}
           tag_name: ${{ steps.version.outputs.tag }}
           name: Otto v${{ steps.version.outputs.version }}
           draft: true
@@ -382,6 +437,7 @@ jobs:
           path: release-download
 
       - name: Require a valid Authenticode chain
+        if: ${{ inputs.unsigned_transition != true }}
         shell: pwsh
         run: |
           $installer = Get-ChildItem -Path release-download -Recurse `
@@ -467,12 +523,19 @@ jobs:
           SIGNATURE="$(find release-download -type f -name 'otto-enterprise-oneclick-v${{ needs.build.outputs.version }}-*.tar.gz.sig' -print -quit)"
           test -n "$ARCHIVE"
           test -n "$CHECKSUM"
-          test -n "$SIGNATURE"
-          cp "$ARCHIVE" "$CHECKSUM" "$SIGNATURE" enterprise-upload/
+          cp "$ARCHIVE" "$CHECKSUM" enterprise-upload/
+          if [ "${{ inputs.unsigned_transition }}" = "true" ]; then
+            test -z "$SIGNATURE"
+          else
+            test -n "$SIGNATURE"
+            cp "$SIGNATURE" enterprise-upload/
+          fi
           cd enterprise-upload
           sha256sum -c ./*.sha256
-          node ../scripts/verify-enterprise-package-signature.mjs \
-            "$(basename "$ARCHIVE")" "$(basename "$SIGNATURE")"
+          if [ "${{ inputs.unsigned_transition }}" != "true" ]; then
+            node ../scripts/verify-enterprise-package-signature.mjs \
+              "$(basename "$ARCHIVE")" "$(basename "$SIGNATURE")"
+          fi
           ls -lh ./*
 
       - name: Configure SSH
@@ -651,6 +714,7 @@ jobs:
 
     steps:
       - name: Publish release after deployments pass
+        if: env.GH_TOKEN != ''
         shell: bash
         run: |
           set -euo pipefail

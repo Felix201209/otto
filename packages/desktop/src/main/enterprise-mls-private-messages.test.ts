@@ -84,6 +84,7 @@ function coordinator(): EnterpriseMlsPrivateMessageCoordinator {
     })),
     acknowledgeReceivedApplication: vi.fn(async () => undefined),
     listActiveConversationPeers: vi.fn(async () => ['bob']),
+    listUnreadConversationPeers: vi.fn(async () => []),
     resetDirectSession: vi.fn(async () => undefined),
   };
 }
@@ -327,6 +328,24 @@ describe('EnterpriseMlsPrivateMessageService', () => {
     await expect(service.reset('alice')).rejects.toThrow(
       'peer account is invalid',
     );
+  });
+  it('does not poll every active peer when the conversation watermarks are unchanged', async () => {
+    const transport = coordinator();
+    vi.mocked(transport.listActiveConversationPeers).mockResolvedValue(
+      Array.from({ length: 100 }, (_, index) => `peer-${index}`),
+    );
+    vi.mocked(transport.listUnreadConversationPeers).mockResolvedValue([]);
+    const service = new EnterpriseMlsPrivateMessageService(
+      transport,
+      history(),
+    );
+
+    await expect(service.listUnread()).resolves.toEqual([]);
+
+    expect(transport.listUnreadConversationPeers).toHaveBeenCalledOnce();
+    expect(transport.listActiveConversationPeers).not.toHaveBeenCalled();
+    expect(transport.establishDirectSession).not.toHaveBeenCalled();
+    expect(transport.poll).not.toHaveBeenCalled();
   });
 });
 

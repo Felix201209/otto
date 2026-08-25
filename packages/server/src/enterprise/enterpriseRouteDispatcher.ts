@@ -27,8 +27,11 @@ import {
 import { handleOrganizationRoute } from '../modules/identity_organization/index.js';
 import { handleGeneralizedParkRoute } from './generalizedParkRoutes.js';
 import { handleHealthRoute } from './healthRoutes.js';
+import { handlePrivateDeploymentBootstrapRoute } from './privateDeploymentBootstrapRoutes.js';
+import type { PrivateDeploymentBootstrapCoordinator } from '../modules/deployment_lifecycle/index.js';
 import { handleLocalAgentRoute } from './localAgentRoutes.js';
 import { handleMemberWorkflowRoute } from './memberWorkflowRoutes.js';
+import { handleModelGatewayRoute } from './modelGatewayRoutes.js';
 import { handleSkillMarketplaceRoute } from './skillMarketplaceRoutes.js';
 import { handleParkResourceRoute } from './parkResourceRoutes.js';
 import { handleParkServicePublicationRoute } from './parkServicePublicationRoutes.js';
@@ -61,10 +64,15 @@ export interface EnterpriseRouteDispatcherDeps {
   smsSender: AuthRouteSmsSender | null;
   repairSmsSender: RepairNotificationSender | null;
   repairFeishuSender: RepairNotificationSender | null;
+  billingFetch: typeof fetch;
   loginRateLimiter: AuthRouteLoginRateLimiter;
   deploymentInfo: EnterpriseRouteDeploymentInfo;
   apiVersion: number;
   capabilities: readonly string[];
+  privateDeploymentBootstrap: Pick<
+    PrivateDeploymentBootstrapCoordinator,
+    'prepare' | 'readiness'
+  >;
   atoaClaims: Map<string, number>;
   atoaClaimTtlMs: number;
   isPublicSimplePark: boolean;
@@ -72,6 +80,7 @@ export interface EnterpriseRouteDispatcherDeps {
   readBody(req: IncomingMessage, maxLength?: number): Promise<Record<string, unknown>>;
   sendJSON(res: ServerResponse, status: number, data: unknown): void;
   extractToken(req: IncomingMessage): string;
+  modelGatewayFetch?: typeof fetch;
   /** CONTROL-12 签名指令队列 HTTP 端点（可选；未启用时为 undefined）。 */
   controlCommandHandle?(
     deps: {
@@ -98,10 +107,12 @@ export async function dispatchEnterpriseRoute({
   smsSender,
   repairSmsSender,
   repairFeishuSender,
+  billingFetch,
   loginRateLimiter,
   deploymentInfo,
   apiVersion,
   capabilities,
+  privateDeploymentBootstrap,
   atoaClaims,
   atoaClaimTtlMs,
   isPublicSimplePark,
@@ -109,6 +120,7 @@ export async function dispatchEnterpriseRoute({
   readBody,
   sendJSON,
   extractToken,
+  modelGatewayFetch,
   controlCommandHandle,
 }: EnterpriseRouteDispatcherDeps): Promise<boolean> {
   // CONTROL-12 签名指令队列端点（配置了 Control 信任根时先于企业路由处理）。
@@ -129,6 +141,20 @@ export async function dispatchEnterpriseRoute({
   }
 
   if (
+    await handlePrivateDeploymentBootstrapRoute({
+      path,
+      method,
+      res,
+      req,
+      readBody,
+      services: privateDeploymentBootstrap,
+      sendJSON,
+    })
+  ) {
+    return true;
+  }
+
+  if (
     handleHealthRoute({
       path,
       method,
@@ -136,6 +162,7 @@ export async function dispatchEnterpriseRoute({
       apiVersion,
       capabilities,
       deploymentInfo,
+      readiness: privateDeploymentBootstrap.readiness,
       sendJSON,
     })
   ) {
@@ -168,9 +195,31 @@ export async function dispatchEnterpriseRoute({
       memberPrincipal: memberAccount
         ? { organizationId: memberAccount.organizationId }
         : null,
+      getRuntimeReadiness: () => ({
+        version: deploymentInfo.version,
+        buildCommit: deploymentInfo.buildCommit,
+        database: db.getDatabaseReadiness(),
+        smsConfigured: Boolean(smsSender),
+      }),
       services: db,
       readBody,
       sendJSON,
+    })
+  ) {
+    return true;
+  }
+
+  if (
+    await handleModelGatewayRoute({
+      path,
+      method,
+      req,
+      res,
+      memberAccount,
+      services: db,
+      readBody,
+      sendJSON,
+      fetchImpl: modelGatewayFetch,
     })
   ) {
     return true;
@@ -349,6 +398,7 @@ export async function dispatchEnterpriseRoute({
       res,
       repairSmsSender,
       repairFeishuSender,
+      billingFetch,
       extractToken,
       readBody,
       sendJSON,

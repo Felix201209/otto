@@ -58,6 +58,7 @@ const MEMBER_ROUTES = new Set([
   '/enterprise/organization/features',
   '/enterprise/presence/heartbeat',
   '/enterprise/organization/sync',
+  '/enterprise/model-gateway/access-token',
   '/enterprise/park/view',
   '/enterprise/park/services/request',
   '/enterprise/messages/unread',
@@ -121,6 +122,7 @@ export function isPublicSimpleParkRoute(
 export function isLicenseMaintenanceRoute(path: string, method?: string): boolean {
   return (
     path === '/enterprise/health' ||
+    path === '/enterprise/bootstrap/prepare' ||
     path === '/enterprise/export' ||
     path === '/enterprise/deployment/status' ||
     path === '/enterprise/deployment/license' ||

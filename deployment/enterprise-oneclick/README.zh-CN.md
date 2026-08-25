@@ -124,6 +124,17 @@ chmod 600 ./enterprise.env
 
 这些可选项留空不会阻止报修记录写入，但对应的外部通知通道不会发送。安装器会把它们写入 `/etc/otto-enterprise/enterprise.env`，不会放进迁移包或日志。
 
+部署中心自动登记为推荐配置：
+
+- `OTTO_CONTROL_URL`：Otto Control 的 HTTPS 地址；
+- `OTTO_CONTROL_TRUST_FILE`：Control 企业初始化指令的独立 Ed25519 公钥数组文件；安装器会复制到 `/etc/otto-enterprise/control-public-keys.json`，不得自动复用 License 发布公钥；
+- `OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE`：部署中心签发的一次性登记密钥文件的绝对路径；
+- `OTTO_DEPLOYMENT_KIND`：发行/部署类型，默认 `self-hosted`。
+
+Control 或云部署编排必须先把密钥写入仓库和镜像构建上下文之外的普通文件（推荐 `/run/otto-enterprise/deployment-enrollment-secret`），文件只能由所有者读取和写入，内容只能是一行 32-512 字符的 base64url token。不要把密钥值写入 `enterprise.env`、shell 参数、cloud-init 日志、容器镜像层或 Git；普通配置中只填写上述文件路径。
+
+安装器通过无符号链接打开方式读取源文件，把规范化后的值暂存于 0700 安装事务目录，并复制到 `otto-enterprise` 服务账号所有的 `/var/lib/otto-enterprise/bootstrap/deployment-enrollment.secret`。父目录权限固定为 0700、秘密文件权限固定为 0600；systemd 仅开放 `/var/lib/otto-enterprise` 写入，因此服务可在成功登记后清空并删除该一次性秘密。成功或失败后都会删除事务目录中的暂存副本；失败时还会删除服务目标副本，不把密钥移入故障诊断目录。最终 `enterprise.env` 只保存 `OTTO_DEPLOYMENT_BOOTSTRAP_SECRET_FILE` 的目标路径。服务器随后自动完成部署身份、License、套餐模块、企业、默认部门、CEO 手机验证码登录身份、模型积分网关、联邦网关、更新通道和遥测配置；桌面客户端只需填写服务器地址，不能读取或提交该密钥。手工离线授权可留空这些字段。
+
 跨私有服务器联邦为可选配置：
 
 - `OTTO_FEDERATION_ENABLED`：仅在已完成 Control 联邦网关注册和验签配置后设为 `1`；
@@ -134,7 +145,14 @@ chmod 600 ./enterprise.env
 
 未启用联邦时应保留 `OTTO_FEDERATION_ENABLED=0`。安装和升级会原样保存上述配置，但不会自动生成签名私钥，也不会绕过 Control 的部署注册与吊销检查。
 
-`OTTO_ENTERPRISE_ADMIN_TOKEN=auto` 会生成不输出到日志的随机平台令牌。迁移库已有管理员账号时不会重建账号；空库会生成一次性管理员密码，安装结束后只写到 `/root/otto-enterprise-bootstrap-*.txt`。
+企业购买 Otto 托管模型时，可配置 `OTTO_EDGE_GATEWAY_URL` 指向 Otto Control 的 HTTPS
+Edge Gateway。企业 Server 使用当前在线 License 租约为已登录账号换取五分钟短令牌，
+桌面端只保存于内存；未授权、租约过期、网关不可达或模型不在策略中均会 fail closed，
+不会回退到其他企业或用户的 API Key。未购买该模块时保持为空，不影响 BYOK 模型。
+
+`OTTO_ENTERPRISE_ADMIN_TOKEN=auto` 会生成不输出到日志的随机平台令牌。迁移库已有管理员账号时不会重建账号；配置 Control 自动开通密钥的空库会直接等待签名指令创建客户企业与 CEO，不生成多余默认组织或本地管理员；只有未配置自动开通的离线空库才会生成一次性管理员密码，安装结束后只写到 `/root/otto-enterprise-bootstrap-*.txt`。
+
+数据库强制使用 SQLCipher。`OTTO_DATABASE_ENCRYPTION_KEY_FILE` 留空时，安装器会生成独立密钥并以 `root:otto-enterprise 0640` 保存到 `/etc/otto-enterprise/database-sqlcipher.key`；也可以提供服务账号可读的外部绝对路径。密钥不会写入数据目录、日志、备份对象或发布包；密钥缺失、不可读或原生产物不匹配时服务拒绝启动。
 
 `external` 表示你自行管理 Nginx/Caddy/负载均衡器。安装器不会验证外置证书、公网 health 或 404 屏蔽规则，完成提示也会明确标为“待外置代理验收”。
 
@@ -200,7 +218,7 @@ curl --fail --show-error \
 - `schemaVersion` 必须与本次 release manifest 的 `database.schemaTo` 一致
 - `db: connected`
 - `sms.configured: true`
-- `capabilities` 同时包含 `personal_enterprise_upgrade`、`direct_messages`、`atoa`、`position_invites`、`park_service_push`、`park_repair_v1`、`data_protection_v1`、`encrypted_attachment_storage_v1`、`encrypted_message_storage_v1`、`signed_telemetry_transport_v1`
+- `capabilities` 同时包含 `personal_enterprise_upgrade`、`direct_messages`、`atoa`、`position_invites`、`park_service_push`、`park_repair_v1`、`data_protection_v1`、`encrypted_attachment_storage_v1`、`encrypted_message_storage_v1`、`signed_telemetry_transport_v1`、`managed_model_gateway_v1`
 
 浏览器验收：
 
@@ -269,11 +287,18 @@ sudo /opt/otto-enterprise/deploy/restore-backup.sh \
   /var/lib/otto-enterprise/backups/otto-enterprise-*.otto-backup
 ```
 
-`OTTO_BACKUP_ENCRYPTION_KEY` 必须由客户和交付方按合同约定离线托管；只剩备份文件但
-丢失该密钥时无法解密。需要异地副本时，将 NFS、对象存储网关或备份卷挂载到
-`/var/backups/otto-enterprise`，再设置
-`OTTO_BACKUP_REPLICA_DIR=/var/backups/otto-enterprise`。异地副本写入后会重新计算
-SHA-256，上传或复制失败不会阻断 Otto 业务，但会进入健康状态告警。
+`OTTO_BACKUP_ENCRYPTION_KEY` 必须由客户和交付方按合同约定托管；只剩备份文件但
+丢失该密钥时无法解密。服务会记录不含密钥材料的 SHA-256 密钥标识。已有备份时若当前
+密钥缺失、被替换或无法解密历史归档，新备份会 fail closed，不会生成新密钥掩盖事故。
+旧部署首次升级时会流式验证最新历史归档，验证成功后才登记密钥标识。
+
+独立恢复副本通过 `OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE` 指向已挂载的密钥托管
+卷或 Secret 文件。该路径必须位于数据目录和所有备份目录之外；挂载缺失时服务拒绝把
+密钥落回本机目录。需要异地副本时，将备份卷挂载到
+`/var/backups/otto-enterprise`，设置
+`OTTO_BACKUP_REPLICA_DIR=/var/backups/otto-enterprise`，并同时配置独立恢复密钥路径。
+异地副本只复制加密归档与元数据，不复制明文密钥；写入后会重新计算 SHA-256。副本或
+密钥托管失败不会中断 Otto 业务，但会进入健康状态告警，管理员页不会显示为完整成功。
 
 高安全部署可以预先创建三个恰好 32 字节的原始密钥文件，并在配置中填写
 `OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE`、`OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE`、

@@ -893,6 +893,53 @@ describe('applyFrame 各帧分支', () => {
       expect(view.result.current.state.lastError).toBe('模型切换失败');
     },
   );
+  it('结果未知后切换模型必须明确确认并回传原请求编号', () => {
+    const { view, push } = setup();
+    push({
+      type: 'sessions_list',
+      payload: { sessions: [makeSession({ sessionId: 's1', model: 'old-model' })] },
+    });
+    push({
+      type: 'models_list',
+      payload: {
+        models: [
+          { id: 'old-model', displayName: '旧模型', provider: 'otto' },
+          { id: 'new-model', displayName: '新模型', provider: 'otto' },
+        ],
+        current: 'old-model',
+      },
+    });
+    const requestId = 'otto-model-00000000-0000-4000-8000-000000000001';
+    push({
+      type: 'error',
+      payload: {
+        sessionId: 's1',
+        code: 'model_outcome_unknown',
+        message: '请求结果未知',
+        modelRequestSafety: {
+          requestId,
+          requestState: 'unknown_outcome',
+          providerRequestId: 'provider-request-123',
+          requiresProviderSwitchConfirmation: true,
+        },
+      },
+    });
+    const confirm = vi.spyOn(window, 'confirm')
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    sendSpy.mockClear();
+
+    act(() => view.result.current.actions.setModel('new-model'));
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(sendSpy).not.toHaveBeenCalled();
+
+    act(() => view.result.current.actions.setModel('new-model'));
+    expect(sendSpy).toHaveBeenCalledWith({
+      type: 'set_model',
+      payload: { sessionId: 's1', model: 'new-model', confirmedUnknownOutcomeRequestId: requestId },
+    });
+  });
+
 
   it('error：写 lastError', () => {
     const { view, push } = setup();
@@ -1014,6 +1061,33 @@ describe('deleteSession / renameSession actions（发帧）', () => {
   });
 });
 
+describe('断线动作保护', () => {
+  it('断线时拒绝工具批准，恢复后要求用户重新确认', () => {
+    const { view, push } = setup();
+    push({
+      type: 'sessions_list',
+      payload: { sessions: [makeSession({ sessionId: 'approval-session' })] },
+    });
+    sendSpy.mockClear();
+
+    act(() => _capturedConnHandler?.(false));
+    expect(view.result.current.state.connection).toBe('disconnected');
+
+    act(() => {
+      view.result.current.actions.respondToolConfirmation(
+        'call-1',
+        'approved',
+      );
+    });
+
+    expect(sendSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'tool_confirmation_response' }),
+    );
+    expect(view.result.current.state.lastError).toBe(
+      '未连接，工具授权未提交；恢复后请重新确认',
+    );
+  });
+});
 describe('目录附件发送', () => {
   it('把 Composer 的目录附件转换成 folder_reference 协议片段', () => {
     const { view, push } = setup();

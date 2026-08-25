@@ -407,6 +407,19 @@ export async function handleCommunicationRoute({
     method === 'GET'
   ) {
     try {
+      if (url.searchParams.get('includeHeads') === '1') {
+        const conversationHeads = db.listMlsInboundConversationHeads({
+          organizationId: memberAccount.organizationId,
+          accountId: memberAccount.id,
+          deviceId: url.searchParams.get('deviceId') || '',
+          afterPeerAccountId:
+            url.searchParams.get('afterPeerAccountId') || undefined,
+          limit: Number(url.searchParams.get('limit') || 100),
+        });
+        res.setHeader('Cache-Control', 'no-store');
+        sendJSON(res, 200, { conversationHeads });
+        return true;
+      }
       const peerAccountIds = db.listMlsInboundConversationPeers({
         organizationId: memberAccount.organizationId,
         accountId: memberAccount.id,

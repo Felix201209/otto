@@ -31,6 +31,12 @@ function routeInput(memberPrincipal: { organizationId: string } | null) {
       url: new URL('https://enterprise.example.test/enterprise/deployment/update-policy'),
       principal: null,
       memberPrincipal,
+      getRuntimeReadiness: () => ({
+        version: '1.10.1',
+        buildCommit: 'a'.repeat(40),
+        database: { ready: true as const, schemaVersion: 22 },
+        smsConfigured: true,
+      }),
       services: { resolveDeploymentUpdatePolicy } as unknown as DeploymentRouteServices,
       readBody,
       sendJSON,
@@ -108,6 +114,12 @@ describe('deployment operations security status route', () => {
         url: new URL('https://enterprise.example.test/enterprise/deployment/status'),
         principal: { organizationId: 'org_1' },
         memberPrincipal: { organizationId: 'org_1' },
+        getRuntimeReadiness: () => ({
+          version: '1.10.1',
+          buildCommit: 'a'.repeat(40),
+          database: { ready: true, schemaVersion: 22 },
+          smsConfigured: true,
+        }),
         services,
         readBody: vi.fn(),
         sendJSON,
@@ -116,6 +128,12 @@ describe('deployment operations security status route', () => {
 
     expect(sendJSON).toHaveBeenCalledWith(res, 200, {
       license: { status: 'active' },
+      runtime: {
+        version: '1.10.1',
+        buildCommit: 'a'.repeat(40),
+        database: { ready: true, schemaVersion: 22 },
+        smsConfigured: true,
+      },
       dataProtection: { backupCount: 2 },
       operationsSecurity,
     });

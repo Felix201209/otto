@@ -8,6 +8,7 @@ import { commercialFeatureForEnterpriseRoute } from './commercialRoutePolicy.js'
 
 describe('commercial enterprise route policy', () => {
   it.each([
+    ['/enterprise/model-gateway/access-token', 'model_gateway'],
     ['/enterprise/atoa/inbox', 'atoa'],
     ['/enterprise/messages/unread', 'direct_messages'],
     ['/enterprise/message-attachments/file-1', 'direct_messages'],
@@ -41,10 +42,27 @@ describe('commercial enterprise route policy', () => {
   });
 
   it('leaves mixed internal and park tickets to record-level policy', () => {
+    expect(commercialFeatureForEnterpriseRoute(
+      '/enterprise/tickets',
+      { ticketServiceId: 'repair' },
+    )).toBe('park_service');
+    expect(commercialFeatureForEnterpriseRoute(
+      '/enterprise/tickets',
+      { ticketServiceId: 'it' },
+    )).toBeNull();
     expect(commercialFeatureForEnterpriseRoute('/enterprise/tickets')).toBeNull();
     expect(
       commercialFeatureForEnterpriseRoute('/enterprise/tickets/ticket-1/action'),
     ).toBeNull();
+  });
+
+  it('separates A2A federation grants from direct-message federation routes', () => {
+    expect(commercialFeatureForEnterpriseRoute(
+      '/enterprise/federation/a2a/grants/grant-1/consume',
+    )).toBe('atoa');
+    expect(commercialFeatureForEnterpriseRoute(
+      '/enterprise/federation/messages/pull',
+    )).toBe('direct_messages');
   });
 
   it('does not match similar unowned path prefixes', () => {

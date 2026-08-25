@@ -43,6 +43,7 @@ import {
 import {
   ENTERPRISE_MLS_CIPHERSUITE,
   enterpriseMlsDirectConversationId,
+  parseEnterpriseMlsInboundConversationHeadPage,
   parseEnterpriseMlsInboundConversationPeerPage,
   parseEnterpriseMlsAttachmentSession,
   parseEnterpriseMlsKeyPackageInventory,
@@ -50,6 +51,7 @@ import {
   parseEnterpriseMlsTransportEvent,
   type EnterpriseMlsAppendTransportEventInput,
   type EnterpriseMlsAttachmentSession,
+  type EnterpriseMlsInboundConversationHead,
   type EnterpriseMlsKeyPackageInventory,
   type EnterpriseMlsPublishedKeyPackage,
   type EnterpriseMlsTransportEvent,
@@ -174,6 +176,13 @@ export interface TokenUsageRecordInput {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+}
+
+export interface ManagedModelGatewayAccess {
+  baseUrl: string;
+  accessToken: string;
+  expiresAt: string;
+  allowedModels: string[];
 }
 
 export interface EnterpriseKnowledgeRecordInput {
@@ -1047,6 +1056,51 @@ interface EnterpriseServerHealth {
   capabilities?: unknown;
 }
 
+export type EnterprisePrivateDeploymentStepId =
+  | 'deployment_identity'
+  | 'license'
+  | 'modules'
+  | 'model_and_credits'
+  | 'storage'
+  | 'federation'
+  | 'updates'
+  | 'telemetry'
+  | 'account_identity';
+
+export interface EnterprisePrivateDeploymentReadiness {
+  state:
+    | 'ready'
+    | 'ready_for_identity'
+    | 'configuring'
+    | 'degraded'
+    | 'blocked';
+  canAuthenticate: boolean;
+  canUseLicensedFeatures: boolean;
+  bootstrap: {
+    phase: 'idle' | 'not_configured' | 'claiming' | 'activated' | 'failed';
+    lastAttemptAt: string | null;
+    lastSuccessAt: string | null;
+    errorCode: string | null;
+  };
+  steps: Array<{
+    id: EnterprisePrivateDeploymentStepId;
+    state:
+      | 'ready'
+      | 'configuring'
+      | 'waiting_for_user'
+      | 'action_required'
+      | 'disabled';
+    required: boolean;
+    message: string;
+  }>;
+}
+
+export interface EnterpriseServerPreparationResult {
+  serverUrl: string;
+  legacy: boolean;
+  readiness: EnterprisePrivateDeploymentReadiness | null;
+}
+
 interface EnterpriseRequestBehavior {
   omitAuthorization?: boolean;
   preserveSessionOnUnauthorized?: boolean;
@@ -1184,6 +1238,7 @@ function e2eeProtocolMetadata(content: string): {
         return {
           contentType: 'atoa_response',
           inReplyToMessageId: (parsed as Record<string, string>).requestId,
+
         };
       }
     } catch {
@@ -1227,6 +1282,61 @@ export class EnterpriseClient {
 
   snapshot(): StoredSession {
     return { serverUrl: this.serverUrl, token: this.token };
+  }
+
+  async prepareServer(
+    serverUrl: string,
+  ): Promise<EnterpriseServerPreparationResult> {
+    const targetServerUrl = normalizeServerUrl(serverUrl);
+    const generation = this.beginAuthOperation(targetServerUrl);
+    const health = await this.request<EnterpriseServerHealth>(
+      '/enterprise/health',
+      {},
+      {
+        omitAuthorization: true,
+        preserveSessionOnUnauthorized: true,
+        serverUrl: targetServerUrl,
+        authorizationToken: null,
+      },
+    );
+    this.assertAuthOperationCurrent(generation, targetServerUrl);
+    const capabilities =
+      Array.isArray(health.capabilities) &&
+      health.capabilities.every((item) => typeof item === 'string')
+        ? new Set(health.capabilities as string[])
+        : null;
+    if (
+      health.status !== 'ok' ||
+      typeof health.apiVersion !== 'number' ||
+      health.apiVersion < 2 ||
+      capabilities === null
+    ) {
+      throw new Error(ENTERPRISE_SERVER_UPGRADE_ERROR);
+    }
+    this.compatibleServerUrl = targetServerUrl;
+    this.compatibleCapabilities = capabilities;
+    if (!capabilities.has('private_deployment_bootstrap_v1')) {
+      return { serverUrl: targetServerUrl, legacy: true, readiness: null };
+    }
+    const result = await this.request<{
+      readiness: EnterprisePrivateDeploymentReadiness;
+    }>(
+      '/enterprise/bootstrap/prepare',
+      { method: 'POST', body: '{}' },
+      {
+        omitAuthorization: true,
+        preserveSessionOnUnauthorized: true,
+        serverUrl: targetServerUrl,
+        authorizationToken: null,
+        timeoutMs: 30_000,
+      },
+    );
+    this.assertAuthOperationCurrent(generation, targetServerUrl);
+    return {
+      serverUrl: targetServerUrl,
+      legacy: false,
+      readiness: result.readiness,
+    };
   }
 
   supportsMlsPrivateMessages(): boolean {
@@ -1536,6 +1646,76 @@ export class EnterpriseClient {
       throw new Error('enterprise MLS inbound conversation limit exceeded');
     }
     return peerAccountIds;
+  }
+
+  async listMlsInboundConversationHeads(
+    deviceId: string,
+  ): Promise<EnterpriseMlsInboundConversationHead[] | null> {
+    const account = await this.requireMlsTransportAccount();
+    const pageLimit = 500;
+    const maximumPeers = 1_000;
+    const conversationHeads: EnterpriseMlsInboundConversationHead[] = [];
+    let afterPeerAccountId = '';
+    while (conversationHeads.length < maximumPeers) {
+      const query = new URLSearchParams({
+        deviceId,
+        limit: String(pageLimit),
+        includeHeads: '1',
+      });
+      if (afterPeerAccountId) {
+        query.set('afterPeerAccountId', afterPeerAccountId);
+      }
+      const response = await this.request<{
+        conversationHeads?: unknown;
+        peerAccountIds?: unknown;
+      }>(
+        `/enterprise/e2ee/mls/inbound-conversations?${query.toString()}`,
+      );
+      if (
+        !Object.prototype.hasOwnProperty.call(response, 'conversationHeads')
+      ) {
+        const legacyPeers = parseEnterpriseMlsInboundConversationPeerPage(
+          response.peerAccountIds,
+          afterPeerAccountId,
+        );
+        if (legacyPeers.some((peerAccountId) => peerAccountId === account.id)) {
+          throw new Error(
+            'enterprise MLS inbound conversation binding is invalid',
+          );
+        }
+        return null;
+      }
+      const page = parseEnterpriseMlsInboundConversationHeadPage(
+        response.conversationHeads,
+        afterPeerAccountId,
+      );
+      if (page.some((head) => head.peerAccountId === account.id)) {
+        throw new Error(
+          'enterprise MLS inbound conversation binding is invalid',
+        );
+      }
+      conversationHeads.push(...page);
+      if (page.length < pageLimit) return conversationHeads;
+      afterPeerAccountId = page.at(-1)!.peerAccountId;
+    }
+    const overflowQuery = new URLSearchParams({
+      deviceId,
+      afterPeerAccountId,
+      limit: '1',
+      includeHeads: '1',
+    });
+    const overflow = await this.request<{ conversationHeads: unknown }>(
+      `/enterprise/e2ee/mls/inbound-conversations?${overflowQuery.toString()}`,
+    );
+    if (
+      parseEnterpriseMlsInboundConversationHeadPage(
+        overflow.conversationHeads,
+        afterPeerAccountId,
+      ).length > 0
+    ) {
+      throw new Error('enterprise MLS inbound conversation limit exceeded');
+    }
+    return conversationHeads;
   }
 
   async getMlsAttachmentSession(
@@ -1951,6 +2131,64 @@ export class EnterpriseClient {
     return this.currentAccount
       ? (JSON.parse(JSON.stringify(this.currentAccount)) as EnterpriseAccount)
       : null;
+  }
+
+  /**
+   * 取得绑定当前企业账号的短期 Edge 凭据。Control 与企业服务器只参与换取
+   * 凭据，不接收聊天正文；企业登录 token 不会离开 Electron main。
+   */
+  async getManagedModelGatewayAccess(): Promise<ManagedModelGatewayAccess> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, [
+      'managed_model_gateway_v1',
+    ]);
+    const response = await this.request<{
+      gateway?: Partial<ManagedModelGatewayAccess>;
+    }>('/enterprise/model-gateway/access-token', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    const gateway = response.gateway;
+    const expiresAtMs = Date.parse(gateway?.expiresAt ?? '');
+    if (
+      typeof gateway?.baseUrl !== 'string' ||
+      typeof gateway.accessToken !== 'string' ||
+      gateway.accessToken.length < 32 ||
+      !Number.isFinite(expiresAtMs) ||
+      expiresAtMs <= Date.now() ||
+      !Array.isArray(gateway.allowedModels) ||
+      gateway.allowedModels.length < 1 ||
+      gateway.allowedModels.some(
+        (model) => typeof model !== 'string' || !model.startsWith('otto:'),
+      )
+    ) {
+      throw new Error('企业模型网关返回了无效的短期凭据');
+    }
+    let endpoint: URL;
+    try {
+      endpoint = new URL(gateway.baseUrl);
+    } catch {
+      throw new Error('企业模型网关地址无效');
+    }
+    const loopback =
+      endpoint.protocol === 'http:' &&
+      ['127.0.0.1', '::1', 'localhost'].includes(endpoint.hostname);
+    if (
+      (endpoint.protocol !== 'https:' && !loopback) ||
+      endpoint.username ||
+      endpoint.password ||
+      endpoint.search ||
+      endpoint.hash ||
+      !/^\/v1\/?$/u.test(endpoint.pathname)
+    ) {
+      throw new Error('企业模型网关地址不符合安全要求');
+    }
+    return {
+      baseUrl: `${endpoint.origin}/v1`,
+      accessToken: gateway.accessToken,
+      expiresAt: new Date(expiresAtMs).toISOString(),
+      allowedModels: [...new Set(gateway.allowedModels)],
+    };
   }
 
   private async request<T>(

@@ -731,6 +731,7 @@ describe('受保护 vs 公开路由边界', () => {
       'park_service_statistics_v1',
       'account_data_sync_v1',
       'private_deployment_v1',
+      'private_deployment_bootstrap_v1',
       'license_enforcement_v1',
       'encrypted_telemetry_queue_v1',
       'signed_telemetry_transport_v1',
@@ -739,6 +740,56 @@ describe('受保护 vs 公开路由边界', () => {
       'encrypted_attachment_storage_v1',
       'encrypted_message_storage_v1',
     ]));
+    expect(body.readiness).toMatchObject({
+      state: expect.any(String),
+      canAuthenticate: expect.any(Boolean),
+      steps: expect.any(Array),
+    });
+  }, 15_000);
+
+  it('部署准备接口只触发服务端协调器，不接收或回显客户端密钥', async () => {
+    const readiness = {
+      state: 'ready_for_identity' as const,
+      canAuthenticate: true,
+      canUseLicensedFeatures: true,
+      bootstrap: {
+        phase: 'activated' as const,
+        lastAttemptAt: '2026-08-21T00:00:00.000Z',
+        lastSuccessAt: '2026-08-21T00:00:01.000Z',
+        errorCode: null,
+      },
+      steps: [
+        {
+          id: 'account_identity' as const,
+          state: 'waiting_for_user' as const,
+          required: true,
+          message: '服务器已就绪，请登录',
+        },
+      ],
+    };
+    const prepare = vi.fn(async () => readiness);
+    const { base } = await startIsolated(ADMIN_TOKEN, null, {
+      privateDeploymentBootstrapCoordinator: {
+        prepare,
+        readiness: () => readiness,
+        snapshot: () => readiness.bootstrap,
+      },
+    });
+
+    const response = await fetch(`${base}/enterprise/bootstrap/prepare`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        bootstrapSecret: 'client-must-not-control-this-value',
+        organizationId: 'forged-organization',
+      }),
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(body).toEqual({ readiness });
+    expect(JSON.stringify(body)).not.toContain('client-must-not-control');
+    expect(JSON.stringify(body)).not.toContain('forged-organization');
   }, 15_000);
 
   it('private deployment license enforcement keeps only maintenance routes open', async () => {
@@ -771,6 +822,10 @@ describe('受保护 vs 公开路由边界', () => {
         includesMeetingAudio: false,
       },
       dataProtection: { enabled: true, retentionDays: 30, minimumRetained: 3 },
+      runtime: {
+        database: { ready: true, schemaVersion: 23 },
+        smsConfigured: false,
+      },
     });
 
     const backup = await fetch(
@@ -781,7 +836,7 @@ describe('受保护 vs 公开路由边界', () => {
     await expect(backup.json()).resolves.toMatchObject({
       lastError: null,
       backupCount: 1,
-      latestSchemaVersion: 22,
+      latestSchemaVersion: 23,
     });
 
     const telemetry = await fetch(`${base}/enterprise/deployment/telemetry`, {
@@ -883,10 +938,49 @@ describe('受保护 vs 公开路由边界', () => {
       feature: 'park_service',
     });
 
+    const blockedManagedModels = await fetch(
+      `${base}/enterprise/model-gateway/access-token`,
+      {
+        method: 'POST',
+        headers: { ...memberHeaders, 'content-type': 'application/json' },
+        body: '{}',
+      },
+    );
+    expect(blockedManagedModels.status).toBe(402);
+    await expect(blockedManagedModels.json()).resolves.toEqual({
+      error: 'commercial module is not entitled',
+      code: 'commercial_module_not_entitled',
+      feature: 'model_gateway',
+    });
+
     const entitledMessages = await fetch(`${base}/enterprise/messages/unread`, {
       headers: memberHeaders,
     });
     expect(entitledMessages.status).toBe(200);
+
+    const crossOrganizationMember = db.createAccount({
+      organizationId: org.id,
+      username: 'cross-organization-route-member',
+      password: 'cross-organization-route-password',
+      name: 'Cross Organization Route Member',
+    });
+    const crossOrganizationToken = db.createAuthSession(
+      crossOrganizationMember.id,
+    ).token;
+    const crossOrganizationMessages = await fetch(
+      `${base}/enterprise/messages/unread`,
+      {
+        headers: {
+          authorization: `Bearer ${crossOrganizationToken}`,
+        },
+      },
+    );
+    expect(crossOrganizationMessages.status).toBe(402);
+    await expect(crossOrganizationMessages.json()).resolves.toEqual({
+      error: 'commercial module is not entitled',
+      code: 'commercial_module_not_entitled',
+      feature: 'direct_messages',
+    });
 
     const internalTicket = await fetch(`${base}/enterprise/tickets`, {
       method: 'POST',
@@ -1048,9 +1142,13 @@ describe('受保护 vs 公开路由边界', () => {
     expect(db.getKnowledge(undefined, undefined, 'org_default')).toHaveLength(0);
 
     const replay = await request('knowledge:e2e:2');
-    expect(replay.status).toBe(200);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(replay.status).toBe(409);
+    await expect(replay.json()).resolves.toMatchObject({
+      code: 'billing_operation_replayed',
+      module: 'enterprise_knowledge',
+    });
     expect(billingCalls.filter((url) => url.endsWith('/capture'))).toHaveLength(1);
+    expect(billingCalls.filter((url) => url.endsWith('/holds'))).toHaveLength(2);
   }, 60_000);
 
   it('admin publishes modular updates without exposing deployment details in public health', async () => {
@@ -2579,6 +2677,17 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         })
       ).status,
     ).toBe(201);
+    const inboundHeads = await fetch(
+      `${base}/enterprise/e2ee/mls/inbound-conversations?deviceId=${encodeURIComponent(bobDevice.deviceId)}&limit=100&includeHeads=1`,
+      { headers: { authorization: `Bearer ${bobToken}` } },
+    );
+    expect(inboundHeads.status).toBe(200);
+    expect(inboundHeads.headers.get('cache-control')).toBe('no-store');
+    await expect(inboundHeads.json()).resolves.toEqual({
+      conversationHeads: [
+        { peerAccountId: alice.id, latestSequence: 3 },
+      ],
+    });
     const nextGroupId = opaque('next');
     expect(
       (

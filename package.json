@@ -1,6 +1,6 @@
 {
   "name": "otto-ai",
-  "version": "1.10.1",
+  "version": "1.9.13",
   "engines": {
     "node": ">=22.16.0"
   },
@@ -114,7 +114,7 @@
     "cli-progress": "^3.12.0",
     "concurrently": "^9.2.0",
     "cross-env": "^7.0.3",
-    "electron": "^43.1.0",
+    "electron": "43.2.0",
     "esbuild": "^0.25.0",
     "eslint": "^9.24.0",
     "eslint-config-prettier": "^10.1.2",
