@@ -20,7 +20,7 @@ import type { CentralEnterpriseRole } from '../state/centralEnterpriseIdentity.j
 import { getEnterpriseOrganizationFeatures } from '../state/enterpriseOrganizationFeatures.js';
 import { IconChevron, IconChevronDown } from './icons.js';
 
-type TabType = 'agents' | 'memory' | 'worklog';
+type TabType = 'agents' | 'memory';
 type KnowledgeView = 'knowledge' | 'timeline';
 
 // server 构建产物更新前也保持 renderer 可独立 typecheck；字段由当前协议快照提供。
@@ -69,13 +69,11 @@ interface EnterpriseKnowledgeRevision {
 const TAB_LABEL: Record<TabType, string> = {
   agents: '专家',
   memory: '企业记忆',
-  worklog: '工作日志',
 };
 
 const TAB_ARIA_LABEL: Record<TabType, string> = {
   agents: '专家',
   memory: '企业记忆',
-  worklog: '工作日志',
 };
 
 function formatEnterpriseMemoryDate(value: string): string {
@@ -104,7 +102,6 @@ export interface RightPanelProps {
   onDeleteCustomAgent?: (agentId: string) => void;
   onOpenAgents?: () => void;
   onOpenSkillZone?: () => void;
-  onSelectDate?: (date: string) => void;
   onOpenOrganization?: () => void;
   onAddFriend?: (name: string, note?: string) => void;
   autoSkillCandidates?: AutoSkillCandidateInfo[];
@@ -142,7 +139,6 @@ export function RightPanel({
   onDeleteCustomAgent = () => undefined,
   onOpenAgents = () => undefined,
   onOpenSkillZone = () => undefined,
-  onSelectDate = () => undefined,
   onOpenOrganization = () => undefined,
   onAddFriend = () => undefined,
   autoSkillCandidates = [],
@@ -163,12 +159,11 @@ export function RightPanel({
   const [enterpriseSkillMarketEnabled, setEnterpriseSkillMarketEnabled] = useState(false);
   const tabs = useMemo<TabType[]>(
     () => mode === 'enterprise' && enterpriseKnowledgeEnabled
-      ? ['agents', 'memory', 'worklog']
-      : ['agents', 'worklog'],
+      ? ['agents', 'memory']
+      : ['agents'],
     [enterpriseKnowledgeEnabled, mode],
   );
   const [activeTab, setActiveTab] = useState<TabType>('agents');
-  const [collapsed, setCollapsed] = useState(false);
   const [parkOpen, setParkOpen] = useState(true);
   const [developmentOpen, setDevelopmentOpen] = useState(true);
   const [createAgentOpen, setCreateAgentOpen] = useState(false);
@@ -180,16 +175,6 @@ export function RightPanel({
   const [collabTab, setCollabTab] = useState<'company' | 'friends'>('company');
   const [friendName, setFriendName] = useState('');
   const [friendNote, setFriendNote] = useState('');
-  const [workSummary, setWorkSummary] = useState<{
-    summary: string;
-    date: string;
-    totalActions: number;
-    workResults: number;
-  } | null>(null);
-  const [worklogDays, setWorklogDays] = useState<WorkLogDay[]>([]);
-  const [worklogLoading, setWorklogLoading] = useState(false);
-  const [workReportMessage, setWorkReportMessage] = useState('');
-  const [workReportPath, setWorkReportPath] = useState('');
   const [knowledgeItems, setKnowledgeItems] = useState<EnterpriseKnowledgeItem[]>([]);
   const [knowledgeView, setKnowledgeView] = useState<KnowledgeView>('knowledge');
   const [knowledgeLoading, setKnowledgeLoading] = useState(false);
@@ -247,22 +232,6 @@ export function RightPanel({
   useEffect(() => {
     if (!tabs.includes(activeTab)) setActiveTab('agents');
   }, [activeTab, tabs]);
-
-  const refreshWorkLog = useCallback(async (): Promise<void> => {
-    setWorklogLoading(true);
-    try {
-      const [today, days] = await Promise.all([
-        window.otto.workLogToday(),
-        window.otto.workLogRecent(92),
-      ]);
-      setWorkSummary(today);
-      setWorklogDays(days);
-    } catch {
-      // 工作日志不可用不影响其它右栏功能；保留上一次成功数据。
-    } finally {
-      setWorklogLoading(false);
-    }
-  }, []);
 
   const refreshEnterpriseKnowledge = useCallback(async (): Promise<void> => {
     if (mode !== 'enterprise' || !enterpriseOrganizationId) return;
@@ -429,10 +398,6 @@ export function RightPanel({
   }, [knowledgeRevisions]);
 
   useEffect(() => {
-    if (activeTab === 'worklog') void refreshWorkLog();
-  }, [activeTab, refreshWorkLog]);
-
-  useEffect(() => {
     if (activeTab === 'memory' && enterpriseKnowledgeEnabled) void refreshEnterpriseKnowledge();
   }, [activeTab, enterpriseKnowledgeEnabled, refreshEnterpriseKnowledge]);
 
@@ -491,12 +456,6 @@ export function RightPanel({
       knowledgeRevisions,
     ]);
 
-  const worklogByDate = useMemo(
-    () => Object.fromEntries(worklogDays.map((day) => [day.date, day.entries])),
-    [worklogDays],
-  );
-  const todayEntries = workSummary ? worklogByDate[workSummary.date] ?? [] : [];
-  const todayResults = todayEntries.filter((entry) => entry.entryType === 'work_result');
   const closeCreateAgent = (): void => {
     if (customAgentBusy) return;
     setCreateAgentOpen(false);
@@ -527,34 +486,11 @@ export function RightPanel({
     }
   };
 
-  if (collapsed && presentation === 'panel') {
-    return (
-      <aside
-        className="otto-right-panel otto-right-panel--collapsed"
-        aria-label="右侧功能栏（已折叠）"
-        aria-busy={busy}
-      >
-        <button type="button" className="otto-right-panel__edge" onClick={() => setCollapsed(false)} aria-label="展开右侧功能栏">
-          ‹
-        </button>
-        {tabs.map((tab) => (
-          <button key={tab} type="button" className={`otto-right-panel__railitem${tab === 'agents' && parkTicketUnreadCount > 0 ? ' has-unread' : ''}`} onClick={() => { setActiveTab(tab); setCollapsed(false); }} title={TAB_LABEL[tab] + (tab === 'agents' && parkTicketUnreadCount > 0 ? ` · ${parkTicketUnreadCount} 条未读` : '')}>
-            {TAB_LABEL[tab].slice(0, 1)}
-            {tab === 'agents' && parkTicketUnreadCount > 0 ? <span className="otto-right-panel__rail-badge" aria-label={`${parkTicketUnreadCount} 条未读`} /> : null}
-          </button>
-        ))}
-      </aside>
-    );
-  }
-
   return (
     <aside
       className={`otto-right-panel otto-right-panel--${presentation}`}
       aria-busy={busy}
     >
-      {presentation === 'panel' ? (
-        <button type="button" className="otto-right-panel__edge" onClick={() => setCollapsed(true)} aria-label="折叠右侧功能栏">›</button>
-      ) : null}
       <div className="otto-right-panel__tabs" role="tablist" aria-label="右侧面板">
         {tabs.map((tab) => (
           <button key={tab} type="button" role="tab" aria-label={TAB_ARIA_LABEL[tab]} aria-selected={activeTab === tab} className={`otto-right-panel__tab${activeTab === tab ? ' is-active' : ''}`} onClick={() => setActiveTab(tab)}>
@@ -773,7 +709,7 @@ export function RightPanel({
 
         {activeTab === 'memory' && enterpriseKnowledgeEnabled ? (
           <div>
-            <div className="otto-worklog-panel__head">
+            <div className="otto-enterprise-memory-head">
               <div>
                 <strong>{knowledgeView === 'knowledge' ? '企业知识' : '企业记忆沿革'}</strong>
                 <span>{knowledgeView === 'knowledge'
@@ -1010,55 +946,6 @@ export function RightPanel({
           </div>
         ) : null}
 
-
-        {activeTab === 'worklog' ? (
-          <div className="otto-worklog-panel">
-            <div className="otto-worklog-panel__head">
-              <div><strong>我的工作成果</strong><span>完成一轮工作后自动归纳</span></div>
-              <button type="button" disabled={worklogLoading} onClick={() => void refreshWorkLog()}>
-                {worklogLoading ? '更新中…' : '刷新'}
-              </button>
-            </div>
-
-            <div className="otto-worklog-panel__hero">
-              <div><strong>{workSummary?.workResults ?? 0}</strong><span>项成果</span></div>
-              <p>{todayResults.length > 0 ? `今天已完成 ${todayResults.map((item) => item.taskTitle || item.action).slice(0, 2).join('、')}` : '今天完成的报告、方案和任务会自动出现在这里。'}</p>
-            </div>
-
-            {todayResults.length > 0 ? (
-              <div className="otto-worklog-panel__results">
-                {todayResults.slice(0, 4).map((entry, index) => (
-                  <article key={`${entry.time}-${index}`}>
-                    <span className="otto-worklog-panel__result-dot" aria-hidden />
-                    <div><strong>完成 · {entry.taskTitle || entry.action}</strong><small>{entry.time}{entry.details ? ` · ${entry.details.replace(/\s+/g, ' ').slice(0, 76)}` : ''}</small></div>
-                  </article>
-                ))}
-              </div>
-            ) : null}
-
-            <div className="otto-worklog-panel__actions">
-              <button type="button" className="is-primary" onClick={async () => {
-                try {
-                  const report = await window.otto.workLogReport();
-                  setWorkReportPath(report.ok ? report.path : '');
-                  setWorkReportMessage(report.message);
-                } catch { /* 保留 */ }
-              }}>生成今日总结</button>
-              {workReportPath ? <button type="button" onClick={() => void window.otto.openPath(workReportPath)}>打开总结</button> : null}
-            </div>
-            <WorkLogCalendar onSelectDate={onSelectDate} byDate={worklogByDate} />
-            <div className="otto-worklog-panel__tip">悬浮日期看当天成果；点击日期进入日程与工作详情。</div>
-            {workReportMessage ? (
-              <div className="otto-worklog-panel__summary">{workReportMessage}</div>
-            ) : null}
-            {workSummary ? (
-              <details className="otto-worklog-panel__details">
-                <summary>查看执行明细</summary>
-                <pre>{workSummary.summary}</pre>
-              </details>
-            ) : null}
-          </div>
-        ) : null}
       </div>
 
       {createAgentOpen ? (
@@ -1165,10 +1052,6 @@ export function RightPanel({
   );
 }
 
-function dateKey(year: number, month: number, day: number): string {
-  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-}
-
 interface WorkLogEntry {
   time: string;
   category: string;
@@ -1177,96 +1060,4 @@ interface WorkLogEntry {
   details?: string;
   entryType: 'tool' | 'work_result';
   taskTitle?: string;
-}
-
-interface WorkLogDay {
-  date: string;
-  entries: WorkLogEntry[];
-}
-
-function WorkLogCalendar({
-  onSelectDate,
-  byDate,
-}: {
-  onSelectDate: (date: string) => void;
-  byDate: Record<string, WorkLogEntry[]>;
-}): React.JSX.Element {
-  const [visibleMonth, setVisibleMonth] = useState(() => {
-    const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), 1);
-  });
-  const year = visibleMonth.getFullYear();
-  const month = visibleMonth.getMonth();
-  const days = new Date(year, month + 1, 0).getDate();
-  const firstWeekday = (new Date(year, month, 1).getDay() + 6) % 7;
-  const todayKey = dateKey(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
-
-  return (
-    <div className="otto-wcal">
-      <div className="otto-wcal__title">
-        <button type="button" onClick={() => setVisibleMonth(new Date(year, month - 1, 1))} aria-label="上个月">‹</button>
-        <span>{year} 年 {month + 1} 月</span>
-        <button type="button" onClick={() => setVisibleMonth(new Date(year, month + 1, 1))} aria-label="下个月">›</button>
-      </div>
-      <div className="otto-wcal__grid">
-        {['一', '二', '三', '四', '五', '六', '日'].map((weekday) => <div key={weekday} className="otto-wcal__weekday">{weekday}</div>)}
-        {Array.from({ length: firstWeekday }, (_, index) => <div key={`pad-${index}`} />)}
-        {Array.from({ length: days }, (_, index) => {
-          const day = index + 1;
-          const key = dateKey(year, month, day);
-          const entries = byDate[key] ?? [];
-          const weekdayColumn = (firstWeekday + index) % 7;
-          const orderedEntries = [...entries].sort((left, right) =>
-            left.entryType === right.entryType ? 0 : left.entryType === 'work_result' ? -1 : 1,
-          );
-          return (
-            <button
-              key={key}
-              type="button"
-              className={
-                'otto-wcal__day'
-                + (entries.length ? ' has-log' : '')
-                + (key === todayKey ? ' is-today' : '')
-                + ` is-pop-col-${weekdayColumn}`
-                + (weekdayColumn <= 2 ? ' is-pop-left' : '')
-                + (weekdayColumn >= 4 ? ' is-pop-right' : '')
-              }
-              onClick={() => onSelectDate(key)}
-              title={entries.length
-                ? entries.map((entry) => `• ${entry.time} ${entry.action}`).join('\n')
-                : '点击查看/新增当日日程'}
-            >
-              {day}{entries.length ? <span className="otto-wcal__dot" /> : null}
-              {entries.length ? (
-                <span className="otto-wcal__pop" role="tooltip">
-                  <span className="otto-wcal__pop-title">
-                    {month + 1} 月 {day} 日 · {entries.length} 条
-                  </span>
-                  {orderedEntries.slice(0, 12).map((entry, entryIndex) => (
-                    <span className="otto-wcal__pop-item" key={`${entry.time}-${entryIndex}`}>
-                      <span className="otto-wcal__pop-time">{entry.time}</span>
-                      <span className="otto-wcal__pop-copy">
-                        <span className="otto-wcal__pop-action">
-                          • {entry.entryType === 'work_result' ? '完成' : entry.category} · {entry.action}
-                          {entry.success ? '' : '（失败）'}
-                        </span>
-                        {entry.details ? (
-                          <span className="otto-wcal__pop-detail">
-                            {entry.details.replace(/\s+/g, ' ').slice(0, 140)}
-                          </span>
-                        ) : null}
-                      </span>
-                    </span>
-                  ))}
-                  {entries.length > 12 ? (
-                    <span className="otto-wcal__pop-more">…还有 {entries.length - 12} 条</span>
-                  ) : null}
-                </span>
-              ) : null}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
 }

@@ -47,8 +47,6 @@ function installBridge(
   skillMarketEnabled = false,
 ) {
   const pending = new Promise<never>(() => undefined);
-  const openPath = vi.fn(async () => undefined);
-  const saveTextFile = vi.fn(async () => '/tmp/edited-worklog.md');
   const enterpriseKnowledgeList = vi.fn(async (): Promise<unknown[]> => []);
   const enterpriseKnowledgeRecord = vi.fn(async () => ({
     status: 'added' as const,
@@ -73,37 +71,17 @@ function installBridge(
       ? Promise.resolve(organizationFeatures)
       : pending,
   );
-  const workLogReport = vi.fn(async () => ({
-    ok: true,
-    date: '2026-07-10',
-    title: '市场竞品调研报告',
-    markdown: '# 市场竞品调研报告\n\n已完成对比。',
-    path: '/tmp/2026-07-10-市场竞品调研报告.md',
-    message: '已生成并保存「市场竞品调研报告」',
-  }));
   (window as unknown as { otto: unknown }).otto = {
     parkConfig: () => pending,
     workLogRecent: typeof recent === 'function' ? recent : async () => recent,
-    workLogToday: async () => ({
-      summary: '今天还没有工作记录。',
-      date: '2026-07-10',
-      totalActions: 0,
-      workResults: 0,
-    }),
     enterpriseKnowledgeList,
     enterpriseKnowledgeRecord,
     enterpriseKnowledgeReview,
     enterpriseKnowledgeRevise,
     enterpriseKnowledgeRevisions,
     enterpriseOrganizationFeaturesGet,
-    workLogReport,
-    openPath,
-    saveTextFile,
   };
   return {
-    openPath,
-    saveTextFile,
-    workLogReport,
     enterpriseKnowledgeList,
     enterpriseKnowledgeRecord,
     enterpriseKnowledgeReview,
@@ -316,57 +294,6 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(container.querySelectorAll('.otto-profile-card')).toHaveLength(9);
   });
 
-  it('keeps worklog popovers inside the panel on the left and right calendar edges', async () => {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth();
-    const firstWeekday = (new Date(year, month, 1).getDay() + 6) % 7;
-    const mondayDay = 1 + ((7 - firstWeekday) % 7);
-    const sundayDay = 1 + ((6 - firstWeekday + 7) % 7);
-    const keyFor = (day: number): string =>
-      `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-
-    installBridge(async () => [
-      {
-        date: keyFor(mondayDay),
-        entries: [{
-          time: '09:00',
-          category: 'test',
-          action: '左侧成果',
-          success: true,
-          entryType: 'work_result',
-        }],
-      },
-      {
-        date: keyFor(sundayDay),
-        entries: [{
-          time: '18:00',
-          category: 'test',
-          action: '右侧成果',
-          success: true,
-          entryType: 'work_result',
-        }],
-      },
-    ]);
-
-    const { container } = render(<RightPanel busy={false} />);
-    fireEvent.click(screen.getByRole('tab', { name: '工作日志' }));
-
-    await waitFor(() => {
-      expect(container.querySelector('button[title*="左侧成果"]')).toBeTruthy();
-      expect(container.querySelector('button[title*="右侧成果"]')).toBeTruthy();
-    });
-
-    expect(container.querySelector('button[title*="左侧成果"]')?.className)
-      .toContain('is-pop-col-0');
-    expect(container.querySelector('button[title*="左侧成果"]')?.className)
-      .toContain('is-pop-left');
-    expect(container.querySelector('button[title*="右侧成果"]')?.className)
-      .toContain('is-pop-col-6');
-    expect(container.querySelector('button[title*="右侧成果"]')?.className)
-      .toContain('is-pop-right');
-  });
-
   it('keeps the park service entry wired to the park-services event', async () => {
     installBridge();
     Object.assign(window.otto, { parkConfig: async () => null });
@@ -385,27 +312,27 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(parkOpen).toHaveBeenCalledTimes(1);
   });
 
-  it('does not keep the legacy mascot stage in the right panel', async () => {
+  it('does not keep the legacy mascot stage in the right panel', () => {
     installBridge();
     render(<RightPanel busy={false} />);
     expect(screen.queryByTestId('otto-pet-stage')).toBeNull();
+  });
 
-    fireEvent.click(screen.getByRole('tab', { name: '工作日志' }));
+  it('keeps the right panel expanded without collapse controls', () => {
+    installBridge();
+    const { container } = render(<RightPanel busy={false} />);
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '刷新' }).hasAttribute('disabled')).toBe(false);
-    });
-    expect(screen.queryByTestId('otto-pet-stage')).toBeNull();
+    expect(screen.queryByRole('button', { name: '折叠右侧功能栏' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '展开右侧功能栏' })).toBeNull();
+    expect(container.querySelector('.otto-right-panel--collapsed')).toBeNull();
+    expect(screen.getByRole('tab', { name: '专家' })).toBeTruthy();
   });
 
   it('keeps personal mode on its right-panel tabs without enterprise-only actions', () => {
     installBridge();
     render(<RightPanel busy={false} />);
 
-    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-      '专家',
-      '工作日志',
-    ]);
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['专家']);
     expect(screen.queryByText('企业记忆')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Skill 专区' })).toBeNull();
     expect(screen.queryByRole('button', { name: /企业与好友/ })).toBeNull();
@@ -474,7 +401,7 @@ describe('RightPanel fixed Agent catalog', () => {
 
     await waitFor(() => {
       expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-        '专家', '企业记忆', '工作日志',
+        '专家', '企业记忆',
       ]);
     });
     fireEvent.click(screen.getByRole('button', { name: 'Skill 专区' }));
@@ -778,58 +705,4 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(reject).toHaveBeenCalledWith('candidate-1');
   });
 
-  it('generates and opens the work report without turning worklog into a notes editor', async () => {
-    const { openPath, saveTextFile, workLogReport } = installBridge();
-    render(<RightPanel busy={false} />);
-    fireEvent.click(screen.getByRole('tab', { name: '工作日志' }));
-    fireEvent.click(screen.getByRole('button', { name: '生成今日总结' }));
-
-    expect(workLogReport).toHaveBeenCalledTimes(1);
-    expect(await screen.findByText(/已生成并保存「市场竞品调研报告」/))
-      .toBeTruthy();
-    expect(screen.queryByLabelText('编辑 /tmp/2026-07-10-市场竞品调研报告.md')).toBeNull();
-    expect(screen.queryByRole('button', { name: '打开已保存编辑稿' })).toBeNull();
-    expect(saveTextFile).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole('button', { name: '打开总结' }));
-    await waitFor(() => expect(openPath).toHaveBeenCalledWith(
-      '/tmp/2026-07-10-市场竞品调研报告.md',
-    ));
-  });
-
-  it('lists every worklog item and its details in the calendar tooltip', async () => {
-    const now = new Date();
-    const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    installBridge([{
-      date,
-      entries: [
-        {
-          time: '09:30',
-          category: 'document',
-          action: '生成调研报告',
-          success: true,
-          entryType: 'work_result',
-          details: '完成宏创园区竞品数据对比与结论。',
-        },
-        {
-          time: '14:20',
-          category: 'calendar',
-          action: '安排复盘日程',
-          success: false,
-          entryType: 'tool',
-        },
-      ],
-    }]);
-    render(<RightPanel busy={false} />);
-    fireEvent.click(screen.getByRole('tab', { name: '工作日志' }));
-    const day = screen.getByRole('button', { name: String(now.getDate()) });
-
-    await waitFor(() => expect(day.getAttribute('title')).toBe(
-      '• 09:30 生成调研报告\n• 14:20 安排复盘日程',
-    ));
-    const tooltipText = screen.getByRole('tooltip').textContent ?? '';
-    expect(tooltipText).toContain('• 完成 · 生成调研报告');
-    expect(tooltipText).toContain('完成宏创园区竞品数据对比与结论。');
-    expect(tooltipText).toContain('• calendar · 安排复盘日程（失败）');
-  });
 });

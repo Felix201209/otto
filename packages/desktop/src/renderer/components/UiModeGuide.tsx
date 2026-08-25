@@ -46,8 +46,6 @@ export function UiModePreview({ mode }: { mode: UiMode }): React.JSX.Element {
           <span className="otto-ui-preview__tabs">
             <i />
             <i />
-            <i />
-            <i />
           </span>
           <span className="otto-ui-preview__agent-list">
             <b><i /><i /></b>
@@ -55,11 +53,6 @@ export function UiModePreview({ mode }: { mode: UiMode }): React.JSX.Element {
             <b><i /><i /></b>
           </span>
           <span className="otto-ui-preview__work-grid">
-            <i />
-            <i />
-          </span>
-          <span className="otto-ui-preview__worklog">
-            <i />
             <i />
             <i />
           </span>
@@ -97,7 +90,7 @@ export function UiModeGuide({ onSelect }: UiModeGuideProps): React.JSX.Element {
             <UiModePreview mode="work" />
             <span className="otto-ui-guide__option-copy">
               <strong>工作式 UI</strong>
-              <small>聊天和工作区同时展示，右侧常驻专家、记忆与日志。</small>
+              <small>聊天和工作区同时展示，右侧常驻专家与企业记忆。</small>
               <b>选择工作式 UI</b>
             </span>
           </button>

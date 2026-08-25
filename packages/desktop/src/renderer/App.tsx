@@ -62,6 +62,7 @@ import { OrganizationPage } from './components/OrganizationPage.js';
 import { InboxPage } from './components/InboxPage.js';
 import { WorkPage } from './components/WorkPage.js';
 import { useEnterpriseAuth } from './state/useEnterpriseAuth.js';
+import { localDateKey } from './localDateKey.js';
 import type {
   EnterpriseAccount,
   EnterpriseAtoaInboxMessage,
@@ -1043,12 +1044,12 @@ function OttoWorkspaceApp({
     setMainView('settings');
   };
 
-  const selectedDate = product.state.selectedDate ?? new Date().toISOString().slice(0, 10);
+  const selectedDate = product.state.selectedDate ?? localDateKey();
   const selectedSchedules = useMemo(
     () => product.state.schedules.filter((item) => {
       const date = new Date(item.startAt);
       if (Number.isNaN(date.getTime())) return false;
-      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      const key = localDateKey(date);
       return key === selectedDate;
     }),
     [product.state.schedules, selectedDate],
@@ -1156,7 +1157,7 @@ function OttoWorkspaceApp({
           <header className="otto-workspace-page__head">
             <div>
               <div className="otto-workspace-page__title">专家与工作区</div>
-              <div className="otto-workspace-page__subtitle">专家、企业记忆与工作日志</div>
+              <div className="otto-workspace-page__subtitle">专家与企业记忆</div>
             </div>
             <button type="button" className="otto-workspace-page__back" onClick={() => setMainView('chat')}>
               返回对话
@@ -1177,10 +1178,6 @@ function OttoWorkspaceApp({
             onDeleteCustomAgent={handleDeleteCustomAgent}
             onOpenAgents={() => setMainView('agents')}
             onOpenSkillZone={() => setMainView('skillzone')}
-            onSelectDate={(date) => {
-              product.actions.selectDate(date);
-              setMainView('agenda');
-            }}
             onOpenOrganization={() => {
               setMainView('organization');
             }}
@@ -1266,10 +1263,6 @@ function OttoWorkspaceApp({
               onDeleteCustomAgent={handleDeleteCustomAgent}
               onOpenAgents={() => setMainView('agents')}
               onOpenSkillZone={() => setMainView('skillzone')}
-              onSelectDate={(date) => {
-                product.actions.selectDate(date);
-                setMainView('agenda');
-              }}
               onOpenOrganization={() => setMainView('organization')}
               onAddFriend={product.actions.addFriend}
               autoSkillCandidates={product.state.pendingAutoSkills}

@@ -19,12 +19,20 @@ function localTime(iso: string): string {
 export function DayAgenda({
   date,
   schedules,
+  workResults: providedWorkResults,
   onCreate,
   onDelete,
   onBack,
+  backLabel = '返回对话',
 }: {
   date: string;
   schedules: ScheduleItemInfo[];
+  workResults?: ReadonlyArray<{
+    time: string;
+    action: string;
+    taskTitle?: string;
+    details?: string;
+  }>;
   onCreate: (input: {
     title: string;
     startAt: string;
@@ -33,13 +41,14 @@ export function DayAgenda({
   }) => void;
   onDelete: (id: string) => void;
   onBack: () => void;
+  backLabel?: string;
 }): React.JSX.Element {
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState('');
   const [startTime, setStartTime] = useState('09:00');
   const [endTime, setEndTime] = useState('10:00');
   const [notes, setNotes] = useState('');
-  const [workResults, setWorkResults] = useState<Array<{
+  const [loadedWorkResults, setLoadedWorkResults] = useState<Array<{
     time: string;
     action: string;
     taskTitle?: string;
@@ -51,10 +60,11 @@ export function DayAgenda({
   );
 
   useEffect(() => {
+    if (providedWorkResults) return undefined;
     let cancelled = false;
     const bridge = window.otto;
     if (!bridge?.workLogRecent) {
-      setWorkResults([]);
+      setLoadedWorkResults([]);
       return () => {
         cancelled = true;
       };
@@ -62,14 +72,16 @@ export function DayAgenda({
     void bridge.workLogRecent(92).then((days) => {
       if (cancelled) return;
       const day = days.find((item) => item.date === date);
-      setWorkResults(
+      setLoadedWorkResults(
         (day?.entries ?? []).filter((entry) => entry.entryType === 'work_result'),
       );
     }).catch(() => {
-      if (!cancelled) setWorkResults([]);
+      if (!cancelled) setLoadedWorkResults([]);
     });
     return () => { cancelled = true; };
-  }, [date]);
+  }, [date, providedWorkResults]);
+
+  const workResults = providedWorkResults ?? loadedWorkResults;
 
   const submit = (): void => {
     if (!title.trim() || !startTime) return;
@@ -99,7 +111,7 @@ export function DayAgenda({
             {adding ? '取消新增' : '+ 新建日程'}
           </button>
           <button type="button" className="otto-hub__btn" onClick={onBack}>
-            <IconChevron size={13} /> 返回对话
+            <IconChevron size={13} /> {backLabel}
           </button>
         </div>
       </header>
