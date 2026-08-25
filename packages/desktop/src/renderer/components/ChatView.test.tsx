@@ -62,7 +62,6 @@ function renderChat(onRegenerate = vi.fn()) {
       messages={twoRounds()}
       models={MODELS}
       currentModel="m1"
-      userInitial="F"
       identityLabel="北辰科技 · 产品部 · 产品经理 · 企业成员"
       busy={false}
       onSend={vi.fn()}
@@ -70,7 +69,6 @@ function renderChat(onRegenerate = vi.fn()) {
       onSetModel={vi.fn()}
       onRegenerate={onRegenerate}
       onOpenSetup={vi.fn()}
-      onToggleAgents={vi.fn()}
       onNewChat={vi.fn()}
       onClearContext={vi.fn()}
       onExport={vi.fn()}
@@ -80,29 +78,29 @@ function renderChat(onRegenerate = vi.fn()) {
 }
 
 describe('ChatView 重新生成携带消息 id', () => {
-  it('在聊天顶栏显示服务端权威身份并使用一致的中文操作文案', () => {
+  it('保留服务端权威身份，不再显示顶栏快捷操作', () => {
     renderChat();
 
     expect(
       screen.getByText('北辰科技 · 产品部 · 产品经理 · 企业成员'),
     ).toBeTruthy();
-    expect(screen.getByRole('button', { name: '导出会话为 Markdown' }).textContent).toBe('导出');
-    expect(screen.getByRole('button', { name: '模型与个人 API 设置' }).textContent).toBe('设置');
-    expect(screen.getByRole('button', { name: '专家面板' }).textContent).toBe('专家');
+    expect(screen.queryByRole('button', { name: '切换到深色' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '切换到浅色' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '导出会话为 Markdown' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '模型与个人 API 设置' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '专家面板' })).toBeNull();
   });
 
   it('空会话与未选择会话时恢复 v1.6 的 Otto 形象', () => {
     const props = {
       models: MODELS,
       currentModel: 'm1',
-      userInitial: 'F',
       busy: false,
       onSend: vi.fn(),
       onCancel: vi.fn(),
       onSetModel: vi.fn(),
       onRegenerate: vi.fn(),
       onOpenSetup: vi.fn(),
-      onToggleAgents: vi.fn(),
       onNewChat: vi.fn(),
       onClearContext: vi.fn(),
     };

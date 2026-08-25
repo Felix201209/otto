@@ -4860,41 +4860,6 @@ h6.otto-prose__h {
   border-color: color-mix(in srgb, var(--otto-danger) 82%, #000);
 }
 
-/* 顶栏右侧按钮组（导出 / 设置 / 头像）：整组靠右，组内间距统一管理。 */
-.otto-topbar__actions {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.otto-topbar-export,
-.otto-topbar-theme,
-.otto-topbar-setup {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--otto-border);
-  border-radius: var(--otto-radius-pill);
-  background: var(--otto-surface);
-  color: var(--otto-text-secondary);
-  cursor: pointer;
-  -webkit-app-region: no-drag;
-}
-.otto-topbar-export:hover,
-.otto-topbar-theme:hover,
-.otto-topbar-setup:hover {
-  color: var(--otto-text);
-  border-color: var(--otto-border-strong);
-  background: var(--otto-surface-raised);
-}
-.otto-topbar-export:focus-visible,
-.otto-topbar-setup:focus-visible {
-  outline: none;
-  box-shadow: var(--otto-shadow-focus);
-}
-
 /* ══════════════ 右侧面板（智能体 / 工具 / 记忆 / 工作日志） ══════════════
  * RightPanel.tsx。右栏样式集中维护；
  * 配色全走 tokens 变量，暗色自动跟随（个别黑底 hover 叠加见文末暗色补丁）。 */
@@ -9788,31 +9753,6 @@ h6.otto-prose__h {
   }
 }
 
-/* Main path stays quiet; dense capabilities live on the dedicated Workspace page. */
-.otto-topbar-export,
-.otto-topbar-setup {
-  width: auto;
-  min-width: 0;
-  height: 30px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-}
-.otto-topbar-export:hover,
-.otto-topbar-setup:hover {
-  border-color: transparent;
-  background: var(--otto-accent-soft);
-  color: var(--otto-accent);
-}
-.otto-topbar-theme {
-  border: 0;
-  background: transparent;
-}
-
 .otto-workspace-page {
   flex: 1 1 auto;
   min-width: 0;
@@ -9940,26 +9880,6 @@ h6.otto-prose__h {
   text-overflow: ellipsis;
 }
 
-.otto-topbar__actions {
-  gap: 4px;
-}
-
-.otto-topbar-export,
-.otto-topbar-setup {
-  height: 28px;
-  padding: 0 8px;
-  color: var(--otto-text-secondary);
-  font-size: 11.5px;
-  font-weight: 600;
-}
-
-.otto-topbar-theme {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  color: var(--otto-text-secondary);
-}
-
 .otto-thread {
   padding-top: 30px;
 }
@@ -10040,8 +9960,7 @@ h6.otto-prose__h {
     padding: 0 16px;
   }
 
-  .otto-main__identity,
-  .otto-topbar-export {
+  .otto-main__identity {
     display: none;
   }
 }

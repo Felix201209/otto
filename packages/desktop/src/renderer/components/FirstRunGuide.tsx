@@ -70,14 +70,6 @@ const STEPS: Record<UiMode, readonly GuideStep[]> = {
       icon: IconPaperclip,
     },
     {
-      title: '需要专门能力时选择专家',
-      description: 'PPT、Word、会议、数据分析等专家会在独立页面中完成对应工作。',
-      tip: '点击顶栏“专家”，选择最接近当前任务的专家即可开始。',
-      selector: '.otto-topbar__actions',
-      placement: 'bottom',
-      icon: IconAgent,
-    },
-    {
       title: '历史与企业入口都在左侧',
       description: '新建对话、查找历史、查看消息、进入组织架构和设置都集中在这里。',
       tip: '未读消息会保留红点，点击对应入口即可直达。',
