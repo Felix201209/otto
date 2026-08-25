@@ -68,7 +68,8 @@ describe('OttoClient A2A 隔离上下文', () => {
       getToolsDisabled: () => false, getPreferredLanguage: () => undefined,
       getUserMemory: () => undefined, getPromptRegistry: () => undefined,
       getAgentStyle: () => 'default', getFeishuMode: () => false,
-      getProjectRoot: () => '/work/otto', getSessionId: () => 'session-1',
+      getProjectRoot: () => '/work/otto', getWorkingDir: () => '/work/otto',
+      getSessionId: () => 'session-1',
       getQuestion: () => 'data visualization', getCustomModelConfig: () => undefined,
       getMemoryProvider: () => ({
         name: 'test', save: async () => undefined,

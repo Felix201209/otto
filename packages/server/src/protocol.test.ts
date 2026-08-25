@@ -467,6 +467,25 @@ describe('validateClientPayload：工作目录', () => {
       payload: { sessionId: 's1', workspacePath: '   ' },
     })).toContain('workspacePath');
   });
+
+  it('项目级设置请求支持会话目录，并兼容旧客户端的空 payload', () => {
+    expect(validateClientPayload({
+      type: 'get_memory',
+      payload: { sessionId: 's1' },
+    })).toBeNull();
+    expect(validateClientPayload({
+      type: 'get_extensions',
+      payload: {},
+    })).toBeNull();
+    expect(validateClientPayload({
+      type: 'get_skills',
+      payload: { sessionId: 7 },
+    })).toContain('sessionId');
+    expect(validateClientPayload({
+      type: 'add_memory',
+      payload: { sessionId: 's1', fact: '使用中文' },
+    })).toBeNull();
+  });
 });
 
 describe('validateClientPayload：v1.7 产品工作区', () => {

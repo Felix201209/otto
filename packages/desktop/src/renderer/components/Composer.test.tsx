@@ -82,7 +82,7 @@ describe('输入区工具布局与弹层', () => {
         onSetModel={vi.fn()}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: /工作目录/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^工作目录：/ }));
     expect(screen.getByRole('menu', { name: '选择工作目录' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /执行授权/ }));
     expect(screen.queryByRole('menu', { name: '选择工作目录' })).toBeNull();
@@ -102,6 +102,49 @@ describe('输入区工具布局与弹层', () => {
     fireEvent.click(screen.getByRole('button', { name: '添加附件' }));
     expect(screen.getByRole('menuitem', { name: '添加文件或图片' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: '添加文件夹作为附件' })).toBeTruthy();
+  });
+
+  it('原生工作目录选择失败时给出非阻断错误，用户取消保持静默', async () => {
+    const selectWorkspaceDirectory = vi.fn()
+      .mockRejectedValueOnce(new Error('无法读取该目录'))
+      .mockResolvedValueOnce(null);
+    const getWorkspaceDirectories = vi.fn(async () => ({
+      defaultPath: '/Users/yang',
+      recentPaths: ['/Users/yang'],
+    }));
+    Object.assign(window.otto, { selectWorkspaceDirectory, getWorkspaceDirectories });
+    const { rerender } = render(
+      <Composer
+        models={[]}
+        currentModel={null}
+        sessionId="s1"
+        workspacePath="/Users/yang"
+        onSetWorkspace={vi.fn()}
+        onSend={vi.fn()}
+        onSetModel={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /^工作目录：/ }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /添加工作目录/ }));
+    expect((await screen.findByRole('alert')).textContent).toContain('无法读取该目录');
+
+    fireEvent.click(screen.getByRole('menuitem', { name: /添加工作目录/ }));
+    await waitFor(() => expect(selectWorkspaceDirectory).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole('alert').textContent).toContain('无法读取该目录');
+
+    rerender(
+      <Composer
+        models={[]}
+        currentModel={null}
+        sessionId="s2"
+        workspacePath="/Users/yang/next"
+        onSetWorkspace={vi.fn()}
+        onSend={vi.fn()}
+        onSetModel={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
   });
 });
 

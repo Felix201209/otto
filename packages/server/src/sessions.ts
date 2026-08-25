@@ -145,6 +145,8 @@ export interface InMemorySessionStoreLimits {
   maxSessions?: number;
   /** 每个会话最多保留的消息条数（超限丢最旧）。<=0 表示不限。 */
   maxMessagesPerSession?: number;
+  /** 新会话默认工作目录；桌面端注入用户主目录，通用 server 保留启动目录。 */
+  defaultWorkspacePath?: string;
 }
 
 /** 默认容量上限：对内嵌常驻桌面进程足够宽松，又能兜住无界增长。 */
@@ -165,11 +167,15 @@ export class InMemorySessionStore implements SessionStore {
   private readonly globalSubscribers = new Set<Subscriber>();
   private readonly maxSessions: number;
   private readonly maxMessagesPerSession: number;
+  private readonly defaultWorkspacePath: string;
 
   constructor(limits: InMemorySessionStoreLimits = {}) {
     this.maxSessions = limits.maxSessions ?? DEFAULT_MAX_SESSIONS;
     this.maxMessagesPerSession =
       limits.maxMessagesPerSession ?? DEFAULT_MAX_MESSAGES_PER_SESSION;
+    const cwd = process.cwd();
+    this.defaultWorkspacePath = limits.defaultWorkspacePath
+      ?? (!cwd || cwd === '/' || cwd === '\\' ? homedir() : cwd);
   }
 
   onEvict(cb: (sessionId: string) => void): Unsubscribe {
@@ -254,7 +260,7 @@ export class InMemorySessionStore implements SessionStore {
       feishuChatId: init.feishuChatId,
       status: 'idle',
       model: init.model,
-      workspacePath: init.workspacePath ?? homedir(),
+      workspacePath: init.workspacePath ?? this.defaultWorkspacePath,
       agentProfileId: init.agentProfileId,
       agentProfileName: init.agentProfileName,
       productEdition: init.productEdition,
@@ -493,6 +499,7 @@ export class InMemorySessionStore implements SessionStore {
    * 不广播、不再触发持久化——纯粹重建内部状态。status 由调用方归一为 idle。
    */
   protected hydrate(summary: SessionSummary, messages: OttoMessage[]): void {
+    summary.workspacePath ??= this.defaultWorkspacePath;
     this.sessions.set(summary.sessionId, {
       summary,
       messages,

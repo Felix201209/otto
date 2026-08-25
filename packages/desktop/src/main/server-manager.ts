@@ -501,6 +501,7 @@ export class ServerManager {
     const env: Record<string, string> = {
       ...process.env,
       OTTO_SERVER_PORT: String(port),
+      OTTO_DEFAULT_WORKSPACE_PATH: os.homedir(),
     };
 
     let spawnArgs: string[];
@@ -843,7 +844,9 @@ export class ServerManager {
     mod: typeof import('otto-server'),
   ): Promise<ServerEndpointRecord> {
     const enableFeishu = feishuCredentialsExist();
-    const store = new mod.PersistentSessionStore(sessionsDir());
+    const store = new mod.PersistentSessionStore(sessionsDir(), {
+      defaultWorkspacePath: os.homedir(),
+    });
     // 确保日志目录存在并设置固定日志路径
     try {
       fs.mkdirSync(logsDir(), { recursive: true });
@@ -854,6 +857,7 @@ export class ServerManager {
       port,
       enableFeishu,
       store,
+      defaultWorkspacePath: os.homedir(),
     }) as TrustedOttoServer;
     try {
       await server.start();

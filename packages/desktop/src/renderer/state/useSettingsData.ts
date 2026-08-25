@@ -247,7 +247,7 @@ export interface UseSettingsData {
   actions: SettingsDataActions;
 }
 
-export function useSettingsData(): UseSettingsData {
+export function useSettingsData(activeSessionId?: string | null): UseSettingsData {
   const [state, dispatch] = useReducer(reducer, initialState);
   const mountedRef = useRef(true);
 
@@ -328,16 +328,19 @@ export function useSettingsData(): UseSettingsData {
   }, []);
 
   const refreshMemory = useCallback(() => {
-    transport.send({ type: 'get_memory', payload: {} });
-  }, []);
+    if (!activeSessionId) return;
+    transport.send({ type: 'get_memory', payload: { sessionId: activeSessionId } });
+  }, [activeSessionId]);
 
   const addMemory = useCallback((fact: string) => {
-    transport.send({ type: 'add_memory', payload: { fact } });
-  }, []);
+    if (!activeSessionId) return;
+    transport.send({ type: 'add_memory', payload: { sessionId: activeSessionId, fact } });
+  }, [activeSessionId]);
 
   const refreshSkills = useCallback(() => {
-    transport.send({ type: 'get_skills', payload: {} });
-  }, []);
+    if (!activeSessionId) return;
+    transport.send({ type: 'get_skills', payload: { sessionId: activeSessionId } });
+  }, [activeSessionId]);
 
   const refreshTools = useCallback((sessionId: string) => {
     if (!sessionId) return;
@@ -364,8 +367,9 @@ export function useSettingsData(): UseSettingsData {
   }, []);
 
   const refreshExtensions = useCallback(() => {
-    transport.send({ type: 'get_extensions', payload: {} });
-  }, []);
+    if (!activeSessionId) return;
+    transport.send({ type: 'get_extensions', payload: { sessionId: activeSessionId } });
+  }, [activeSessionId]);
 
   const refreshIdeStatus = useCallback(() => {
     transport.send({ type: 'get_ide_status', payload: {} });

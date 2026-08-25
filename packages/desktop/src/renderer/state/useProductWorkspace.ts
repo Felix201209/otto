@@ -145,7 +145,7 @@ export interface UseProductWorkspace {
   actions: ProductWorkspaceActions;
 }
 
-export function useProductWorkspace(): UseProductWorkspace {
+export function useProductWorkspace(activeSessionId?: string | null): UseProductWorkspace {
   const [state, dispatch] = useReducer(
     productWorkspaceReducer,
     initialProductWorkspaceState,
@@ -184,7 +184,13 @@ export function useProductWorkspace(): UseProductWorkspace {
         payload: {},
       }),
     confirmPendingAutoSkill: (candidateId) =>
-      transport.send({ type: 'confirm_pending_auto_skill', payload: { candidateId } }),
+      transport.send({
+        type: 'confirm_pending_auto_skill',
+        payload: {
+          candidateId,
+          ...(activeSessionId ? { sessionId: activeSessionId } : {}),
+        },
+      }),
     rejectPendingAutoSkill: (candidateId) =>
       transport.send({ type: 'reject_pending_auto_skill', payload: { candidateId } }),
     selectDate: (date, timezone) => {
@@ -204,7 +210,7 @@ export function useProductWorkspace(): UseProductWorkspace {
     deleteSchedule: (id) => transport.send({ type: 'delete_schedule', payload: { id } }),
     clearInvite: () => dispatch({ kind: 'clear_invite' }),
     clearError: () => dispatch({ kind: 'clear_error' }),
-  }), []);
+  }), [activeSessionId]);
 
   return { state, actions };
 }

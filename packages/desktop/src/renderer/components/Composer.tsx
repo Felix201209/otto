@@ -310,6 +310,7 @@ export function Composer({
     defaultPath: string;
     recentPaths: string[];
   }>({ defaultPath: '', recentPaths: [] });
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [globalAuto, setGlobalAuto] = useState(
     () => localStorage.getItem('otto.authorization.global-auto') !== '0',
   );
@@ -341,8 +342,13 @@ export function Composer({
   React.useEffect(() => {
     if (!window.otto?.getWorkspaceDirectories) return;
     void window.otto.getWorkspaceDirectories()
-      .then(setNativeWorkspaceState)
-      .catch(() => undefined);
+      .then((state) => {
+        setNativeWorkspaceState(state);
+        setWorkspaceError(null);
+      })
+      .catch((error: unknown) => setWorkspaceError(
+        error instanceof Error ? error.message : '无法读取最近工作目录',
+      ));
   }, [sessionId]);
 
   // 所有列表统一交互：一次只开一个；点当前按钮/面板以外区域或按 Esc 都关闭。
@@ -1073,10 +1079,13 @@ export function Composer({
         ...current,
         recentPaths: [selected, ...current.recentPaths.filter((path) => path !== selected)],
       }));
+      setWorkspaceError(null);
       onSetWorkspace?.(selected);
       setOpenPopover(null);
-    } catch {
-      // 原生选择失败由 host 侧诊断处理，不用破坏当前目录。
+    } catch (error) {
+      setWorkspaceError(
+        error instanceof Error ? error.message : '无法选择工作目录',
+      );
     }
   };
 
@@ -1185,6 +1194,16 @@ export function Composer({
           ) : null}
         </div>
       </div>
+      {workspaceError ? (
+        <div className="otto-workspace__error" role="alert">
+          <span>{workspaceError}</span>
+          <button
+            type="button"
+            aria-label="关闭工作目录错误"
+            onClick={() => setWorkspaceError(null)}
+          >×</button>
+        </div>
+      ) : null}
       <div className="otto-composer__inner">
         {attachments.length > 0 || attaching || attachError ? (
           <div className="otto-attachments">

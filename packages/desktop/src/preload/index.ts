@@ -38,6 +38,7 @@ import {
 import {
   authorizeOutboundFileReferences,
   hasOutboundPathReference,
+  sendAuthorizedWorkspaceFrame,
   sendAuthorizedFileFrame,
 } from './outbound-file-authorization.js';
 
@@ -2014,22 +2015,22 @@ const bridge: OttoBridge = {
       }
     };
     if (frame.type === 'set_session_workspace') {
-      void (ipcRenderer.invoke(
-        IPC.authorizeWorkspaceDirectory,
-        frame.payload.workspacePath,
-      ) as Promise<string>)
-        .then((workspacePath) => sendOrQueue({
-          ...frame,
-          payload: { ...frame.payload, workspacePath },
-        }))
-        .catch((error: unknown) => dispatchFrame({
+      void sendAuthorizedWorkspaceFrame(
+        frame,
+        (workspacePath) => ipcRenderer.invoke(
+          IPC.authorizeWorkspaceDirectory,
+          workspacePath,
+        ) as Promise<string>,
+        sendOrQueue,
+        (error) => dispatchFrame({
           type: 'error',
           payload: {
             sessionId: frame.payload.sessionId,
             code: 'workspace_access_denied',
             message: error instanceof Error ? error.message : '工作目录未获得授权',
           },
-        }));
+        }),
+      );
       return;
     }
     if (frame.type !== 'send_user_message') {

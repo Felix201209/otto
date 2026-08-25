@@ -250,7 +250,7 @@ const defaultRuntimeFactory: RuntimeFactory = async (
     // 回退到 preferred/首个个人模型，不能再进入尚未上线的中转站路径。
     model: resolveSessionRuntimeModel(summary?.productEdition, model),
     feishuMode: Boolean(summary?.feishuChatId),
-    cwd: workspacePath ?? summary?.workspacePath ?? homedir(),
+    cwd: workspacePath ?? summary?.workspacePath ?? resolveDefaultCwd(),
     ...(userRules ? { userRules } : {}),
     documentIdentity,
     searchTenantId:
@@ -285,6 +285,8 @@ export interface OttoServerOptions {
   /** 是否启用飞书网关（缺省读 env / credentials 探测）。 */
   enableFeishu?: boolean;
   store?: SessionStore;
+  /** 新会话默认工作目录；Electron 传用户主目录，独立 server 默认保留启动目录。 */
+  defaultWorkspacePath?: string;
   /**
    * 会话运行时工厂。缺省 = 包 otto-core 的真实运行时。
    * 注入自定义工厂用于测试或 mock 模式。
@@ -372,12 +374,17 @@ export class OttoServer {
   >();
   private expiredIdentityFingerprint?: string;
   private readonly runtimeFactory: RuntimeFactory;
+  private readonly defaultWorkspacePath: string;
   private readonly mock: boolean;
   /** 同一会话首次 send 时懒构建 runtime，用此 map 去重并发初始化。 */
   private readonly runtimeInit = new Map<
     string,
     Promise<SessionRuntime | undefined>
   >();
+  /** 目录校验/切换中的会话；发送入口等待它，避免两种操作交叉。 */
+  private readonly workspaceUpdates = new Map<string, Promise<void>>();
+  /** 从接收消息到 runtime 接管前的窗口也禁止切目录。 */
+  private readonly messageDispatches = new Map<string, number>();
   private globalAuthorizationMode: 'manual' | 'auto';
   private readonly sessionAuthorizationModes = new Map<
     string,
@@ -411,7 +418,12 @@ export class OttoServer {
       opts.port ?? Number(process.env.OTTO_SERVER_PORT ?? DEFAULT_PORT);
     this.enableFeishu =
       opts.enableFeishu ?? process.env.OTTO_FEISHU_ENABLED === '1';
-    this.store = opts.store ?? new InMemorySessionStore();
+    this.defaultWorkspacePath = opts.defaultWorkspacePath
+      ?? process.env.OTTO_DEFAULT_WORKSPACE_PATH
+      ?? resolveDefaultCwd();
+    this.store = opts.store ?? new InMemorySessionStore({
+      defaultWorkspacePath: this.defaultWorkspacePath,
+    });
     this.runtimeFactory = opts.runtimeFactory ?? defaultRuntimeFactory;
     // mock 决策：显式 opts.mock 优先，否则看 env；都没有则按「是否配了模型」自动判定。
     this.mock = opts.mock ?? process.env.OTTO_SERVER_MOCK === '1';
@@ -1034,14 +1046,15 @@ export class OttoServer {
       serverVersion: SERVER_VERSION,
       protocolVersion: PROTOCOL_VERSION,
       uptimeMs: () => Date.now() - this.startedAt,
-      cwd: (sessionId) => this.store.getSession(sessionId)?.workspacePath ?? homedir(),
+      cwd: (sessionId) => this.store.getSession(sessionId)?.workspacePath
+        ?? this.defaultWorkspacePath,
       getConfig: (sid) =>
         this.store.getRuntime(sid)?.getConfig?.() as CoreConfig | undefined,
       currentModel: () => this.currentModel(),
       modelInfos: () => this.modelInfos(),
       mcpServerInfos: () => this.mcpServerInfos(),
       extensionSummaries: (sessionId) => discoverExtensionSummaries(
-        this.store.getSession(sessionId)?.workspacePath ?? homedir(),
+        this.store.getSession(sessionId)?.workspacePath ?? this.defaultWorkspacePath,
       ),
     };
   }
@@ -1230,26 +1243,63 @@ export class OttoServer {
   }
 
   /** 切换会话工作目录。只允许空闲会话，确保正在执行的工具不会被中途换根目录。 */
-  private async handleSetSessionWorkspace(
+  private handleSetSessionWorkspace(
     conn: ClientConn,
     msg: Extract<ClientToServer, { type: 'set_session_workspace' }>,
   ): Promise<void> {
     const { sessionId } = msg.payload;
     const session = this.store.getSession(sessionId);
     if (!session) {
-      return this.send(conn.socket, errorFrame(sessionId, 'no_session', '会话不存在'));
+      this.send(conn.socket, errorFrame(sessionId, 'no_session', '会话不存在'));
+      return Promise.resolve();
     }
-    if (session.status !== 'idle' && session.status !== 'error') {
-      return this.send(
+    if (
+      (session.status !== 'idle' && session.status !== 'error')
+      || this.runtimeInit.has(sessionId)
+      || this.messageDispatches.has(sessionId)
+      || this.workspaceUpdates.has(sessionId)
+    ) {
+      this.send(
         conn.socket,
         errorFrame(sessionId, 'session_busy', '当前任务执行中，完成或停止后再切换工作目录'),
       );
+      return Promise.resolve();
     }
+    const update = this.applySessionWorkspace(conn, msg);
+    this.workspaceUpdates.set(sessionId, update);
+    return update.finally(() => {
+      if (this.workspaceUpdates.get(sessionId) === update) {
+        this.workspaceUpdates.delete(sessionId);
+      }
+    });
+  }
+
+  private async applySessionWorkspace(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'set_session_workspace' }>,
+  ): Promise<void> {
+    const { sessionId } = msg.payload;
     try {
       const requested = path.resolve(msg.payload.workspacePath.trim());
       const canonical = await fs.realpath(requested);
       const stat = await fs.stat(canonical);
       if (!stat.isDirectory()) throw new Error('所选路径不是目录');
+      const session = this.store.getSession(sessionId);
+      if (!session) {
+        this.send(conn.socket, errorFrame(sessionId, 'no_session', '会话不存在'));
+        return;
+      }
+      if (
+        (session.status !== 'idle' && session.status !== 'error')
+        || this.runtimeInit.has(sessionId)
+        || this.messageDispatches.has(sessionId)
+      ) {
+        this.send(
+          conn.socket,
+          errorFrame(sessionId, 'session_busy', '当前任务执行中，完成或停止后再切换工作目录'),
+        );
+        return;
+      }
       if (canonical === session.workspacePath) return;
 
       // Config.cwd 在 runtime 生命周期内不可变；切换后摘除旧 runtime，下次发送按新目录懒建。
@@ -1712,10 +1762,18 @@ export class OttoServer {
   // GUI 设置面板 handler（P1：记忆文件 / 技能库 / 工具清单 / 压缩上下文 / 导出会话）
   // ──────────────────────────────────────────────────────────────────────
 
+  private workspaceForSession(sessionId?: string): string {
+    return (sessionId ? this.store.getSession(sessionId)?.workspacePath : undefined)
+      ?? this.defaultWorkspacePath;
+  }
+
   /** 拉取层级记忆文件（项目 OTTO.md + 全局 ~/.otto-user/memory/OTTO.md）内容。 */
-  private async handleGetMemory(conn: ClientConn): Promise<void> {
+  private async handleGetMemory(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'get_memory' }>,
+  ): Promise<void> {
     try {
-      const cwd = resolveDefaultCwd();
+      const cwd = this.workspaceForSession(msg.payload.sessionId);
       const projectPath = path.join(cwd, 'OTTO.md');
       const globalPath = path.join(
         homedir(),
@@ -1756,13 +1814,19 @@ export class OttoServer {
   ): Promise<void> {
     const { fact } = msg.payload;
     try {
-      const memoryFilePath = path.join(resolveDefaultCwd(), 'OTTO.md');
+      const memoryFilePath = path.join(
+        this.workspaceForSession(msg.payload.sessionId),
+        'OTTO.md',
+      );
       await MemoryTool.performAddMemoryEntry(fact, memoryFilePath, {
         readFile: fs.readFile,
         writeFile: fs.writeFile,
         mkdir: fs.mkdir,
       });
-      await this.handleGetMemory(conn);
+      await this.handleGetMemory(conn, {
+        type: 'get_memory',
+        payload: { sessionId: msg.payload.sessionId },
+      });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       this.send(conn.socket, {
@@ -1775,10 +1839,20 @@ export class OttoServer {
     }
   }
 
-  /** 拉取已装技能列表（对齐 CLI /skill list，进程级、与会话无关）。 */
-  private async handleGetSkills(conn: ClientConn): Promise<void> {
+  /** 拉取已装技能列表（项目级 + 用户级，项目根随会话工作目录）。 */
+  private async handleGetSkills(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'get_skills' }>,
+  ): Promise<void> {
+    return this.sendSkillsList(
+      conn,
+      this.workspaceForSession(msg.payload.sessionId),
+    );
+  }
+
+  private async sendSkillsList(conn: ClientConn, workspacePath: string): Promise<void> {
     try {
-      const adapter = new SkillsCompatAdapter(resolveDefaultCwd());
+      const adapter = new SkillsCompatAdapter(workspacePath);
       const skills = await adapter.listSkills();
       const payload: SkillSummary[] = skills.map((s) => ({
         id: s.id,
@@ -2064,9 +2138,14 @@ export class OttoServer {
   }
 
   /** 拉取已安装扩展列表（项目级 + 全局 ~/.otto-user/extensions，去重）。 */
-  private async handleGetExtensions(conn: ClientConn): Promise<void> {
+  private async handleGetExtensions(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'get_extensions' }>,
+  ): Promise<void> {
     try {
-      const extensions = await discoverExtensionSummaries(resolveDefaultCwd());
+      const extensions = await discoverExtensionSummaries(
+        this.workspaceForSession(msg.payload.sessionId),
+      );
       this.send(conn.socket, {
         type: 'extensions_list',
         payload: { extensions },
@@ -2967,7 +3046,10 @@ export class OttoServer {
               },
             },
           });
-          await this.handleGetSkills(conn);
+          await this.sendSkillsList(
+            conn,
+            this.workspaceForSession(msg.payload.sessionId),
+          );
           return;
         } catch (error) {
           return this.send(conn.socket, {
@@ -3157,11 +3239,11 @@ export class OttoServer {
           payload: { todos: todoStore.getTodos() as TodoItemInfo[] },
         });
       case 'get_memory':
-        return this.handleGetMemory(conn);
+        return this.handleGetMemory(conn, msg);
       case 'add_memory':
         return this.handleAddMemory(conn, msg);
       case 'get_skills':
-        return this.handleGetSkills(conn);
+        return this.handleGetSkills(conn, msg);
       case 'get_tools':
         return this.handleGetTools(conn, msg);
       case 'compress_context':
@@ -3171,7 +3253,7 @@ export class OttoServer {
       case 'get_workflows':
         return this.handleGetWorkflows(conn);
       case 'get_extensions':
-        return this.handleGetExtensions(conn);
+        return this.handleGetExtensions(conn, msg);
       case 'get_ide_status':
         return this.handleGetIdeStatus(conn);
       case 'get_knowledge':
@@ -3275,6 +3357,34 @@ export class OttoServer {
    *   流式/工具事件由 runtime 内部 publish 广播给所有订阅者。
    */
   private async handleSendUserMessage(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'send_user_message' }>,
+  ): Promise<void> {
+    const { sessionId } = msg.payload;
+    const workspaceUpdate = this.workspaceUpdates.get(sessionId);
+    if (workspaceUpdate) await workspaceUpdate;
+    this.beginMessageDispatch(sessionId);
+    try {
+      await this.handleSendUserMessageAfterWorkspace(conn, msg);
+    } finally {
+      this.endMessageDispatch(sessionId);
+    }
+  }
+
+  private beginMessageDispatch(sessionId: string): void {
+    this.messageDispatches.set(
+      sessionId,
+      (this.messageDispatches.get(sessionId) ?? 0) + 1,
+    );
+  }
+
+  private endMessageDispatch(sessionId: string): void {
+    const remaining = (this.messageDispatches.get(sessionId) ?? 1) - 1;
+    if (remaining > 0) this.messageDispatches.set(sessionId, remaining);
+    else this.messageDispatches.delete(sessionId);
+  }
+
+  private async handleSendUserMessageAfterWorkspace(
     conn: ClientConn,
     msg: Extract<ClientToServer, { type: 'send_user_message' }>,
   ): Promise<void> {
@@ -3617,7 +3727,7 @@ export class OttoServer {
       ? resolveEnterpriseDocumentIdentity(enterpriseWorkspace)
       : undefined;
     const identityGeneration = this.enterpriseIdentityGeneration;
-    const workspacePath = summary?.workspacePath ?? homedir();
+    const workspacePath = summary?.workspacePath ?? this.defaultWorkspacePath;
     const task = (async (): Promise<SessionRuntime | undefined> => {
       try {
         const runtime = await this.runtimeFactory(
@@ -3634,7 +3744,7 @@ export class OttoServer {
           : '会话已不存在';
         if (
           identityGeneration !== this.enterpriseIdentityGeneration ||
-          (latestSummary?.workspacePath ?? homedir()) !== workspacePath ||
+          (latestSummary?.workspacePath ?? this.defaultWorkspacePath) !== workspacePath ||
           denied
         ) {
           runtime.cancel();
@@ -3945,9 +4055,25 @@ export class OttoServer {
     if (!queue || queue.length === 0) return;
     const next = queue.shift()!;
     if (queue.length === 0) this.messageQueues.delete(sessionId);
+    // 在让出当前事件循环前先占住目录锁，避免 idle→下一轮接管之间切根目录。
+    this.beginMessageDispatch(sessionId);
     // fire-and-forget: 下一轮不阻塞当前返回
     setImmediate(() => {
-      this.handleSendUserMessageRaw(
+      void this.handleQueuedMessage(
+        sessionId,
+        conn,
+        next,
+      );
+    });
+  }
+
+  private async handleQueuedMessage(
+    sessionId: string,
+    conn: ClientConn,
+    next: QueuedMessage,
+  ): Promise<void> {
+    try {
+      await this.handleSendUserMessageRaw(
         sessionId,
         conn,
         next.content,
@@ -3955,7 +4081,11 @@ export class OttoServer {
         next.clientMessageId,
         next.authorizedContext,
       );
-    });
+    } catch (error) {
+      console.error('[Server] queued message failed:', error);
+    } finally {
+      this.endMessageDispatch(sessionId);
+    }
   }
 
 }

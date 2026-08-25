@@ -191,9 +191,9 @@ function OttoWorkspaceApp({
       ? null
       : account.organizationId,
   });
-  const settingsData = useSettingsData();
+  const settingsData = useSettingsData(state.activeSessionId);
   const softwareUpdate = useSoftwareUpdate();
-  const product = useProductWorkspace();
+  const product = useProductWorkspace(state.activeSessionId);
   const [enterpriseUnreadCounts, setEnterpriseUnreadCounts] = useState<EnterpriseUnreadCounts>({});
   const centralIdentity = useMemo(
     () => resolveCentralEnterpriseIdentity(account),
