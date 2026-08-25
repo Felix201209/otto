@@ -1156,7 +1156,7 @@ function OttoWorkspaceApp({
           <header className="otto-workspace-page__head">
             <div>
               <div className="otto-workspace-page__title">专家与工作区</div>
-              <div className="otto-workspace-page__subtitle">专家、常用命令、文档、企业记忆与工作日志</div>
+              <div className="otto-workspace-page__subtitle">专家、文档、企业记忆与工作日志</div>
             </div>
             <button type="button" className="otto-workspace-page__back" onClick={() => setMainView('chat')}>
               返回对话

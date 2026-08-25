@@ -14,7 +14,6 @@ import type {
   CustomAgentDefinition,
   CustomAgentDraft,
 } from '../customAgents.js';
-import { SLASH_COMMANDS, insertComposerDraft } from './Composer.js';
 import { FilePreview, type FileEntry } from './FilePreview.js';
 import { GeneratedIcon } from './GeneratedIcon.js';
 import { openParkServices, useParkBrand } from './ParkServicesPlugin.js';
@@ -82,20 +81,12 @@ const TAB_ARIA_LABEL: Record<TabType, string> = {
   worklog: '工作日志',
 };
 
-const TOOL_COMMAND_IDS = new Set([
-  'new', 'model', 'clear', 'settings', 'doctor', 'feishu-status',
-  'multi-channel', 'memory', 'skills',
-  'audio', 'browser', 'ide', 'export', 'workflow',
-]);
-
 function formatEnterpriseMemoryDate(value: string): string {
   if (!value) return '时间未知';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '时间未知';
   return date.toLocaleDateString('zh-CN');
 }
-
-const TOOL_COMMANDS = SLASH_COMMANDS.filter((command) => TOOL_COMMAND_IDS.has(command.id));
 
 export interface RightPanelProps {
   busy: boolean;
@@ -841,18 +832,6 @@ export function RightPanel({
                     <button type="button" onClick={() => onRejectAutoSkill(candidate.id)}>不再建议</button>
                   </div>
                 </article>
-              ))}
-            </div>
-            {/* 常用命令合入专家 tab：工具是专家的调用方式。 */}
-            <div className="otto-right-panel__waist" role="separator" />
-            <div className="otto-right-panel__head">常用命令</div>
-            <div className="otto-right-panel__hint">点击把命令填入输入框，回车执行</div>
-            <div className="otto-tool-list">
-              {TOOL_COMMANDS.map((command) => (
-                <button key={command.id} type="button" className="otto-tool-item" onClick={() => insertComposerDraft(`/${command.id}`)}>
-                  <span className="otto-tool-item__cmd">/{command.id}</span>
-                  <span className="otto-tool-item__desc">{command.description}</span>
-                </button>
               ))}
             </div>
           </div>

@@ -203,6 +203,16 @@ function enterpriseWorkspace(): ProductWorkspaceSnapshot {
 }
 
 describe('RightPanel fixed Agent catalog', () => {
+  it('不再展示常驻的常用命令说明区', () => {
+    installBridge();
+
+    render(<RightPanel busy={false} />);
+
+    expect(screen.queryByText('常用命令')).toBeNull();
+    expect(screen.queryByText('点击把命令填入输入框，回车执行')).toBeNull();
+    expect(screen.queryByText('/new')).toBeNull();
+  });
+
   it('在右边栏创建、保存并立即启动自定义专家，不混入固定 9 Agent', async () => {
     installBridge();
     const create = vi.fn();
@@ -395,16 +405,6 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(parkCard?.getAttribute('title')).toContain('装修管理');
     fireEvent.click(parkCard!);
     expect(parkOpen).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps the Feishu status and multi-channel shortcuts in the agents tab', () => {
-    installBridge();
-    render(<RightPanel busy={false} />);
-
-    // 工具命令已合入专家 tab，不需要切换。
-    expect(screen.getByText('/feishu-status')).toBeTruthy();
-    expect(screen.getByText('/multi-channel')).toBeTruthy();
-    expect(screen.getByText('点击把命令填入输入框，回车执行')).toBeTruthy();
   });
 
   it('does not keep the legacy mascot stage in the right panel', async () => {

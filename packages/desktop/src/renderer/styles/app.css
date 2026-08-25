@@ -5107,12 +5107,7 @@ h6.otto-prose__h {
   text-transform: uppercase;
   color: var(--otto-text-tertiary);
 }
-.otto-right-panel__hint {
-  padding: 0 2px 8px;
-  font-size: 11px;
-  color: var(--otto-text-secondary);
-  line-height: 1.45;
-}
+
 .otto-right-panel__empty {
   padding: 20px 12px;
   text-align: center;
@@ -5231,56 +5226,6 @@ h6.otto-prose__h {
 }
 .otto-right-panel__moreagents-chev {
   color: currentColor;
-}
-
-/* —— 工具 tab：slash 命令快捷列表（hover 模式沿用原 .otto-common-task：accent-soft 底） —— */
-.otto-tool-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.otto-tool-item {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
-  width: 100%;
-  padding: 7px 9px;
-  border: none;
-  border-radius: var(--otto-radius-sm);
-  background: transparent;
-  color: var(--otto-text);
-  cursor: pointer;
-  text-align: left;
-  transition:
-    background var(--otto-dur-fast) var(--otto-ease),
-    transform var(--otto-dur-fast) var(--otto-ease);
-}
-.otto-tool-item:hover {
-  background: var(--otto-accent-soft);
-}
-.otto-tool-item:active {
-  transform: translateY(0.5px);
-}
-.otto-tool-item:focus-visible {
-  outline: none;
-  box-shadow: var(--otto-shadow-focus);
-}
-.otto-tool-item__cmd {
-  font-family: var(--otto-font-mono);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--otto-accent);
-  line-height: 1.3;
-}
-.otto-tool-item__desc {
-  font-size: 11px;
-  color: var(--otto-text-tertiary);
-  line-height: 1.35;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
 }
 
 /* —— 浏览器 tab —— */
@@ -9708,8 +9653,7 @@ h6.otto-prose__h {
 }
 .otto-expert-card,
 .otto-profile-card,
-.otto-custom-agent-card,
-.otto-tool-item {
+.otto-custom-agent-card {
   border-color: transparent;
   border-radius: 8px;
   background: transparent;
@@ -9717,8 +9661,7 @@ h6.otto-prose__h {
 }
 .otto-expert-card:hover,
 .otto-profile-card:hover,
-.otto-custom-agent-card:hover,
-.otto-tool-item:hover {
+.otto-custom-agent-card:hover {
   border-color: transparent;
   background: var(--otto-surface);
   box-shadow: none;
