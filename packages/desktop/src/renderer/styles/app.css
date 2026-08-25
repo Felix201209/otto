@@ -1202,9 +1202,6 @@ h6.otto-prose__h {
 .otto-sidebar-account__copy strong, .otto-sidebar-account__copy small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .otto-sidebar-account__copy strong { color: var(--otto-text); font-size: 10px; }
 .otto-sidebar-account__copy small { color: var(--otto-text-tertiary); font-size: 8px; }
-.otto-sidebar-account__logout { min-width: 34px; min-height: 28px; padding: 0 6px; border: 1px solid transparent !important; border-radius: 7px; background: transparent; color: var(--otto-text-tertiary); font: 650 9px var(--otto-font); cursor: pointer; }
-.otto-sidebar-account__logout:hover { border-color: color-mix(in srgb, var(--otto-danger) 18%, transparent) !important; color: var(--otto-danger); background: color-mix(in srgb, var(--otto-danger) 7%, transparent); }
-.otto-sidebar-account__logout:focus-visible { outline: none; box-shadow: var(--otto-shadow-focus); }
 .otto-viewall--upgrade { color: color-mix(in srgb, var(--otto-accent) 88%, var(--otto-text)); }
 .otto-viewall--upgrade:hover { background: color-mix(in srgb, var(--otto-accent) 9%, transparent); }
 .otto-join-enterprise { width: min(420px, calc(100vw - 32px)); }
@@ -2664,13 +2661,6 @@ h6.otto-prose__h {
 
 .otto-sidebar-account__copy small {
   color: #78a8cf;
-  font-size: 10px;
-}
-
-.otto-sidebar-account__logout {
-  min-width: 26px;
-  padding: 0 4px;
-  color: var(--otto-text-tertiary);
   font-size: 10px;
 }
 
@@ -11805,4 +11795,105 @@ h6.otto-prose__h {
   .otto-work-page__stats { grid-template-columns: 1fr; }
   .otto-org-page__body, .otto-work-page__body { padding: 14px 16px 30px; }
   .otto-org-page__header, .otto-inbox-page__header, .otto-work-page__header { padding: 14px 16px 12px; }
+}
+
+/* 账户区：身份区打开向上的账户菜单，设置作为独立的快捷入口。 */
+.otto-sidebar-account {
+  position: relative;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 6px;
+}
+.otto-sidebar-account__identity {
+  min-width: 0;
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 4px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.otto-sidebar-account__identity:hover,
+.otto-sidebar-account__identity[aria-expanded="true"] {
+  background: var(--otto-accent-soft);
+}
+.otto-sidebar-account__identity:focus-visible,
+.otto-sidebar-account__settings:focus-visible,
+.otto-sidebar-account__menuitem:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+.otto-sidebar-account__settings {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  align-self: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--otto-text-tertiary);
+  cursor: pointer;
+}
+.otto-sidebar-account__settings:hover,
+.otto-sidebar-account__settings.is-active {
+  background: var(--otto-accent-soft);
+  color: var(--otto-accent);
+}
+.otto-sidebar-account__update {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--otto-sidebar-bg);
+  border-radius: 50%;
+  background: var(--otto-danger);
+}
+.otto-sidebar-account__menu {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  display: grid;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-sm);
+  background: var(--otto-surface);
+  box-shadow: var(--otto-shadow-pop);
+  animation: otto-menu-in 140ms var(--otto-ease);
+  transform-origin: bottom left;
+}
+.otto-sidebar-account__menuitem {
+  width: 100%;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--otto-text);
+  font: 550 12px var(--otto-font);
+  text-align: left;
+  cursor: pointer;
+}
+.otto-sidebar-account__menuitem:hover {
+  background: var(--otto-sidebar-bg);
+}
+.otto-sidebar-account__menuitem--danger {
+  color: var(--otto-danger);
+}
+.otto-sidebar-account__menuitem--danger:hover {
+  background: color-mix(in srgb, var(--otto-danger) 8%, transparent);
 }

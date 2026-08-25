@@ -142,7 +142,46 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
     expect(screen.getByRole('status', { name: '4 条未读消息' }).textContent).toBe('4');
   });
 
-  it('个人版账号也始终显示账户区和退出登录入口', async () => {
+  it('设置从主导航迁移到账户区右侧，并保留原设置入口行为', () => {
+    const onOpenHub = vi.fn();
+    renderSidebar({
+      enterpriseAccount: PERSONAL_ACCOUNT,
+      onNavigate: vi.fn(),
+      onOpenHub,
+      hubActive: true,
+    });
+
+    const primaryNav = screen.getByRole('navigation', { name: '主导航' });
+    expect(within(primaryNav).queryByRole('button', { name: '设置' })).toBeNull();
+
+    const settings = screen.getByRole('button', { name: '设置' });
+    expect(settings.getAttribute('aria-current')).toBe('page');
+    fireEvent.click(settings);
+    expect(onOpenHub).toHaveBeenCalledOnce();
+  });
+
+  it('点击账户区打开账户菜单，点击外部或按 Escape 均会收起', () => {
+    renderSidebar({
+      enterpriseAccount: PERSONAL_ACCOUNT,
+      onLogout: vi.fn(),
+    });
+
+    const accountTrigger = screen.getByRole('button', { name: 'Felix，个人空间' });
+    expect(screen.queryByRole('menu', { name: '账户菜单' })).toBeNull();
+
+    fireEvent.click(accountTrigger);
+    expect(screen.getByRole('menu', { name: '账户菜单' })).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: '退出登录' }));
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole('menu', { name: '账户菜单' })).toBeNull();
+
+    fireEvent.click(accountTrigger);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('menu', { name: '账户菜单' })).toBeNull();
+    expect(document.activeElement).toBe(accountTrigger);
+  });
+
+  it('个人版账号的退出登录入口位于账户菜单内，且仍需二次确认', async () => {
     const onLogout = vi.fn(async () => undefined);
     renderSidebar({
       enterpriseAccount: PERSONAL_ACCOUNT,
@@ -150,7 +189,13 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
     });
 
     expect(screen.getByText('Felix')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '退出登录' }));
+    expect(screen.queryByRole('button', { name: '退出登录' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Felix，个人空间' }));
+    const accountMenu = screen.getByRole('menu', { name: '账户菜单' });
+    const logout = within(accountMenu).getByRole('menuitem', { name: '退出登录' });
+    expect(logout.querySelector('svg')).toBeTruthy();
+    fireEvent.click(logout);
+    expect(screen.queryByRole('menu', { name: '账户菜单' })).toBeNull();
     expect(screen.getByRole('dialog', { name: '确认退出登录' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '确认退出' }));
     await waitFor(() => expect(onLogout).toHaveBeenCalledOnce());

@@ -25,6 +25,8 @@ import {
   IconPlus,
   IconChevronDown,
   IconUserAvatar,
+  IconSettings,
+  IconLogOut,
 } from './icons.js';
 import { LogoutConfirmDialog } from './LogoutConfirmDialog.js';
 import { JoinEnterpriseDialog } from './JoinEnterpriseDialog.js';
@@ -102,6 +104,8 @@ interface SidebarProps {
 export function Sidebar({
   groups,
   activeSessionId,
+  hubActive = false,
+  updateBadge = false,
   activeView = 'chat',
   accountManagementActive = false,
   enterpriseAccount,
@@ -109,6 +113,7 @@ export function Sidebar({
   parkTicketUnreadCount = 0,
   onSelect,
   onNewChat,
+  onOpenHub,
   onOpenAccounts,
   onNavigate,
   onJoinEnterprise,
@@ -121,6 +126,10 @@ export function Sidebar({
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [joinEnterpriseOpen, setJoinEnterpriseOpen] = useState(false);
   const [logoutBusy, setLogoutBusy] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const accountMenuRef = useRef<HTMLDivElement>(null);
+  const accountMenuTriggerRef = useRef<HTMLButtonElement>(null);
+  const accountMenuItemRef = useRef<HTMLButtonElement>(null);
   const sessionGroups = relativeSessionGroups(groups);
   const sessionCount = sessionGroups.reduce((total, group) => total + group.sessions.length, 0);
   const enterpriseUnreadTotal = Object.values(enterpriseUnreadCounts)
@@ -133,6 +142,29 @@ export function Sidebar({
   const unreadSessionRemainder = unreadSessions
     ?.filter((sessionId) => !countedEnterpriseSessions.has(sessionId)).length ?? 0;
   const unreadCount = enterpriseUnreadTotal + unreadSessionRemainder;
+
+  useEffect(() => {
+    if (!accountMenuOpen) return;
+    accountMenuItemRef.current?.focus();
+
+    const onDocumentMouseDown = (event: MouseEvent): void => {
+      if (!accountMenuRef.current?.contains(event.target as Node)) {
+        setAccountMenuOpen(false);
+      }
+    };
+    const onDocumentKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return;
+      setAccountMenuOpen(false);
+      accountMenuTriggerRef.current?.focus();
+    };
+
+    document.addEventListener('mousedown', onDocumentMouseDown);
+    document.addEventListener('keydown', onDocumentKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onDocumentMouseDown);
+      document.removeEventListener('keydown', onDocumentKeyDown);
+    };
+  }, [accountMenuOpen]);
 
   return (
     <aside className="otto-sidebar">
@@ -157,7 +189,7 @@ export function Sidebar({
         新建对话
       </button>
 
-      {/* 主导航：五个一级入口，各自映射到主内容区的完整页面。 */}
+      {/* 主导航：四个一级业务入口，设置已迁移到底部账户区。 */}
       {onNavigate ? (
         <NavItems
           activeView={activeView}
@@ -238,24 +270,56 @@ export function Sidebar({
           </button>
         ) : null}
         {enterpriseAccount ? (
-          <div className="otto-sidebar-account">
-            <span className="otto-sidebar-account__avatar" aria-hidden>
-              <IconUserAvatar size={34} />
-            </span>
-            <span className="otto-sidebar-account__copy">
-              <strong>{enterpriseAccount.name}</strong>
-              <small>{enterpriseAccount.department || '个人空间'}</small>
-            </span>
-            {onLogout ? (
-              <button
-                type="button"
-                className="otto-sidebar-account__logout"
-                onClick={() => setLogoutConfirmOpen(true)}
-                aria-label="退出登录"
-                title="退出登录"
-              >
-                退出
-              </button>
+          <div className="otto-sidebar-account" ref={accountMenuRef}>
+            <button
+              ref={accountMenuTriggerRef}
+              type="button"
+              className="otto-sidebar-account__identity"
+              aria-label={`${enterpriseAccount.name}，${enterpriseAccount.department || '个人空间'}`}
+              aria-haspopup="menu"
+              aria-expanded={accountMenuOpen}
+              onClick={() => setAccountMenuOpen((open) => !open)}
+            >
+              <span className="otto-sidebar-account__avatar" aria-hidden>
+                <IconUserAvatar size={34} />
+              </span>
+              <span className="otto-sidebar-account__copy">
+                <strong>{enterpriseAccount.name}</strong>
+                <small>{enterpriseAccount.department || '个人空间'}</small>
+              </span>
+            </button>
+            <button
+              type="button"
+              className={'otto-sidebar-account__settings' + (hubActive || activeView === 'hub' ? ' is-active' : '')}
+              onClick={() => {
+                setAccountMenuOpen(false);
+                onOpenHub();
+              }}
+              aria-label="设置"
+              aria-current={hubActive || activeView === 'hub' ? 'page' : undefined}
+              title="设置"
+            >
+              <IconSettings size={17} />
+              {updateBadge ? <span className="otto-sidebar-account__update" aria-label="有可用更新" /> : null}
+            </button>
+            {accountMenuOpen ? (
+              <div className="otto-sidebar-account__menu" role="menu" aria-label="账户菜单">
+                {onLogout ? (
+                  <button
+                    ref={accountMenuItemRef}
+                    type="button"
+                    role="menuitem"
+                    className="otto-sidebar-account__menuitem otto-sidebar-account__menuitem--danger"
+                    onClick={() => {
+                      setAccountMenuOpen(false);
+                      setLogoutConfirmOpen(true);
+                    }}
+                  >
+                    <IconLogOut size={16} />
+                    <span>退出登录</span>
+                  </button>
+                ) : null}
+              </div>
             ) : null}
           </div>
         ) : null}
@@ -335,7 +399,6 @@ function NavItems({
     { key: 'organization', label: '组织架构', view: 'organization', unread: 0 },
     { key: 'inbox', label: '我的消息', view: 'inbox', unread: inboxUnread },
     { key: 'work', label: '我的工作', view: 'work', unread: workUnread },
-    { key: 'hub', label: '设置', view: 'hub', unread: 0 },
   ] as const;
 
   return (
