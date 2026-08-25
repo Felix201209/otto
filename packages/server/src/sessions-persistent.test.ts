@@ -83,6 +83,15 @@ describe('PersistentSessionStore 落盘 + 重启恢复', () => {
     expect(hist[0].isStreaming).toBe(false);
   });
 
+  it('工作目录切换后落盘并在重启后恢复', () => {
+    const db = tmpDb();
+    const a = new PersistentSessionStore(db);
+    const session = a.createSession({});
+    a.patchSessionWorkspace(session.sessionId, '/Users/test/project');
+    expect(new PersistentSessionStore(db).getSession(session.sessionId)?.workspacePath)
+      .toBe('/Users/test/project');
+  });
+
   it('临时 A2A 会话只存在内存，消息与状态变化也绝不落盘', async () => {
     const db = tmpDb();
     const a = new PersistentSessionStore(db);

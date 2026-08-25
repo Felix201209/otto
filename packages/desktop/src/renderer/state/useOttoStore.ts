@@ -770,6 +770,8 @@ export interface OttoActions {
     authorizedContext?: string,
   ): void;
   setModel(model: string): void;
+  /** 切换当前会话的真实工作目录。 */
+  setWorkspace(workspacePath: string): void;
   cancel(): void;
   respondToolConfirmation(
     callId: string,
@@ -1225,6 +1227,20 @@ export function useOttoStore(
     transport.send({ type: 'set_model', payload: { sessionId, model } });
   }, []);
 
+  const setWorkspace = useCallback((workspacePath: string) => {
+    const sessionId = activeRef.current;
+    if (!sessionId || !workspacePath.trim()) return;
+    if (connectionRef.current !== 'connected') {
+      dispatch({ kind: 'local_error', message: '未连接，工作目录未切换' });
+      return;
+    }
+    if (sessionsRef.current[sessionId]?.workspacePath === workspacePath) return;
+    transport.send({
+      type: 'set_session_workspace',
+      payload: { sessionId, workspacePath },
+    });
+  }, []);
+
   const cancel = useCallback(() => {
     const sessionId = activeRef.current;
     if (!sessionId) return;
@@ -1282,6 +1298,7 @@ export function useOttoStore(
       launchAgentProfileWithPrompt,
       sendMessage,
       setModel,
+      setWorkspace,
       cancel,
       respondToolConfirmation,
       runSlashCommand,

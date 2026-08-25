@@ -2438,8 +2438,108 @@ h6.otto-prose__h {
   padding: 6px 10px 9px;
 }
 
+/* 输入面板上下文条：工作目录与授权是任务上下文，不再挤占输入框底部动作区。 */
+.otto-composer__contextbar {
+  position: relative;
+  z-index: 21;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 760px;
+  margin: 0 auto 7px;
+  padding: 0 4px;
+}
+.otto-contextpill {
+  min-width: 0;
+  height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-pill);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--otto-surface);
+  color: var(--otto-text-secondary);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  box-shadow: var(--otto-shadow-sm);
+}
+.otto-contextpill:hover { border-color: var(--otto-border-strong); color: var(--otto-text); }
+.otto-contextpill:focus-visible { outline: none; box-shadow: var(--otto-shadow-focus); }
+.otto-contextpill:disabled { opacity: .55; cursor: default; }
+.otto-workspace, .otto-attachment-picker, .otto-model-anchor { position: relative; }
+.otto-workspace .otto-contextpill > span { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.otto-composer__contextbar .otto-authorization { margin-left: 0; }
+.otto-composer__contextbar .otto-authorization__trigger { border: 1px solid var(--otto-border); }
+
+.otto-workspace__menu,
+.otto-attachment-picker__menu {
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 0;
+  width: 330px;
+  padding: 6px;
+  border: 1px solid var(--otto-border-strong);
+  border-radius: 14px;
+  background: var(--otto-surface);
+  box-shadow: var(--otto-shadow-pop);
+  z-index: 45;
+  animation: otto-menu-in 140ms var(--otto-ease);
+  transform-origin: bottom left;
+}
+.otto-workspace__heading { padding: 5px 8px 7px; color: var(--otto-text-tertiary); font-size: 11px; font-weight: 650; }
+.otto-workspace__option {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--otto-text);
+  text-align: left;
+  cursor: pointer;
+}
+.otto-workspace__option:hover, .otto-workspace__option.is-active { background: var(--otto-accent-soft); }
+.otto-workspace__option > span { min-width: 0; display: grid; gap: 2px; }
+.otto-workspace__option strong, .otto-workspace__option small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.otto-workspace__option strong { font-size: 12.5px; }
+.otto-workspace__option small { color: var(--otto-text-tertiary); font-size: 10.5px; }
+.otto-workspace__add {
+  width: 100%;
+  margin-top: 5px;
+  padding: 9px 8px;
+  border: 0;
+  border-top: 1px solid var(--otto-border);
+  background: transparent;
+  color: var(--otto-text);
+  text-align: left;
+  cursor: pointer;
+}
+.otto-workspace__add:hover { color: var(--otto-accent); }
+.otto-attachment-picker__menu { width: 220px; }
+.otto-attachment-picker__menu button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--otto-text);
+  text-align: left;
+  cursor: pointer;
+}
+.otto-attachment-picker__menu button:hover { background: var(--otto-accent-soft); }
+.otto-model-anchor { margin-left: auto; }
+.otto-model-anchor .otto-modelmenu { left: auto; right: 0; transform-origin: bottom right; }
+
 /* 执行授权：贴近发送按钮，菜单向上展开，沿用 Otto 的表面/边框/阴影 token。 */
-.otto-authorization { position: relative; margin-left: auto; }
+.otto-authorization { position: relative; }
 .otto-authorization + .otto-send { margin-left: 0; }
 .otto-authorization__trigger {
   height: 32px; padding: 0 9px; border: 0; border-radius: var(--otto-radius-pill);

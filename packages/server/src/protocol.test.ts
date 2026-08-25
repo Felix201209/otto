@@ -452,6 +452,23 @@ describe('validateClientPayload：执行授权', () => {
   });
 });
 
+describe('validateClientPayload：工作目录', () => {
+  it('只接受会话 id 与非空绝对目录字符串', () => {
+    expect(validateClientPayload({
+      type: 'set_session_workspace',
+      payload: { sessionId: 's1', workspacePath: '/Users/yang/project' },
+    })).toBeNull();
+    expect(validateClientPayload({
+      type: 'set_session_workspace',
+      payload: { sessionId: '', workspacePath: '/Users/yang/project' },
+    })).toContain('sessionId');
+    expect(validateClientPayload({
+      type: 'set_session_workspace',
+      payload: { sessionId: 's1', workspacePath: '   ' },
+    })).toContain('workspacePath');
+  });
+});
+
 describe('validateClientPayload：v1.7 产品工作区', () => {
   it('create_session 只接受字符串 agentProfileId', () => {
     expect(validateClientPayload({

@@ -45,6 +45,66 @@ function openMenu() {
   return screen.getByRole('listbox', { name: '选择模型' });
 }
 
+describe('输入区工具布局与弹层', () => {
+  it('工作目录和授权位于输入面板上方，模型位于发送按钮左侧，且无独立文件夹按钮', () => {
+    const { container } = render(
+      <Composer
+        models={makeModels(2)}
+        currentModel="m0"
+        sessionId="s1"
+        workspacePath="/Users/yang/project"
+        recentWorkspacePaths={['/Users/yang/project']}
+        onSetWorkspace={vi.fn()}
+        onSend={vi.fn()}
+        onSetModel={vi.fn()}
+      />,
+    );
+    const contextBar = container.querySelector('.otto-composer__contextbar');
+    expect(contextBar?.querySelector('.otto-workspace')).not.toBeNull();
+    expect(contextBar?.querySelector('.otto-authorization')).not.toBeNull();
+    expect(container.querySelector('[aria-label="添加文件夹"]')).toBeNull();
+    const bar = container.querySelector('.otto-composer__bar')!;
+    const model = bar.querySelector('.otto-modelpill')!;
+    const send = bar.querySelector('.otto-send')!;
+    expect(model.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('同一时间只打开一个列表，点击列表外或按 Esc 会关闭', () => {
+    render(
+      <Composer
+        models={makeModels(2)}
+        currentModel="m0"
+        sessionId="s1"
+        workspacePath="/Users/yang/project"
+        recentWorkspacePaths={['/Users/yang/project']}
+        onSetWorkspace={vi.fn()}
+        onSend={vi.fn()}
+        onSetModel={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /工作目录/ }));
+    expect(screen.getByRole('menu', { name: '选择工作目录' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /执行授权/ }));
+    expect(screen.queryByRole('menu', { name: '选择工作目录' })).toBeNull();
+    expect(screen.getByRole('menu', { name: '选择执行授权方式' })).toBeTruthy();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole('menu', { name: '选择执行授权方式' })).toBeNull();
+    fireEvent.click(document.querySelector('.otto-modelpill') as Element);
+    expect(screen.getByRole('listbox', { name: '选择模型' })).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('listbox', { name: '选择模型' })).toBeNull();
+  });
+
+  it('回形针菜单同时保留添加文件与目录附件能力', () => {
+    render(
+      <Composer models={[]} currentModel={null} sessionId="s1" onSend={vi.fn()} onSetModel={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '添加附件' }));
+    expect(screen.getByRole('menuitem', { name: '添加文件或图片' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: '添加文件夹作为附件' })).toBeTruthy();
+  });
+});
+
 describe('专家提示词草稿', () => {
   it('填入后不自动发送，用户可修改再发送', () => {
     const onSend = vi.fn();
@@ -488,7 +548,8 @@ describe('附件预览卡片', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    fireEvent.click(screen.getByRole('button', { name: '添加附件' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '添加文件夹作为附件' }));
     const folderName = await screen.findByText('客户资料');
     const card = folderName.closest('.otto-attachment');
     expect(selectFolders).toHaveBeenCalledTimes(1);

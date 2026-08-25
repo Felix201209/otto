@@ -51,6 +51,7 @@ import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { HealthInfo, ServerEndpoint } from 'otto-server';
+import { WorkspaceDirectoryStore } from './workspace-directory-store.js';
 
 function ignoreBrokenPipe(stream: NodeJS.WriteStream): void {
   stream.on('error', (error: NodeJS.ErrnoException) => {
@@ -458,6 +459,11 @@ const serverManager = new ServerManager({
 const notificationService = new NotificationService();
 /** 原生文件选择授权账本：允许任意磁盘，但拒绝 renderer 凭空传入的路径。 */
 const fileAccessGrants = new FileAccessGrantStore();
+/** 用户明确选择过的真实工作目录；跨重启保留最近列表。 */
+const workspaceDirectories = new WorkspaceDirectoryStore(
+  path.join(app.getPath('userData'), 'workspace-directories.json'),
+  os.homedir(),
+);
 /** 身份提交统一边界：跨账号、跨组织和失效退出时先清旧账号通知与文件授权。 */
 const enterpriseNotificationIdentityBoundary =
   new EnterpriseNotificationIdentityBoundary(
@@ -494,6 +500,9 @@ const IPC = {
   activateLocalPath: 'otto:activate-local-path',
   selectFiles: 'otto:select-files',
   selectFolders: 'otto:select-folders',
+  selectWorkspaceDirectory: 'otto:select-workspace-directory',
+  getWorkspaceDirectories: 'otto:get-workspace-directories',
+  authorizeWorkspaceDirectory: 'otto:authorize-workspace-directory',
   grantBrowserFile: 'otto:grant-browser-file',
   authorizeMessageFiles: 'otto:authorize-message-files',
   readFilePath: 'otto:read-file-path',
@@ -4643,6 +4652,31 @@ function registerIpc(): void {
         }));
     if (result.canceled || result.filePaths.length === 0) return [];
     return fileAccessGrants.grantDirectories(result.filePaths);
+  });
+
+  ipcMain.handle(IPC.getWorkspaceDirectories, () => ({
+    defaultPath: workspaceDirectories.defaultPath(),
+    recentPaths: workspaceDirectories.list(),
+  }));
+
+  ipcMain.handle(IPC.selectWorkspaceDirectory, async () => {
+    const win = mainWindow;
+    const result = await (win
+      ? dialog.showOpenDialog(win, {
+          defaultPath: workspaceDirectories.defaultPath(),
+          properties: ['openDirectory', 'createDirectory'],
+        })
+      : dialog.showOpenDialog({
+          defaultPath: workspaceDirectories.defaultPath(),
+          properties: ['openDirectory', 'createDirectory'],
+        }));
+    if (result.canceled || !result.filePaths[0]) return null;
+    return workspaceDirectories.grant(result.filePaths[0]);
+  });
+
+  ipcMain.handle(IPC.authorizeWorkspaceDirectory, (_event, directory: unknown) => {
+    if (typeof directory !== 'string') throw new Error('工作目录格式无效');
+    return workspaceDirectories.authorize(directory);
   });
 
   // 拖拽/隐藏 input 的 File 路径由可信 preload 通过 webUtils 提取后送到这里。

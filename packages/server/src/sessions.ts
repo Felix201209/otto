@@ -19,6 +19,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
 import {
   SESSION_TITLE_MAX_LEN,
   type MessageContent,
@@ -106,6 +107,8 @@ export interface SessionStore {
   setStatus(sessionId: string, status: SessionStatus): void;
   /** 更新会话选定模型（懒构建 runtime 时按此取模型）。 */
   patchSessionModel(sessionId: string, model: string): void;
+  /** 更新会话真实工作目录；调用方须先完成路径授权和目录校验。 */
+  patchSessionWorkspace(sessionId: string, workspacePath: string): void;
   /**
    * 重命名会话：改 title、刷新 updatedAt，并广播 session_upsert。
    * 返回更新后的摘要；会话不存在返回 undefined。
@@ -251,6 +254,7 @@ export class InMemorySessionStore implements SessionStore {
       feishuChatId: init.feishuChatId,
       status: 'idle',
       model: init.model,
+      workspacePath: init.workspacePath ?? homedir(),
       agentProfileId: init.agentProfileId,
       agentProfileName: init.agentProfileName,
       productEdition: init.productEdition,
@@ -379,6 +383,16 @@ export class InMemorySessionStore implements SessionStore {
     const s = this.sessions.get(sessionId);
     if (!s) return;
     s.summary = { ...s.summary, model, updatedAt: Date.now() };
+    this.publish(sessionId, {
+      type: 'session_upsert',
+      payload: { session: s.summary },
+    });
+  }
+
+  patchSessionWorkspace(sessionId: string, workspacePath: string): void {
+    const s = this.sessions.get(sessionId);
+    if (!s) return;
+    s.summary = { ...s.summary, workspacePath, updatedAt: Date.now() };
     this.publish(sessionId, {
       type: 'session_upsert',
       payload: { session: s.summary },

@@ -153,7 +153,7 @@ function memoryFilePaths(cwd: string): { project: string; global: string } {
 
 /** 会话 runtime 未构建时的兜底：直接读记忆文件，照样给真实内容。 */
 async function showMemoryFromFiles(ctx: CommandContext): Promise<SlashOutcome> {
-  const paths = memoryFilePaths(ctx.host.cwd());
+  const paths = memoryFilePaths(ctx.host.cwd(ctx.sessionId));
   const sections: string[] = [];
   for (const [label, filePath] of [
     ['项目记忆（OTTO.md）', paths.project],
@@ -191,7 +191,7 @@ export const memoryCommand: ServerSlashCommand = {
         const fact = args.trim();
         if (!fact) return fail('用法：`/memory add <要记住的内容>`');
         // 与 add_memory 帧同落点：项目级 OTTO.md（core MemoryTool 的真实写盘）。
-        const target = memoryFilePaths(ctx.host.cwd()).project;
+        const target = memoryFilePaths(ctx.host.cwd(ctx.sessionId)).project;
         await MemoryTool.performAddMemoryEntry(fact, target, {
           readFile: fs.readFile,
           writeFile: fs.writeFile,
@@ -224,7 +224,7 @@ export const memoryCommand: ServerSlashCommand = {
         const cfg = ctx.host.getConfig(ctx.sessionId);
         if (cfg) return md(AcpCommands.listMemoryFiles(cfg).content);
         // 兜底：列出层级约定的两处路径并标注是否存在。
-        const paths = memoryFilePaths(ctx.host.cwd());
+        const paths = memoryFilePaths(ctx.host.cwd(ctx.sessionId));
         const lines: string[] = ['记忆文件（层级约定落点）：', ''];
         for (const [label, filePath] of [
           ['项目', paths.project],

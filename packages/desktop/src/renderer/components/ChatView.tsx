@@ -97,6 +97,7 @@ interface ChatViewProps {
   /** 中止当前流式生成（busy 时停止按钮）。 */
   onCancel: () => void;
   onSetModel: (model: string) => void;
+  onSetWorkspace?: (workspacePath: string) => void;
   /**
    * 重新生成某条 bot 回复：携带被点消息 id，App 据此定位「该条之前最近的
    * 一条用户消息」重发，而非永远重发全会话最后一轮。
@@ -147,6 +148,7 @@ export function ChatView({
   onSend,
   onCancel,
   onSetModel,
+  onSetWorkspace,
   onRegenerate,
   onRespondQuestion,
   onOpenSetup,
@@ -374,6 +376,8 @@ export function ChatView({
         onSend={(text, attachments) => onSend(text, sendSource, attachments)}
         onCancel={onCancel}
         onSetModel={onSetModel}
+        workspacePath={session?.workspacePath}
+        onSetWorkspace={onSetWorkspace}
         onManageModels={onOpenSetup}
         // 斜杠命令接线：/new /clear 走 App 回调，/settings 复用打开设置。
         onNewChat={onNewChat}

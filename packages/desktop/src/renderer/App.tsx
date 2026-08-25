@@ -1221,6 +1221,7 @@ function OttoWorkspaceApp({
               onSend={handleSend}
               onCancel={actions.cancel}
               onSetModel={actions.setModel}
+              onSetWorkspace={actions.setWorkspace}
               onRegenerate={handleRegenerate}
               onRespondQuestion={handleToolConfirmation}
               onOpenSetup={openModelSettings}

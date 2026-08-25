@@ -223,6 +223,12 @@ interface ComposerProps {
   /** 中止当前流式生成（busy 时停止按钮调用）。 */
   onCancel?: () => void;
   onSetModel: (model: string) => void;
+  /** 当前会话真实工作目录（server 会话摘要的权威值）。 */
+  workspacePath?: string;
+  /** 最近使用目录；未传时组件从原生主进程读取。 */
+  recentWorkspacePaths?: string[];
+  /** 切换当前会话工作目录。 */
+  onSetWorkspace?: (workspacePath: string) => void;
   /** 受控初值（空态示例胶囊点击后注入草稿）。 */
   draft?: string;
   /** 注入序号：每次递增触发再注入（支持连点同一胶囊）。 */
@@ -274,6 +280,9 @@ export function Composer({
   onSend,
   onCancel,
   onSetModel,
+  workspacePath,
+  recentWorkspacePaths,
+  onSetWorkspace,
   draft,
   draftNonce,
   onManageModels,
@@ -294,8 +303,13 @@ export function Composer({
   onLaunchAgentProfile,
 }: ComposerProps): React.JSX.Element {
   const [text, setText] = useState('');
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [authorizationOpen, setAuthorizationOpen] = useState(false);
+  const [openPopover, setOpenPopover] = useState<
+    'workspace' | 'attachment' | 'model' | 'authorization' | null
+  >(null);
+  const [nativeWorkspaceState, setNativeWorkspaceState] = useState<{
+    defaultPath: string;
+    recentPaths: string[];
+  }>({ defaultPath: '', recentPaths: [] });
   const [globalAuto, setGlobalAuto] = useState(
     () => localStorage.getItem('otto.authorization.global-auto') !== '0',
   );
@@ -323,6 +337,32 @@ export function Composer({
   const [slashIndex, setSlashIndex] = useState(0);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  React.useEffect(() => {
+    if (!window.otto?.getWorkspaceDirectories) return;
+    void window.otto.getWorkspaceDirectories()
+      .then(setNativeWorkspaceState)
+      .catch(() => undefined);
+  }, [sessionId]);
+
+  // 所有列表统一交互：一次只开一个；点当前按钮/面板以外区域或按 Esc 都关闭。
+  React.useEffect(() => {
+    if (!openPopover) return;
+    const closeOutside = (event: PointerEvent): void => {
+      const target = event.target;
+      if (target instanceof Element && target.closest('.otto-popover-anchor')) return;
+      setOpenPopover(null);
+    };
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setOpenPopover(null);
+    };
+    document.addEventListener('pointerdown', closeOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [openPopover]);
 
   const stopVoiceMeter = (): void => {
     if (voiceTimerRef.current !== null) window.clearInterval(voiceTimerRef.current);
@@ -471,7 +511,7 @@ export function Composer({
         payload: { sessionId, mode: 'manual', scope: wasGlobal ? 'all' : 'session' },
       });
     }
-    setAuthorizationOpen(false);
+    setOpenPopover(null);
   };
 
   // 由当前文本解析斜杠命令 query，再过滤出候选。无会话（disabled）时不弹面板。
@@ -814,7 +854,7 @@ export function Composer({
         onNewChat?.();
         break;
       case 'model':
-        setMenuOpen(true);
+        setOpenPopover('model');
         break;
       case 'clear':
         onClearContext?.();
@@ -1016,6 +1056,30 @@ export function Composer({
       ? '发送'
       : '请先输入内容';
 
+  const workspacePaths = Array.from(new Set([
+    ...(recentWorkspacePaths ?? nativeWorkspaceState.recentPaths),
+    ...(nativeWorkspaceState.defaultPath ? [nativeWorkspaceState.defaultPath] : []),
+    ...(workspacePath ? [workspacePath] : []),
+  ]));
+  const workspaceName = (value: string): string => {
+    if (value === nativeWorkspaceState.defaultPath) return '个人目录';
+    return value.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || value;
+  };
+  const chooseNewWorkspace = async (): Promise<void> => {
+    try {
+      const selected = await window.otto?.selectWorkspaceDirectory?.();
+      if (!selected) return;
+      setNativeWorkspaceState((current) => ({
+        ...current,
+        recentPaths: [selected, ...current.recentPaths.filter((path) => path !== selected)],
+      }));
+      onSetWorkspace?.(selected);
+      setOpenPopover(null);
+    } catch {
+      // 原生选择失败由 host 侧诊断处理，不用破坏当前目录。
+    }
+  };
+
   return (
     <div
       ref={composerRef}
@@ -1058,6 +1122,69 @@ export function Composer({
           </div>
         </>
       ) : null}
+      <div className="otto-composer__contextbar">
+        <div className="otto-workspace otto-popover-anchor">
+          <button
+            type="button"
+            className="otto-contextpill"
+            aria-label={`工作目录：${workspacePath ? workspaceName(workspacePath) : '个人目录'}`}
+            aria-haspopup="menu"
+            aria-expanded={openPopover === 'workspace'}
+            disabled={disabled || busy}
+            title={busy ? '当前任务执行中，完成或停止后再切换工作目录' : workspacePath}
+            onClick={() => setOpenPopover((value) => value === 'workspace' ? null : 'workspace')}
+          >
+            <IconFolder size={16} />
+            <span>{workspacePath ? workspaceName(workspacePath) : '个人目录'}</span>
+            <IconChevronDown size={14} />
+          </button>
+          {openPopover === 'workspace' && !disabled ? (
+            <div className="otto-workspace__menu" role="menu" aria-label="选择工作目录">
+              <div className="otto-workspace__heading">最近使用</div>
+              {workspacePaths.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={item === workspacePath}
+                  className={`otto-workspace__option${item === workspacePath ? ' is-active' : ''}`}
+                  title={item}
+                  onClick={() => {
+                    onSetWorkspace?.(item);
+                    setOpenPopover(null);
+                  }}
+                >
+                  <IconFolder size={15} />
+                  <span><strong>{workspaceName(item)}</strong><small>{item}</small></span>
+                  {item === workspacePath ? <IconCheck size={15} /> : null}
+                </button>
+              ))}
+              <button type="button" role="menuitem" className="otto-workspace__add" onClick={() => void chooseNewWorkspace()}>
+                <span aria-hidden>＋</span> 添加工作目录…
+              </button>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="otto-authorization otto-popover-anchor">
+          <button
+            type="button"
+            className="otto-contextpill otto-authorization__trigger"
+            aria-label={`执行授权：${authorizationLabel}`}
+            aria-haspopup="menu"
+            aria-expanded={openPopover === 'authorization'}
+            disabled={disabled}
+            onClick={() => setOpenPopover((value) => value === 'authorization' ? null : 'authorization')}
+          >
+            <AuthorizationModeIcon kind={authorizationKind} size={16} />
+            <span>{authorizationLabel}</span>
+            <IconChevronDown size={14} />
+          </button>
+          {openPopover === 'authorization' && !disabled ? (
+            <AuthorizationMenu current={authorizationKind} onPick={pickAuthorization} />
+          ) : null}
+        </div>
+      </div>
       <div className="otto-composer__inner">
         {attachments.length > 0 || attaching || attachError ? (
           <div className="otto-attachments">
@@ -1192,75 +1319,57 @@ export function Composer({
           disabled={disabled}
         />
         <div className="otto-composer__bar">
-          <div style={{ position: 'relative' }}>
+          <div className="otto-attachment-picker otto-popover-anchor">
+            <button
+              type="button"
+              className="otto-attach"
+              title="添加附件"
+              aria-label="添加附件"
+              aria-haspopup="menu"
+              aria-expanded={openPopover === 'attachment'}
+              onClick={() => setOpenPopover((value) => value === 'attachment' ? null : 'attachment')}
+              disabled={disabled || attaching}
+            >
+              <IconPaperclip size={17} />
+            </button>
+            {openPopover === 'attachment' && !disabled ? (
+              <div className="otto-attachment-picker__menu" role="menu" aria-label="添加附件">
+                <button type="button" role="menuitem" onClick={() => { pickFiles(); setOpenPopover(null); }}>
+                  <IconPaperclip size={15} /> 添加文件或图片
+                </button>
+                <button type="button" role="menuitem" onClick={() => { pickFolders(); setOpenPopover(null); }}>
+                  <IconFolder size={15} /> 添加文件夹作为附件
+                </button>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="otto-model-anchor otto-popover-anchor">
             <button
               type="button"
               className="otto-modelpill"
-              onClick={(e) => {
-                e.stopPropagation();
-                setMenuOpen((v) => !v);
-              }}
+              onClick={() => setOpenPopover((value) => value === 'model' ? null : 'model')}
               aria-haspopup="listbox"
-              aria-expanded={menuOpen}
-              // 与 textarea 一致：无会话（disabled）时也锁模型菜单，避免「输入锁了菜单还能开」的不一致。
+              aria-expanded={openPopover === 'model'}
               disabled={disabled}
               title={disabled ? disabledReason ?? '请先选择或新建会话' : '切换模型'}
             >
               {modelLabel}
               <IconChevronDown size={14} className="otto-modelpill__chev" />
             </button>
-            {menuOpen && !disabled ? (
+            {openPopover === 'model' && !disabled ? (
               <ModelMenu
                 models={models}
                 current={currentModel}
                 onPick={(id) => {
                   onSetModel(id);
-                  setMenuOpen(false);
+                  setOpenPopover(null);
                 }}
-                onClose={() => setMenuOpen(false)}
-                onManage={onManageModels}
+                onManage={onManageModels ? () => {
+                  setOpenPopover(null);
+                  onManageModels();
+                } : undefined}
               />
-            ) : null}
-          </div>
-
-          <button
-            type="button"
-            className="otto-attach"
-            title="添加文件或图片"
-            aria-label="添加文件或图片"
-            onClick={pickFiles}
-            disabled={disabled || attaching}
-          >
-            <IconPaperclip size={17} />
-          </button>
-
-          <button
-            type="button"
-            className="otto-attach"
-            title="添加文件夹"
-            aria-label="添加文件夹"
-            onClick={pickFolders}
-            disabled={disabled || attaching}
-          >
-            <IconFolder size={17} />
-          </button>
-
-          <div className="otto-authorization">
-            <button
-              type="button"
-              className="otto-authorization__trigger"
-              aria-label={`执行授权：${authorizationLabel}`}
-              aria-haspopup="menu"
-              aria-expanded={authorizationOpen}
-              disabled={disabled}
-              onClick={() => setAuthorizationOpen((v) => !v)}
-            >
-              <AuthorizationModeIcon kind={authorizationKind} size={16} />
-              <span>{authorizationLabel}</span>
-              <IconChevronDown size={14} />
-            </button>
-            {authorizationOpen && !disabled ? (
-              <AuthorizationMenu current={authorizationKind} onPick={pickAuthorization} />
             ) : null}
           </div>
 
@@ -1354,13 +1463,11 @@ function ModelMenu({
   models,
   current,
   onPick,
-  onClose,
   onManage,
 }: {
   models: ModelInfo[];
   current: string | null;
   onPick: (id: string) => void;
-  onClose: () => void;
   onManage?: () => void;
 }): React.JSX.Element {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -1368,23 +1475,6 @@ function ModelMenu({
 
   // 模型多到一定数量才显示搜索框（+ 分组）；少量时平铺即可，不加噪声。
   const showSearch = models.length > MODEL_SEARCH_THRESHOLD;
-
-  // 点击菜单外关闭 + Esc 关闭。
-  React.useEffect(() => {
-    const onDoc = () => onClose();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    document.addEventListener('click', onDoc);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('click', onDoc);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [onClose]);
 
   // 按 displayName 过滤（大小写不敏感，去空白）。空 query 返回全部。
   const filtered = useMemo(() => {

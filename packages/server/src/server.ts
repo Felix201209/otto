@@ -208,6 +208,7 @@ export type RuntimeFactory = (
   model: string | undefined,
   workspaceContext?: string,
   documentIdentity?: DocumentIdentity,
+  workspacePath?: string,
 ) => Promise<SessionRuntime>;
 
 /**
@@ -229,6 +230,7 @@ const defaultRuntimeFactory: RuntimeFactory = async (
   model,
   workspaceContext,
   documentIdentity,
+  workspacePath,
 ) => {
   const summary = store.getSession(sessionId);
   const profile = resolveAgentProfile(summary?.agentProfileId);
@@ -248,6 +250,7 @@ const defaultRuntimeFactory: RuntimeFactory = async (
     // 回退到 preferred/首个个人模型，不能再进入尚未上线的中转站路径。
     model: resolveSessionRuntimeModel(summary?.productEdition, model),
     feishuMode: Boolean(summary?.feishuChatId),
+    cwd: workspacePath ?? summary?.workspacePath ?? homedir(),
     ...(userRules ? { userRules } : {}),
     documentIdentity,
     searchTenantId:
@@ -1031,13 +1034,15 @@ export class OttoServer {
       serverVersion: SERVER_VERSION,
       protocolVersion: PROTOCOL_VERSION,
       uptimeMs: () => Date.now() - this.startedAt,
-      cwd: () => resolveDefaultCwd(),
+      cwd: (sessionId) => this.store.getSession(sessionId)?.workspacePath ?? homedir(),
       getConfig: (sid) =>
         this.store.getRuntime(sid)?.getConfig?.() as CoreConfig | undefined,
       currentModel: () => this.currentModel(),
       modelInfos: () => this.modelInfos(),
       mcpServerInfos: () => this.mcpServerInfos(),
-      extensionSummaries: () => discoverExtensionSummaries(resolveDefaultCwd()),
+      extensionSummaries: (sessionId) => discoverExtensionSummaries(
+        this.store.getSession(sessionId)?.workspacePath ?? homedir(),
+      ),
     };
   }
 
@@ -1222,6 +1227,46 @@ export class OttoServer {
       type: 'models_list',
       payload: { models: this.modelInfos(), current: model },
     });
+  }
+
+  /** 切换会话工作目录。只允许空闲会话，确保正在执行的工具不会被中途换根目录。 */
+  private async handleSetSessionWorkspace(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'set_session_workspace' }>,
+  ): Promise<void> {
+    const { sessionId } = msg.payload;
+    const session = this.store.getSession(sessionId);
+    if (!session) {
+      return this.send(conn.socket, errorFrame(sessionId, 'no_session', '会话不存在'));
+    }
+    if (session.status !== 'idle' && session.status !== 'error') {
+      return this.send(
+        conn.socket,
+        errorFrame(sessionId, 'session_busy', '当前任务执行中，完成或停止后再切换工作目录'),
+      );
+    }
+    try {
+      const requested = path.resolve(msg.payload.workspacePath.trim());
+      const canonical = await fs.realpath(requested);
+      const stat = await fs.stat(canonical);
+      if (!stat.isDirectory()) throw new Error('所选路径不是目录');
+      if (canonical === session.workspacePath) return;
+
+      // Config.cwd 在 runtime 生命周期内不可变；切换后摘除旧 runtime，下次发送按新目录懒建。
+      const runtime = this.store.detachRuntime(sessionId);
+      runtime?.cancel();
+      await runtime?.dispose().catch(() => undefined);
+      this.store.patchSessionWorkspace(sessionId, canonical);
+    } catch (error) {
+      this.send(
+        conn.socket,
+        errorFrame(
+          sessionId,
+          'invalid_workspace',
+          `无法使用该工作目录：${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
+    }
   }
 
   /**
@@ -2709,6 +2754,8 @@ export class OttoServer {
         return this.handleSendUserMessage(conn, msg);
       case 'set_model':
         return this.handleSetModel(conn, msg);
+      case 'set_session_workspace':
+        return this.handleSetSessionWorkspace(conn, msg);
       case 'set_authorization_mode': {
         const { sessionId, mode, scope } = msg.payload;
         if (scope === 'all') {
@@ -3570,6 +3617,7 @@ export class OttoServer {
       ? resolveEnterpriseDocumentIdentity(enterpriseWorkspace)
       : undefined;
     const identityGeneration = this.enterpriseIdentityGeneration;
+    const workspacePath = summary?.workspacePath ?? homedir();
     const task = (async (): Promise<SessionRuntime | undefined> => {
       try {
         const runtime = await this.runtimeFactory(
@@ -3578,6 +3626,7 @@ export class OttoServer {
           model,
           workspaceContext,
           documentIdentity,
+          workspacePath,
         );
         const latestSummary = this.store.getSession(sessionId);
         const denied = latestSummary
@@ -3585,6 +3634,7 @@ export class OttoServer {
           : '会话已不存在';
         if (
           identityGeneration !== this.enterpriseIdentityGeneration ||
+          (latestSummary?.workspacePath ?? homedir()) !== workspacePath ||
           denied
         ) {
           runtime.cancel();

@@ -1653,6 +1653,74 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
     await server?.stop();
   });
 
+  it('工作目录默认用户级，切换后销毁旧 runtime 并以新 cwd 重建', async () => {
+    const first = path.join(tmpHome, 'workspace-one');
+    const second = path.join(tmpHome, 'workspace-two');
+    fs.mkdirSync(first);
+    fs.mkdirSync(second);
+    const captured: string[] = [];
+    const dispose = vi.fn(async () => undefined);
+    const store = new InMemorySessionStore();
+    const session = store.createSession({ workspacePath: first });
+    expect(store.createSession().workspacePath).toBe(os.homedir());
+    const factory: RuntimeFactory = async (
+      runtimeStore,
+      sessionId,
+      _model,
+      _workspaceContext,
+      _documentIdentity,
+      workspacePath,
+    ) => {
+      captured.push(workspacePath ?? '');
+      return {
+        async run() { runtimeStore.setStatus(sessionId, 'idle'); },
+        cancel() {},
+        setModel() {},
+        getConfig() { return undefined; },
+        dispose,
+      };
+    };
+    server = new OttoServer({ port: 0, mock: false, runtimeFactory: factory, store });
+    baseUrl = await startServer(server);
+    const client = await connectWs(baseUrl);
+    await client.waitFor((frame) => frame.type === 'welcome');
+    client.send({ type: 'subscribe', payload: { sessionId: session.sessionId } });
+    await client.waitFor((frame) => frame.type === 'history');
+    client.send({
+      type: 'send_user_message',
+      payload: {
+        sessionId: session.sessionId,
+        source: 'local',
+        content: [{ type: 'text', value: 'first' }],
+      },
+    });
+    await vi.waitFor(() => expect(captured).toEqual([first]));
+
+    client.send({
+      type: 'set_session_workspace',
+      payload: { sessionId: session.sessionId, workspacePath: second },
+    });
+    await client.waitFor(
+      (frame) => frame.type === 'session_upsert'
+        && frame.payload.session.workspacePath === fs.realpathSync(second),
+    );
+    expect(dispose).toHaveBeenCalledTimes(1);
+
+    client.send({
+      type: 'send_user_message',
+      payload: {
+        sessionId: session.sessionId,
+        source: 'local',
+        content: [{ type: 'text', value: 'second' }],
+      },
+    });
+    await vi.waitFor(() => expect(captured).toEqual([
+      first,
+      fs.realpathSync(second),
+    ]));
+    client.close();
+  });
+
   it('A2A tool-free runtime 不注入企业组织与职位上下文', async () => {
     let capturedWorkspaceContext: string | undefined;
     let capturedDocumentIdentity:

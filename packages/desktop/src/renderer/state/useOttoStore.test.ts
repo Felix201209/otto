@@ -1047,6 +1047,32 @@ describe('目录附件发送', () => {
   });
 });
 
+describe('真实工作目录切换', () => {
+  it('只为当前会话发送 set_session_workspace，由服务端回包更新摘要', () => {
+    const { view, push } = setup();
+    push({
+      type: 'session_upsert',
+      payload: { session: makeSession({ sessionId: 'workspace-session', workspacePath: '/Users/test' }) },
+    });
+    act(() => view.result.current.actions.selectSession('workspace-session'));
+    sendSpy.mockClear();
+
+    act(() => view.result.current.actions.setWorkspace('/Users/test/project'));
+    expect(sendSpy).toHaveBeenCalledWith({
+      type: 'set_session_workspace',
+      payload: { sessionId: 'workspace-session', workspacePath: '/Users/test/project' },
+    });
+    expect(view.result.current.state.sessions['workspace-session'].workspacePath).toBe('/Users/test');
+
+    push({
+      type: 'session_upsert',
+      payload: { session: makeSession({ sessionId: 'workspace-session', workspacePath: '/Users/test/project' }) },
+    });
+    expect(view.result.current.state.sessions['workspace-session'].workspacePath)
+      .toBe('/Users/test/project');
+  });
+});
+
 describe('Agent profile 启动动作', () => {
   it('A2A 本地协助会话在服务端确认后才发送一次任务提示', async () => {
     const { view, push } = setup();

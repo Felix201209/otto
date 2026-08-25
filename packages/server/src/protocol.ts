@@ -239,6 +239,8 @@ export interface SessionSummary {
   feishuChatId?: string;
   status: SessionStatus;
   model?: string;
+  /** 此会话工具、命令与文件操作使用的真实工作目录。旧会话缺失时回退用户主目录。 */
+  workspacePath?: string;
   /** 受服务端白名单验证的会话 Agent profile；不携带可注入 prompt。 */
   agentProfileId?: string;
   agentProfileName?: string;
@@ -346,6 +348,12 @@ export type CancelMsg = Envelope<
 export type SetModelMsg = Envelope<
   'set_model',
   { sessionId: string; model: string }
+>;
+
+/** 切换当前会话的真实工作目录。路径须由 desktop 主进程授权，server 仍会复核。 */
+export type SetSessionWorkspaceMsg = Envelope<
+  'set_session_workspace',
+  { sessionId: string; workspacePath: string }
 >;
 
 /** 设置执行授权。session 仅当前会话；all 同步所有会话并作为后续会话默认值。 */
@@ -692,6 +700,7 @@ export type ClientToServer =
   | ToolConfirmationResponseMsg
   | CancelMsg
   | SetModelMsg
+  | SetSessionWorkspaceMsg
   | SetAuthorizationModeMsg
   | GetModelsMsg
   | SaveCustomModelMsg
@@ -1803,6 +1812,14 @@ export function validateClientPayload(msg: {
       if (!isNonEmptyString(p['sessionId']))
         return 'sessionId 必须是非空字符串';
       if (!isNonEmptyString(p['model'])) return 'model 必须是非空字符串';
+      return null;
+    }
+    case 'set_session_workspace': {
+      if (!isPlainObject(p)) return 'set_session_workspace payload 必须是对象';
+      if (!isNonEmptyString(p['sessionId']))
+        return 'sessionId 必须是非空字符串';
+      if (!isNonEmptyString(p['workspacePath']) || !p['workspacePath'].trim())
+        return 'workspacePath 必须是非空字符串';
       return null;
     }
     case 'set_authorization_mode': {
