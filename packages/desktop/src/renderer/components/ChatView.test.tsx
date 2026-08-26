@@ -55,7 +55,10 @@ function twoRounds(): OttoMessage[] {
   ];
 }
 
-function renderChat(onRegenerate = vi.fn()) {
+function renderChat(
+  onRegenerate = vi.fn(),
+  rightPanel?: { collapsed: boolean; onToggle: () => void },
+) {
   render(
     <ChatView
       session={SESSION}
@@ -72,6 +75,8 @@ function renderChat(onRegenerate = vi.fn()) {
       onNewChat={vi.fn()}
       onClearContext={vi.fn()}
       onExport={vi.fn()}
+      rightPanelCollapsed={rightPanel?.collapsed}
+      onToggleRightPanel={rightPanel?.onToggle}
     />,
   );
   return { onRegenerate };
@@ -127,5 +132,15 @@ describe('ChatView 重新生成携带消息 id', () => {
     const buttons = screen.getAllByLabelText('重新生成');
     fireEvent.click(buttons[1]);
     expect(onRegenerate).toHaveBeenCalledWith('bot-B');
+  });
+
+  it('在聊天顶栏使用 PanelRight 按钮切换右侧栏', () => {
+    const onToggle = vi.fn();
+    renderChat(vi.fn(), { collapsed: false, onToggle });
+
+    const toggle = screen.getByRole('button', { name: '折叠右侧栏' });
+    expect(toggle.querySelector('svg')).toBeTruthy();
+    fireEvent.click(toggle);
+    expect(onToggle).toHaveBeenCalledTimes(1);
   });
 });

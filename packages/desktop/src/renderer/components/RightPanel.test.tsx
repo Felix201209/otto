@@ -203,11 +203,13 @@ describe('RightPanel fixed Agent catalog', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: '创建并启动' }));
 
-    await waitFor(() => expect(create).toHaveBeenCalledWith({
-      name: '客户成功助手',
-      instructions: '跟进客户风险与续费待办。',
-    }));
-    expect(screen.queryByRole('dialog', { name: '创建专家' })).toBeNull();
+    await waitFor(() => {
+      expect(create).toHaveBeenCalledWith({
+        name: '客户成功助手',
+        instructions: '跟进客户风险与续费待办。',
+      });
+      expect(screen.queryByRole('dialog', { name: '创建专家' })).toBeNull();
+    });
 
     fireEvent.click(screen.getByRole('button', { name: '启动招投标助手' }));
     expect(launch).toHaveBeenCalledWith(saved);
@@ -318,14 +320,31 @@ describe('RightPanel fixed Agent catalog', () => {
     expect(screen.queryByTestId('otto-pet-stage')).toBeNull();
   });
 
-  it('keeps the right panel expanded without collapse controls', () => {
+  it('accepts controlled collapse state without restoring legacy edge controls', () => {
     installBridge();
-    const { container } = render(<RightPanel busy={false} />);
+    const { container, rerender } = render(<RightPanel busy={false} />);
 
     expect(screen.queryByRole('button', { name: '折叠右侧功能栏' })).toBeNull();
     expect(screen.queryByRole('button', { name: '展开右侧功能栏' })).toBeNull();
     expect(container.querySelector('.otto-right-panel--collapsed')).toBeNull();
     expect(screen.getByRole('tab', { name: '专家' })).toBeTruthy();
+
+    rerender(<RightPanel busy={false} collapsed />);
+    const panel = container.querySelector<HTMLElement>('.otto-right-panel--collapsed');
+    expect(panel).toBeTruthy();
+    expect(panel?.getAttribute('aria-hidden')).toBe('true');
+    expect(screen.queryByRole('button', { name: '折叠右侧功能栏' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '展开右侧功能栏' })).toBeNull();
+  });
+
+  it('does not collapse the standalone workspace presentation', () => {
+    installBridge();
+    const { container } = render(
+      <RightPanel busy={false} presentation="page" collapsed />,
+    );
+
+    expect(container.querySelector('.otto-right-panel--page')).toBeTruthy();
+    expect(container.querySelector('.otto-right-panel--collapsed')).toBeNull();
   });
 
   it('keeps personal mode on its right-panel tabs without enterprise-only actions', () => {

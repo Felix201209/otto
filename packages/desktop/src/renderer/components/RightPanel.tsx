@@ -86,6 +86,8 @@ function formatEnterpriseMemoryDate(value: string): string {
 export interface RightPanelProps {
   busy: boolean;
   presentation?: 'panel' | 'page';
+  /** 面板模式下保留组件状态，但从布局和可访问性树中收起。 */
+  collapsed?: boolean;
   mode?: 'personal' | 'enterprise';
   /** 已由中心服务认证的角色；不能从本机 workspace.role 推导。 */
   enterpriseRole?: CentralEnterpriseRole;
@@ -126,6 +128,7 @@ function visibleProfiles(
 export function RightPanel({
   busy,
   presentation = 'panel',
+  collapsed = false,
   mode = 'personal',
   enterpriseRole,
   enterpriseOrganizationId: authenticatedOrganizationId,
@@ -488,8 +491,11 @@ export function RightPanel({
 
   return (
     <aside
-      className={`otto-right-panel otto-right-panel--${presentation}`}
+      className={`otto-right-panel otto-right-panel--${presentation}${
+        presentation === 'panel' && collapsed ? ' otto-right-panel--collapsed' : ''
+      }`}
       aria-busy={busy}
+      aria-hidden={presentation === 'panel' && collapsed ? true : undefined}
     >
       <div className="otto-right-panel__tabs" role="tablist" aria-label="右侧面板">
         {tabs.map((tab) => (

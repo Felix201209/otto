@@ -90,6 +90,16 @@ export function IconList({ size, className }: IconProps): React.JSX.Element {
   );
 }
 
+/** Lucide panel-right：聊天顶栏中的右侧栏显隐入口。 */
+export function IconPanelRight({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path d="M15 3v18" />
+    </svg>
+  );
+}
+
 export function IconSearch({ size, className }: IconProps): React.JSX.Element {
   return (
     <svg {...base(size)} className={className}>

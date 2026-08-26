@@ -25,7 +25,7 @@ import { Message } from './Message.js';
 import type { RespondQuestionFn } from './ToolCalls.js';
 import { Composer } from './Composer.js';
 import type { SlashCommand } from './SlashCommands.js';
-import { IconArrowDown, OttoAvatar } from './icons.js';
+import { IconArrowDown, IconPanelRight, OttoAvatar } from './icons.js';
 
 import { OttoPetStage } from './OttoPetStage.js';
 import {
@@ -94,6 +94,9 @@ interface ChatViewProps {
   onShowHelp?: () => void;
   /** 斜杠专家入口：创建绑定服务端 profile 的新会话。 */
   onLaunchAgentProfile?: (profileId: string, title: string) => void;
+  /** 工作式 UI 的右侧栏状态；仅传入切换动作时显示顶栏入口。 */
+  rightPanelCollapsed?: boolean;
+  onToggleRightPanel?: () => void;
 }
 
 export function ChatView({
@@ -123,6 +126,8 @@ export function ChatView({
   onOpenSessions,
   onShowHelp,
   onLaunchAgentProfile,
+  rightPanelCollapsed = false,
+  onToggleRightPanel,
 }: ChatViewProps): React.JSX.Element {
   const threadRef = useRef<HTMLDivElement>(null);
   // 用户是否贴在底部（决定流式增量是否自动跟随）。
@@ -241,6 +246,19 @@ export function ChatView({
 
         {session?.source === 'feishu' ? (
           <span className="otto-main__sync">飞书 · 实时同步</span>
+        ) : null}
+
+        {onToggleRightPanel ? (
+          <button
+            type="button"
+            className={`otto-main__panel-toggle${rightPanelCollapsed ? '' : ' is-active'}`}
+            aria-label={rightPanelCollapsed ? '展开右侧栏' : '折叠右侧栏'}
+            aria-pressed={!rightPanelCollapsed}
+            title={rightPanelCollapsed ? '展开右侧栏' : '折叠右侧栏'}
+            onClick={onToggleRightPanel}
+          >
+            <IconPanelRight size={18} />
+          </button>
         ) : null}
       </header>
 

@@ -106,6 +106,10 @@ import {
   type UiMode,
 } from './uiModePreference.js';
 import {
+  readRightPanelCollapsed,
+  writeRightPanelCollapsed,
+} from './rightPanelPreference.js';
+import {
   buildCustomAgentKickoff,
   createCustomAgent,
   customAgentStorageKey,
@@ -721,6 +725,19 @@ function OttoWorkspaceApp({
     writeUiModePreference(uiModeScope, nextMode);
     setSavedUiMode(nextMode);
   }, [uiModeScope]);
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(
+    () => readRightPanelCollapsed(uiModeScope),
+  );
+  useEffect(() => {
+    setRightPanelCollapsed(readRightPanelCollapsed(uiModeScope));
+  }, [uiModeScope]);
+  const toggleRightPanel = useCallback((): void => {
+    setRightPanelCollapsed((current) => {
+      const next = !current;
+      writeRightPanelCollapsed(uiModeScope, next);
+      return next;
+    });
+  }, [uiModeScope]);
   const [organizationRefreshRevision, setOrganizationRefreshRevision] = useState(0);
   const [enterpriseDirectChatOpenRequest, setEnterpriseDirectChatOpenRequest] = useState<{
     peerAccountId: string;
@@ -1238,6 +1255,8 @@ function OttoWorkspaceApp({
                 setMainView('chat');
                 actions.launchAgentProfile(title, profileId);
               }}
+              rightPanelCollapsed={rightPanelCollapsed}
+              onToggleRightPanel={uiMode === 'work' ? toggleRightPanel : undefined}
               commands={slashCommands}
               onRunServerCommand={(name, args) => {
                 if (!activeSession) return;
@@ -1248,9 +1267,10 @@ function OttoWorkspaceApp({
               }}
             />
           )}
-          {mainView === 'chat' && uiMode === 'work' ? (
+          {(mainView === 'chat' || mainView === 'hub') && uiMode === 'work' ? (
             <RightPanel
               busy={busy}
+              collapsed={rightPanelCollapsed}
               mode={edition}
               enterpriseRole={centralIdentity.role}
               enterpriseOrganizationId={account.organizationId}

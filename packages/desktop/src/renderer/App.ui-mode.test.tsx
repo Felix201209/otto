@@ -2,7 +2,7 @@
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App.js';
 import type { EnterpriseAccount } from '../preload/index.js';
@@ -128,11 +128,31 @@ vi.mock('./components/Sidebar.js', () => ({
 }));
 
 vi.mock('./components/ChatView.js', () => ({
-  ChatView: () => <main data-testid="chat-view" />,
+  ChatView: ({
+    rightPanelCollapsed,
+    onToggleRightPanel,
+  }: {
+    rightPanelCollapsed?: boolean;
+    onToggleRightPanel?: () => void;
+  }) => (
+    <main data-testid="chat-view">
+      {onToggleRightPanel ? (
+        <button
+          type="button"
+          aria-label={rightPanelCollapsed ? '展开右侧栏' : '折叠右侧栏'}
+          onClick={onToggleRightPanel}
+        >
+          toggle-right-panel
+        </button>
+      ) : null}
+    </main>
+  ),
 }));
 
 vi.mock('./components/RightPanel.js', () => ({
-  RightPanel: () => <aside data-testid="work-panel" />,
+  RightPanel: ({ collapsed }: { collapsed?: boolean }) => (
+    <aside data-testid="work-panel" data-collapsed={collapsed ? 'true' : 'false'} />
+  ),
 }));
 
 vi.mock('./components/ParkServicesPlugin.js', () => ({
@@ -222,6 +242,15 @@ function preferenceKey(account: EnterpriseAccount): string {
   });
 }
 
+function rightPanelPreferenceKey(account: EnterpriseAccount): string {
+  return [
+    'otto.right-panel.v1',
+    'https://enterprise.example.com',
+    account.organizationId,
+    account.id,
+  ].map(encodeURIComponent).join(':');
+}
+
 beforeEach(() => {
   localStorage.clear();
   harness.auth.current = authFor(accountA, 'signed-in');
@@ -278,10 +307,63 @@ describe('App UI mode integration', () => {
     expect(screen.getByTestId('work-panel')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'open-preferences' }));
     expect(screen.getByTestId('settings-hub').dataset.uiMode).toBe('work');
+    expect(screen.getByTestId('work-panel').dataset.collapsed).toBe('false');
 
     fireEvent.click(screen.getByRole('button', { name: 'settings-conversational' }));
     expect(screen.queryByTestId('work-panel')).toBeNull();
+    expect(screen.queryByRole('button', { name: /右侧栏/ })).toBeNull();
     expect(localStorage.getItem(preferenceKey(accountA))).toBe('conversational');
+  });
+
+  it('toggles the right panel from the chat header and persists the account preference', () => {
+    localStorage.setItem(preferenceKey(accountA), 'work');
+    const first = render(<App />);
+
+    expect(screen.getByTestId('work-panel').dataset.collapsed).toBe('false');
+    fireEvent.click(screen.getByRole('button', { name: '折叠右侧栏' }));
+
+    expect(screen.getByTestId('work-panel').dataset.collapsed).toBe('true');
+    expect(screen.getByRole('button', { name: '展开右侧栏' })).toBeTruthy();
+    expect(localStorage.getItem(rightPanelPreferenceKey(accountA))).toBe('collapsed');
+
+    first.unmount();
+    render(<App />);
+    expect(screen.getByTestId('work-panel').dataset.collapsed).toBe('true');
+    expect(screen.getByRole('button', { name: '展开右侧栏' })).toBeTruthy();
+  });
+
+  it('keeps a collapsed right panel mounted while the settings hub is open', () => {
+    localStorage.setItem(preferenceKey(accountA), 'work');
+    localStorage.setItem(rightPanelPreferenceKey(accountA), 'collapsed');
+    render(<App />);
+
+    expect(screen.getByTestId('work-panel').dataset.collapsed).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'open-preferences' }));
+
+    expect(screen.getByTestId('settings-hub')).toBeTruthy();
+    expect(screen.getByTestId('work-panel').dataset.collapsed).toBe('true');
+  });
+
+  it('does not reuse a collapsed preference for another account', async () => {
+    const accountB = {
+      ...accountA,
+      id: 'account-b',
+      organizationId: 'personal-b',
+      username: 'account-b',
+      name: 'Bob',
+    };
+    localStorage.setItem(preferenceKey(accountA), 'work');
+    localStorage.setItem(preferenceKey(accountB), 'work');
+    localStorage.setItem(rightPanelPreferenceKey(accountA), 'collapsed');
+    const view = render(<App />);
+    expect(screen.getByTestId('work-panel').dataset.collapsed).toBe('true');
+
+    harness.auth.current = authFor(accountB, 'signed-in');
+    view.rerender(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('work-panel').dataset.collapsed).toBe('false');
+    });
   });
 
   it('does not reuse one account UI preference for another account', () => {
