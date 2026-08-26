@@ -5,12 +5,12 @@
  */
 
 /**
- * applyFrame reducer + groupSessions selector 单测（renderer 状态心脏）。
+ * applyFrame reducer 单测（renderer 状态心脏）。
  *
  * applyFrame / reducer / mergeTextDelta 是文件私有（不改源码 export），故通过
  * renderHook(useOttoStore) + mock transport 打帧的方式间接覆盖每个帧分支：
  *   mock 的 transport.onFrame 捕获 hook 注册的 frame handler，用 act() 调它推帧，
- *   再断言 result.current.state。groupSessions 已 export，直接测。
+ *   再断言 result.current.state。
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -56,8 +56,7 @@ vi.mock('../transport.js', () => ({
   isConnected: () => true,
 }));
 
-import { useOttoStore, groupSessions } from './useOttoStore.js';
-import type { OttoState } from './useOttoStore.js';
+import { useOttoStore } from './useOttoStore.js';
 import { clearEnterpriseOrganizationFeaturesCache } from './enterpriseOrganizationFeatures.js';
 
 /** 渲染 hook 并返回推帧函数 + result。 */
@@ -1117,71 +1116,5 @@ describe('Agent profile 启动动作', () => {
       ([frame]) => (frame as { type?: string }).type === 'send_user_message',
     );
     expect(sentPrompts).toHaveLength(1);
-  });
-});
-
-describe('groupSessions selector', () => {
-  const DAY = 86_400_000;
-
-  function stateWith(sessions: SessionSummary[]): OttoState {
-    const map: Record<string, SessionSummary> = {};
-    const ids: string[] = [];
-    for (const s of sessions) {
-      map[s.sessionId] = s;
-      ids.push(s.sessionId);
-    }
-    return {
-      connection: 'connected',
-      sessions: map,
-      sessionIds: ids,
-      activeSessionId: null,
-      messages: {},
-      models: [],
-      modelsLoaded: true,
-      currentModel: null,
-      lastError: null,
-      queuedCounts: {},
-      pendingCreateRequestId: null,
-      unreadSessions: [],
-    };
-  }
-
-  beforeEach(() => {
-    // 固定系统时间，避免时区/边界 flaky。
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-06-27T12:00:00'));
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('按 updatedAt 倒序 + 今天/昨天/更早分组', () => {
-    const now = Date.now();
-    const startOfToday = new Date(2026, 5, 27).getTime();
-    const groups = groupSessions(
-      stateWith([
-        makeSession({ sessionId: 'today1', updatedAt: startOfToday + 3600_000 }),
-        makeSession({ sessionId: 'today2', updatedAt: now }),
-        makeSession({ sessionId: 'yest', updatedAt: startOfToday - 3600_000 }),
-        makeSession({ sessionId: 'old', updatedAt: startOfToday - 3 * DAY }),
-      ]),
-    );
-    const labels = groups.map((g) => g.label);
-    expect(labels).toEqual(['今天', '昨天', '更早']);
-
-    const today = groups.find((g) => g.label === '今天')!;
-    // 倒序：today2(now) 在 today1 之前
-    expect(today.sessions.map((s) => s.sessionId)).toEqual(['today2', 'today1']);
-
-    expect(groups.find((g) => g.label === '昨天')!.sessions[0].sessionId).toBe('yest');
-    expect(groups.find((g) => g.label === '更早')!.sessions[0].sessionId).toBe('old');
-  });
-
-  it('空分组不出现在结果里', () => {
-    const startOfToday = new Date(2026, 5, 27).getTime();
-    const groups = groupSessions(
-      stateWith([makeSession({ sessionId: 'only', updatedAt: startOfToday + 1000 })]),
-    );
-    expect(groups.map((g) => g.label)).toEqual(['今天']);
   });
 });

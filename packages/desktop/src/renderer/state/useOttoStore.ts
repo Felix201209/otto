@@ -1310,44 +1310,7 @@ export function useOttoStore(
 
 // ── selectors ─────────────────────────────────────────────────────────────
 
-/** 列表按 updatedAt 倒序，并按今天/昨天/更早分组。 */
-export interface SessionGroup {
-  label: string;
-  sessions: SessionSummary[];
-}
-
-export function groupSessions(state: OttoState): SessionGroup[] {
-  const all = state.sessionIds
-    .map((id) => state.sessions[id])
-    .filter((s): s is SessionSummary => Boolean(s))
-    .sort((a, b) => b.updatedAt - a.updatedAt);
-
-  const now = new Date();
-  const startOfToday = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-  ).getTime();
-  const startOfYesterday = startOfToday - 86_400_000;
-
-  const today: SessionSummary[] = [];
-  const yesterday: SessionSummary[] = [];
-  const earlier: SessionSummary[] = [];
-
-  for (const s of all) {
-    if (s.updatedAt >= startOfToday) today.push(s);
-    else if (s.updatedAt >= startOfYesterday) yesterday.push(s);
-    else earlier.push(s);
-  }
-
-  const groups: SessionGroup[] = [];
-  if (today.length) groups.push({ label: '今天', sessions: today });
-  if (yesterday.length) groups.push({ label: '昨天', sessions: yesterday });
-  if (earlier.length) groups.push({ label: '更早', sessions: earlier });
-  return groups;
-}
-
-/** 全量会话按 updatedAt 倒序（「查看全部对话」检索面板用）。 */
+/** 全量会话按 updatedAt 倒序（侧栏任务列表与「查看全部对话」检索面板共用）。 */
 export function selectSortedSessions(state: OttoState): SessionSummary[] {
   return state.sessionIds
     .map((id) => state.sessions[id])

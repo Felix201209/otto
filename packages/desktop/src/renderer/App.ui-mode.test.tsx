@@ -73,7 +73,6 @@ vi.mock('./state/useOttoStore.js', () => ({
     },
     actions: harness.storeActions,
   }),
-  groupSessions: () => [],
   selectSortedSessions: () => [],
 }));
 

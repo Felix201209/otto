@@ -6,7 +6,7 @@
 
 /**
  * 左侧栏。以会话列表为主体：
- *   品牌 otto✦ / + 新建对话 / 今天·昨天分组会话列表（flex:1 主体）/
+ *   品牌 Otto / + 新建对话 / 可按时间或工作目录分组的会话列表（flex:1 主体）/
  *   底部账号区（辅助入口与当前账号）。
  *   常用工具（企业专家入口、全部智能体）已迁往右侧 RightPanel。
  *
@@ -16,9 +16,8 @@
  * 会话项因此从 <button> 改为 role=button 的 <div>：按钮不能嵌按钮/输入框（无效 HTML）。
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { SessionSummary } from 'otto-server';
-import { type SessionGroup } from '../state/useOttoStore.js';
 import { computeNavBadgeCounts } from '../attentionCenter.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import {
@@ -27,11 +26,22 @@ import {
   IconUserAvatar,
   IconSettings,
   IconLogOut,
+  IconList,
+  IconFolder,
+  IconCheck,
 } from './icons.js';
 import { LogoutConfirmDialog } from './LogoutConfirmDialog.js';
 import { JoinEnterpriseDialog } from './JoinEnterpriseDialog.js';
 import type { EnterpriseAccount } from '../../preload/index.js';
 import type { EnterpriseUnreadCounts } from '../enterpriseUnreadNotifications.js';
+import type { UiModePreferenceScope } from '../uiModePreference.js';
+import {
+  groupSessionsForSidebar,
+  readSessionListPreference,
+  sessionListPreferenceStorageKey,
+  writeSessionListPreference,
+  type SessionListPreference,
+} from '../sessionListView.js';
 
 function formatTime(ts: number): string {
   const d = new Date(ts);
@@ -40,41 +50,9 @@ function formatTime(ts: number): string {
   return `${hh}:${mm}`;
 }
 
-/** 按用户本地自然日计算相对日期，避免跨时区或夏令时把“昨天”算成同一天。 */
-function formatRelativeDay(ts: number, now = Date.now()): string {
-  const current = new Date(now);
-  const target = new Date(ts);
-  const currentDay = Date.UTC(current.getFullYear(), current.getMonth(), current.getDate());
-  const targetDay = Date.UTC(target.getFullYear(), target.getMonth(), target.getDate());
-  const days = Math.max(0, Math.round((currentDay - targetDay) / 86_400_000));
-  if (days === 0) return '今天';
-  if (days === 1) return '昨天';
-  return `${days}天前`;
-}
-
-function relativeSessionGroups(groups: SessionGroup[]): SessionGroup[] {
-  const result: SessionGroup[] = [];
-  const byLabel = new Map<string, SessionSummary[]>();
-  const now = Date.now();
-  const sessions = groups
-    .flatMap((group) => group.sessions)
-    .sort((a, b) => b.updatedAt - a.updatedAt);
-
-  for (const session of sessions) {
-    const label = formatRelativeDay(session.updatedAt, now);
-    const bucket = byLabel.get(label);
-    if (bucket) bucket.push(session);
-    else {
-      const first = [session];
-      byLabel.set(label, first);
-      result.push({ label, sessions: first });
-    }
-  }
-  return result;
-}
-
 interface SidebarProps {
-  groups: SessionGroup[];
+  sessions: SessionSummary[];
+  preferenceScope: UiModePreferenceScope;
   activeSessionId: string | null;
   /** 当前是否停在「设置」页（高亮该入口）。 */
   hubActive?: boolean;
@@ -102,7 +80,8 @@ interface SidebarProps {
 }
 
 export function Sidebar({
-  groups,
+  sessions,
+  preferenceScope,
   activeSessionId,
   hubActive = false,
   updateBadge = false,
@@ -127,11 +106,38 @@ export function Sidebar({
   const [joinEnterpriseOpen, setJoinEnterpriseOpen] = useState(false);
   const [logoutBusy, setLogoutBusy] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [groupingMenuOpen, setGroupingMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement>(null);
   const accountMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const accountMenuItemRef = useRef<HTMLButtonElement>(null);
-  const sessionGroups = relativeSessionGroups(groups);
-  const sessionCount = sessionGroups.reduce((total, group) => total + group.sessions.length, 0);
+  const groupingMenuRef = useRef<HTMLDivElement>(null);
+  const groupingMenuTriggerRef = useRef<HTMLButtonElement>(null);
+  const groupingMenuItemRef = useRef<HTMLButtonElement>(null);
+  const preferenceKey = sessionListPreferenceStorageKey(preferenceScope);
+  const [preferenceState, setPreferenceState] = useState<{
+    key: string;
+    preference: SessionListPreference;
+  }>(() => ({
+    key: preferenceKey,
+    preference: readSessionListPreference(preferenceScope),
+  }));
+  const preference = preferenceState.key === preferenceKey
+    ? preferenceState.preference
+    : readSessionListPreference(preferenceScope);
+  const sessionGroups = useMemo(
+    () => groupSessionsForSidebar(sessions, preference.mode),
+    [preference.mode, sessions],
+  );
+  const sessionCount = sessions.length;
+  const collapsedWorkspaceKeys = useMemo(
+    () => new Set(preference.collapsedWorkspaceKeys),
+    [preference.collapsedWorkspaceKeys],
+  );
+  const activeWorkspaceGroupKey = preference.mode === 'workspace'
+    ? sessionGroups.find((group) => group.sessions.some(
+      (session) => session.sessionId === activeSessionId,
+    ))?.key
+    : undefined;
   const enterpriseUnreadTotal = Object.values(enterpriseUnreadCounts)
     .reduce((total, count) => total + count, 0);
   const countedEnterpriseSessions = new Set(
@@ -142,6 +148,32 @@ export function Sidebar({
   const unreadSessionRemainder = unreadSessions
     ?.filter((sessionId) => !countedEnterpriseSessions.has(sessionId)).length ?? 0;
   const unreadCount = enterpriseUnreadTotal + unreadSessionRemainder;
+
+  const commitPreference = (next: SessionListPreference): void => {
+    setPreferenceState({ key: preferenceKey, preference: next });
+    writeSessionListPreference(preferenceScope, next);
+  };
+
+  useEffect(() => {
+    if (preferenceState.key === preferenceKey) return;
+    setPreferenceState({
+      key: preferenceKey,
+      preference: readSessionListPreference(preferenceScope),
+    });
+  }, [preferenceKey, preferenceScope, preferenceState.key]);
+
+  useEffect(() => {
+    if (!activeWorkspaceGroupKey
+      || !preference.collapsedWorkspaceKeys.includes(activeWorkspaceGroupKey)) return;
+    commitPreference({
+      ...preference,
+      collapsedWorkspaceKeys: preference.collapsedWorkspaceKeys.filter(
+        (key) => key !== activeWorkspaceGroupKey,
+      ),
+    });
+    // 只在当前会话、工作目录组或模式变化时自动展开；用户之后仍可手动折叠。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSessionId, activeWorkspaceGroupKey, preference.mode, preferenceKey]);
 
   useEffect(() => {
     if (!accountMenuOpen) return;
@@ -165,6 +197,29 @@ export function Sidebar({
       document.removeEventListener('keydown', onDocumentKeyDown);
     };
   }, [accountMenuOpen]);
+
+  useEffect(() => {
+    if (!groupingMenuOpen) return;
+    groupingMenuItemRef.current?.focus();
+
+    const onDocumentMouseDown = (event: MouseEvent): void => {
+      if (!groupingMenuRef.current?.contains(event.target as Node)) {
+        setGroupingMenuOpen(false);
+      }
+    };
+    const onDocumentKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return;
+      setGroupingMenuOpen(false);
+      groupingMenuTriggerRef.current?.focus();
+    };
+
+    document.addEventListener('mousedown', onDocumentMouseDown);
+    document.addEventListener('keydown', onDocumentKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onDocumentMouseDown);
+      document.removeEventListener('keydown', onDocumentKeyDown);
+    };
+  }, [groupingMenuOpen]);
 
   return (
     <aside className="otto-sidebar">
@@ -202,41 +257,128 @@ export function Sidebar({
 
       <div className="otto-sidebar__workspace">
         <section className="otto-conversations" aria-label="任务">
-          <button
-            type="button"
-            className="otto-conversations__toggle"
-            onClick={() => setSessionsOpen((value) => !value)}
-            aria-expanded={sessionsOpen}
-            aria-label={`任务（${sessionCount}）`}
-          >
-            <span>任务（{sessionCount}）</span>
-            <IconChevronDown
-              size={13}
-              className={'otto-conversations__chevron' + (sessionsOpen ? '' : ' is-collapsed')}
-            />
-          </button>
+          <div className="otto-conversations__header">
+            <button
+              type="button"
+              className="otto-conversations__toggle"
+              onClick={() => setSessionsOpen((value) => !value)}
+              aria-expanded={sessionsOpen}
+              aria-label={`任务（${sessionCount}）`}
+            >
+              <span>任务（{sessionCount}）</span>
+              <IconChevronDown
+                size={13}
+                className={'otto-conversations__chevron' + (sessionsOpen ? '' : ' is-collapsed')}
+              />
+            </button>
+            <div className="otto-session-grouping" ref={groupingMenuRef}>
+              <button
+                ref={groupingMenuTriggerRef}
+                type="button"
+                className="otto-session-grouping__trigger"
+                aria-label="任务分组方式"
+                aria-haspopup="menu"
+                aria-expanded={groupingMenuOpen}
+                title={preference.mode === 'time' ? '当前按时间分组' : '当前按工作目录分组'}
+                onClick={() => setGroupingMenuOpen((open) => !open)}
+              >
+                {preference.mode === 'time' ? <IconList size={14} /> : <IconFolder size={14} />}
+                <IconChevronDown size={11} />
+              </button>
+              {groupingMenuOpen ? (
+                <div className="otto-session-grouping__menu" role="menu" aria-label="任务分组方式">
+                  {([
+                    ['time', '按时间', IconList],
+                    ['workspace', '按工作目录', IconFolder],
+                  ] as const).map(([mode, label, Icon]) => (
+                    <button
+                      key={mode}
+                      ref={mode === preference.mode ? groupingMenuItemRef : undefined}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={preference.mode === mode}
+                      className="otto-session-grouping__menuitem"
+                      onClick={() => {
+                        commitPreference({ ...preference, mode });
+                        setGroupingMenuOpen(false);
+                        groupingMenuTriggerRef.current?.focus();
+                      }}
+                    >
+                      <Icon size={14} />
+                      <span>{label}</span>
+                      {preference.mode === mode ? <IconCheck size={14} /> : <span />}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </div>
 
           {sessionsOpen ? (
             <div className="otto-sessions">
               {sessionGroups.length === 0 ? (
                 <div className="otto-group__label">暂无对话</div>
               ) : (
-                sessionGroups.map((g) => (
-                  <div key={g.label}>
-                    <div className="otto-group__label">{g.label}</div>
-                    {g.sessions.map((s) => (
-                      <SessionItem
-                        key={s.sessionId}
-                        session={s}
-                        active={s.sessionId === activeSessionId}
-                        unread={unreadSessions?.includes(s.sessionId) ?? false}
-                        onSelect={onSelect}
-                        onRename={onRename}
-                        onDelete={onDelete}
-                      />
-                    ))}
-                  </div>
-                ))
+                sessionGroups.map((group) => {
+                  const collapsed = group.collapsible && collapsedWorkspaceKeys.has(group.key);
+                  const groupUnreadCount = group.sessions.filter(
+                    (session) => unreadSessions?.includes(session.sessionId),
+                  ).length;
+                  return (
+                    <div key={group.key} className="otto-session-group">
+                      {group.collapsible ? (
+                        <button
+                          type="button"
+                          className="otto-workspace-group__toggle"
+                          aria-expanded={!collapsed}
+                          aria-label={
+                            `${group.label}，${group.sessions.length} 个任务`
+                            + (groupUnreadCount > 0 ? `，${groupUnreadCount} 个未读任务` : '')
+                          }
+                          title={group.fullPath}
+                          onClick={() => {
+                            const nextCollapsed = collapsed
+                              ? preference.collapsedWorkspaceKeys.filter((key) => key !== group.key)
+                              : [...preference.collapsedWorkspaceKeys, group.key];
+                            commitPreference({
+                              ...preference,
+                              collapsedWorkspaceKeys: nextCollapsed,
+                            });
+                          }}
+                        >
+                          <IconChevronDown
+                            size={12}
+                            className={'otto-conversations__chevron' + (collapsed ? ' is-collapsed' : '')}
+                          />
+                          <IconFolder size={14} />
+                          <span className="otto-workspace-group__label">{group.label}</span>
+                          <span className="otto-workspace-group__count">{group.sessions.length}</span>
+                          {groupUnreadCount > 0 ? (
+                            <span
+                              className="otto-workspace-group__unread"
+                              aria-hidden="true"
+                            >
+                              {groupUnreadCount > 99 ? '99+' : groupUnreadCount}
+                            </span>
+                          ) : null}
+                        </button>
+                      ) : (
+                        <div className="otto-group__label">{group.label}</div>
+                      )}
+                      {!collapsed ? group.sessions.map((session) => (
+                        <SessionItem
+                          key={session.sessionId}
+                          session={session}
+                          active={session.sessionId === activeSessionId}
+                          unread={unreadSessions?.includes(session.sessionId) ?? false}
+                          onSelect={onSelect}
+                          onRename={onRename}
+                          onDelete={onDelete}
+                        />
+                      )) : null}
+                    </div>
+                  );
+                })
               )}
             </div>
           ) : null}

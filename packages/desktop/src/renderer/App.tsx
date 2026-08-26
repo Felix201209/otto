@@ -35,7 +35,6 @@ import type {
 } from 'otto-server';
 import {
   useOttoStore,
-  groupSessions,
   selectSortedSessions,
 } from './state/useOttoStore.js';
 import type { Attachment } from './state/useOttoStore.js';
@@ -914,7 +913,7 @@ function OttoWorkspaceApp({
     return off;
   }, [actions, edition]);
 
-  const groups = useMemo(() => groupSessions(state), [state]);
+  const sessions = useMemo(() => selectSortedSessions(state), [state]);
 
   const activeSession = state.activeSessionId
     ? state.sessions[state.activeSessionId] ?? null
@@ -1108,7 +1107,8 @@ function OttoWorkspaceApp({
   return (
     <div className="otto-app" data-connection={state.connection} data-ui-mode={uiMode}>
       <Sidebar
-        groups={groups}
+        sessions={sessions}
+        preferenceScope={uiModeScope}
         activeSessionId={state.activeSessionId}
         hubActive={mainView === 'hub'}
         activeView={mainView}

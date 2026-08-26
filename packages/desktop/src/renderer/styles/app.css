@@ -9443,7 +9443,15 @@ h6.otto-prose__h {
   border-radius: 0;
   background: transparent;
 }
+.otto-conversations__header {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 10px;
+}
 .otto-conversations__toggle {
+  flex: 1 1 auto;
+  width: auto;
   padding: 8px 18px 7px;
   color: var(--otto-text-tertiary);
   font-size: 11px;
@@ -9452,6 +9460,66 @@ h6.otto-prose__h {
 .otto-conversations__toggle:hover {
   background: transparent;
   color: var(--otto-text-secondary);
+}
+.otto-session-grouping {
+  position: relative;
+  flex: 0 0 auto;
+}
+.otto-session-grouping__trigger {
+  width: 32px;
+  height: 28px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--otto-text-tertiary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  cursor: pointer;
+}
+.otto-session-grouping__trigger:hover,
+.otto-session-grouping__trigger[aria-expanded='true'] {
+  background: var(--otto-surface-hover, rgba(0, 0, 0, 0.04));
+  color: var(--otto-text-secondary);
+}
+.otto-session-grouping__trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+.otto-session-grouping__menu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  right: 0;
+  width: 150px;
+  padding: 5px;
+  border: 1px solid var(--otto-border);
+  border-radius: 10px;
+  background: var(--otto-surface);
+  box-shadow: var(--otto-shadow-pop);
+}
+.otto-session-grouping__menuitem {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--otto-text-secondary);
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+  font-size: 12px;
+  cursor: pointer;
+}
+.otto-session-grouping__menuitem:hover,
+.otto-session-grouping__menuitem:focus-visible {
+  outline: none;
+  background: var(--otto-accent-soft);
+  color: var(--otto-accent);
 }
 .otto-conversations .otto-sessions {
   border-top: 0;
@@ -9464,6 +9532,55 @@ h6.otto-prose__h {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
+}
+.otto-workspace-group__toggle {
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 8px 5px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--otto-text-secondary);
+  display: grid;
+  grid-template-columns: 12px 16px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 5px;
+  text-align: left;
+  cursor: pointer;
+}
+.otto-workspace-group__toggle:hover {
+  background: var(--otto-surface-hover, rgba(0, 0, 0, 0.04));
+}
+.otto-workspace-group__toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
+.otto-workspace-group__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  font-weight: 650;
+}
+.otto-workspace-group__count {
+  color: var(--otto-text-tertiary);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.otto-workspace-group__unread {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--otto-accent);
+  color: white;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
 }
 .otto-session {
   padding: 8px 12px 8px 14px;

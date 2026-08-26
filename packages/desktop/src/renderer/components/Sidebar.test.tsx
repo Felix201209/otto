@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { render, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { SessionSummary } from 'otto-server';
 import { Sidebar } from './Sidebar.js';
-import type { SessionGroup } from '../state/useOttoStore.js';
+import { sessionListPreferenceStorageKey } from '../sessionListView.js';
 
 const PERSONAL_ACCOUNT = {
   id: 'acc_personal',
@@ -61,13 +61,15 @@ function renderSidebar(over: Partial<React.ComponentProps<typeof Sidebar>> = {})
   const onSelect = vi.fn();
   const onRename = vi.fn();
   const onDelete = vi.fn();
-  const groups: SessionGroup[] = [
-    { label: '今天', sessions: [makeSession()] },
-  ];
   render(
     <Sidebar
-      groups={groups}
+      sessions={[makeSession()]}
       activeSessionId="s1"
+      preferenceScope={{
+        serverUrl: 'https://example.com',
+        organizationId: 'personal_acc_personal',
+        accountId: 'acc_personal',
+      }}
       onSelect={onSelect}
       onNewChat={vi.fn()}
       onOpenHub={vi.fn()}
@@ -79,6 +81,10 @@ function renderSidebar(over: Partial<React.ComponentProps<typeof Sidebar>> = {})
   );
   return { onSelect, onRename, onDelete };
 }
+
+beforeEach(() => {
+  window.localStorage.clear();
+});
 
 describe('Sidebar：布局（工具区已迁右侧面板）', () => {
   it('首页品牌使用正式名称 Otto', () => {
@@ -106,13 +112,10 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
 
   it('任务标题只用一个数字表示总数，并支持整体展开收起', () => {
     renderSidebar({
-      groups: [{
-        label: '今天',
-        sessions: [
-          makeSession({ sessionId: 's1' }),
-          makeSession({ sessionId: 's2', title: '第二个任务' }),
-        ],
-      }],
+      sessions: [
+        makeSession({ sessionId: 's1' }),
+        makeSession({ sessionId: 's2', title: '第二个任务' }),
+      ],
     });
 
     const toggle = screen.getByRole('button', { name: '任务（2）' });
@@ -277,19 +280,113 @@ describe('Sidebar：对话任务日期', () => {
     const day = 86_400_000;
     const today = new Date(2026, 6, 12).getTime();
     renderSidebar({
-      groups: [{
-        label: '任意旧分组名',
-        sessions: [
-          makeSession({ sessionId: 'today', title: '今天任务', updatedAt: today + 1_000 }),
-          makeSession({ sessionId: 'yesterday', title: '昨天任务', updatedAt: today - day + 1_000 }),
-          makeSession({ sessionId: 'old', title: '旧任务', updatedAt: today - 4 * day + 1_000 }),
-        ],
-      }],
+      sessions: [
+        makeSession({ sessionId: 'today', title: '今天任务', updatedAt: today + 1_000 }),
+        makeSession({ sessionId: 'yesterday', title: '昨天任务', updatedAt: today - day + 1_000 }),
+        makeSession({ sessionId: 'old', title: '旧任务', updatedAt: today - 4 * day + 1_000 }),
+      ],
     });
 
     expect(screen.getByText('今天')).toBeTruthy();
     expect(screen.getByText('昨天')).toBeTruthy();
     expect(screen.getByText('4天前')).toBeTruthy();
+  });
+});
+
+describe('Sidebar：任务分组方式', () => {
+  const preferenceScope = {
+    serverUrl: 'https://example.com',
+    organizationId: 'personal_acc_personal',
+    accountId: 'acc_personal',
+  };
+
+  const workspaceSessions = [
+    makeSession({
+      sessionId: 'project-new',
+      title: '项目新任务',
+      workspacePath: '/Users/yang/project',
+      updatedAt: 30,
+    }),
+    makeSession({
+      sessionId: 'project-old',
+      title: '项目旧任务',
+      workspacePath: '/Users/yang/project',
+      updatedAt: 20,
+    }),
+    makeSession({
+      sessionId: 'desktop',
+      title: '桌面任务',
+      workspacePath: '/Users/yang/Desktop',
+      updatedAt: 10,
+    }),
+  ];
+
+  it('默认保持按时间，并可从菜单切换到按工作目录', () => {
+    renderSidebar({ sessions: workspaceSessions, preferenceScope });
+
+    fireEvent.click(screen.getByRole('button', { name: '任务分组方式' }));
+    const menu = screen.getByRole('menu', { name: '任务分组方式' });
+    expect(within(menu).getByRole('menuitemradio', { name: '按时间' })
+      .getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(within(menu).getByRole('menuitemradio', { name: '按工作目录' }));
+
+    expect(screen.getByRole('button', { name: 'project，2 个任务' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Desktop，1 个任务' })).toBeTruthy();
+    expect(JSON.parse(localStorage.getItem(sessionListPreferenceStorageKey(preferenceScope)) ?? '{}'))
+      .toMatchObject({ mode: 'workspace' });
+  });
+
+  it('分组菜单点击外部或按 Escape 都会关闭，并把焦点还给触发按钮', () => {
+    renderSidebar({ sessions: workspaceSessions, preferenceScope });
+    const trigger = screen.getByRole('button', { name: '任务分组方式' });
+
+    fireEvent.click(trigger);
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole('menu', { name: '任务分组方式' })).toBeNull();
+
+    fireEvent.click(trigger);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('menu', { name: '任务分组方式' })).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('工作目录可以独立折叠，折叠后仍显示未读数量', () => {
+    localStorage.setItem(sessionListPreferenceStorageKey(preferenceScope), JSON.stringify({
+      version: 1,
+      mode: 'workspace',
+      collapsedWorkspaceKeys: [],
+    }));
+    renderSidebar({
+      sessions: workspaceSessions,
+      preferenceScope,
+      unreadSessions: ['project-old'],
+    });
+
+    const project = screen.getByRole('button', { name: 'project，2 个任务，1 个未读任务' });
+    expect(project.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(project);
+    expect(project.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('项目新任务')).toBeNull();
+    expect(within(project).getByText('1')).toBeTruthy();
+    expect(screen.getByText('桌面任务')).toBeTruthy();
+  });
+
+  it('进入目录模式时自动展开当前会话所在目录，但之后允许用户手动折叠', () => {
+    localStorage.setItem(sessionListPreferenceStorageKey(preferenceScope), JSON.stringify({
+      version: 1,
+      mode: 'workspace',
+      collapsedWorkspaceKeys: ['workspace:/Users/yang/project'],
+    }));
+    renderSidebar({
+      sessions: workspaceSessions,
+      activeSessionId: 'project-new',
+      preferenceScope,
+    });
+
+    const project = screen.getByRole('button', { name: 'project，2 个任务' });
+    expect(project.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(project);
+    expect(project.getAttribute('aria-expanded')).toBe('false');
   });
 });
 
@@ -382,9 +479,7 @@ describe('Sidebar 会话项：删除二次确认（弹窗）', () => {
 
   it('标题为空 → 弹窗回退「未命名对话」', () => {
     renderSidebar({
-      groups: [
-        { label: '今天', sessions: [makeSession({ title: '' })] },
-      ],
+      sessions: [makeSession({ title: '' })],
     });
     fireEvent.click(screen.getByLabelText('更多操作'));
     fireEvent.click(screen.getByText('删除'));
