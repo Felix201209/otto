@@ -40,6 +40,14 @@ function capabilitiesSignature(capabilities: ModuleWorkspaceCapabilities): strin
   return JSON.stringify([capabilities.edition, capabilities.availableModuleIds]);
 }
 
+function capabilitiesFromSignature(signature: string): ModuleWorkspaceCapabilities {
+  const [edition, availableModuleIds] = JSON.parse(signature) as [
+    ModuleWorkspaceCapabilities['edition'],
+    string[],
+  ];
+  return { edition, availableModuleIds };
+}
+
 function readLayout(
   storage: ModuleWorkspaceStorage,
   storageKey: string,
@@ -72,9 +80,13 @@ export function useModuleWorkspace({
 }: UseModuleWorkspaceInput): UseModuleWorkspaceResult {
   const storageKey = getModuleWorkspaceStorageKey(scope);
   const capabilitySignature = capabilitiesSignature(capabilities);
+  const stableCapabilities = useMemo(
+    () => capabilitiesFromSignature(capabilitySignature),
+    [capabilitySignature],
+  );
   const loadedLayout = useMemo(
-    () => readLayout(storage, storageKey, capabilities),
-    [capabilitySignature, storage, storageKey],
+    () => readLayout(storage, storageKey, stableCapabilities),
+    [stableCapabilities, storage, storageKey],
   );
   const [state, setState] = useState<ScopedLayoutState>(() => ({
     storageKey,
@@ -97,22 +109,19 @@ export function useModuleWorkspace({
   }, [capabilitySignature, storage, storageKey]);
 
   const restoreDefaults = useCallback((): void => {
-    const defaults = createDefaultModuleWorkspace(capabilities);
+    const defaults = createDefaultModuleWorkspace(stableCapabilities);
     setState({ storageKey, capabilitySignature, layout: defaults });
     writeLayout(storage, storageKey, defaults);
-  }, [capabilitySignature, capabilities, storage, storageKey]);
+  }, [capabilitySignature, stableCapabilities, storage, storageKey]);
 
-  const visibleSignature = JSON.stringify(visibleModuleIds);
-  const visibleLayout = useMemo(() => {
-    const visible = new Set(visibleModuleIds);
-    return {
-      ...layout,
-      groups: layout.groups.map((group) => ({
-        ...group,
-        moduleIds: group.moduleIds.filter((moduleId) => visible.has(moduleId)),
-      })),
-    };
-  }, [layout, visibleSignature]);
+  const visible = new Set(visibleModuleIds);
+  const visibleLayout = {
+    ...layout,
+    groups: layout.groups.map((group) => ({
+      ...group,
+      moduleIds: group.moduleIds.filter((moduleId) => visible.has(moduleId)),
+    })),
+  };
 
   return {
     layout,
