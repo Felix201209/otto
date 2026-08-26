@@ -9,7 +9,7 @@
  * 数据与动作全部来自 useSettingsData，本文件只负责排版。
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { DEFAULT_UI_MODE, type UiMode } from '../../uiModePreference.js';
 import { UiModePreview } from '../UiModeGuide.js';
 import type { UseSettingsData } from '../../state/useSettingsData.js';
@@ -58,8 +58,9 @@ export function PrefsPanel({
   // 外观主题：独立于 server settings（走 main 的 nativeTheme IPC，本机持久化）。
   const [theme, setTheme] = useState<'system' | 'light' | 'dark'>('system');
   const [petWidgetEnabled, setPetWidgetEnabled] = useState(readPetWidgetEnabled);
-  const [resetting, setResetting] = useState(false);
-  const [resetComplete, setResetComplete] = useState(false);
+  const [resetStatus, setResetStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
+  const [themeResetSettled, setThemeResetSettled] = useState(true);
+  const resetErrorBaseline = useRef<string | null>(null);
 
   useEffect(() => {
     setLangDraft(s?.preferredLanguage ?? '');
@@ -81,42 +82,77 @@ export function PrefsPanel({
   };
 
   useEffect(() => {
-    if (!resetComplete) return;
-    const timer = window.setTimeout(() => setResetComplete(false), 1800);
+    if (resetStatus !== 'success') return;
+    const timer = window.setTimeout(() => setResetStatus('idle'), 1800);
     return () => window.clearTimeout(timer);
-  }, [resetComplete]);
+  }, [resetStatus]);
 
-  const hasNonDefaultPreference = Boolean(
-    s && (
-      uiMode !== DEFAULT_UI_MODE ||
-      theme !== 'system' ||
-      s.agentStyle !== 'default' ||
-      petWidgetEnabled ||
-      s.healthyUse !== true ||
-      (s.preferredLanguage ?? '').trim() !== '' ||
-      langDraft.trim() !== ''
-    )
+  useEffect(() => {
+    if (resetStatus !== 'pending') return;
+    const timer = window.setTimeout(() => setResetStatus('error'), 8000);
+    return () => window.clearTimeout(timer);
+  }, [resetStatus]);
+
+  useEffect(() => {
+    if (
+      resetStatus === 'pending' &&
+      state.lastError &&
+      state.lastError !== resetErrorBaseline.current
+    ) {
+      setResetStatus('error');
+    }
+  }, [resetStatus, state.lastError]);
+
+  const preferencesAreDefault = Boolean(
+    s &&
+      uiMode === DEFAULT_UI_MODE &&
+      theme === 'system' &&
+      s.agentStyle === 'default' &&
+      !petWidgetEnabled &&
+      s.healthyUse === true &&
+      (s.preferredLanguage ?? '') === '' &&
+      langDraft === ''
   );
+  const hasNonDefaultPreference = Boolean(s && !preferencesAreDefault);
+
+  useEffect(() => {
+    if (
+      (resetStatus === 'pending' || resetStatus === 'error') &&
+      themeResetSettled &&
+      preferencesAreDefault
+    ) {
+      setResetStatus('success');
+    }
+  }, [preferencesAreDefault, resetStatus, themeResetSettled]);
 
   const resetPreferences = async (): Promise<void> => {
-    if (!s || resetting || !hasNonDefaultPreference) return;
+    if (
+      !s ||
+      resetStatus === 'pending' ||
+      resetStatus === 'success' ||
+      !hasNonDefaultPreference
+    ) {
+      return;
+    }
     if (!window.confirm(
       '恢复外观与回复的默认设置？\n\n这会重置本页面的界面、主题和回复偏好，不会影响账号、工作目录或其他设置。',
     )) return;
 
-    setResetting(true);
-    setResetComplete(false);
+    resetErrorBaseline.current = state.lastError;
+    setResetStatus('pending');
     const previousTheme = theme;
+    const needsThemeReset = theme !== 'system';
+    setThemeResetSettled(!needsThemeReset);
     try {
       if (uiMode !== DEFAULT_UI_MODE) onUiModeChange(DEFAULT_UI_MODE);
       let themeReset: Promise<unknown> | undefined;
-      if (theme !== 'system') {
+      if (needsThemeReset) {
         setTheme('system');
         themeReset = window.otto?.themeSet?.('system');
       }
       if (s.agentStyle !== 'default') actions.setSetting('agentStyle', 'default');
       if (s.healthyUse !== true) actions.setSetting('healthyUse', true);
-      if ((s.preferredLanguage ?? '').trim() !== '') {
+      if ((s.preferredLanguage ?? '') !== '') {
         actions.setSetting('preferredLanguage', '');
       }
       if (petWidgetEnabled) {
@@ -125,14 +161,23 @@ export function PrefsPanel({
       }
       setLangDraft('');
       await themeReset;
-      setResetComplete(true);
+      setThemeResetSettled(true);
     } catch {
-      // 主题 IPC 失败时恢复原来的视觉状态，按钮保持可重试；其他设置通道各自独立。
+      // 主题 IPC 失败时恢复原来的视觉状态，并保留可重试入口。
       setTheme(previousTheme);
-    } finally {
-      setResetting(false);
+      setThemeResetSettled(false);
+      setResetStatus('error');
     }
   };
+
+  const resetButtonLabel =
+    resetStatus === 'pending'
+      ? '正在恢复…'
+      : resetStatus === 'success'
+        ? '已恢复'
+        : resetStatus === 'error'
+          ? '恢复失败，重试'
+          : '恢复默认设置';
 
   return (
     <Panel
@@ -142,10 +187,15 @@ export function PrefsPanel({
         <button
           type="button"
           className="otto-hub__btn"
-          disabled={!s || resetting || resetComplete || !hasNonDefaultPreference}
+          disabled={
+            !s ||
+            resetStatus === 'pending' ||
+            resetStatus === 'success' ||
+            !hasNonDefaultPreference
+          }
           onClick={() => { void resetPreferences(); }}
         >
-          {resetting ? '正在恢复…' : resetComplete ? '已恢复' : '恢复默认设置'}
+          {resetButtonLabel}
         </button>
       )}
     >

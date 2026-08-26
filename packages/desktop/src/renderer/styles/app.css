@@ -5890,6 +5890,16 @@ h6.otto-prose__h {
 .otto-prefs-simple__intro > div { display: flex; flex-direction: column; gap: 2px; }
 .otto-prefs-simple__intro strong { color: var(--otto-text); font-size: 13px; }
 .otto-prefs-simple__intro span { color: var(--otto-text-secondary); font-size: 11px; }
+.otto-prefs-simple__check {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--otto-accent);
+  color: #fff !important;
+  font-weight: 800;
+}
 .otto-prefs-modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .otto-prefs-modes .otto-hub__chip { min-height: 70px; padding: 12px; border-radius: 12px; align-items: flex-start; text-align: left; }
 .otto-prefs-modes .otto-hub__chip > span { display: flex; flex-direction: column; gap: 3px; }
