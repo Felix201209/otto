@@ -2,7 +2,7 @@
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App.js';
 import type { EnterpriseAccount } from '../preload/index.js';
@@ -344,7 +344,7 @@ describe('App UI mode integration', () => {
     expect(screen.getByTestId('work-panel').dataset.collapsed).toBe('true');
   });
 
-  it('does not reuse a collapsed preference for another account', async () => {
+  it('uses the next account right-panel preference on the account-switch render', () => {
     const accountB = {
       ...accountA,
       id: 'account-b',
@@ -361,9 +361,8 @@ describe('App UI mode integration', () => {
     harness.auth.current = authFor(accountB, 'signed-in');
     view.rerender(<App />);
 
-    await waitFor(() => {
-      expect(screen.getByTestId('work-panel').dataset.collapsed).toBe('false');
-    });
+    expect(screen.getByTestId('work-panel').dataset.collapsed).toBe('false');
+    expect(screen.getByRole('button', { name: '折叠右侧栏' })).toBeTruthy();
   });
 
   it('does not reuse one account UI preference for another account', () => {

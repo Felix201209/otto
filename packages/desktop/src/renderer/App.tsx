@@ -18,7 +18,14 @@
  * 待办：附件入站；slash 命令面板；「查看全部对话」检索视图（onViewAll 仍为空 TODO）。
  */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import './styles/tokens.css';
 import './styles/app.css';
 import type {
@@ -107,6 +114,7 @@ import {
 } from './uiModePreference.js';
 import {
   readRightPanelCollapsed,
+  rightPanelStorageKey,
   writeRightPanelCollapsed,
 } from './rightPanelPreference.js';
 import {
@@ -725,19 +733,35 @@ function OttoWorkspaceApp({
     writeUiModePreference(uiModeScope, nextMode);
     setSavedUiMode(nextMode);
   }, [uiModeScope]);
-  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(
-    () => readRightPanelCollapsed(uiModeScope),
+  const rightPanelPreferenceKey = useMemo(
+    () => rightPanelStorageKey(uiModeScope),
+    [uiModeScope],
   );
-  useEffect(() => {
-    setRightPanelCollapsed(readRightPanelCollapsed(uiModeScope));
-  }, [uiModeScope]);
+  const [rightPanelPreference, setRightPanelPreference] = useState(() => ({
+    key: rightPanelPreferenceKey,
+    collapsed: readRightPanelCollapsed(uiModeScope),
+  }));
+  const rightPanelCollapsed = rightPanelPreference.key === rightPanelPreferenceKey
+    ? rightPanelPreference.collapsed
+    : readRightPanelCollapsed(uiModeScope);
+  useLayoutEffect(() => {
+    if (rightPanelPreference.key !== rightPanelPreferenceKey) {
+      setRightPanelPreference({
+        key: rightPanelPreferenceKey,
+        collapsed: rightPanelCollapsed,
+      });
+    }
+  }, [rightPanelCollapsed, rightPanelPreference.key, rightPanelPreferenceKey]);
   const toggleRightPanel = useCallback((): void => {
-    setRightPanelCollapsed((current) => {
-      const next = !current;
+    setRightPanelPreference((current) => {
+      const currentCollapsed = current.key === rightPanelPreferenceKey
+        ? current.collapsed
+        : readRightPanelCollapsed(uiModeScope);
+      const next = !currentCollapsed;
       writeRightPanelCollapsed(uiModeScope, next);
-      return next;
+      return { key: rightPanelPreferenceKey, collapsed: next };
     });
-  }, [uiModeScope]);
+  }, [rightPanelPreferenceKey, uiModeScope]);
   const [organizationRefreshRevision, setOrganizationRefreshRevision] = useState(0);
   const [enterpriseDirectChatOpenRequest, setEnterpriseDirectChatOpenRequest] = useState<{
     peerAccountId: string;
