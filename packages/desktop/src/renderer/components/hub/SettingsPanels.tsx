@@ -10,7 +10,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import type { UiMode } from '../../uiModePreference.js';
+import { DEFAULT_UI_MODE, type UiMode } from '../../uiModePreference.js';
 import { UiModePreview } from '../UiModeGuide.js';
 import type { UseSettingsData } from '../../state/useSettingsData.js';
 import { GeneratedIcon, type GeneratedIconName } from '../GeneratedIcon.js';
@@ -58,6 +58,8 @@ export function PrefsPanel({
   // 外观主题：独立于 server settings（走 main 的 nativeTheme IPC，本机持久化）。
   const [theme, setTheme] = useState<'system' | 'light' | 'dark'>('system');
   const [petWidgetEnabled, setPetWidgetEnabled] = useState(readPetWidgetEnabled);
+  const [resetting, setResetting] = useState(false);
+  const [resetComplete, setResetComplete] = useState(false);
 
   useEffect(() => {
     setLangDraft(s?.preferredLanguage ?? '');
@@ -78,17 +80,80 @@ export function PrefsPanel({
     void window.otto?.themeSet?.(v);
   };
 
+  useEffect(() => {
+    if (!resetComplete) return;
+    const timer = window.setTimeout(() => setResetComplete(false), 1800);
+    return () => window.clearTimeout(timer);
+  }, [resetComplete]);
+
+  const hasNonDefaultPreference = Boolean(
+    s && (
+      uiMode !== DEFAULT_UI_MODE ||
+      theme !== 'system' ||
+      s.agentStyle !== 'default' ||
+      petWidgetEnabled ||
+      s.healthyUse !== true ||
+      (s.preferredLanguage ?? '').trim() !== '' ||
+      langDraft.trim() !== ''
+    )
+  );
+
+  const resetPreferences = async (): Promise<void> => {
+    if (!s || resetting || !hasNonDefaultPreference) return;
+    if (!window.confirm(
+      '恢复外观与回复的默认设置？\n\n这会重置本页面的界面、主题和回复偏好，不会影响账号、工作目录或其他设置。',
+    )) return;
+
+    setResetting(true);
+    setResetComplete(false);
+    const previousTheme = theme;
+    try {
+      if (uiMode !== DEFAULT_UI_MODE) onUiModeChange(DEFAULT_UI_MODE);
+      let themeReset: Promise<unknown> | undefined;
+      if (theme !== 'system') {
+        setTheme('system');
+        themeReset = window.otto?.themeSet?.('system');
+      }
+      if (s.agentStyle !== 'default') actions.setSetting('agentStyle', 'default');
+      if (s.healthyUse !== true) actions.setSetting('healthyUse', true);
+      if ((s.preferredLanguage ?? '').trim() !== '') {
+        actions.setSetting('preferredLanguage', '');
+      }
+      if (petWidgetEnabled) {
+        setPetWidgetEnabled(false);
+        writePetWidgetEnabled(false);
+      }
+      setLangDraft('');
+      await themeReset;
+      setResetComplete(true);
+    } catch {
+      // 主题 IPC 失败时恢复原来的视觉状态，按钮保持可重试；其他设置通道各自独立。
+      setTheme(previousTheme);
+    } finally {
+      setResetting(false);
+    }
+  };
+
   return (
-    <Panel title="外观与回复" desc="只保留日常真正需要的选择；默认设置已经适合大多数人。">
+    <Panel
+      title="外观与回复"
+      desc="只保留日常真正需要的选择；默认设置已经适合大多数人。"
+      actions={(
+        <button
+          type="button"
+          className="otto-hub__btn"
+          disabled={!s || resetting || resetComplete || !hasNonDefaultPreference}
+          onClick={() => { void resetPreferences(); }}
+        >
+          {resetting ? '正在恢复…' : resetComplete ? '已恢复' : '恢复默认设置'}
+        </button>
+      )}
+    >
       {!s ? (
         <Empty>正在加载偏好设置…</Empty>
       ) : (
         <>
         <Card className="otto-prefs-simple">
-          <div className="otto-prefs-simple__intro">
-            <span className="otto-prefs-simple__check" aria-hidden>✓</span>
-            <div><strong>推荐设置已生效</strong><span>不知道怎么选时保持默认就好，所有选项都会立即生效。</span></div>
-          </div>
           <div className="otto-hub__setting otto-hub__setting--stack">
             <div className="otto-hub__setting-text">
               <div className="otto-hub__field-label">界面模式</div>

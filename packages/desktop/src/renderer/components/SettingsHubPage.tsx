@@ -194,7 +194,6 @@ export function SettingsHubPage({
         <IconSettings size={20} className="otto-hub__headicon" />
         <div className="otto-hub__headtext">
           <div className="otto-hub__title">Otto 设置</div>
-          <div className="otto-hub__subtitle">常用能力已经准备好；通常不需要改任何专业参数。</div>
         </div>
         <button
           type="button"
