@@ -209,7 +209,8 @@ export async function handleMemberWorkflowRoute({
       byType.set(task.task_type, current);
     }
     let handoverCandidates = 0;
-    for (const [type, entries] of byType.entries()) {
+    const knowledgeEnabled = db.getOrganizationFeatures(organizationId).knowledge;
+    for (const [type, entries] of knowledgeEnabled ? byType.entries() : []) {
       const reusableResults = entries
         .map((entry) => entry.result?.replace(/\s+/g, ' ').trim())
         .filter((result): result is string => Boolean(result))
@@ -326,6 +327,10 @@ export async function handleMemberWorkflowRoute({
     const content = body.content as string | undefined;
     if (!content) {
       sendJSON(res, 400, { error: 'content required' });
+      return true;
+    }
+    if (!memberAccount!.isAdmin && !memberAccount!.department?.trim()) {
+      sendJSON(res, 403, { error: '无部门成员不能写入全局知识' });
       return true;
     }
     const confidence = typeof body.confidence === 'number'

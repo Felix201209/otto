@@ -384,7 +384,10 @@ function mapEnterpriseKnowledgeItem(
     category: item.category,
     content: item.content,
     contributor: item.contributor ?? null,
-    confidence: typeof item.confidence === 'number' ? item.confidence : 0.5,
+    confidence:
+      typeof item.confidence === 'number' && Number.isFinite(item.confidence)
+        ? Math.min(1, Math.max(0, item.confidence))
+        : 0.5,
     sourceType: item.sourceType || item.source_type || 'manual',
     sourceLabel: item.sourceLabel ?? item.source_label ?? null,
     status: item.status || 'active',

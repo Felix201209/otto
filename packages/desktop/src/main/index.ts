@@ -138,6 +138,10 @@ import {
 } from './voiceConfig.js';
 import { transcribeAudio } from './voiceService.js';
 import {
+  EnterpriseSkillLibrary,
+  type EnterpriseSkillScope,
+} from './enterpriseSkillLibrary.js';
+import {
   EnterpriseClient,
   EnterpriseJoinStateUncertainError,
   type AccountCreateInput,
@@ -417,25 +421,6 @@ async function localMarketplaceInstallVersions(): Promise<Map<string, number>> {
     }
   }
   return versions;
-}
-
-/** 部门 Skill 共享记录（.otto/org/skill-shares.json 条目；krx 企业面板数据）。 */
-interface SkillShareRecord {
-  skillName?: string;
-  version?: number;
-  featureDescription?: string;
-  sharedBy?: string;
-  sharedByName?: string;
-  teamId?: string;
-  teamName?: string;
-  status?: string;
-  note?: string;
-  rating?: number;
-  ratingCount?: number;
-  installCount?: number;
-  usageCount?: number;
-  successCount?: number;
-  publishedToMarketplace?: boolean;
 }
 
 /** 渲染进程崩溃自动重载的退避：窗口期内超过上限就不再 reload，防白屏无限闪烁。 */
@@ -2296,7 +2281,20 @@ function parseLegalDocumentReferences(
   return references;
 }
 
+async function authenticatedSkillScope(): Promise<EnterpriseSkillScope | null> {
+  loadEnterpriseSession();
+  let account = enterpriseClient.authenticatedAccountSnapshot();
+  if (!account && enterpriseClient.snapshot().token) {
+    account = (await enterpriseClient.getSession()).account;
+  }
+  const teamId = account?.departmentId?.trim();
+  return teamId ? { teamId } : null;
+}
+
 function registerIpc(): void {
+  const enterpriseSkillLibrary = new EnterpriseSkillLibrary(
+    path.join(process.cwd(), '.otto', 'org', 'skill-shares.json'),
+  );
   ipcMain.handle(IPC.writeClipboard, (_e, text: unknown) => {
     if (typeof text !== 'string') return false;
     clipboard.writeText(text);
@@ -2691,18 +2689,20 @@ function registerIpc(): void {
       typeof body.category !== 'string' ||
       !body.category ||
       typeof body.content !== 'string' ||
-      !body.content ||
-      typeof body.confidence !== 'number' ||
-      !Number.isFinite(body.confidence)
+      !body.content
     ) {
       throw new Error('知识条目字段不完整');
     }
+    const confidence =
+      typeof body.confidence === 'number' && Number.isFinite(body.confidence)
+        ? Math.min(1, Math.max(0, body.confidence))
+        : 0.5;
     const record: EnterpriseKnowledgeRecordInput = {
       sourceId: body.sourceId,
       title: typeof body.title === 'string' ? body.title : undefined,
       category: body.category,
       content: body.content,
-      confidence: Math.min(1, Math.max(0, body.confidence)),
+      confidence,
       sourceType:
         body.sourceType === 'manual' ||
         body.sourceType === 'auto_capture' ||
@@ -3874,125 +3874,11 @@ function registerIpc(): void {
     return nativeTheme.themeSource;
   });
 
-  // ── krx 的企业面板 IPC（排行榜/工作日志/Skill 共享与市场）──
-  // 这批 handler 在 a01198db 的 merge 解冲突时被误删（renderer 调用还在、
-  // 通路没了，面板按钮全哑）。从 8a22244e 原样移植回来，仅做类型化（去 any）。
-  ipcMain.handle(IPC.skillLeaderboard, async (_e, teamId?: string) => {
-    const emptyTabs = [
-      { id: 'leaderboard', label: '排行榜', icon: '' },
-      { id: 'stars', label: '明星榜', icon: '' },
-    ];
-    try {
-      const sharesPath = path.join(
-        process.cwd(),
-        '.otto',
-        'org',
-        'skill-shares.json',
-      );
-      let shares: SkillShareRecord[] = [];
-      try {
-        shares = JSON.parse(
-          await fs.promises.readFile(sharesPath, 'utf-8'),
-        ) as SkillShareRecord[];
-      } catch {
-        /* 文件不存在，返回空 */
-      }
-
-      const activeShares = shares.filter(
-        (s) => (!teamId || s.teamId === teamId) && s.status === 'active',
-      );
-      const teamName = activeShares[0]?.teamName || '本小组';
-
-      const medals = ['1.', '2.', '3.'];
-      const maxInstalls = Math.max(
-        ...activeShares.map((s) => s.installCount || 0),
-        1,
-      );
-      const maxUsage = Math.max(
-        ...activeShares.map((s) => s.usageCount || 0),
-        1,
-      );
-
-      const lbLines: string[] = [`${teamName} Skill 排行榜`, ''];
-      const scored = activeShares
-        .map((s) => {
-          const ratingScore = ((s.rating || 0) / 5) * 100;
-          const installScore = ((s.installCount || 0) / maxInstalls) * 100;
-          const successRate =
-            (s.usageCount || 0) > 0
-              ? ((s.successCount || 0) / (s.usageCount || 1)) * 100
-              : 50;
-          const usageScore = ((s.usageCount || 0) / maxUsage) * 100;
-          return {
-            s,
-            score:
-              ratingScore * 0.35 +
-              installScore * 0.25 +
-              successRate * 0.25 +
-              usageScore * 0.15,
-          };
-        })
-        .sort((a, b) => b.score - a.score);
-
-      scored.forEach((item, i) => {
-        const rank = i < 3 ? medals[i] : `${i + 1}.`;
-        const rating = item.s.rating ? `${item.s.rating.toFixed(1)}/5` : '暂无';
-        lbLines.push(`${rank} ${item.s.skillName} (v${item.s.version || 1})`);
-        lbLines.push(`   ${item.s.featureDescription || ''}`);
-        lbLines.push(
-          `   ${item.s.sharedByName} | ${rating} (${item.s.ratingCount || 0}人) | 装${item.s.installCount || 0} | 用${item.s.usageCount || 0} | ${item.score.toFixed(0)}分`,
-        );
-        lbLines.push('');
-      });
-
-      const contributorMap: Record<
-        string,
-        {
-          name?: string;
-          count: number;
-          installs: number;
-          skills: Array<string | undefined>;
-        }
-      > = {};
-      for (const s of activeShares) {
-        const key = s.sharedBy || 'unknown';
-        if (!contributorMap[key]) {
-          contributorMap[key] = {
-            name: s.sharedByName,
-            count: 0,
-            installs: 0,
-            skills: [],
-          };
-        }
-        contributorMap[key].count++;
-        contributorMap[key].installs += s.installCount || 0;
-        contributorMap[key].skills.push(s.skillName);
-      }
-      const sbLines: string[] = [`${teamName} 贡献明星榜`, ''];
-      Object.values(contributorMap)
-        .sort((a, b) => b.installs - a.installs)
-        .forEach((c, i) => {
-          const rank = i < 3 ? medals[i] : `${i + 1}.`;
-          sbLines.push(`${rank} ${c.name}`);
-          sbLines.push(
-            `   分享${c.count}个 | 安装${c.installs}次 | ${c.skills.join('、')}`,
-          );
-          sbLines.push('');
-        });
-
-      return {
-        leaderboard: lbLines.join('\n'),
-        starBoard: sbLines.join('\n'),
-        tabs: emptyTabs,
-      };
-    } catch {
-      return {
-        leaderboard: '暂无排行榜数据',
-        starBoard: '暂无明星榜数据',
-        tabs: emptyTabs,
-      };
-    }
-  });
+  ipcMain.handle(
+    IPC.skillLeaderboard,
+    async () =>
+      enterpriseSkillLibrary.leaderboard(await authenticatedSkillScope()),
+  );
 
   // 工作日志：读取本地日历的今天，展示业务成果 + 支撑操作。
   ipcMain.handle(IPC.workLogToday, async () => {
@@ -4027,96 +3913,14 @@ function registerIpc(): void {
     return result;
   });
 
-  // 部门共享 Skill 列表
-  ipcMain.handle(IPC.skillShareList, async (_e, teamId?: string) => {
-    try {
-      const sharesPath = path.join(
-        process.cwd(),
-        '.otto',
-        'org',
-        'skill-shares.json',
-      );
-      let shares: SkillShareRecord[] = [];
-      try {
-        shares = JSON.parse(
-          await fs.promises.readFile(sharesPath, 'utf-8'),
-        ) as SkillShareRecord[];
-      } catch {
-        /* 无文件 */
-      }
-
-      const active = shares.filter(
-        (s) => s.status === 'active' && (!teamId || s.teamId === teamId),
-      );
-
-      if (active.length === 0) {
-        return { text: '本部门暂无共享 Skill。' };
-      }
-
-      const lines: string[] = ['部门共享 Skill 列表', ''];
-      for (const s of active) {
-        const rating = s.rating ? `${s.rating.toFixed(1)}/5` : '暂无';
-        lines.push(`${s.skillName} (v${s.version || 1})`);
-        lines.push(`  功能：${s.featureDescription || '暂无描述'}`);
-        lines.push(`  分享者：${s.sharedByName}`);
-        lines.push(
-          `  评分：${rating} (${s.ratingCount || 0}人) | 安装：${s.installCount || 0}次 | 使用：${s.usageCount || 0}次`,
-        );
-        if (s.note) lines.push(`  备注：${s.note}`);
-        lines.push('');
-      }
-      return { text: lines.join('\n') };
-    } catch {
-      return { text: '读取 Skill 列表失败。' };
-    }
-  });
-
-  // 公司 Skill 市场
-  ipcMain.handle(IPC.skillMarketplace, async () => {
-    try {
-      const sharesPath = path.join(
-        process.cwd(),
-        '.otto',
-        'org',
-        'skill-shares.json',
-      );
-      let shares: SkillShareRecord[] = [];
-      try {
-        shares = JSON.parse(
-          await fs.promises.readFile(sharesPath, 'utf-8'),
-        ) as SkillShareRecord[];
-      } catch {
-        /* 无文件 */
-      }
-
-      const market = shares.filter(
-        (s) => s.publishedToMarketplace === true && s.status === 'active',
-      );
-
-      if (market.length === 0) {
-        return {
-          text: '公司 Skill 市场暂无已发布的 Skill。\n\n部门共享的 Skill 需要分享者「发布到市场」后才会在此显示。',
-        };
-      }
-
-      market.sort((a, b) => (b.rating || 0) - (a.rating || 0));
-
-      const lines: string[] = ['公司 Skill 市场', ''];
-      for (const s of market) {
-        const rating = s.rating ? `${s.rating.toFixed(1)}/5` : '暂无';
-        lines.push(`${s.skillName} (v${s.version || 1})`);
-        lines.push(`  功能：${s.featureDescription || '暂无描述'}`);
-        lines.push(`  分享者：${s.sharedByName} (${s.teamName})`);
-        lines.push(
-          `  评分：${rating} (${s.ratingCount || 0}人) | 安装：${s.installCount || 0}次 | 使用：${s.usageCount || 0}次`,
-        );
-        lines.push('');
-      }
-      return { text: lines.join('\n') };
-    } catch {
-      return { text: '读取 Skill 市场失败。' };
-    }
-  });
+  ipcMain.handle(
+    IPC.skillShareList,
+    async () =>
+      enterpriseSkillLibrary.listDepartment(await authenticatedSkillScope()),
+  );
+  ipcMain.handle(IPC.skillMarketplace, () =>
+    enterpriseSkillLibrary.listMarketplace(),
+  );
 
   ipcMain.handle(IPC.enterpriseSkillLocalList, async () => {
     const root = userSkillsRootDir();
