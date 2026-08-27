@@ -332,6 +332,10 @@ if (!previewWindow.otto) {
     notificationMarkRead: () => Promise.resolve(),
     notificationGetUnread: () => Promise.resolve([]),
     appVersion: () => Promise.resolve('1.10.1-browser-preview'),
+    getWorkspaceDirectories: () => Promise.resolve({
+      defaultPath: '/Users/demo',
+      recentPaths: ['/Users/demo'],
+    }),
     openExternal: () => Promise.resolve(),
     openPath: () => Promise.resolve(),
     inspectLocalPath: () =>

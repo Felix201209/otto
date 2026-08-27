@@ -9627,34 +9627,55 @@ h6.otto-prose__h {
   border: 0;
   border-radius: 0;
   background: transparent;
+  --otto-task-row-hover: color-mix(in srgb, var(--otto-text) 6%, transparent);
+  --otto-task-row-selected: color-mix(in srgb, var(--otto-accent) 5%, var(--otto-sidebar-bg));
+  --otto-task-muted: color-mix(in srgb, var(--otto-text) 52%, transparent);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
 }
 .otto-conversations__header {
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding-right: 10px;
+  gap: 4px;
+  min-height: 36px;
+  padding: 0 10px 0 12px;
 }
 .otto-conversations__toggle {
   flex: 1 1 auto;
   width: auto;
-  padding: 8px 18px 7px;
-  color: var(--otto-text-tertiary);
-  font-size: 11px;
-  letter-spacing: 0.02em;
+  min-width: 0;
+  padding: 8px 0;
+  color: var(--otto-text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  letter-spacing: 0;
 }
 .otto-conversations__toggle:hover {
   background: transparent;
-  color: var(--otto-text-secondary);
+  color: var(--otto-text);
+}
+.otto-conversations__title {
+  min-width: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.otto-conversations__count {
+  color: var(--otto-task-muted);
+  font-size: 12px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
 }
 .otto-session-grouping {
   position: relative;
   flex: 0 0 auto;
 }
 .otto-session-grouping__trigger {
-  width: 32px;
+  width: 28px;
   height: 28px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 50%;
   background: transparent;
   color: var(--otto-text-tertiary);
   display: inline-flex;
@@ -9665,8 +9686,8 @@ h6.otto-prose__h {
 }
 .otto-session-grouping__trigger:hover,
 .otto-session-grouping__trigger[aria-expanded='true'] {
-  background: var(--otto-surface-hover, rgba(0, 0, 0, 0.04));
-  color: var(--otto-text-secondary);
+  background: var(--otto-task-row-hover);
+  color: var(--otto-text);
 }
 .otto-session-grouping__trigger:focus-visible {
   outline: none;
@@ -9713,28 +9734,32 @@ h6.otto-prose__h {
   padding: 2px 10px 8px;
 }
 .otto-group__label {
-  padding: 12px 8px 5px;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  padding: 12px 8px 4px;
+  color: var(--otto-task-muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+  text-transform: none;
+  letter-spacing: 0;
 }
 .otto-workspace-group__toggle {
   width: 100%;
+  height: 34px;
   min-height: 34px;
-  padding: 7px 8px 5px;
+  padding: 0 8px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 8px;
   background: transparent;
-  color: var(--otto-text-secondary);
+  color: var(--otto-text);
   display: grid;
-  grid-template-columns: 12px 16px minmax(0, 1fr) auto auto;
+  grid-template-columns: 16px 16px minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   text-align: left;
   cursor: pointer;
 }
 .otto-workspace-group__toggle:hover {
-  background: var(--otto-surface-hover, rgba(0, 0, 0, 0.04));
+  background: var(--otto-task-row-hover);
 }
 .otto-workspace-group__toggle:focus-visible {
   outline: none;
@@ -9745,13 +9770,18 @@ h6.otto-prose__h {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11.5px;
-  font-weight: 650;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
 }
 .otto-workspace-group__count {
-  color: var(--otto-text-tertiary);
-  font-size: 10px;
+  color: var(--otto-task-muted);
+  font-size: 12px;
+  line-height: 20px;
   font-variant-numeric: tabular-nums;
+}
+.otto-workspace-group__toggle > svg:nth-of-type(2) {
+  color: var(--otto-accent);
 }
 .otto-workspace-group__unread {
   min-width: 16px;
@@ -9768,20 +9798,61 @@ h6.otto-prose__h {
   line-height: 1;
 }
 .otto-session {
-  padding: 8px 12px 8px 14px;
-  border-radius: 0;
+  height: 32px;
+  box-sizing: border-box;
+  padding: 0 10px 0 14px;
+  border-radius: 8px;
+}
+.otto-session-group > .otto-session + .otto-session {
+  margin-top: 2px;
+}
+.otto-session:hover {
+  background: var(--otto-task-row-hover);
 }
 .otto-session--active,
 .otto-session--active:hover {
-  background: var(--otto-accent-soft);
+  background: var(--otto-task-row-selected);
   box-shadow: none;
 }
 .otto-session--active::before {
-  display: block;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  border-radius: 0;
+  display: none;
+}
+.otto-session__top {
+  height: 100%;
+  align-items: center;
+  gap: 8px;
+}
+.otto-session__title {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+}
+.otto-session--active .otto-session__title {
+  font-weight: 500;
+}
+.otto-session__time {
+  margin-left: auto;
+  color: var(--otto-task-muted);
+  font-size: 12px;
+  line-height: 20px;
+  font-variant-numeric: tabular-nums;
+}
+.otto-session:hover .otto-session__time,
+.otto-session:focus-within .otto-session__time {
+  visibility: hidden;
+}
+.otto-session .otto-session__more {
+  position: absolute;
+  top: 5px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  border-radius: 4px;
+}
+.otto-session .otto-session__more svg {
+  width: 16px;
+  height: 16px;
 }
 
 .otto-sidebar__footer {
@@ -10043,8 +10114,8 @@ h6.otto-prose__h {
 }
 
 .otto-sidebar {
-  width: 240px;
-  min-width: 240px;
+  width: 264px;
+  min-width: 264px;
   background: color-mix(in srgb, var(--otto-sidebar-bg) 92%, var(--otto-bg));
 }
 

@@ -265,7 +265,12 @@ export function Sidebar({
               aria-expanded={sessionsOpen}
               aria-label={`任务（${sessionCount}）`}
             >
-              <span>任务（{sessionCount}）</span>
+              <span className="otto-conversations__title">
+                <span>任务</span>
+                <span className="otto-conversations__count" aria-hidden="true">
+                  {sessionCount}
+                </span>
+              </span>
               <IconChevronDown
                 size={13}
                 className={'otto-conversations__chevron' + (sessionsOpen ? '' : ' is-collapsed')}
