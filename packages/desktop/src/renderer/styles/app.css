@@ -10406,9 +10406,9 @@ h6.otto-prose__h {
   box-sizing: border-box;
   width: 100%;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   margin-bottom: 4px;
-  padding: 2px 10px 10px;
+  padding: 2px 10px 8px;
   border-bottom: 0;
 }
 .otto-sidebar__nav::after {
@@ -10426,7 +10426,7 @@ h6.otto-prose__h {
   width: 100%;
   align-items: center;
   gap: 10px;
-  min-height: 40px;
+  min-height: 36px;
   padding: 0 12px;
   border: 0;
   border-radius: 8px;
@@ -10440,6 +10440,9 @@ h6.otto-prose__h {
   cursor: pointer;
   text-align: left;
   transition: background var(--otto-dur-fast) var(--otto-ease), color var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-sidebar__navitem:first-child {
+  margin-bottom: 6px;
 }
 .otto-sidebar__navicon {
   width: 18px;
