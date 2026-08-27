@@ -135,6 +135,7 @@ jobs:
           npm run validate:integration-baseline
           npm run validate:boundaries
           npm run lint:ci
+          npm run build --workspace=packages/core
           npm run typecheck --workspace=packages/server
           npm test --workspace=packages/server
           npm run test:scripts -- --run \

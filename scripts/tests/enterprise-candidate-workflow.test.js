@@ -42,6 +42,18 @@ describe('V1.9.13 enterprise candidate source identity', () => {
     expect(workflow).not.toContain('npm install --package-lock-only');
   });
 
+  it('builds the referenced core declarations before server typechecking', () => {
+    const coreBuildIndex = workflow.indexOf(
+      'npm run build --workspace=packages/core',
+    );
+    const serverTypecheckIndex = workflow.indexOf(
+      'npm run typecheck --workspace=packages/server',
+    );
+
+    expect(coreBuildIndex).toBeGreaterThan(-1);
+    expect(serverTypecheckIndex).toBeGreaterThan(coreBuildIndex);
+  });
+
   it('retains the repository integration ledger checks in hardened backfill mode', () => {
     expect(validateServerIntegrationBaseline({ rootDir: repoRoot })).toEqual(
       [],
