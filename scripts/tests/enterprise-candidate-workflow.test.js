@@ -30,4 +30,14 @@ describe('V1.9.13 enterprise candidate source identity', () => {
       'unexpected change beyond reviewed V1.9.13 source',
     );
   });
+
+  it('pins the npm resolver used with Node 22 so npm ci honors the reviewed lock', () => {
+    expect(workflow).toContain("NPM_VERSION: '11.13.0'");
+    expect(workflow).toContain(
+      'npm install --global "npm@${NPM_VERSION}" --ignore-scripts',
+    );
+    expect(workflow).toContain('test "$(npm --version)" = "$NPM_VERSION"');
+    expect(workflow).toContain('run: npm ci');
+    expect(workflow).not.toContain('npm install --package-lock-only');
+  });
 });
