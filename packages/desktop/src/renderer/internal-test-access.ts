@@ -20,6 +20,7 @@ export const INTERNAL_TEST_ADMIN_ENABLED =
 
 export const INTERNAL_TEST_ACCOUNT: EnterpriseAccount = Object.freeze({
   id: 'local_internal_test',
+  accountType: 'personal',
   organizationId: 'local-internal-test',
   organizationName: '本地',
   employeeId: null,

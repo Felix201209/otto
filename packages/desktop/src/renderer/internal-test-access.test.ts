@@ -10,6 +10,7 @@ import {
   isAuthenticatedEnterpriseAccount,
   resolveEnterpriseAccessMode,
 } from './internal-test-access.js';
+import { resolveCentralEnterpriseIdentity } from './state/centralEnterpriseIdentity.js';
 
 describe('v1.9.2 企业认证访问模式', () => {
   it('交付版默认恢复真实登录，同时保留可逆的本地测试身份', () => {
@@ -77,5 +78,6 @@ describe('v1.9.2 企业认证访问模式', () => {
 
   it('合成本地身份永远不能冒充真实企业账号', () => {
     expect(isAuthenticatedEnterpriseAccount(INTERNAL_TEST_ACCOUNT)).toBe(false);
+    expect(resolveCentralEnterpriseIdentity(INTERNAL_TEST_ACCOUNT).edition).toBe('personal');
   });
 });
