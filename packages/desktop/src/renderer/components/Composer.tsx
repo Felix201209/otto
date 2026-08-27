@@ -47,6 +47,7 @@ import {
   IconStop,
   IconClose,
   IconFolder,
+  IconPlus,
 } from './icons.js';
 import type { ModuleIconKey } from './ModuleIcon.js';
 import { ModuleIcon } from './ModuleIcon.js';
@@ -1216,7 +1217,8 @@ export function Composer({
                 </button>
               ))}
               <button type="button" role="menuitem" className="otto-workspace__add" onClick={() => void chooseNewWorkspace()}>
-                <span aria-hidden>＋</span> 添加工作目录…
+                <IconPlus size={16} />
+                <span>添加工作目录…</span>
               </button>
             </div>
           ) : null}

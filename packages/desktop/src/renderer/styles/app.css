@@ -2620,8 +2620,8 @@ h6.otto-prose__h {
 }
 .otto-contextpill {
   min-width: 0;
-  height: 32px;
-  padding: 0 11px;
+  height: 30px;
+  padding: 0 10px;
   border: 1px solid var(--otto-border);
   border-radius: var(--otto-radius-pill);
   display: inline-flex;
@@ -2630,11 +2630,16 @@ h6.otto-prose__h {
   background: var(--otto-surface);
   color: var(--otto-text-secondary);
   font: inherit;
-  font-size: 12.5px;
+  font-size: 12px;
   cursor: pointer;
-  box-shadow: var(--otto-shadow-sm);
+  box-shadow: var(--otto-shadow-xs);
 }
 .otto-contextpill:hover { border-color: var(--otto-border-strong); color: var(--otto-text); }
+.otto-contextpill[aria-expanded='true'] {
+  border-color: var(--otto-border-strong);
+  background: color-mix(in srgb, var(--otto-text) 3%, var(--otto-surface));
+  color: var(--otto-text);
+}
 .otto-contextpill:focus-visible { outline: none; box-shadow: var(--otto-shadow-focus); }
 .otto-contextpill:disabled { opacity: .55; cursor: default; }
 .otto-workspace, .otto-attachment-picker, .otto-model-anchor { position: relative; }
@@ -2667,7 +2672,7 @@ h6.otto-prose__h {
 .otto-workspace__menu,
 .otto-attachment-picker__menu {
   position: absolute;
-  bottom: calc(100% + 7px);
+  bottom: calc(100% + 8px);
   left: 0;
   width: 330px;
   padding: 6px;
@@ -2680,76 +2685,70 @@ h6.otto-prose__h {
   transform-origin: bottom left;
 }
 .otto-workspace__menu {
-  width: 296px;
-  padding: 6px 7px 7px;
+  width: min(284px, calc(100vw - 36px));
+  padding: 6px;
   border-color: var(--otto-border);
-  border-radius: 12px;
+  border-radius: 11px;
   box-shadow: var(--otto-shadow);
 }
 .otto-workspace__heading {
-  padding: 4px 10px 6px;
+  padding: 3px 8px 5px;
   color: var(--otto-text-tertiary);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 16px;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 15px;
 }
 .otto-workspace__option {
   width: 100%;
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 18px;
+  grid-template-columns: 16px minmax(0, 1fr) 16px;
   align-items: center;
-  gap: 10px;
-  min-height: 44px;
-  padding: 6px 10px;
+  gap: 9px;
+  min-height: 42px;
+  padding: 5px 8px;
   border: 0;
   border-radius: 8px;
   background: transparent;
   color: var(--otto-text);
   text-align: left;
   cursor: pointer;
+  transition: background-color var(--otto-dur-fast) var(--otto-ease);
 }
 .otto-workspace__option:hover {
   background: color-mix(in srgb, var(--otto-text) 4%, var(--otto-surface));
 }
 .otto-workspace__option.is-active,
 .otto-workspace__option.is-active:hover {
-  background: color-mix(in srgb, var(--otto-text) 6%, var(--otto-surface));
+  background: color-mix(in srgb, var(--otto-text) 5%, var(--otto-surface));
 }
 .otto-workspace__option:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--otto-text) 20%, transparent);
   outline-offset: -2px;
 }
 .otto-workspace__option > svg { color: var(--otto-text-secondary); }
-.otto-workspace__option > svg:last-child { color: var(--otto-text); }
+.otto-workspace__option > svg:last-child { color: var(--otto-accent); }
 .otto-workspace__option > span { min-width: 0; display: grid; gap: 1px; }
 .otto-workspace__option strong, .otto-workspace__option small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.otto-workspace__option strong { font-size: 12.5px; font-weight: 550; line-height: 17px; }
+.otto-workspace__option strong { font-size: 12.5px; font-weight: 500; line-height: 17px; }
 .otto-workspace__option small { color: var(--otto-text-tertiary); font-size: 10.5px; line-height: 14px; }
 .otto-workspace__add {
   width: calc(100% - 8px);
-  min-height: 38px;
-  margin: 5px 4px 0;
-  padding: 7px 6px;
+  min-height: 36px;
+  margin: 4px 4px 0;
+  padding: 6px 8px;
   border: 0;
   border-top: 1px solid var(--otto-border);
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   background: transparent;
   color: var(--otto-text);
   text-align: left;
   font: inherit;
-  font-size: 12.5px;
+  font-size: 12px;
   cursor: pointer;
 }
-.otto-workspace__add > span {
-  width: 18px;
-  color: var(--otto-text-secondary);
-  font-size: 18px;
-  font-weight: 300;
-  line-height: 1;
-  text-align: center;
-}
+.otto-workspace__add > svg { flex: 0 0 16px; color: var(--otto-text-secondary); }
 .otto-workspace__add:hover {
   background: color-mix(in srgb, var(--otto-text) 4%, var(--otto-surface));
 }
@@ -2778,36 +2777,30 @@ h6.otto-prose__h {
 .otto-authorization { position: relative; }
 .otto-authorization + .otto-send { margin-left: 0; }
 .otto-authorization__trigger {
-  height: 32px; padding: 0 9px; border: 0; border-radius: var(--otto-radius-pill);
-  display: inline-flex; align-items: center; gap: 6px; background: transparent;
-  color: var(--otto-text-secondary); font: inherit; font-size: 12.5px; cursor: pointer;
-}
-.otto-authorization__trigger:hover {
-  background: color-mix(in srgb, var(--otto-text) 5%, transparent);
-  color: var(--otto-text);
+  border: 1px solid var(--otto-border);
 }
 .otto-authorization__trigger:focus-visible { outline: none; box-shadow: var(--otto-shadow-focus); }
 .otto-authorization__menu {
   position: absolute; left: 0; right: auto; bottom: calc(100% + 8px);
-  width: min(370px, calc(100vw - 36px)); padding: 6px;
-  border: 1px solid var(--otto-border); border-radius: 12px;
+  width: min(344px, calc(100vw - 36px)); padding: 6px;
+  border: 1px solid var(--otto-border); border-radius: 11px;
   background: var(--otto-surface); box-shadow: var(--otto-shadow); z-index: 40;
   animation: otto-menu-in 140ms var(--otto-ease); transform-origin: bottom left;
 }
 .otto-authorization__option {
-  width: 100%; min-height: 56px; padding: 9px 10px; border: 0; border-radius: 8px;
-  display: grid; grid-template-columns: 18px minmax(0, 1fr) 16px; align-items: center;
-  gap: 10px; background: transparent; color: var(--otto-text); text-align: left; cursor: pointer;
+  width: 100%; min-height: 50px; padding: 7px 8px; border: 0; border-radius: 8px;
+  display: grid; grid-template-columns: 16px minmax(0, 1fr) 16px; align-items: center;
+  gap: 9px; background: transparent; color: var(--otto-text); text-align: left; cursor: pointer;
   transition: background-color var(--otto-dur-fast) var(--otto-ease);
 }
 .otto-authorization__option:hover {
   background: color-mix(in srgb, var(--otto-text) 4%, var(--otto-surface));
 }
 .otto-authorization__option.is-active {
-  background: transparent;
+  background: color-mix(in srgb, var(--otto-text) 5%, var(--otto-surface));
 }
 .otto-authorization__option.is-active:hover {
-  background: color-mix(in srgb, var(--otto-text) 4%, var(--otto-surface));
+  background: color-mix(in srgb, var(--otto-text) 5%, var(--otto-surface));
 }
 .otto-authorization__option:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--otto-text) 20%, transparent);
@@ -2820,19 +2813,19 @@ h6.otto-prose__h {
 }
 .otto-authorization__option-icon svg,
 .otto-authorization__selected { width: 16px; height: 16px; }
-.otto-authorization__option.is-active .otto-authorization__option-icon,
-.otto-authorization__option.is-active .otto-authorization__title,
 .otto-authorization__selected { color: var(--otto-accent); }
-.otto-authorization__copy { display: grid; gap: 2px; }
-.otto-authorization__title { font-size: 13.5px; line-height: 19px; font-weight: 500; }
-.otto-authorization__desc { color: var(--otto-text-tertiary); font-size: 11.5px; line-height: 17px; font-weight: 400; }
+.otto-authorization__copy { min-width: 0; display: grid; gap: 1px; }
+.otto-authorization__title,
+.otto-authorization__desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.otto-authorization__title { font-size: 13px; line-height: 18px; font-weight: 500; }
+.otto-authorization__desc { color: var(--otto-text-tertiary); font-size: 11px; line-height: 16px; font-weight: 400; }
 
 @media (max-width: 760px) {
   .otto-authorization__trigger span { display: none; }
   .otto-authorization__menu {
     left: auto;
     right: -42px;
-    width: min(370px, calc(100vw - 36px));
+    width: min(344px, calc(100vw - 36px));
     transform-origin: bottom right;
   }
 }

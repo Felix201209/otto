@@ -1,51 +1,52 @@
-# Design QA — Sidebar primary navigation
+# Design QA — Composer context popovers
 
 final result: passed
 
 ## Source of truth
 
-- User-provided before screenshot: `/var/folders/mg/ctd9153d5_g93y9n6w7tvmf80000gn/T/codex-clipboard-f790ae43-7c37-4980-8211-bc4391d8d68f.png`
-- Normalized source capture: `/Users/yang/.codex/visualizations/2026/08/27/01a04100-3fc9-72c0-b593-8a42954fec6e/sidebar-primary-nav/sidebar-source-normalized.png`
-- Final implementation capture: `/Users/yang/.codex/visualizations/2026/08/27/01a04100-3fc9-72c0-b593-8a42954fec6e/sidebar-primary-nav/sidebar-primary-nav-full.png`
-- Full-view comparison: `/Users/yang/.codex/visualizations/2026/08/27/01a04100-3fc9-72c0-b593-8a42954fec6e/sidebar-primary-nav/sidebar-full-comparison.png`
-- Focused equal-size comparison: `/Users/yang/.codex/visualizations/2026/08/27/01a04100-3fc9-72c0-b593-8a42954fec6e/sidebar-primary-nav/sidebar-focused-comparison.png`
+- User-provided workspace reference: `/var/folders/mg/ctd9153d5_g93y9n6w7tvmf80000gn/T/codex-clipboard-219d9c6f-6528-4886-9483-b471765da954.png`
+- User-provided authorization reference: `/var/folders/mg/ctd9153d5_g93y9n6w7tvmf80000gn/T/codex-clipboard-a3d03078-4e01-4d58-9e67-3299f60973a0.png`
+- Final workspace capture: `/Users/yang/.codex/visualizations/2026/08/27/01a04100-3fc9-72c0-b593-8a42954fec6e/compact-composer-popovers/workspace-popover.png`
+- Final authorization capture: `/Users/yang/.codex/visualizations/2026/08/27/01a04100-3fc9-72c0-b593-8a42954fec6e/compact-composer-popovers/authorization-popover.png`
+- Focused comparison: `/Users/yang/.codex/visualizations/2026/08/27/01a04100-3fc9-72c0-b593-8a42954fec6e/compact-composer-popovers/focused-comparison.png`
 
 ## Viewport and state
 
-- Source pixels: 2400 x 1600 at macOS 2x density; normalized to 1200 x 800.
-- Implementation pixels and CSS viewport: 1200 x 800 at 1:1 screenshot output.
-- Focused comparison: equal 264 x 800 sidebar crops.
-- State: light theme, `工作台` selected, unread attention animation completed.
-- Primary interactions tested: open `组织架构`, verify its region, return to `工作台`, and create a new conversation.
-- Fresh preview console: no warnings or errors.
+- Workspace source pixels: 1286 x 720; authorization source pixels: 1254 x 694.
+- Implementation viewport and screenshot pixels: 1280 x 720.
+- Focused comparison uses centered equal-size 620 x 470 canvases for each source/implementation crop.
+- State: light theme, composer visible, workspace menu open and authorization menu open in separate captures.
+- Interaction tested: open each menu, switch authorization from all-session automatic to manual, verify the trigger label updates, restore all-session automatic, and reopen the menu.
 
 ## Comparison history
 
-1. The source showed `新建对话` as a detached blue action with a large gap before the text-only navigation.
-2. The first implementation placed all six actions in one navigation but retained the existing 264 px sidebar width; measurement confirmed each row is 40 px high with a matching 18 px icon.
-3. A width guard was added to the navigation and rows so their 10 px sidebar insets remain stable if the sidebar width changes.
-4. The final stable capture was taken after the unread attention animation completed and compared against the source at the same normalized viewport.
+1. The source implementation used two different trigger treatments, oversized menu geometry, heavier type, and inconsistent selected-state color.
+2. Both triggers were normalized to the same 30 px context-pill geometry, 12 px type, border, radius, and shadow tokens.
+3. The workspace menu was reduced to 284 px with 42 px rows; the authorization menu was reduced to 344 px with 50 px rows.
+4. Type weight, line height, icon columns, spacing, hover states, and neutral selected backgrounds were aligned across both menus.
+5. The final captures were placed beside the supplied references in one comparison image and inspected together.
 
 ## Fidelity review
 
-- Typography: all primary-navigation entries share the existing 14/20 system type, weight, and selected-state hierarchy.
-- Spacing and layout: six entries now use the same 40 px row, 4 px vertical gap, 10 px navigation inset, 12 px row padding, and 8 px radius. `新建对话` no longer has a separate margin or button treatment.
-- Colors and tokens: the new-conversation action now uses the same neutral default, hover, focus, and selected-state token system as adjacent navigation entries.
-- Image and icon fidelity: no raster assets were added. Official Lucide geometries are used for SquarePen, LayoutDashboard, Network, MessageCircle, BriefcaseBusiness, and Building2, rendered through the project's existing icon component system at 18 px and 1.75 stroke width.
-- Copy and content: all navigation labels remain unchanged.
-- Accessibility: each icon is decorative, button names remain text-based, `aria-current` remains intact, and every row provides a 40 px pointer target.
+- Typography: titles use 500 weight instead of heavy display weight; supporting copy is 10.5–11 px with compact line height and safe ellipsis handling.
+- Spacing and layout: both menus use 6 px shells, 8–9 px internal gaps, 8 px option radii, and an 8 px trigger-to-menu offset.
+- Colors and tokens: menu surfaces, borders, shadows, neutral selection backgrounds, and accent checkmarks use existing Otto tokens.
+- Icons: the workspace add action now uses the project's Lucide-based `IconPlus`; existing folder, shield, hand, chevron, and check icons remain intact.
+- Copy and content: all user-facing wording remains unchanged.
+- Behavior: selection callbacks, workspace picking, authorization persistence, menu semantics, and keyboard focus styles are unchanged.
+- Boundary safety: measured authorization menu width is 344 px, all three rows are 50 px, and the open menu remains inside the 1280 x 720 viewport.
 
 ## Findings
 
 - P0: none.
 - P1: none.
-- P2: none after unifying row geometry and constraining the navigation width.
-- P3: the unread count remains visible by design and does not alter row alignment.
+- P2: none after unifying trigger geometry and reducing popover density.
+- P3: the preview fixture contains one recent workspace rather than the two entries in the user's source screenshot; this is data-dependent and does not affect layout behavior.
 
 ## Verification
 
-- Sidebar focused tests: 31 passed.
+- Composer focused tests: 28 passed.
 - Desktop typecheck: passed.
 - Renderer production build: passed.
 - `git diff --check`: passed.
-- The `企业管理` destination currently throws inside a separate, already-modified account-management implementation in this shared worktree. The sidebar callback and selected-state contract remain covered by the focused test; this unrelated page error was not changed as part of this task.
+- Browser interaction verification: passed; authorization selection and restoration both updated the trigger correctly.
