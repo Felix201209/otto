@@ -138,7 +138,14 @@ function exportDatabase(input: {
   const schemaVersion = Number(
     input.source.pragma('user_version', { simple: true }) ?? 0,
   );
+  // better-sqlite3 opens an existing source with SQLITE_OPEN_CREATE disabled
+  // when fileMustExist is true. SQLite reuses those connection flags for
+  // ATTACH, so the destination must exist before SQLCipher can attach and
+  // initialize it. Create it exclusively to preserve the no-overwrite guard.
+  const destinationDescriptor = fs.openSync(input.destinationPath, 'wx', 0o600);
+  fs.closeSync(destinationDescriptor);
   let attached = false;
+  let exported = false;
   try {
     input.source.exec('BEGIN IMMEDIATE;');
     input.source.exec(
@@ -149,6 +156,7 @@ function exportDatabase(input: {
     input.source.prepare("SELECT sqlcipher_export('encrypted')").get();
     input.source.pragma(`encrypted.user_version = ${schemaVersion}`);
     input.source.exec('COMMIT;');
+    exported = true;
   } catch (error) {
     try {
       if (input.source.inTransaction) input.source.exec('ROLLBACK;');
@@ -162,6 +170,13 @@ function exportDatabase(input: {
         input.source.exec('DETACH DATABASE encrypted;');
       } catch {
         // A failed transaction may already have detached the destination.
+      }
+    }
+    if (!exported) {
+      try {
+        fs.unlinkSync(input.destinationPath);
+      } catch {
+        // Preserve the export error; callers will never accept this output.
       }
     }
   }
