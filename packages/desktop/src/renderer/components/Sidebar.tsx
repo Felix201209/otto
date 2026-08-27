@@ -304,14 +304,20 @@ export function Sidebar({
         新建对话
       </button>
 
-      {/* 主导航：四个一级业务入口，设置已迁移到底部账户区。 */}
+      {/* 主导航：企业管理员额外显示企业管理；设置仍位于底部账户区。 */}
       {onNavigate ? (
         <NavItems
           activeView={activeView}
+          accountManagementActive={accountManagementActive}
           enterpriseUnreadCounts={enterpriseUnreadCounts}
           parkTicketUnreadCount={parkTicketUnreadCount}
           unreadSessions={unreadSessions}
           onNavigate={onNavigate}
+          onOpenAccounts={
+            enterpriseAccount?.accountType !== 'personal' && enterpriseAccount?.isAdmin
+              ? onOpenAccounts
+              : undefined
+          }
         />
       ) : null}
 
@@ -467,20 +473,6 @@ export function Sidebar({
       </div>
 
       <div className="otto-sidebar__footer">
-        {enterpriseAccount?.accountType !== 'personal'
-          && enterpriseAccount?.isAdmin
-          && onOpenAccounts ? (
-          <button
-            type="button"
-            className={'otto-viewall otto-viewall--accounts' + (accountManagementActive ? ' is-active' : '')}
-            onClick={onOpenAccounts}
-            aria-current={accountManagementActive ? 'page' : undefined}
-            title="CEO 企业管理中心"
-          >
-            <span className="otto-viewall__accounticon" aria-hidden>◎</span>
-            CEO 管理
-          </button>
-        ) : null}
         {enterpriseAccount?.accountType === 'personal' && onJoinEnterprise ? (
           <button
             type="button"
@@ -582,16 +574,20 @@ export function Sidebar({
 
 function NavItems({
   activeView,
+  accountManagementActive,
   enterpriseUnreadCounts,
   parkTicketUnreadCount,
   unreadSessions,
   onNavigate,
+  onOpenAccounts,
 }: {
   activeView: string;
+  accountManagementActive: boolean;
   enterpriseUnreadCounts: EnterpriseUnreadCounts;
   parkTicketUnreadCount: number;
   unreadSessions?: string[];
   onNavigate: (view: 'chat' | 'organization' | 'inbox' | 'work' | 'hub') => void;
+  onOpenAccounts?: () => void;
 }): React.JSX.Element {
   const { inboxUnread, workUnread } = computeNavBadgeCounts(
     enterpriseUnreadCounts,
@@ -654,6 +650,16 @@ function NavItems({
           </button>
         );
       })}
+      {onOpenAccounts ? (
+        <button
+          type="button"
+          className={'otto-sidebar__navitem' + (accountManagementActive ? ' is-active' : '')}
+          aria-current={accountManagementActive ? 'page' : undefined}
+          onClick={onOpenAccounts}
+        >
+          <span>企业管理</span>
+        </button>
+      ) : null}
     </nav>
   );
 }

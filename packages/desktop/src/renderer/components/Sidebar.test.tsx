@@ -44,6 +44,11 @@ const ENTERPRISE_ACCOUNT = {
   department: '产品部',
 };
 
+const ENTERPRISE_ADMIN_ACCOUNT = {
+  ...ENTERPRISE_ACCOUNT,
+  isAdmin: true,
+};
+
 function makeSession(over: Partial<SessionSummary> = {}): SessionSummary {
   return {
     sessionId: 's1',
@@ -188,6 +193,77 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
     expect(settings.getAttribute('aria-current')).toBe('page');
     fireEvent.click(settings);
     expect(onOpenHub).toHaveBeenCalledOnce();
+  });
+
+  it('企业管理员在我的工作下方看到企业管理，并可打开和高亮该页面', () => {
+    const onOpenAccounts = vi.fn();
+    renderSidebar({
+      enterpriseAccount: ENTERPRISE_ADMIN_ACCOUNT,
+      onNavigate: vi.fn(),
+      onOpenAccounts,
+      accountManagementActive: true,
+    });
+
+    const primaryNav = screen.getByRole('navigation', { name: '主导航' });
+    expect(within(primaryNav).getAllByRole('button').map((button) => button.textContent)).toEqual([
+      '工作台',
+      '组织架构',
+      '我的消息',
+      '我的工作',
+      '企业管理',
+    ]);
+    const enterpriseManagement = within(primaryNav).getByRole('button', { name: '企业管理' });
+    expect(enterpriseManagement.getAttribute('aria-current')).toBe('page');
+    expect(screen.queryByText('CEO 管理')).toBeNull();
+    fireEvent.click(enterpriseManagement);
+    expect(onOpenAccounts).toHaveBeenCalledOnce();
+  });
+
+  it('个人账号和非管理员企业账号不显示企业管理', () => {
+    const onOpenAccounts = vi.fn();
+    const { rerender } = render(
+      <Sidebar
+        sessions={[makeSession()]}
+        activeSessionId="s1"
+        preferenceScope={{
+          serverUrl: 'https://example.com',
+          organizationId: PERSONAL_ACCOUNT.organizationId,
+          accountId: PERSONAL_ACCOUNT.id,
+        }}
+        enterpriseAccount={PERSONAL_ACCOUNT}
+        onSelect={vi.fn()}
+        onNewChat={vi.fn()}
+        onOpenHub={vi.fn()}
+        onOpenAccounts={onOpenAccounts}
+        onNavigate={vi.fn()}
+        onViewAll={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: '企业管理' })).toBeNull();
+
+    rerender(
+      <Sidebar
+        sessions={[makeSession()]}
+        activeSessionId="s1"
+        preferenceScope={{
+          serverUrl: 'https://example.com',
+          organizationId: ENTERPRISE_ACCOUNT.organizationId,
+          accountId: ENTERPRISE_ACCOUNT.id,
+        }}
+        enterpriseAccount={ENTERPRISE_ACCOUNT}
+        onSelect={vi.fn()}
+        onNewChat={vi.fn()}
+        onOpenHub={vi.fn()}
+        onOpenAccounts={onOpenAccounts}
+        onNavigate={vi.fn()}
+        onViewAll={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: '企业管理' })).toBeNull();
   });
 
   it('点击账户区打开账户菜单，点击外部或按 Escape 均会收起', () => {
