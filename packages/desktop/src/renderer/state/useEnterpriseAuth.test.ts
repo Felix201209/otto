@@ -92,6 +92,9 @@ beforeEach(() => {
       serverUrl: 'https://enterprise.otto.test',
       account: UPGRADED_ACCOUNT,
     })),
+    getEnterpriseVerificationApplication: vi.fn(),
+    submitEnterpriseVerificationApplication: vi.fn(),
+    cancelEnterpriseVerificationApplication: vi.fn(),
     enterpriseLogout: vi.fn(),
   };
   Object.defineProperty(window, 'otto', {
@@ -207,6 +210,71 @@ describe('企业注册链接进入中心注册', () => {
       positionTitle: '产品经理',
     });
     expect(view.result.current.state.registrationIntent).toBeNull();
+  });
+  it('个人账号可通过 hook 查询、提交和取消企业认证申请', async () => {
+    bridge.enterpriseSession.mockResolvedValueOnce({
+      serverUrl: 'https://enterprise.otto.test',
+      account: PERSONAL_ACCOUNT,
+    });
+    const application = {
+      id: 'verification-1',
+      applicantAccountId: PERSONAL_ACCOUNT.id,
+      sourceOrganizationId: PERSONAL_ACCOUNT.organizationId,
+      legalName: '星河科技有限公司',
+      status: 'manual_review' as const,
+      reviewNote: null,
+      reviewedBy: null,
+      reviewedAt: null,
+      provisionedOrganizationId: null,
+      submittedAt: '2026-08-21T01:00:00.000Z',
+      createdAt: '2026-08-21T01:00:00.000Z',
+      updatedAt: '2026-08-21T01:00:00.000Z',
+    };
+    const cancelled = { ...application, status: 'cancelled' as const };
+    bridge.getEnterpriseVerificationApplication.mockResolvedValueOnce(
+      application,
+    );
+    bridge.submitEnterpriseVerificationApplication.mockResolvedValueOnce(
+      application,
+    );
+    bridge.cancelEnterpriseVerificationApplication.mockResolvedValueOnce(
+      cancelled,
+    );
+    const view = renderHook(() => useEnterpriseAuth());
+    await waitFor(() => expect(view.result.current.state.status).toBe('signed-in'));
+
+    const submitInput = { legalName: application.legalName };
+    let loaded;
+    let submitted;
+    let cancelledResult;
+    await act(async () => {
+      loaded = await view.result.current.actions
+        .getEnterpriseVerificationApplication();
+      submitted = await view.result.current.actions
+        .submitEnterpriseVerificationApplication(submitInput);
+      cancelledResult = await view.result.current.actions
+        .cancelEnterpriseVerificationApplication();
+    });
+
+    expect(loaded).toEqual(application);
+    expect(submitted).toEqual(application);
+    expect(cancelledResult).toEqual(cancelled);
+    expect(bridge.submitEnterpriseVerificationApplication)
+      .toHaveBeenCalledWith(submitInput);
+    expect(view.result.current.state.error).toBeNull();
+
+    bridge.getEnterpriseVerificationApplication.mockRejectedValueOnce(
+      new Error(
+        "Error invoking remote method 'otto:enterprise-verification-application-get': Error: 审核服务不可用",
+      ),
+    );
+    await act(async () => {
+      await expect(
+        view.result.current.actions.getEnterpriseVerificationApplication(),
+      ).rejects.toThrow('审核服务不可用');
+    });
+    expect(view.result.current.state.error).toBe('审核服务不可用');
+    expect(view.result.current.state.status).toBe('signed-in');
   });
 
   it('个人账号升级失败时保留当前登录身份，允许原地改邀请码重试', async () => {

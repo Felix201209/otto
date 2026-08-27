@@ -11929,3 +11929,21 @@ h6.otto-prose__h {
   .otto-org-page__body, .otto-work-page__body { padding: 14px 16px 30px; }
   .otto-org-page__header, .otto-inbox-page__header, .otto-work-page__header { padding: 14px 16px 12px; }
 }
+
+/* 企业自助创建：邀请码加入与企业创建双入口。 */
+.otto-join-enterprise{width:min(720px,calc(100vw - 32px));max-width:720px;max-height:min(780px,calc(100vh - 32px));padding:0;overflow:hidden;border-radius:8px}
+.otto-join-enterprise__header{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:20px 22px 15px;border-bottom:1px solid var(--otto-border)}
+.otto-join-enterprise__header .otto-confirm__message{margin:0}.otto-join-enterprise__close{display:grid;place-items:center;flex:0 0 30px;width:30px;height:30px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--otto-text-tertiary);font:22px/1 var(--otto-font);cursor:pointer}
+.otto-join-enterprise__close:hover{border-color:var(--otto-border);background:var(--otto-bg-secondary);color:var(--otto-text)}
+.otto-join-enterprise__tabs{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:10px 22px;background:var(--otto-bg-secondary);border-bottom:1px solid var(--otto-border)}
+.otto-join-enterprise__tabs button{min-height:40px;padding:0 12px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--otto-text-secondary);font:700 12px var(--otto-font);cursor:pointer}
+.otto-join-enterprise__tabs button.is-active{border-color:var(--otto-border-strong);background:var(--otto-surface);color:var(--otto-accent);box-shadow:var(--otto-shadow-sm)}
+.otto-join-enterprise__body{max-height:calc(min(780px,100vh - 32px) - 142px);overflow-y:auto}.otto-join-enterprise__pane{display:grid;gap:16px;padding:20px 22px 22px}
+.otto-join-enterprise__intro{display:grid;gap:4px}.otto-join-enterprise__intro strong{color:var(--otto-text);font-size:14px}.otto-join-enterprise__intro span{color:var(--otto-text-secondary);font-size:11px;line-height:1.55}
+.otto-join-enterprise__field{display:grid;gap:7px;margin:0;color:var(--otto-text-secondary);font:700 11px var(--otto-font);min-width:0}
+.otto-join-enterprise__field input{width:100%;min-width:0;min-height:42px;padding:0 12px;border:1px solid var(--otto-border);border-radius:8px;outline:none;background:var(--otto-surface);color:var(--otto-text);font:650 13px/1 var(--otto-font);letter-spacing:0;text-transform:none}
+.otto-join-enterprise__loading{min-height:180px;display:grid;place-items:center;color:var(--otto-text-secondary);font-size:12px}
+.otto-enterprise-creation-form{display:grid;gap:16px}.otto-verification-form__grid{display:grid;grid-template-columns:1fr;gap:14px}.otto-verification-form__hint{color:var(--otto-text-tertiary);font:500 10px/1.4 var(--otto-font)}.otto-verification-form__hint.is-error{color:var(--otto-danger)}
+.otto-enterprise-creation-status{display:grid;gap:10px;padding:14px;border:1px solid var(--otto-border);border-radius:8px;background:var(--otto-bg-secondary)}.otto-verification-status.is-success{border-color:color-mix(in srgb,var(--otto-success) 38%,var(--otto-border))}.otto-verification-status.is-danger{border-color:color-mix(in srgb,var(--otto-danger) 38%,var(--otto-border))}
+.otto-verification-status__heading{display:flex;align-items:center;gap:9px}.otto-verification-status__heading>span{display:grid;place-items:center;width:30px;height:30px;border-radius:7px;background:var(--otto-surface);color:var(--otto-accent)}.otto-verification-status__heading>div{display:grid;gap:2px}.otto-verification-status__heading small{color:var(--otto-text-tertiary);font-size:9px}.otto-verification-status__heading strong{color:var(--otto-text);font-size:13px}
+.otto-verification-status h3,.otto-verification-status p{margin:0}.otto-verification-status h3{font-size:14px}.otto-verification-status p{color:var(--otto-text-secondary);font-size:11px;line-height:1.55}.otto-verification-status__actions{display:flex;justify-content:flex-end}

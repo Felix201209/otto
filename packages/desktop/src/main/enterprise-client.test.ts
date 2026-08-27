@@ -1170,6 +1170,117 @@ describe('EnterpriseClient', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('个人账号使用 member bearer 完成企业认证申请生命周期', async () => {
+    const personalAccount = {
+      ...ACCOUNT,
+      organizationId: 'personal_acc_1',
+      organizationName: '员工一号的个人空间',
+      accountType: 'personal' as const,
+    };
+    const application = {
+      id: 'verification-1',
+      applicantAccountId: personalAccount.id,
+      sourceOrganizationId: personalAccount.organizationId,
+      legalName: '星河科技有限公司',
+      status: 'manual_review' as const,
+      reviewNote: null,
+      reviewedBy: null,
+      reviewedAt: null,
+      provisionedOrganizationId: null,
+      submittedAt: '2026-08-21T01:00:00.000Z',
+      createdAt: '2026-08-21T01:00:00.000Z',
+      updatedAt: '2026-08-21T01:00:00.000Z',
+    };
+    const cancelled = { ...application, status: 'cancelled' as const };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: personalAccount,
+        token: 'personal-token',
+        expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, { application: null }))
+      .mockResolvedValueOnce(jsonResponse(201, { application }))
+      .mockResolvedValueOnce(jsonResponse(200, { application: cancelled }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(client.getEnterpriseVerificationApplication())
+      .resolves.toBeNull();
+    await expect(client.submitEnterpriseVerificationApplication({
+      legalName: `  ${application.legalName}  `,
+    })).resolves.toEqual(application);
+    await expect(client.cancelEnterpriseVerificationApplication())
+      .resolves.toEqual(cancelled);
+
+    const requests = fetchMock.mock.calls.slice(2).map(([url, init]) => ({
+      url,
+      init: init as RequestInit,
+    }));
+    expect(requests.map(({ url, init }) => [url, init.method])).toEqual([
+      ['https://enterprise.otto.test/enterprise/verification/application', 'GET'],
+      ['https://enterprise.otto.test/enterprise/verification/application', 'POST'],
+      ['https://enterprise.otto.test/enterprise/verification/application', 'DELETE'],
+    ]);
+    for (const { init } of requests) {
+      expect(init.headers).toMatchObject({
+        authorization: 'Bearer personal-token',
+      });
+    }
+    expect(JSON.parse(String(requests[1]?.init.body))).toEqual({
+      legalName: application.legalName,
+    });
+  });
+
+  it('企业账号不能提交企业认证申请', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: { ...ACCOUNT, accountType: 'enterprise' },
+        token: 'member-token',
+        expiresAt: '2099-01-01',
+      }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(client.submitEnterpriseVerificationApplication({
+      legalName: '星河科技有限公司',
+    })).rejects.toThrow('当前账号已经属于企业');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('企业认证申请拒绝空企业名称', async () => {
+    const personalAccount = {
+      ...ACCOUNT,
+      accountType: 'personal' as const,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: personalAccount,
+        token: 'personal-token',
+        expiresAt: '2099-01-01',
+      }));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword(
+      'https://enterprise.otto.test',
+      'staff01',
+      'password',
+    );
+
+    await expect(client.submitEnterpriseVerificationApplication({
+      legalName: '   ',
+    })).rejects.toThrow('请输入企业名称');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
   it('支持手机号验证码登录并保存会话', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))

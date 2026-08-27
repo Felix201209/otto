@@ -307,6 +307,32 @@ export interface EnterpriseLegalDocumentSection {
   important?: boolean;
 }
 
+export interface EnterpriseVerificationApplicationInput {
+  legalName: string;
+}
+
+export interface EnterpriseVerificationApplication {
+  id: string;
+  applicantAccountId: string;
+  sourceOrganizationId: string;
+  legalName: string;
+  status:
+    | 'draft'
+    | 'submitted'
+    | 'auto_check'
+    | 'manual_review'
+    | 'approved'
+    | 'rejected'
+    | 'cancelled';
+  reviewNote: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  provisionedOrganizationId: string | null;
+  submittedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface EnterpriseSmsLoginChallenge {
   serverUrl: string;
   challengeId: string;
@@ -1118,6 +1144,12 @@ const IPC = {
   enterpriseAccountUpdate: 'otto:enterprise-account-update',
   enterpriseAccountDelete: 'otto:enterprise-account-delete',
   enterpriseDataGovernanceGet: 'otto:enterprise-data-governance-get',
+  enterpriseVerificationApplicationGet:
+    'otto:enterprise-verification-application-get',
+  enterpriseVerificationApplicationSubmit:
+    'otto:enterprise-verification-application-submit',
+  enterpriseVerificationApplicationCancel:
+    'otto:enterprise-verification-application-cancel',
   enterpriseLegalAccept: 'otto:enterprise-legal-accept',
   enterprisePrivacyExport: 'otto:enterprise-privacy-export',
   enterprisePrivacyDelete: 'otto:enterprise-privacy-delete',
@@ -1575,6 +1607,15 @@ export interface OttoBridge {
   enterpriseLegalAccept(
     documents: EnterpriseLegalDocumentReference[],
   ): Promise<EnterpriseDataGovernanceProfile>;
+  getEnterpriseVerificationApplication(): Promise<
+    EnterpriseVerificationApplication | null
+  >;
+  submitEnterpriseVerificationApplication(
+    input: EnterpriseVerificationApplicationInput,
+  ): Promise<EnterpriseVerificationApplication>;
+  cancelEnterpriseVerificationApplication(): Promise<
+    EnterpriseVerificationApplication
+  >;
   enterprisePrivacyExport(): Promise<{ ok: true; path: string } | null>;
   enterprisePrivacyDelete(input: {
     password: string;
@@ -2687,6 +2728,28 @@ const bridge: OttoBridge = {
       IPC.enterpriseLegalAccept,
       documents,
     ) as Promise<EnterpriseDataGovernanceProfile>;
+  },
+  getEnterpriseVerificationApplication(): Promise<
+    EnterpriseVerificationApplication | null
+  > {
+    return ipcRenderer.invoke(
+      IPC.enterpriseVerificationApplicationGet,
+    ) as Promise<EnterpriseVerificationApplication | null>;
+  },
+  submitEnterpriseVerificationApplication(
+    input: EnterpriseVerificationApplicationInput,
+  ): Promise<EnterpriseVerificationApplication> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseVerificationApplicationSubmit,
+      input,
+    ) as Promise<EnterpriseVerificationApplication>;
+  },
+  cancelEnterpriseVerificationApplication(): Promise<
+    EnterpriseVerificationApplication
+  > {
+    return ipcRenderer.invoke(
+      IPC.enterpriseVerificationApplicationCancel,
+    ) as Promise<EnterpriseVerificationApplication>;
   },
   enterprisePrivacyExport(): Promise<{ ok: true; path: string } | null> {
     return ipcRenderer.invoke(IPC.enterprisePrivacyExport) as Promise<{

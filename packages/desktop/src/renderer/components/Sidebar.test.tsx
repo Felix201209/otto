@@ -166,8 +166,8 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
       onJoinEnterprise,
     });
 
-    fireEvent.click(screen.getByRole('button', { name: '升级企业版' }));
-    const dialog = screen.getByRole('dialog', { name: '升级为企业版' });
+    fireEvent.click(screen.getByRole('button', { name: '加入企业' }));
+    const dialog = screen.getByRole('dialog', { name: '加入或创建企业' });
     expect(within(dialog).getByText(/原个人空间对话不会自动带入企业/)).toBeTruthy();
     const invite = within(dialog).getByRole('textbox', { name: '企业邀请码' });
     fireEvent.change(invite, { target: { value: 'Ab3D-k9Pq-Z7xY' } });
@@ -177,7 +177,7 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
       inviteCode: 'Ab3D-k9Pq-Z7xY',
     }));
     await waitFor(() => expect(
-      screen.queryByRole('dialog', { name: '升级为企业版' }),
+      screen.queryByRole('dialog', { name: '加入或创建企业' }),
     ).toBeNull());
   });
 
@@ -190,8 +190,8 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
       onJoinEnterprise,
     });
 
-    fireEvent.click(screen.getByRole('button', { name: '升级企业版' }));
-    const dialog = screen.getByRole('dialog', { name: '升级为企业版' });
+    fireEvent.click(screen.getByRole('button', { name: '加入企业' }));
+    const dialog = screen.getByRole('dialog', { name: '加入或创建企业' });
     const invite = within(dialog).getByRole('textbox', { name: '企业邀请码' });
     fireEvent.change(invite, { target: { value: 'Ab3D-k9Pq-Z7xY' } });
     fireEvent.click(within(dialog).getByRole('button', { name: '加入企业' }));
@@ -204,7 +204,7 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
 
     await waitFor(() => expect(onJoinEnterprise).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(
-      screen.queryByRole('dialog', { name: '升级为企业版' }),
+      screen.queryByRole('dialog', { name: '加入或创建企业' }),
     ).toBeNull());
   });
 
@@ -214,7 +214,7 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
       onJoinEnterprise: vi.fn(),
     });
 
-    expect(screen.queryByRole('button', { name: '升级企业版' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '加入企业' })).toBeNull();
   });
 });
 

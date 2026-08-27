@@ -27,7 +27,10 @@ import {
   IconUserAvatar,
 } from './icons.js';
 import { LogoutConfirmDialog } from './LogoutConfirmDialog.js';
-import { JoinEnterpriseDialog } from './JoinEnterpriseDialog.js';
+import {
+  JoinEnterpriseDialog,
+  type EnterpriseVerificationHandlers,
+} from './JoinEnterpriseDialog.js';
 import type { EnterpriseAccount } from '../../preload/index.js';
 import type { EnterpriseUnreadCounts } from '../enterpriseUnreadNotifications.js';
 
@@ -71,7 +74,7 @@ function relativeSessionGroups(groups: SessionGroup[]): SessionGroup[] {
   return result;
 }
 
-interface SidebarProps {
+interface SidebarProps extends EnterpriseVerificationHandlers {
   groups: SessionGroup[];
   activeSessionId: string | null;
   /** 当前是否停在「设置」页（高亮该入口）。 */
@@ -112,6 +115,10 @@ export function Sidebar({
   onOpenAccounts,
   onNavigate,
   onJoinEnterprise,
+  onSubmitEnterpriseVerification,
+  onGetEnterpriseVerification,
+  onCancelEnterpriseVerification,
+  onReloadEnterpriseIdentity,
   onLogout,
   onRename,
   onDelete,
@@ -231,10 +238,10 @@ export function Sidebar({
             type="button"
             className="otto-viewall otto-viewall--upgrade"
             onClick={() => setJoinEnterpriseOpen(true)}
-            title="使用企业邀请码升级"
+            title="使用邀请码加入企业，或直接创建企业"
           >
             <span className="otto-viewall__accounticon" aria-hidden>↗</span>
-            升级企业版
+            加入企业
           </button>
         ) : null}
         {enterpriseAccount ? (
@@ -287,6 +294,10 @@ export function Sidebar({
             await onJoinEnterprise(input);
             setJoinEnterpriseOpen(false);
           }}
+          onSubmitEnterpriseVerification={onSubmitEnterpriseVerification}
+          onGetEnterpriseVerification={onGetEnterpriseVerification}
+          onCancelEnterpriseVerification={onCancelEnterpriseVerification}
+          onReloadEnterpriseIdentity={onReloadEnterpriseIdentity}
         />
       ) : null}
     </aside>
