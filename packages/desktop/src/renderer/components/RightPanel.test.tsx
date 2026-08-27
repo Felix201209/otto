@@ -18,7 +18,7 @@ const modules: ModuleDefinition[] = [{
 
 function renderPanel(overrides: Partial<React.ComponentProps<typeof RightPanel>> = {}) {
   const props: React.ComponentProps<typeof RightPanel> = {
-    busy: false, ready: true, scopeKey: 'scope', layout, defaultLayout: layout, modules,
+    busy: false, ready: true, scopeKey: 'scope', layout, modules,
     onActivate: vi.fn(), onOpenMarketplace: vi.fn(), onLayoutChange: vi.fn(), ...overrides,
   };
   return { ...render(<RightPanel {...props}/>), props };
@@ -44,7 +44,7 @@ describe('RightPanel module workspace boundary', () => {
   it('preserves collapsed panel state but never collapses page presentation', () => {
     const { rerender, container } = renderPanel({ collapsed: true });
     expect(container.querySelector('aside')?.getAttribute('aria-hidden')).toBe('true');
-    rerender(<RightPanel busy={false} ready scopeKey="scope" layout={layout} defaultLayout={layout} modules={modules} presentation="page" collapsed onActivate={vi.fn()} onOpenMarketplace={vi.fn()} onLayoutChange={vi.fn()}/>);
+    rerender(<RightPanel busy={false} ready scopeKey="scope" layout={layout} modules={modules} presentation="page" collapsed onActivate={vi.fn()} onOpenMarketplace={vi.fn()} onLayoutChange={vi.fn()}/>);
     expect(container.querySelector('aside')?.hasAttribute('aria-hidden')).toBe(false);
   });
 

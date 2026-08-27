@@ -103,7 +103,6 @@ export interface ModuleWorkspaceProps {
   presentation: 'panel' | 'page';
   scopeKey?: string;
   layout: ModuleWorkspaceLayout;
-  defaultLayout?: ModuleWorkspaceLayout;
   modules: readonly ModuleDefinition[];
   onActivate(module: ModuleDefinition): void;
   onOpenMarketplace(groupId: string): void;
@@ -119,7 +118,6 @@ export function ModuleWorkspace({
   presentation,
   scopeKey = 'default',
   layout,
-  defaultLayout,
   modules,
   onActivate,
   onOpenMarketplace,
@@ -133,7 +131,7 @@ export function ModuleWorkspace({
     error: string | null;
   } | null>(null);
   const [confirmState, setConfirmState] = useState<
-    { kind: 'delete-group'; groupId: string } | { kind: 'restore-defaults' } | null
+    { kind: 'delete-group'; groupId: string } | null
   >(null);
   const [undoState, setUndoState] = useState<{
     label: string;
@@ -269,18 +267,6 @@ export function ModuleWorkspace({
 
   return (
     <section className="otto-module-workspace-shell" aria-label="功能组">
-      <div className="otto-module-workspace__toolbar">
-        <button
-          type="button"
-          aria-label="添加功能组"
-          onClick={() => commitLayout(createModuleGroup(layout))}
-        >＋ 添加功能组</button>
-        {defaultLayout ? (
-          <button type="button" onClick={() => setConfirmState({ kind: 'restore-defaults' })}>
-            恢复默认布局
-          </button>
-        ) : null}
-      </div>
       <Reorder.Group
         as="div"
         axis={presentation === 'panel' ? 'y' : undefined}
@@ -301,8 +287,12 @@ export function ModuleWorkspace({
         const groupModules = group.moduleIds
           .map((moduleId) => modulesById.get(moduleId))
           .filter((module): module is ModuleDefinition => Boolean(module));
-        const capacity = group.rows * 3;
-        const overflowing = groupModules.length > capacity;
+        const displayRows = Math.min(
+          3,
+          Math.max(group.rows, Math.ceil((groupModules.length + 1) / 3)),
+        );
+        const capacity = displayRows * 3;
+        const overflowing = groupModules.length + 1 > capacity;
         return (
           <DraggableItem
             key={group.id}
@@ -456,7 +446,7 @@ export function ModuleWorkspace({
                 );
                 updateTransientLayout(reorderModulesInGroup(current, group.id, mergedOrder));
               }}
-              className={`otto-module-group__grid otto-module-group__grid--rows-${group.rows}${
+              className={`otto-module-group__grid otto-module-group__grid--rows-${displayRows}${
                 overflowing ? ' is-overflowing' : ''
               }`}
               data-reorder-group={`modules:${group.id}`}
@@ -565,25 +555,33 @@ export function ModuleWorkspace({
                   </DraggableItem>
                 );
               })}
-              {groupModules.length === 0 ? (
-                <div className="otto-module-group__empty">还没有添加模块</div>
-              ) : null}
+              <button
+                type="button"
+                className="otto-module-group__add"
+                aria-label={`向${group.name}添加模块`}
+                onClick={() => onOpenMarketplace(group.id)}
+              >
+                <span className="otto-module-group__add-icon" aria-hidden>＋</span>
+                <span>添加模块</span>
+              </button>
             </Reorder.Group>
-            <button
-              type="button"
-              className="otto-module-group__add"
-              aria-label={`向${group.name}添加模块`}
-              onClick={() => onOpenMarketplace(group.id)}
-            >
-              <span aria-hidden>＋</span>
-              添加模块
-            </button>
           </article>
             )}
           </DraggableItem>
         );
         })}
       </Reorder.Group>
+      <div className="otto-module-workspace__footer">
+        <button
+          type="button"
+          className="otto-module-workspace__add-group"
+          aria-label="添加功能组"
+          onClick={() => commitLayout(createModuleGroup(layout))}
+        >
+          <span aria-hidden>＋</span>
+          添加功能组
+        </button>
+      </div>
       {undoState ? (
         <div className="otto-module-workspace__undo" role="status">
           <span>{undoState.label}</span>
@@ -610,18 +608,6 @@ export function ModuleWorkspace({
           if (confirmState?.kind !== 'delete-group') return;
           applyWithUndo(deleteModuleGroup(layout, confirmState.groupId), '功能组已删除');
           setEditingGroupId(null);
-          setConfirmState(null);
-        }}
-        onCancel={() => setConfirmState(null)}
-      />
-      <ConfirmDialog
-        open={confirmState?.kind === 'restore-defaults'}
-        title="恢复默认布局"
-        message="仅恢复功能组与模块排列，不会删除专家或业务数据。"
-        confirmText="恢复默认"
-        danger={false}
-        onConfirm={() => {
-          if (defaultLayout) commitLayout(defaultLayout);
           setConfirmState(null);
         }}
         onCancel={() => setConfirmState(null)}

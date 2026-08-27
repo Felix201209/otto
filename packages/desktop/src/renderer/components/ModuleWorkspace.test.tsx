@@ -87,7 +87,6 @@ function ControlledWorkspace({ scopeKey = 'scope-a' }: { scopeKey?: string }) {
       presentation="panel"
       scopeKey={scopeKey}
       layout={layout}
-      defaultLayout={enterpriseLayout}
       modules={modules}
       onActivate={vi.fn()}
       onOpenMarketplace={vi.fn()}
@@ -129,6 +128,23 @@ describe('ModuleWorkspace', () => {
     expect(onOpenMarketplace).toHaveBeenCalledWith('park-services');
   });
 
+  it('renders module addition as the next grid tile and group addition after all groups', () => {
+    const { container } = renderWorkspace();
+    const parkGrid = container.querySelector('[data-group-id="park-services"] .otto-module-group__grid');
+    const parkChildren = parkGrid?.children ?? [];
+    const addModule = screen.getByRole('button', { name: '向园区服务添加模块' });
+    const workspace = container.querySelector('.otto-module-workspace');
+    const addGroup = screen.getByRole('button', { name: '添加功能组' });
+
+    expect(parkChildren).toHaveLength(3);
+    expect(parkChildren[2]).toBe(addModule);
+    expect(addModule.classList.contains('otto-module-group__add')).toBe(true);
+    expect(
+      (workspace?.compareDocumentPosition(addGroup) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '恢复默认布局' })).toBeNull();
+  });
+
   it('renders personal capability fixtures without synthesizing enterprise groups', () => {
     renderWorkspace('panel', {
       version: 1,
@@ -158,7 +174,7 @@ describe('ModuleWorkspace', () => {
   );
 
   it('uses a focusable internal scroller for overflowing groups', () => {
-    const overflowModules = Array.from({ length: 8 }, (_, index): ModuleDefinition => ({
+    const overflowModules = Array.from({ length: 9 }, (_, index): ModuleDefinition => ({
       id: `module-${index}`,
       label: `模块 ${index + 1}`,
       category: 'common',
@@ -188,6 +204,41 @@ describe('ModuleWorkspace', () => {
     const grid = container.querySelector('.otto-module-group__grid');
     expect(grid?.classList.contains('is-overflowing')).toBe(true);
     expect(grid?.getAttribute('tabindex')).toBe('0');
+  });
+
+  it('places add module in the seventh slot and expands a full two-row group to three rows', () => {
+    const sixModules = Array.from({ length: 6 }, (_, index): ModuleDefinition => ({
+      id: `six-${index}`,
+      label: `模块 ${index + 1}`,
+      category: 'common',
+      icon: 'agent',
+      activation: { kind: 'agent', profileId: `six-${index}` },
+      availability: 'available',
+    }));
+    const { container } = render(
+      <ModuleWorkspace
+        presentation="panel"
+        layout={{
+          version: 1,
+          groups: [{
+            id: 'six-modules',
+            name: '六个模块',
+            rows: 2,
+            moduleIds: sixModules.map((module) => module.id),
+          }],
+        }}
+        modules={sixModules}
+        onActivate={vi.fn()}
+        onOpenMarketplace={vi.fn()}
+        onLayoutChange={vi.fn()}
+      />,
+    );
+
+    const grid = container.querySelector('.otto-module-group__grid');
+    expect(grid?.children).toHaveLength(7);
+    expect(grid?.children[6]).toBe(screen.getByRole('button', { name: '向六个模块添加模块' }));
+    expect(grid?.classList.contains('otto-module-group__grid--rows-3')).toBe(true);
+    expect(grid?.classList.contains('is-overflowing')).toBe(false);
   });
 
   it('creates a group and supports rename validation and row changes', () => {
@@ -260,18 +311,14 @@ describe('ModuleWorkspace', () => {
     expect(screen.getByRole('heading', { name: '园区服务' })).toBeTruthy();
   });
 
-  it('restores defaults after confirmation and provides keyboard-friendly group ordering', () => {
+  it('provides keyboard-friendly group ordering without a reset action', () => {
     renderControlledWorkspace();
     fireEvent.click(screen.getByRole('button', { name: '功能组菜单：日常办公' }));
     fireEvent.click(screen.getByRole('menuitem', { name: '上移功能组' }));
     const headings = screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent);
     expect(headings.slice(0, 2)).toEqual(['日常办公', '园区服务']);
 
-    fireEvent.click(screen.getByRole('button', { name: '恢复默认布局' }));
-    expect(screen.getByRole('dialog', { name: '恢复默认布局' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '恢复默认' }));
-    expect(screen.getAllByRole('heading', { level: 2 }).slice(0, 2).map((heading) => heading.textContent))
-      .toEqual(['园区服务', '日常办公']);
+    expect(screen.queryByRole('button', { name: '恢复默认布局' })).toBeNull();
   });
 
   it('supports first/last group moves and four-way keyboard module ordering', () => {

@@ -145,7 +145,6 @@ import {
 import { useModuleWorkspaceCapabilities } from './state/useModuleWorkspaceCapabilities.js';
 import { useModuleWorkspace } from './state/useModuleWorkspace.js';
 import {
-  createDefaultModuleWorkspace,
   getModuleWorkspaceStorageKey,
   type ModuleWorkspaceLayout,
 } from './moduleWorkspace.js';
@@ -292,12 +291,6 @@ function OttoWorkspaceApp({
   const moduleWorkspaceScopeKey = useMemo(
     () => getModuleWorkspaceStorageKey(moduleWorkspaceScope),
     [moduleWorkspaceScope],
-  );
-  const moduleWorkspaceDefaults = useMemo<ModuleWorkspaceLayout>(
-    () => moduleCapabilities.ready
-      ? createDefaultModuleWorkspace({ edition, availableModuleIds })
-      : { version: 1, groups: [] },
-    [availableModuleIds, edition, moduleCapabilities.ready],
   );
   const moduleWorkspace = useModuleWorkspace({
     scope: moduleWorkspaceScope,
@@ -1370,7 +1363,6 @@ function OttoWorkspaceApp({
             onRetryCapabilities={moduleCapabilities.retry}
             scopeKey={moduleWorkspaceScopeKey}
             layout={moduleWorkspace.visibleLayout}
-            defaultLayout={moduleWorkspaceDefaults}
             modules={moduleCapabilities.modules}
             onActivate={activateModule}
             onOpenMarketplace={(groupId) => openModuleModal({ kind: 'marketplace', groupId })}
@@ -1448,7 +1440,6 @@ function OttoWorkspaceApp({
               onRetryCapabilities={moduleCapabilities.retry}
               scopeKey={moduleWorkspaceScopeKey}
               layout={moduleWorkspace.visibleLayout}
-              defaultLayout={moduleWorkspaceDefaults}
               modules={moduleCapabilities.modules}
               onActivate={activateModule}
               onOpenMarketplace={(groupId) => openModuleModal({ kind: 'marketplace', groupId })}

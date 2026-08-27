@@ -15,7 +15,6 @@ export interface RightPanelProps {
   onRetryCapabilities?: () => void;
   scopeKey: string;
   layout: ModuleWorkspaceLayout;
-  defaultLayout: ModuleWorkspaceLayout;
   modules: readonly ModuleDefinition[];
   onActivate(module: ModuleDefinition): void;
   onOpenMarketplace(groupId: string): void;
@@ -31,7 +30,6 @@ export function RightPanel({
   onRetryCapabilities,
   scopeKey,
   layout,
-  defaultLayout,
   modules,
   onActivate,
   onOpenMarketplace,
@@ -50,7 +48,6 @@ export function RightPanel({
           presentation={presentation}
           scopeKey={scopeKey}
           layout={layout}
-          defaultLayout={defaultLayout}
           modules={modules}
           onActivate={onActivate}
           onOpenMarketplace={onOpenMarketplace}
