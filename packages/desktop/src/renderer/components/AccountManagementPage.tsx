@@ -21,7 +21,6 @@ import {
 } from './EnterpriseAdministrationPanel.js';
 import {
   IconBuilding,
-  IconChevron,
   IconDashboard,
   IconIdBadge,
   IconNetwork,
@@ -187,7 +186,6 @@ export function formatInviteRemaining(expiresAt: string, now = Date.now()): stri
 
 export function AccountManagementPage({
   currentAccount,
-  onBack,
   onOrganizationChanged,
 }: {
   currentAccount: EnterpriseAccount;
@@ -756,11 +754,6 @@ export function AccountManagementPage({
       >
       <aside className="otto-account-workspace__rail" aria-label="企业管理导航">
         <header className="otto-account-hero">
-          <button type="button" className="otto-account-page__back" onClick={onBack}>
-            <IconChevron size={14} />
-            返回工作台
-          </button>
-          <div className="otto-account-page__eyebrow">ENTERPRISE MANAGEMENT</div>
           <h1>企业管理</h1>
           <p>管理组织结构、成员身份、企业能力和产业园服务。</p>
         </header>

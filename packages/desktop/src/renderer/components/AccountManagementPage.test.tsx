@@ -162,6 +162,8 @@ describe('企业管理分区导航', () => {
     expect(secondaryNavigation.contains(screen.getByRole('tabpanel'))).toBe(false);
     expect(membersTab.getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('heading', { name: '企业管理' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '返回工作台' })).toBeNull();
+    expect(screen.queryByText('ENTERPRISE MANAGEMENT')).toBeNull();
     expect(screen.queryByText('CEO 企业管理中心')).toBeNull();
     await waitFor(() => expect(screen.getByRole('tab', { name: /成员目录/ }).textContent)
       .toContain('1 名成员'));
