@@ -59,7 +59,7 @@ jobs:
           test "$(node -p "require('./packages/desktop/package.json').version")" = '1.9.13'
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           git fetch --no-tags origin internal
-          git merge-base --is-ancestor origin/internal "$GITHUB_SHA"
+          git merge-base --is-ancestor FETCH_HEAD "$GITHUB_SHA"
 
       - name: Install locked dependencies
         run: npm ci
