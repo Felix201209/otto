@@ -11,9 +11,11 @@ on:
         description: 'Run remote dry-run only.'
         required: false
         type: boolean
-        default: false
-  release:
-    types: [published]
+        default: true
+      apply_confirmation:
+        description: 'Production apply requires exactly DEPLOY_V1.9.13.'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -42,14 +44,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "release" ]; then
-            TAG="${{ github.event.release.tag_name }}"
-          else
-            TAG="${{ inputs.version }}"
-          fi
+          TAG="${{ inputs.version }}"
           TAG="${TAG#v}"
+          test "$TAG" = '1.9.13'
           echo "version=$TAG" >> "$GITHUB_OUTPUT"
           echo "tag=v$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Fail closed unless production apply is explicit
+        shell: bash
+        env:
+          DRY_RUN_INPUT: ${{ inputs.dry_run }}
+          APPLY_CONFIRMATION: ${{ inputs.apply_confirmation }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN_INPUT" != "true" ] \
+            && [ "$APPLY_CONFIRMATION" != 'DEPLOY_V1.9.13' ]; then
+            echo 'refusing production apply without exact confirmation' >&2
+            exit 3
+          fi
 
       - name: Validate deployment secrets
         shell: bash
@@ -110,7 +122,7 @@ jobs:
       - name: Install or upgrade on server
         shell: bash
         env:
-          DRY_RUN_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+          DRY_RUN_INPUT: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
           DRY_RUN_FLAG=""
@@ -127,8 +139,50 @@ jobs:
              mkdir unpack
              tar -xzf \"\$ARCHIVE\" -C unpack
              PKG_DIR=\$(find unpack -mindepth 1 -maxdepth 1 -type d | head -n 1)
-             if [ -L /opt/otto-enterprise/current ]; then
-               sudo \"\$PKG_DIR/upgrade.sh\" --config '${DEPLOY_CONFIG_PATH}' $DRY_RUN_FLAG
-             else
-               sudo \"\$PKG_DIR/install.sh\" --config '${DEPLOY_CONFIG_PATH}' $DRY_RUN_FLAG
-             fi"
+             test -n \"\$PKG_DIR\"
+             test -L /opt/otto-enterprise/current
+             if [ '$DRY_RUN_INPUT' != 'true' ]; then
+               sudo -n \"\$PKG_DIR/backup-now.sh\" '${DEPLOY_CONFIG_PATH}'
+             fi
+             sudo -n \"\$PKG_DIR/upgrade.sh\" --config '${DEPLOY_CONFIG_PATH}' $DRY_RUN_FLAG"
+
+      - name: Verify production version and public contracts
+        if: ${{ inputs.dry_run == false }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -p "${DEPLOY_PORT}" \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "set -euo pipefail
+             CURRENT=\$(readlink -f /opt/otto-enterprise/current)
+             case \"\$CURRENT\" in
+               /opt/otto-enterprise/releases/1.9.13-*) ;;
+               *) echo \"unexpected current release: \$CURRENT\" >&2; exit 5 ;;
+             esac
+             curl --fail --silent --show-error --retry 5 \
+               http://127.0.0.1:7778/enterprise/health > /tmp/otto-health-${GITHUB_RUN_ID}.json
+             curl --fail --silent --show-error --retry 5 \
+               http://127.0.0.1:7778/enterprise/legal > /tmp/otto-legal-${GITHUB_RUN_ID}.json
+             /opt/otto-enterprise/runtime/current/bin/node -e '
+               const fs = require(\"node:fs\");
+               const health = JSON.parse(fs.readFileSync(process.argv[1], \"utf8\"));
+               const legal = JSON.parse(fs.readFileSync(process.argv[2], \"utf8\"));
+               if (health.status !== \"ok\" || health.version !== \"1.9.13\") {
+                 throw new Error(\"health identity mismatch\");
+               }
+               const documents = Array.isArray(legal) ? legal : legal.documents;
+               if (!Array.isArray(documents) || documents.length < 2) {
+                 throw new Error(\"legal documents missing\");
+               }
+               for (const document of documents) {
+                 if (!/^[0-9a-f]{64}$/.test(document.sha256 || \"\")) {
+                   throw new Error(\"legal document hash invalid\");
+                 }
+               }
+               console.log(JSON.stringify({
+                 status: health.status,
+                 version: health.version,
+                 apiVersion: health.apiVersion,
+                 legalDocuments: documents.map(({ id, version }) => ({ id, version })),
+               }));
+             ' /tmp/otto-health-${GITHUB_RUN_ID}.json /tmp/otto-legal-${GITHUB_RUN_ID}.json"
