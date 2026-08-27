@@ -304,9 +304,11 @@ describe('ModuleWorkspace', () => {
     expect(screen.getByRole('menu', { name: '园区服务设置' })).toBeTruthy();
     fireEvent.mouseDown(document.body);
     expect(screen.queryByRole('menu', { name: '园区服务设置' })).toBeNull();
+    expect(document.activeElement).toBe(menuButton);
     fireEvent.click(menuButton);
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('menu', { name: '园区服务设置' })).toBeNull();
+    expect(document.activeElement).toBe(menuButton);
   });
 
   it('keeps group and module menus mutually exclusive', () => {

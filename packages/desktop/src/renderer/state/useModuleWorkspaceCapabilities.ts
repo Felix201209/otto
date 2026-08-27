@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AgentProfile } from '../agents/departmentAgents.js';
 import type { CustomAgentDefinition } from '../customAgents.js';
 import { buildModuleCatalog, type ModuleDefinition, type ParkModuleAuthorization } from '../moduleCatalog.js';
+import { normalizeServerUrlForStorage } from '../moduleWorkspace.js';
 import { getEnterpriseOrganizationFeatures } from './enterpriseOrganizationFeatures.js';
 
 interface CapabilityState {
@@ -21,7 +22,9 @@ const NO_PARK: ParkModuleAuthorization = {
 
 export function useModuleWorkspaceCapabilities(input: {
   edition: 'personal' | 'enterprise';
+  serverUrl: string;
   organizationId?: string | null;
+  accountId: string;
   accountIsAdmin?: boolean;
   profiles: readonly AgentProfile[];
   customAgents: readonly CustomAgentDefinition[];
@@ -31,7 +34,13 @@ export function useModuleWorkspaceCapabilities(input: {
   modules: ModuleDefinition[];
   retry(): void;
 } {
-  const key = `${input.edition}:${input.organizationId ?? 'personal'}`;
+  const key = [
+    normalizeServerUrlForStorage(input.serverUrl),
+    input.edition,
+    input.organizationId?.trim() || 'personal',
+    input.accountId.trim() || 'anonymous',
+    input.accountIsAdmin ? 'admin' : 'member',
+  ].join(':');
   const [retryRevision, setRetryRevision] = useState(0);
   const [state, setState] = useState<CapabilityState>(() => ({
     key,
@@ -53,25 +62,26 @@ export function useModuleWorkspaceCapabilities(input: {
     }
     void Promise.all([
       getEnterpriseOrganizationFeatures(organizationId, { force: true }),
-      window.otto.enterpriseParkView().catch(() => null),
-    ]).then(([features, park]) => {
+      window.otto.enterpriseParkView(),
+    ]).then(async ([features, park]) => {
+      const hasParkContext = Boolean(park && park.status === 'active');
+      const tickets = hasParkContext ? await window.otto.enterpriseTicketList() : [];
       if (cancelled) return;
-      const privileged = Boolean(input.accountIsAdmin || park?.isAdminOrganization);
       setState({
         key,
         status: 'ready',
         features,
         park: {
-          hasParkContext: Boolean(park && park.status === 'active'),
-          canViewStatistics: privileged,
-          canViewStaffTasks: privileged,
+          hasParkContext,
+          canViewStatistics: hasParkContext && Boolean(park?.isAdminOrganization),
+          canViewStaffTasks: hasParkContext && tickets.some((ticket) => ticket.isRecipient === true),
         },
       });
     }).catch(() => {
       if (!cancelled) setState({ key, status: 'failed', features: null, park: NO_PARK });
     });
     return () => { cancelled = true; };
-  }, [input.accountIsAdmin, input.edition, input.organizationId, key, retryRevision]);
+  }, [input.accountIsAdmin, input.accountId, input.edition, input.organizationId, input.serverUrl, key, retryRevision]);
 
   const current = state.key === key ? state : {
     key,

@@ -160,6 +160,7 @@ vi.mock('./components/ParkServicesPlugin.js', () => ({
   PARK_STATE_EVENT: 'otto:park-services-state',
   openParkServices: vi.fn(),
   closeParkServices: vi.fn(),
+  hideParkServices: vi.fn(),
 }));
 
 vi.mock('./components/UiModeGuide.js', () => ({

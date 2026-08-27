@@ -20,7 +20,9 @@ beforeEach(() => {
     enterpriseKnowledgeRevise: vi.fn(async () => ({ status: 'updated' })),
     enterpriseKnowledgeReview: vi.fn(async () => ({ status: 'approved' })),
     enterpriseKnowledgeRevisions: vi.fn(async () => []),
+    workLogRecent: vi.fn(async () => []),
   });
+  vi.spyOn(window, 'confirm').mockReturnValue(true);
 });
 
 describe('WorkspaceDialogs', () => {
@@ -49,6 +51,76 @@ describe('WorkspaceDialogs', () => {
     }]);
     await Promise.resolve();
     expect(screen.queryByText('旧组织制度')).toBeNull();
+  });
+
+  it('企业记忆保留最近工作成果候选，并按成果来源沉淀', async () => {
+    Object.assign(window.otto, {
+      workLogRecent: vi.fn(async () => [{
+        date: '2026-08-27',
+        entries: [{
+          time: '10:30', category: '文档', action: '完成客户方案', success: true,
+          details: '交付最终版', entryType: 'work_result', taskTitle: '客户方案定稿',
+        }],
+      }]),
+    });
+    render(<EnterpriseMemoryDialog open role="company_admin" onClose={vi.fn()} />);
+
+    await screen.findByText('客户方案定稿');
+    fireEvent.click(screen.getByRole('button', { name: '沉淀' }));
+
+    await waitFor(() => expect(window.otto.enterpriseKnowledgeRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceType: 'work_result',
+        title: '客户方案定稿',
+        content: '客户方案定稿\n交付最终版',
+      }),
+    ));
+    await waitFor(() => expect(
+      (screen.getByRole('button', { name: '沉淀' }) as HTMLButtonElement).disabled,
+    ).toBe(false));
+  });
+
+  it('企业知识保留部门、证据、来源和完整记忆沿革', async () => {
+    Object.assign(window.otto, {
+      enterpriseKnowledgeList: vi.fn(async () => [{
+        id: 'knowledge-1', organizationId: 'org-a', sourceId: 'source-1',
+        sourceLabel: '项目复盘', sourceType: 'work_result', title: '交付规范',
+        department: '客户成功部', category: '流程', content: '先审核再交付',
+        contributor: '小周', confidence: 0.92, status: 'active', version: 2,
+        evidenceCount: 3, distinctSessionCount: 2, distinctContributorCount: 2,
+        lastObservedAt: '2026-08-27T08:00:00.000Z', createdAt: '2026-08-26T00:00:00.000Z',
+      }]),
+      enterpriseKnowledgeRevisions: vi.fn(async () => [{
+        id: 'revision-1', knowledgeId: 'knowledge-1', version: 1, title: '交付规范',
+        category: '流程', content: '初版流程', status: 'active', changedBy: '管理员',
+        changeNote: '形成知识', createdAt: '2026-08-26T00:00:00.000Z',
+      }]),
+    });
+    render(<EnterpriseMemoryDialog open role="company_admin" onClose={vi.fn()} />);
+
+    await screen.findByText('交付规范');
+    expect(screen.getByText('客户成功部')).toBeTruthy();
+    expect(screen.getByText('3 条证据')).toBeTruthy();
+    expect(screen.getByText('来源：项目复盘')).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: '记忆沿革' }));
+    await screen.findByText('初版流程');
+    expect(screen.getByText(/管理员 · 形成知识/)).toBeTruthy();
+  });
+
+  it('有未保存的企业知识草稿时，关闭前需要确认', async () => {
+    vi.mocked(window.confirm).mockReturnValue(false);
+    const onClose = vi.fn();
+    render(<EnterpriseMemoryDialog open role="company_admin" onClose={onClose} />);
+    await screen.findByText('暂无企业知识。');
+    fireEvent.click(screen.getByRole('button', { name: '新增知识' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '知识标题' }), {
+      target: { value: '尚未保存的制度' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '关闭企业记忆' }));
+
+    expect(window.confirm).toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByDisplayValue('尚未保存的制度')).toBeTruthy();
   });
 
   it('自动 Skill 弹窗保留确认、拒绝和分析动作', () => {

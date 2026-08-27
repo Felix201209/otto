@@ -21,6 +21,7 @@ beforeEach(() => {
     enterpriseParkView: vi.fn(async () => ({
       status: 'active', brandName: '测试园区', isAdminOrganization: false,
     })),
+    enterpriseTicketList: vi.fn(async () => []),
   });
 });
 
@@ -31,7 +32,8 @@ describe('useModuleWorkspaceCapabilities', () => {
       .mockResolvedValueOnce(enabledFeatures);
     Object.assign(window.otto, { enterpriseOrganizationFeaturesGet: getFeatures });
     const view = renderHook(() => useModuleWorkspaceCapabilities({
-      edition: 'enterprise', organizationId: 'org-a', accountIsAdmin: false,
+      edition: 'enterprise', serverUrl: 'https://enterprise.example.com',
+      organizationId: 'org-a', accountId: 'account-a', accountIsAdmin: false,
       profiles: BASE_AGENT_PROFILES, customAgents: [],
     }));
     expect(view.result.current.status).toBe('loading');
@@ -46,12 +48,83 @@ describe('useModuleWorkspaceCapabilities', () => {
   it('个人版立即就绪且不会请求企业能力', () => {
     const getFeatures = vi.mocked(window.otto.enterpriseOrganizationFeaturesGet);
     const view = renderHook(() => useModuleWorkspaceCapabilities({
-      edition: 'personal', profiles: BASE_AGENT_PROFILES, customAgents: [],
+      edition: 'personal', serverUrl: 'local', accountId: 'account-a',
+      profiles: BASE_AGENT_PROFILES, customAgents: [],
     }));
     expect(view.result.current.status).toBe('ready');
     expect(view.result.current.modules
       .filter((module) => module.availability === 'available')
       .every((module) => !module.id.startsWith('park-'))).toBe(true);
     expect(getFeatures).not.toHaveBeenCalled();
+  });
+
+  it('does not grant park administration modules to a tenant organization administrator', async () => {
+    Object.assign(window.otto, { enterpriseTicketList: vi.fn(async () => []) });
+    const view = renderHook(() => useModuleWorkspaceCapabilities({
+      edition: 'enterprise', serverUrl: 'https://enterprise.example.com',
+      organizationId: 'tenant-org', accountId: 'tenant-admin', accountIsAdmin: true,
+      profiles: BASE_AGENT_PROFILES, customAgents: [],
+    }));
+
+    await waitFor(() => expect(view.result.current.status).toBe('ready'));
+    expect(view.result.current.modules.find((module) => module.id === 'park-overview')?.availability)
+      .toBe('hidden');
+    expect(view.result.current.modules.find((module) => module.id === 'park-staff-tasks')?.availability)
+      .toBe('hidden');
+  });
+
+  it('exposes staff tasks only when the current account has received a park ticket', async () => {
+    Object.assign(window.otto, {
+      enterpriseTicketList: vi.fn(async () => [{ id: 'ticket-1', isRecipient: true }]),
+    });
+    const view = renderHook(() => useModuleWorkspaceCapabilities({
+      edition: 'enterprise', serverUrl: 'https://enterprise.example.com',
+      organizationId: 'tenant-org', accountId: 'staff-a', accountIsAdmin: false,
+      profiles: BASE_AGENT_PROFILES, customAgents: [],
+    }));
+
+    await waitFor(() => expect(view.result.current.status).toBe('ready'));
+    expect(view.result.current.modules.find((module) => module.id === 'park-staff-tasks')?.availability)
+      .toBe('available');
+  });
+
+  it('fails closed when park capability loading fails', async () => {
+    Object.assign(window.otto, {
+      enterpriseParkView: vi.fn(async () => { throw new Error('park unavailable'); }),
+      enterpriseTicketList: vi.fn(async () => []),
+    });
+    const view = renderHook(() => useModuleWorkspaceCapabilities({
+      edition: 'enterprise', serverUrl: 'https://enterprise.example.com',
+      organizationId: 'org-a', accountId: 'account-a', accountIsAdmin: false,
+      profiles: BASE_AGENT_PROFILES, customAgents: [],
+    }));
+
+    await waitFor(() => expect(view.result.current.status).toBe('failed'));
+    expect(view.result.current.modules.every((module) => !module.id.startsWith('park-')
+      || module.availability === 'hidden')).toBe(true);
+  });
+
+  it('synchronously drops the previous privilege snapshot when account or role changes', async () => {
+    Object.assign(window.otto, {
+      enterpriseParkView: vi.fn(async () => ({
+        status: 'active', brandName: '测试园区', isAdminOrganization: true,
+      })),
+      enterpriseTicketList: vi.fn(async () => []),
+    });
+    const view = renderHook(
+      (props: { accountId: string; accountIsAdmin: boolean }) => useModuleWorkspaceCapabilities({
+        edition: 'enterprise', serverUrl: 'https://enterprise.example.com',
+        organizationId: 'org-a', accountId: props.accountId,
+        accountIsAdmin: props.accountIsAdmin,
+        profiles: BASE_AGENT_PROFILES, customAgents: [],
+      }),
+      { initialProps: { accountId: 'admin-a', accountIsAdmin: true } },
+    );
+    await waitFor(() => expect(view.result.current.status).toBe('ready'));
+
+    act(() => view.rerender({ accountId: 'member-a', accountIsAdmin: false }));
+    expect(view.result.current.status).toBe('loading');
+    expect(view.result.current.modules.find((module) => module.id === 'park-overview')?.availability)
+      .toBe('hidden');
   });
 });

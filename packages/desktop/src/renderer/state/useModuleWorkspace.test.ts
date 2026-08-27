@@ -203,6 +203,38 @@ describe('useModuleWorkspace', () => {
     expect(view.result.current.visibleLayout.groups[1].moduleIds).not.toContain('future-hidden-module');
   });
 
+  it('merges visible layout edits without deleting temporarily hidden module ids', () => {
+    const stored = createDefaultModuleWorkspace(enterpriseCapabilities);
+    stored.groups[1].moduleIds.splice(1, 0, 'future-hidden-module');
+    window.localStorage.setItem(getModuleWorkspaceStorageKey(accountA), JSON.stringify(stored));
+    const visibleModuleIds = enterpriseCapabilities.availableModuleIds;
+    const view = renderHook(
+      (props: HookProps) => useModuleWorkspace(props),
+      { initialProps: {
+        scope: accountA,
+        capabilities: enterpriseCapabilities,
+        visibleModuleIds,
+      } },
+    );
+    const editedVisible = {
+      ...view.result.current.visibleLayout,
+      groups: view.result.current.visibleLayout.groups.map((group) => group.id === 'daily-office'
+        ? { ...group, moduleIds: ['agent-ppt', 'agent-enterprise-work', 'agent-meeting'] }
+        : group),
+    };
+
+    act(() => view.result.current.setVisibleLayout(editedVisible));
+
+    const saved = JSON.parse(window.localStorage.getItem(getModuleWorkspaceStorageKey(accountA))!);
+    expect(saved.groups[1].moduleIds).toContain('future-hidden-module');
+    expect(saved.groups[1].moduleIds).toEqual([
+      'agent-ppt',
+      'future-hidden-module',
+      'agent-enterprise-work',
+      'agent-meeting',
+    ]);
+  });
+
   it('restores and persists defaults for the current capability snapshot once', () => {
     const write = vi.spyOn(Storage.prototype, 'setItem');
     const view = renderHook(

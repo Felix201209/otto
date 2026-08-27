@@ -438,6 +438,7 @@ function defaultServices(park: string, actors: ParkActorDirectory = {}): ParkSer
 
 const PARK_OPEN_EVENT = 'otto:open-park-services';
 const PARK_CLOSE_EVENT = 'otto:close-park-services';
+const PARK_HIDE_EVENT = 'otto:hide-park-services';
 export const PARK_STATE_EVENT = 'otto:park-services-state';
 
 export function openParkServices(target?: ParkModuleTarget): void {
@@ -447,6 +448,11 @@ export function openParkServices(target?: ParkModuleTarget): void {
 /** Close only the Park UI surfaces. Polling and notification subscriptions stay mounted. */
 export function closeParkServices(): void {
   window.dispatchEvent(new CustomEvent(PARK_CLOSE_EVENT));
+}
+
+/** Hide Park surfaces while retaining in-progress service window state. */
+export function hideParkServices(): void {
+  window.dispatchEvent(new CustomEvent(PARK_HIDE_EVENT));
 }
 
 export function useParkBrand(): string {
@@ -1364,6 +1370,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
   const [services, setServices] = useState<ParkService[]>(() => defaultServices(DEFAULT_PARK));
   const [selected, setSelected] = useState<ParkService | null>(null);
   const [serviceWindows, setServiceWindows] = useState<ParkServiceWindowState[]>([]);
+  const [parkSurfacesVisible, setParkSurfacesVisible] = useState(true);
   const [backgroundTickets, setBackgroundTickets] = useState<EnterpriseRepairTicket[]>([]);
   const [backgroundTicketSummaryCount, setBackgroundTicketSummaryCount] = useState(0);
   const [backgroundPublication, setBackgroundPublication] = useState<EnterpriseParkPublication | null>(null);
@@ -1399,9 +1406,9 @@ export function ParkServicesPlugin(): React.JSX.Element {
 
   useEffect(() => {
     window.dispatchEvent(new CustomEvent(PARK_STATE_EVENT, {
-      detail: { open: open || serviceWindows.length > 0 },
+      detail: { open: parkSurfacesVisible && (open || serviceWindows.length > 0) },
     }));
-  }, [open, serviceWindows.length]);
+  }, [open, parkSurfacesVisible, serviceWindows.length]);
   const notifiedTicketKeys = useRef(new Set<string>());
   const ticketPollIdentity = useRef<string | null>(null);
   const ticketPollInitialized = useRef(false);
@@ -1413,6 +1420,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
     service: ParkService,
     ticket: EnterpriseRepairTicket | null = null,
   ): void => {
+    setParkSurfacesVisible(true);
     const id = ticket ? `ticket:${ticket.id}` : `service:${service.id}`;
     setServiceWindows((current) => {
       const existing = current.find((entry) => entry.id === id);
@@ -1635,6 +1643,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
       sessionId?: string,
       landingTarget?: 'overview' | 'staff-tasks' | 'my-applications',
     ): void => {
+      setParkSurfacesVisible(true);
       setSelected(null);
       setFocusTicket(null);
       setPendingNotificationSessionId(sessionId?.startsWith('park:') ? sessionId : null);
@@ -1681,16 +1690,23 @@ export function ParkServicesPlugin(): React.JSX.Element {
       windowDrag.current = null;
       setOpen(false);
       setServiceWindows([]);
+      setParkSurfacesVisible(false);
+    };
+    const onHide = (): void => {
+      setOpen(false);
+      setParkSurfacesVisible(false);
     };
     const unsubscribeNotification = window.otto.onNotificationSessionOpen?.((sessionId) => {
       if (sessionId.startsWith('park:')) showParkSession(sessionId);
     }) ?? (() => {});
     window.addEventListener(PARK_OPEN_EVENT, onOpen);
     window.addEventListener(PARK_CLOSE_EVENT, onClose);
+    window.addEventListener(PARK_HIDE_EVENT, onHide);
     return () => {
       unsubscribeNotification();
       window.removeEventListener(PARK_OPEN_EVENT, onOpen);
       window.removeEventListener(PARK_CLOSE_EVENT, onClose);
+      window.removeEventListener(PARK_HIDE_EVENT, onHide);
     };
   }, [openServiceWindow, parkEnabled, services]);
 
@@ -2259,6 +2275,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
       </div>
     </div>
   ) : null}
+  <div hidden={!parkSurfacesVisible} data-park-service-windows>
   {serviceWindows.map((entry, index) => (
     <ParkServiceWindow
       key={entry.id}
@@ -2271,6 +2288,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
       onComplete={completeServiceWindow}
     />
   ))}
+  </div>
   {(backgroundTicketSummaryCount || backgroundTickets.length || backgroundPublication) ? <div className="otto-park-toast-stack" aria-live="polite">
     {backgroundTicketSummaryCount ? (
       <button type="button" className="otto-park-toast otto-park-toast--result" onClick={openBackgroundTicketSummary} aria-label="打开园区待办汇总">

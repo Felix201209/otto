@@ -872,6 +872,15 @@ export function useOttoStore(
     const unsubFrame = transport.onFrame((frame) => {
       maybeShowChatNotification(frame, activeRef.current, sessionsRef.current);
       dispatch({ kind: 'frame', frame });
+      if (frame.type === 'error'
+        && (frame.payload.code === 'unknown_agent_profile'
+          || frame.payload.code === 'forbidden_agent_profile')) {
+        // create_session errors do not carry clientRequestId. Fail closed: cancel every
+        // unresolved profile launch so a late session_created frame cannot inherit a
+        // prompt, workspace, or authorization context from a rejected transaction.
+        for (const pending of profileLaunchRef.current.values()) clearTimeout(pending.timeout);
+        profileLaunchRef.current.clear();
+      }
       if (frame.type === 'chat_complete' && frame.payload.tokenUsage) {
         const { sessionId, messageId, tokenUsage } = frame.payload;
         try {

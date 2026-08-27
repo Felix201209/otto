@@ -55,6 +55,7 @@ import {
   ParkServicesPlugin,
   PARK_STATE_EVENT,
   closeParkServices,
+  hideParkServices,
   openParkServices,
 } from './components/ParkServicesPlugin.js';
 import { ModuleMarketplaceDialog } from './components/ModuleMarketplaceDialog.js';
@@ -256,7 +257,9 @@ function OttoWorkspaceApp({
   }, [customAgentsKey]);
   const moduleCapabilities = useModuleWorkspaceCapabilities({
     edition,
+    serverUrl: serverUrl || 'local',
     organizationId: account.organizationId,
+    accountId: account.id,
     accountIsAdmin: account.isAdmin,
     profiles: centralIdentity.profiles,
     customAgents,
@@ -279,10 +282,12 @@ function OttoWorkspaceApp({
     () => getModuleWorkspaceStorageKey(moduleWorkspaceScope),
     [moduleWorkspaceScope],
   );
-  const moduleWorkspaceDefaults = useMemo(() => createDefaultModuleWorkspace({
-    edition,
-    availableModuleIds,
-  }), [availableModuleIds, edition]);
+  const moduleWorkspaceDefaults = useMemo<ModuleWorkspaceLayout>(
+    () => moduleCapabilities.ready
+      ? createDefaultModuleWorkspace({ edition, availableModuleIds })
+      : { version: 1, groups: [] },
+    [availableModuleIds, edition, moduleCapabilities.ready],
+  );
   const moduleWorkspace = useModuleWorkspace({
     scope: moduleWorkspaceScope,
     capabilities: { edition, availableModuleIds },
@@ -293,7 +298,7 @@ function OttoWorkspaceApp({
   const [pendingAgent, setPendingAgent] = useState<PendingAgentSelection | null>(null);
   const { cancelPendingAgentLaunches } = actions;
   const openModuleModal = useCallback((next: Exclude<ModuleModalState, null>): void => {
-    if (next.kind !== 'park') closeParkServices();
+    if (next.kind !== 'park') hideParkServices();
     setModuleModal(next);
   }, []);
   useEffect(() => {
@@ -883,7 +888,7 @@ function OttoWorkspaceApp({
   // 打开「设置与诊断中心」时默认停在哪个 tab（斜杠命令 /doctor /memory /skills 直达用）。
   const [hubInitialTab, setHubInitialTab] = useState<HubTabId>('prefs');
   const openHub = (tab: HubTabId = 'prefs'): void => {
-    closeParkServices();
+    hideParkServices();
     setModuleModal(null);
     setHubInitialTab(tab);
     setMainView('hub');
@@ -1164,7 +1169,7 @@ function OttoWorkspaceApp({
       }
       return;
     }
-    closeParkServices();
+    hideParkServices();
     setModuleModal(null);
     if (activation.kind === 'route') {
       setMainView('skillzone');
@@ -1351,12 +1356,12 @@ function OttoWorkspaceApp({
             readiness={moduleCapabilities.status}
             onRetryCapabilities={moduleCapabilities.retry}
             scopeKey={moduleWorkspaceScopeKey}
-            layout={moduleWorkspace.layout}
+            layout={moduleWorkspace.visibleLayout}
             defaultLayout={moduleWorkspaceDefaults}
             modules={moduleCapabilities.modules}
             onActivate={activateModule}
             onOpenMarketplace={(groupId) => openModuleModal({ kind: 'marketplace', groupId })}
-            onLayoutChange={moduleWorkspace.setLayout}
+            onLayoutChange={moduleWorkspace.setVisibleLayout}
           />
         </section>
       ) : (
@@ -1429,12 +1434,12 @@ function OttoWorkspaceApp({
               readiness={moduleCapabilities.status}
               onRetryCapabilities={moduleCapabilities.retry}
               scopeKey={moduleWorkspaceScopeKey}
-              layout={moduleWorkspace.layout}
+              layout={moduleWorkspace.visibleLayout}
               defaultLayout={moduleWorkspaceDefaults}
               modules={moduleCapabilities.modules}
               onActivate={activateModule}
               onOpenMarketplace={(groupId) => openModuleModal({ kind: 'marketplace', groupId })}
-              onLayoutChange={moduleWorkspace.setLayout}
+              onLayoutChange={moduleWorkspace.setVisibleLayout}
             />
           ) : null}
         </div>

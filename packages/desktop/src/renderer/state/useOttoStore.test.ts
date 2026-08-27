@@ -1204,4 +1204,34 @@ describe('Agent profile 启动动作', () => {
     ))).toBe(false);
     expect(view.result.current.state.lastError).toContain('Agent 任务未发送');
   });
+
+  it('服务端拒绝创建 Agent 会话时清除所有待启动事务，迟到回包不会误发任务', () => {
+    const { view, push } = setup();
+    act(() => {
+      view.result.current.actions.launchAgentProfileWithPrompt('PPT', 'ppt', '不应发送的 PPT 任务');
+      view.result.current.actions.launchAgentProfileWithPrompt('会议', 'meeting', '不应发送的会议任务');
+    });
+    const creates = sendSpy.mock.calls
+      .map(([frame]) => frame as { type: string; payload: { clientRequestId?: string } })
+      .filter((frame) => frame.type === 'create_session');
+
+    push({
+      type: 'error',
+      payload: { code: 'forbidden_agent_profile', message: '当前账号无权启动该 Agent' },
+    });
+    for (const [index, create] of creates.entries()) {
+      push({
+        type: 'session_created',
+        payload: {
+          session: makeSession({ sessionId: `late-${index}` }),
+          clientRequestId: create.payload.clientRequestId!,
+        },
+      });
+    }
+
+    expect(sendSpy.mock.calls.some(([frame]) => (
+      (frame as { type?: string }).type === 'send_user_message'
+    ))).toBe(false);
+    expect(view.result.current.state.lastError).toContain('当前账号无权启动该 Agent');
+  });
 });

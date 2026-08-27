@@ -20,6 +20,7 @@ import {
   isStaffHistoryTicket,
   PARK_STATE_EVENT,
   closeParkServices,
+  hideParkServices,
   openParkServices,
   serviceFormFields,
 } from './ParkServicesPlugin.js';
@@ -282,6 +283,20 @@ describe('ParkServicesPlugin', () => {
     expect(states).toContain(true);
     expect(states.at(-1)).toBe(false);
     window.removeEventListener(PARK_STATE_EVENT, onState);
+  });
+
+  it('切换到其他模块时只隐藏园区窗口，重新打开后保留未提交表单', async () => {
+    installRepairBridge('reporter');
+    render(<ParkServicesPlugin />);
+    openDialog('repair');
+    await screen.findByLabelText('物业报修申请表');
+    fireEvent.change(screen.getByLabelText('故障描述'), { target: { value: '保留这段未提交内容' } });
+
+    act(() => hideParkServices());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '物业报修' })).toBeNull());
+    openDialog('repair');
+
+    expect(await screen.findByDisplayValue('保留这段未提交内容')).toBeTruthy();
   });
 
   it('可直达我的申请区域，而不是只打开园区服务首页', async () => {

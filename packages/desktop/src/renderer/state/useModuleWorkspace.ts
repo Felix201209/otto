@@ -29,6 +29,7 @@ export interface UseModuleWorkspaceResult {
   layout: ModuleWorkspaceLayout;
   visibleLayout: ModuleWorkspaceLayout;
   setLayout(next: ModuleWorkspaceLayout): void;
+  setVisibleLayout(next: ModuleWorkspaceLayout): void;
   restoreDefaults(): void;
 }
 
@@ -117,6 +118,37 @@ export function useModuleWorkspace({
     writeLayout(storage, storageKey, normalized);
   }, [capabilitySignature, ready, storage, storageKey]);
 
+  const visibleModuleIdSet = useMemo(
+    () => new Set(visibleModuleIds),
+    [visibleModuleIds],
+  );
+  const commitVisibleLayout = useCallback((next: ModuleWorkspaceLayout): void => {
+    const rawGroupsById = new Map(layout.groups.map((group) => [group.id, group]));
+    const retainedHiddenIds: string[] = [];
+    for (const group of layout.groups) {
+      if (next.groups.some((candidate) => candidate.id === group.id)) continue;
+      retainedHiddenIds.push(...group.moduleIds.filter((moduleId) => !visibleModuleIdSet.has(moduleId)));
+    }
+    const groups = next.groups.map((group, groupIndex) => {
+      const rawGroup = rawGroupsById.get(group.id);
+      if (!rawGroup) {
+        return groupIndex === 0 && retainedHiddenIds.length > 0
+          ? { ...group, moduleIds: [...group.moduleIds, ...retainedHiddenIds] }
+          : group;
+      }
+      let visibleIndex = 0;
+      const moduleIds = rawGroup.moduleIds.flatMap((moduleId) => {
+        if (!visibleModuleIdSet.has(moduleId)) return [moduleId];
+        const replacement = group.moduleIds[visibleIndex++];
+        return replacement ? [replacement] : [];
+      });
+      moduleIds.push(...group.moduleIds.slice(visibleIndex));
+      if (groupIndex === 0) moduleIds.push(...retainedHiddenIds);
+      return { ...group, moduleIds };
+    });
+    commitLayout({ ...next, groups });
+  }, [commitLayout, layout.groups, visibleModuleIdSet]);
+
   const restoreDefaults = useCallback((): void => {
     if (!ready) return;
     const defaults = createDefaultModuleWorkspace(stableCapabilities);
@@ -124,12 +156,11 @@ export function useModuleWorkspace({
     writeLayout(storage, storageKey, defaults);
   }, [capabilitySignature, ready, stableCapabilities, storage, storageKey]);
 
-  const visible = new Set(visibleModuleIds);
   const visibleLayout = {
     ...layout,
     groups: layout.groups.map((group) => ({
       ...group,
-      moduleIds: group.moduleIds.filter((moduleId) => visible.has(moduleId)),
+      moduleIds: group.moduleIds.filter((moduleId) => visibleModuleIdSet.has(moduleId)),
     })),
   };
 
@@ -138,6 +169,7 @@ export function useModuleWorkspace({
     layout,
     visibleLayout,
     setLayout: commitLayout,
+    setVisibleLayout: commitVisibleLayout,
     restoreDefaults,
   };
 }

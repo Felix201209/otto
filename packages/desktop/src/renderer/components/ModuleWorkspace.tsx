@@ -142,6 +142,7 @@ export function ModuleWorkspace({
   } | null>(null);
   const [transientLayout, setTransientLayout] = useState(layout);
   const menuRef = useRef<HTMLDivElement>(null);
+  const popoverTriggerRef = useRef<HTMLButtonElement | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transientLayoutRef = useRef(layout);
   const previousScopeRef = useRef(scopeKey);
@@ -152,14 +153,18 @@ export function ModuleWorkspace({
   );
 
   useEffect(() => {
+    const closePopoverAndRestoreFocus = (): void => {
+      setOpenPopover(null);
+      popoverTriggerRef.current?.focus();
+    };
     const onPointerDown = (event: MouseEvent): void => {
       if (openPopover && !menuRef.current?.contains(event.target as Node)) {
-        setOpenPopover(null);
+        closePopoverAndRestoreFocus();
       }
     };
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
-        setOpenPopover(null);
+        if (openPopover) closePopoverAndRestoreFocus();
         setRenameDraft(null);
       }
     };
@@ -359,11 +364,14 @@ export function ModuleWorkspace({
                   className="otto-module-group__menu-button"
                   aria-label={`功能组菜单：${group.name}`}
                   aria-expanded={openPopover?.kind === 'group' && openPopover.id === group.id}
-                  onClick={() => setOpenPopover((current) => (
-                    current?.kind === 'group' && current.id === group.id
-                      ? null
-                      : { kind: 'group', id: group.id }
-                  ))}
+                  onClick={(event) => {
+                    popoverTriggerRef.current = event.currentTarget;
+                    setOpenPopover((current) => (
+                      current?.kind === 'group' && current.id === group.id
+                        ? null
+                        : { kind: 'group', id: group.id }
+                    ));
+                  }}
                 >
                   ···
                 </button>
@@ -513,11 +521,14 @@ export function ModuleWorkspace({
                           className="otto-module-group__menu-button otto-module-tile__menu-button"
                           aria-label={`模块菜单：${module.label}`}
                           aria-expanded={openPopover?.kind === 'module' && openPopover.key === moduleMenuKey}
-                          onClick={() => setOpenPopover((current) => (
-                            current?.kind === 'module' && current.key === moduleMenuKey
-                              ? null
-                              : { kind: 'module', key: moduleMenuKey }
-                          ))}
+                          onClick={(event) => {
+                            popoverTriggerRef.current = event.currentTarget;
+                            setOpenPopover((current) => (
+                              current?.kind === 'module' && current.key === moduleMenuKey
+                                ? null
+                                : { kind: 'module', key: moduleMenuKey }
+                            ));
+                          }}
                         >···</button>
                         {openPopover?.kind === 'module' && openPopover.key === moduleMenuKey ? (
                           <div className="otto-module-group__menu otto-module-tile__menu" role="menu" aria-label={`${module.label}设置`}>
