@@ -437,9 +437,16 @@ function defaultServices(park: string, actors: ParkActorDirectory = {}): ParkSer
 }
 
 const PARK_OPEN_EVENT = 'otto:open-park-services';
+const PARK_CLOSE_EVENT = 'otto:close-park-services';
+export const PARK_STATE_EVENT = 'otto:park-services-state';
 
 export function openParkServices(target?: ParkModuleTarget): void {
   window.dispatchEvent(new CustomEvent(PARK_OPEN_EVENT, { detail: { target } }));
+}
+
+/** Close only the Park UI surfaces. Polling and notification subscriptions stay mounted. */
+export function closeParkServices(): void {
+  window.dispatchEvent(new CustomEvent(PARK_CLOSE_EVENT));
 }
 
 export function useParkBrand(): string {
@@ -1389,6 +1396,12 @@ export function ParkServicesPlugin(): React.JSX.Element {
     minY: number;
     maxY: number;
   } | null>(null);
+
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent(PARK_STATE_EVENT, {
+      detail: { open: open || serviceWindows.length > 0 },
+    }));
+  }, [open, serviceWindows.length]);
   const notifiedTicketKeys = useRef(new Set<string>());
   const ticketPollIdentity = useRef<string | null>(null);
   const ticketPollInitialized = useRef(false);
@@ -1657,13 +1670,27 @@ export function ParkServicesPlugin(): React.JSX.Element {
           : undefined,
       );
     };
+    const onClose = (): void => {
+      setSelected(null);
+      setFocusTicket(null);
+      setPendingNotificationSessionId(null);
+      focusedLandingElementRef.current = null;
+      setPendingLandingTarget(null);
+      setWindowMode('normal');
+      setWindowPosition({ x: 0, y: 0 });
+      windowDrag.current = null;
+      setOpen(false);
+      setServiceWindows([]);
+    };
     const unsubscribeNotification = window.otto.onNotificationSessionOpen?.((sessionId) => {
       if (sessionId.startsWith('park:')) showParkSession(sessionId);
     }) ?? (() => {});
     window.addEventListener(PARK_OPEN_EVENT, onOpen);
+    window.addEventListener(PARK_CLOSE_EVENT, onClose);
     return () => {
       unsubscribeNotification();
       window.removeEventListener(PARK_OPEN_EVENT, onOpen);
+      window.removeEventListener(PARK_CLOSE_EVENT, onClose);
     };
   }, [openServiceWindow, parkEnabled, services]);
 

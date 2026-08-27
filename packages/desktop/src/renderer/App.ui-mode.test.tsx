@@ -17,6 +17,7 @@ const harness = vi.hoisted(() => ({
     deleteSession: vi.fn(),
     launchAgentProfile: vi.fn(),
     launchAgentProfileWithPrompt: vi.fn(),
+    cancelPendingAgentLaunches: vi.fn(),
     postSystemNote: vi.fn(),
     renameSession: vi.fn(),
     respondToolConfirmation: vi.fn(),
@@ -156,6 +157,9 @@ vi.mock('./components/RightPanel.js', () => ({
 
 vi.mock('./components/ParkServicesPlugin.js', () => ({
   ParkServicesPlugin: () => null,
+  PARK_STATE_EVENT: 'otto:park-services-state',
+  openParkServices: vi.fn(),
+  closeParkServices: vi.fn(),
 }));
 
 vi.mock('./components/UiModeGuide.js', () => ({

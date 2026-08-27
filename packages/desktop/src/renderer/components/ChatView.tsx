@@ -23,7 +23,11 @@ import type {
 import type { Attachment } from '../state/useOttoStore.js';
 import { Message } from './Message.js';
 import type { RespondQuestionFn } from './ToolCalls.js';
-import { Composer } from './Composer.js';
+import {
+  Composer,
+  type ComposerAuthorizationContext,
+  type PendingAgentSelection,
+} from './Composer.js';
 import type { SlashCommand } from './SlashCommands.js';
 import { IconArrowDown, IconPanelRight, OttoAvatar } from './icons.js';
 
@@ -52,7 +56,8 @@ interface ChatViewProps {
     text: string,
     source: MessageSource,
     attachments?: Attachment[],
-  ) => void;
+    authorization?: ComposerAuthorizationContext,
+  ) => void | boolean | Promise<void | boolean>;
   /** 中止当前流式生成（busy 时停止按钮）。 */
   onCancel: () => void;
   onSetModel: (model: string) => void;
@@ -95,6 +100,8 @@ interface ChatViewProps {
   /** 工作式 UI 的右侧栏状态；仅传入切换动作时显示顶栏入口。 */
   rightPanelCollapsed?: boolean;
   onToggleRightPanel?: () => void;
+  pendingAgent?: PendingAgentSelection | null;
+  onClearPendingAgent?: () => void;
 }
 
 export function ChatView({
@@ -125,6 +132,8 @@ export function ChatView({
   onLaunchAgentProfile,
   rightPanelCollapsed = false,
   onToggleRightPanel,
+  pendingAgent,
+  onClearPendingAgent,
 }: ChatViewProps): React.JSX.Element {
   const threadRef = useRef<HTMLDivElement>(null);
   // 用户是否贴在底部（决定流式增量是否自动跟随）。
@@ -309,7 +318,9 @@ export function ChatView({
         busy={busy}
         draft={draft.text}
         draftNonce={draft.n}
-        onSend={(text, attachments) => onSend(text, sendSource, attachments)}
+        onSend={(text, attachments, authorization) => (
+          onSend(text, sendSource, attachments, authorization)
+        )}
         onCancel={onCancel}
         onSetModel={onSetModel}
         workspacePath={session?.workspacePath}
@@ -331,6 +342,8 @@ export function ChatView({
         onCopyLast={copyLastReply}
         onShowHelp={onShowHelp}
         onLaunchAgentProfile={onLaunchAgentProfile}
+        pendingAgent={pendingAgent}
+        onClearPendingAgent={onClearPendingAgent}
       />
     </section>
   );

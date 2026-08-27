@@ -1083,22 +1083,27 @@ describe('Agent profile 启动动作', () => {
         '请总结这段企业聊天。',
       );
     });
+    const createFrame = sendSpy.mock.calls.map(([frame]) => frame).find(
+      (frame) => (frame as { type?: string }).type === 'create_session',
+    ) as { payload: { clientRequestId: string } };
     expect(sendSpy).toHaveBeenCalledWith({
       type: 'create_session',
       payload: {
         title: 'Otto 协助：同事',
         agentProfileId: 'otto-enterprise-work',
+        clientRequestId: createFrame.payload.clientRequestId,
       },
     });
 
     push({
-      type: 'session_upsert',
+      type: 'session_created',
       payload: {
         session: makeSession({
           sessionId: 'a2a-session',
           title: 'Otto 协助：同事',
           agentProfileId: 'otto-enterprise-work',
         }),
+        clientRequestId: createFrame.payload.clientRequestId,
       },
     });
 
@@ -1116,5 +1121,87 @@ describe('Agent profile 启动动作', () => {
       ([frame]) => (frame as { type?: string }).type === 'send_user_message',
     );
     expect(sentPrompts).toHaveLength(1);
+  });
+
+  it('用 clientRequestId 隔离并发启动，并按顺序继承工作目录、授权和附件', () => {
+    const { view, push } = setup();
+
+    act(() => {
+      view.result.current.actions.launchAgentProfileWithPrompt(
+        'PPT',
+        'ppt',
+        '制作发布会',
+        'local',
+        [{ fileName: 'brief.pdf', filePath: '/tmp/brief.pdf' }],
+        '企业上下文 A',
+        '/Users/test/project-a',
+        { mode: 'auto', scope: 'session' },
+      );
+      view.result.current.actions.launchAgentProfileWithPrompt(
+        '会议',
+        'meeting',
+        '整理纪要',
+        'local',
+        [],
+        '企业上下文 B',
+        '/Users/test/project-b',
+        { mode: 'manual', scope: 'session' },
+      );
+    });
+
+    const creates = sendSpy.mock.calls
+      .map(([frame]) => frame as { type: string; payload: { clientRequestId?: string } })
+      .filter((frame) => frame.type === 'create_session');
+    expect(creates).toHaveLength(2);
+    const firstId = creates[0].payload.clientRequestId!;
+    const secondId = creates[1].payload.clientRequestId!;
+
+    push({
+      type: 'session_created',
+      payload: { session: makeSession({ sessionId: 'second', agentProfileId: 'meeting' }), clientRequestId: secondId },
+    });
+    push({
+      type: 'session_created',
+      payload: { session: makeSession({ sessionId: 'first', agentProfileId: 'ppt' }), clientRequestId: firstId },
+    });
+
+    const relevant = sendSpy.mock.calls
+      .map(([frame]) => frame as { type: string; payload: Record<string, unknown> })
+      .filter((frame) => ['set_session_workspace', 'set_authorization_mode', 'send_user_message'].includes(frame.type));
+    expect(relevant).toEqual([
+      { type: 'set_session_workspace', payload: { sessionId: 'second', workspacePath: '/Users/test/project-b' } },
+      { type: 'set_authorization_mode', payload: { sessionId: 'second', mode: 'manual', scope: 'session' } },
+      { type: 'send_user_message', payload: expect.objectContaining({ sessionId: 'second', authorizedContext: '企业上下文 B', content: [{ type: 'text', value: '整理纪要' }] }) },
+      { type: 'set_session_workspace', payload: { sessionId: 'first', workspacePath: '/Users/test/project-a' } },
+      { type: 'set_authorization_mode', payload: { sessionId: 'first', mode: 'auto', scope: 'session' } },
+      { type: 'send_user_message', payload: expect.objectContaining({
+        sessionId: 'first',
+        authorizedContext: '企业上下文 A',
+        content: [
+          { type: 'text', value: '制作发布会' },
+          { type: 'file_reference', value: { fileName: 'brief.pdf', filePath: '/tmp/brief.pdf' } },
+        ],
+      }) },
+    ]);
+  });
+
+  it('断线会清除尚未确认的 Agent 启动，迟到回包不会误发任务', () => {
+    const { view, push } = setup();
+    act(() => {
+      view.result.current.actions.launchAgentProfileWithPrompt('PPT', 'ppt', '不要串到后续会话');
+    });
+    const create = sendSpy.mock.calls
+      .map(([frame]) => frame as { type: string; payload: { clientRequestId?: string } })
+      .find((frame) => frame.type === 'create_session')!;
+    act(() => _capturedConnHandler?.(false));
+    push({
+      type: 'session_created',
+      payload: { session: makeSession({ sessionId: 'late' }), clientRequestId: create.payload.clientRequestId! },
+    });
+    expect(sendSpy.mock.calls.some(([frame]) => (
+      (frame as { type?: string; payload?: { sessionId?: string } }).type === 'send_user_message'
+      && (frame as { payload?: { sessionId?: string } }).payload?.sessionId === 'late'
+    ))).toBe(false);
+    expect(view.result.current.state.lastError).toContain('Agent 任务未发送');
   });
 });

@@ -48,6 +48,21 @@ import {
   IconClose,
   IconFolder,
 } from './icons.js';
+import type { ModuleIconKey } from './ModuleIcon.js';
+import { ModuleIcon } from './ModuleIcon.js';
+
+export interface PendingAgentSelection {
+  moduleId: string;
+  title: string;
+  profileId: string;
+  icon: ModuleIconKey;
+  customAgentId?: string;
+}
+
+export interface ComposerAuthorizationContext {
+  mode: 'manual' | 'auto';
+  scope: 'session' | 'all';
+}
 
 async function blobToWav(blob: Blob): Promise<Uint8Array> {
   const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -220,7 +235,11 @@ interface ComposerProps {
    * 与 disabled 解耦：disabled 锁全部，busy 只改发送按钮形态。
    */
   busy?: boolean;
-  onSend: (text: string, attachments: Attachment[]) => void;
+  onSend: (
+    text: string,
+    attachments: Attachment[],
+    authorization: ComposerAuthorizationContext,
+  ) => void | boolean | Promise<void | boolean>;
   /** 中止当前流式生成（busy 时停止按钮调用）。 */
   onCancel?: () => void;
   onSetModel: (model: string) => void;
@@ -269,6 +288,9 @@ interface ComposerProps {
   onShowHelp?: () => void;
   /** 专家命令（如 /ppt）：新建绑定服务端 profile 的会话。 */
   onLaunchAgentProfile?: (profileId: string, title: string) => void;
+  /** Right-panel Agent tile selection. It is staged and creates no session until submit. */
+  pendingAgent?: PendingAgentSelection | null;
+  onClearPendingAgent?: () => void;
 }
 
 export function Composer({
@@ -302,8 +324,11 @@ export function Composer({
   onCopyLast,
   onShowHelp,
   onLaunchAgentProfile,
+  pendingAgent = null,
+  onClearPendingAgent,
 }: ComposerProps): React.JSX.Element {
   const [text, setText] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const [openPopover, setOpenPopover] = useState<
     'workspace' | 'attachment' | 'model' | 'authorization' | null
   >(null);
@@ -805,18 +830,28 @@ export function Composer({
   // 生成中（busy）不发送，但 textarea 仍可输入下一条；无会话（disabled）才整体锁死。
   // 有文本或有图片附件即可发送。
   const canSend =
-    (text.trim().length > 0 || attachments.length > 0) && !disabled && !busy;
+    (text.trim().length > 0 || attachments.length > 0) && !disabled && !busy && !submitting;
 
-  const submit = () => {
+  const submit = (): void => {
     if (!canSend) return;
-    onSend(text, attachments);
-    setText('');
-    setAttachments([]);
-    setAttachmentSizes({});
-    setAttachError(null);
-    // 发送后清掉本会话草稿，避免切走再切回时又冒出已发送的内容。
-    if (sessionId != null) draftsRef.current[sessionId] = '';
-    if (taRef.current) taRef.current.style.height = 'auto';
+    setSubmitting(true);
+    const authorization: ComposerAuthorizationContext = authorizationKind === 'global'
+      ? { mode: 'auto', scope: 'all' }
+      : authorizationKind === 'session'
+        ? { mode: 'auto', scope: 'session' }
+        : { mode: 'manual', scope: 'session' };
+    void Promise.resolve(onSend(text, attachments, authorization))
+      .then((accepted) => {
+        if (accepted === false) return;
+        setText('');
+        setAttachments([]);
+        setAttachmentSizes({});
+        setAttachError(null);
+        // 发送后清掉本会话草稿，避免切走再切回时又冒出已发送的内容。
+        if (sessionId != null) draftsRef.current[sessionId] = '';
+        if (taRef.current) taRef.current.style.height = 'auto';
+      })
+      .finally(() => setSubmitting(false));
   };
 
   // 清空 textarea（命令执行后消费掉触发命令的文本）。
@@ -841,7 +876,11 @@ export function Composer({
     }
 
     if (cmd.action === 'prompt' && cmd.prompt) {
-      onSend(cmd.prompt, []);
+      void onSend(cmd.prompt, [], authorizationKind === 'global'
+        ? { mode: 'auto', scope: 'all' }
+        : authorizationKind === 'session'
+          ? { mode: 'auto', scope: 'session' }
+          : { mode: 'manual', scope: 'session' });
       clearInput();
       taRef.current?.focus();
       return;
@@ -1102,6 +1141,13 @@ export function Composer({
         setContextMenu({ x: e.clientX, y: e.clientY });
       }}
     >
+      {pendingAgent ? (
+        <div className="otto-composer__agent-chip" role="status">
+          <ModuleIcon icon={pendingAgent.icon} label={pendingAgent.title} size={18} />
+          <span>{pendingAgent.title}</span>
+          <button type="button" aria-label={`移除 ${pendingAgent.title}`} onClick={onClearPendingAgent}>×</button>
+        </div>
+      ) : null}
       {/* 右键菜单 */}
       {contextMenu ? (
         <>

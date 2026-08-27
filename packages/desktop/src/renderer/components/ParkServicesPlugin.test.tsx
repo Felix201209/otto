@@ -18,6 +18,8 @@ import {
   isActionableStaffTicket,
   isMeetingSlotPast,
   isStaffHistoryTicket,
+  PARK_STATE_EVENT,
+  closeParkServices,
   openParkServices,
   serviceFormFields,
 } from './ParkServicesPlugin.js';
@@ -263,6 +265,23 @@ describe('ParkServicesPlugin', () => {
 
     expect(screen.getByRole('dialog', { name: '物业报修' })).toBeTruthy();
     expect(screen.queryByLabelText('园区服务列表')).toBeNull();
+  });
+
+  it('协调桥可关闭顶层及服务窗口，同时发布开关状态', async () => {
+    const states: boolean[] = [];
+    const onState = (event: Event): void => {
+      states.push(event instanceof CustomEvent && event.detail?.open === true);
+    };
+    window.addEventListener(PARK_STATE_EVENT, onState);
+    render(<ParkServicesPlugin />);
+    openDialog('repair');
+    expect(screen.getByRole('dialog', { name: '物业报修' })).toBeTruthy();
+
+    act(() => closeParkServices());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '物业报修' })).toBeNull());
+    expect(states).toContain(true);
+    expect(states.at(-1)).toBe(false);
+    window.removeEventListener(PARK_STATE_EVENT, onState);
   });
 
   it('可直达我的申请区域，而不是只打开园区服务首页', async () => {

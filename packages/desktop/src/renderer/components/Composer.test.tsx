@@ -183,7 +183,41 @@ describe('专家提示词草稿', () => {
 
     fireEvent.change(textarea, { target: { value: '帮我做一份产品发布会 PPT' } });
     fireEvent.keyDown(textarea, { key: 'Enter' });
-    expect(onSend).toHaveBeenCalledWith('帮我做一份产品发布会 PPT', []);
+    expect(onSend).toHaveBeenCalledWith(
+      '帮我做一份产品发布会 PPT',
+      [],
+      { mode: 'auto', scope: 'all' },
+    );
+  });
+});
+
+describe('右侧模块 Agent 标签', () => {
+  it('显示选中 Agent，允许移除，拒绝创建时保留草稿并阻止双击重复提交', async () => {
+    let resolveSend!: (accepted: boolean) => void;
+    const onSend = vi.fn(() => new Promise<boolean>((resolve) => { resolveSend = resolve; }));
+    const onClearPendingAgent = vi.fn();
+    render(
+      <Composer
+        models={[]}
+        currentModel={null}
+        sessionId="agent-session"
+        pendingAgent={{ moduleId: 'agent-ppt', title: 'PPT 创作专家', profileId: 'ppt', icon: 'agent' }}
+        onClearPendingAgent={onClearPendingAgent}
+        onSend={onSend}
+        onSetModel={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('PPT 创作专家')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '移除 PPT 创作专家' }));
+    expect(onClearPendingAgent).toHaveBeenCalledTimes(1);
+
+    const textarea = document.querySelector('.otto-composer__textarea') as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: '制作发布会' } });
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+    expect(onSend).toHaveBeenCalledTimes(1);
+    await act(async () => resolveSend(false));
+    expect(textarea.value).toBe('制作发布会');
   });
 });
 
@@ -454,7 +488,7 @@ describe('每会话草稿隔离', () => {
     expect(ta().value).toBe('draft-for-s2');
   });
 
-  it('发送后清空，切走再切回不残留已发送内容', () => {
+  it('发送后清空，切走再切回不残留已发送内容', async () => {
     const onSend = vi.fn();
     const { rerender } = render(
       <Composer
@@ -468,8 +502,12 @@ describe('每会话草稿隔离', () => {
 
     fireEvent.change(ta(), { target: { value: 'hello' } });
     fireEvent.keyDown(ta(), { key: 'Enter' });
-    expect(onSend).toHaveBeenCalledWith('hello', []);
-    expect(ta().value).toBe('');
+    expect(onSend).toHaveBeenCalledWith(
+      'hello',
+      [],
+      { mode: 'manual', scope: 'session' },
+    );
+    await waitFor(() => expect(ta().value).toBe(''));
 
     // 切走再切回 s1：草稿表里不该残留已发送的 'hello'。
     rerender(
@@ -616,9 +654,11 @@ describe('附件预览卡片', () => {
     expect(await screen.findByTitle(folderPath)).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
-    expect(onSend).toHaveBeenCalledWith('', [
-      { folderName: '客户资料', folderPath },
-    ]);
+    expect(onSend).toHaveBeenCalledWith(
+      '',
+      [{ folderName: '客户资料', folderPath }],
+      { mode: 'manual', scope: 'session' },
+    );
   });
 
   it('拖入外部卷文件时通过 webUtils 保留真实路径并随消息发送', async () => {
@@ -646,9 +686,11 @@ describe('附件预览卡片', () => {
 
     expect(await screen.findByTitle(externalPath)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
-    expect(onSend).toHaveBeenCalledWith('', [
-      { fileName: '园区方案.pdf', filePath: externalPath },
-    ]);
+    expect(onSend).toHaveBeenCalledWith(
+      '',
+      [{ fileName: '园区方案.pdf', filePath: externalPath }],
+      { mode: 'manual', scope: 'session' },
+    );
   });
 
   it('拖入文件若无法由 preload/main 授权，不会附加或发送裸路径', async () => {
