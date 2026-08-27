@@ -324,8 +324,10 @@ describe('Sidebar：任务分组方式', () => {
   it('默认保持按时间，并可从菜单切换到按工作目录', () => {
     renderSidebar({ sessions: workspaceSessions, preferenceScope });
 
-    fireEvent.click(screen.getByRole('button', { name: '任务分组方式' }));
-    const menu = screen.getByRole('menu', { name: '任务分组方式' });
+    fireEvent.click(screen.getByRole('button', { name: '视图选项' }));
+    const menu = screen.getByRole('menu', { name: '视图选项' });
+    expect(menu.parentElement).toBe(document.body);
+    expect(within(menu).getByText('分组方式')).toBeTruthy();
     expect(within(menu).getByRole('menuitemradio', { name: '按时间' })
       .getAttribute('aria-checked')).toBe('true');
     fireEvent.click(within(menu).getByRole('menuitemradio', { name: '按工作目录' }));
@@ -338,15 +340,15 @@ describe('Sidebar：任务分组方式', () => {
 
   it('分组菜单点击外部或按 Escape 都会关闭，并把焦点还给触发按钮', () => {
     renderSidebar({ sessions: workspaceSessions, preferenceScope });
-    const trigger = screen.getByRole('button', { name: '任务分组方式' });
+    const trigger = screen.getByRole('button', { name: '视图选项' });
 
     fireEvent.click(trigger);
     fireEvent.mouseDown(document.body);
-    expect(screen.queryByRole('menu', { name: '任务分组方式' })).toBeNull();
+    expect(screen.queryByRole('menu', { name: '视图选项' })).toBeNull();
 
     fireEvent.click(trigger);
     fireEvent.keyDown(document, { key: 'Escape' });
-    expect(screen.queryByRole('menu', { name: '任务分组方式' })).toBeNull();
+    expect(screen.queryByRole('menu', { name: '视图选项' })).toBeNull();
     expect(document.activeElement).toBe(trigger);
   });
 

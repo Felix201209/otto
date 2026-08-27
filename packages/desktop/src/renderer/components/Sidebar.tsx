@@ -17,6 +17,7 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { SessionSummary } from 'otto-server';
 import { computeNavBadgeCounts } from '../attentionCenter.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
@@ -26,9 +27,9 @@ import {
   IconUserAvatar,
   IconSettings,
   IconLogOut,
-  IconList,
   IconFolder,
   IconCheck,
+  IconPersonalization,
 } from './icons.js';
 import { LogoutConfirmDialog } from './LogoutConfirmDialog.js';
 import { JoinEnterpriseDialog } from './JoinEnterpriseDialog.js';
@@ -107,10 +108,12 @@ export function Sidebar({
   const [logoutBusy, setLogoutBusy] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [groupingMenuOpen, setGroupingMenuOpen] = useState(false);
+  const [groupingMenuPosition, setGroupingMenuPosition] = useState({ top: 0, left: 0 });
   const accountMenuRef = useRef<HTMLDivElement>(null);
   const accountMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const accountMenuItemRef = useRef<HTMLButtonElement>(null);
   const groupingMenuRef = useRef<HTMLDivElement>(null);
+  const groupingMenuSurfaceRef = useRef<HTMLDivElement>(null);
   const groupingMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const groupingMenuItemRef = useRef<HTMLButtonElement>(null);
   const preferenceKey = sessionListPreferenceStorageKey(preferenceScope);
@@ -203,7 +206,9 @@ export function Sidebar({
     groupingMenuItemRef.current?.focus();
 
     const onDocumentMouseDown = (event: MouseEvent): void => {
-      if (!groupingMenuRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (!groupingMenuRef.current?.contains(target)
+        && !groupingMenuSurfaceRef.current?.contains(target)) {
         setGroupingMenuOpen(false);
       }
     };
@@ -215,11 +220,38 @@ export function Sidebar({
 
     document.addEventListener('mousedown', onDocumentMouseDown);
     document.addEventListener('keydown', onDocumentKeyDown);
+    const repositionMenu = (): void => {
+      const rect = groupingMenuTriggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setGroupingMenuPosition({
+        top: rect.bottom + 4,
+        left: Math.max(12, rect.right - 218),
+      });
+    };
+    window.addEventListener('resize', repositionMenu);
+    window.addEventListener('scroll', repositionMenu, true);
     return () => {
       document.removeEventListener('mousedown', onDocumentMouseDown);
       document.removeEventListener('keydown', onDocumentKeyDown);
+      window.removeEventListener('resize', repositionMenu);
+      window.removeEventListener('scroll', repositionMenu, true);
     };
   }, [groupingMenuOpen]);
+
+  const toggleGroupingMenu = (): void => {
+    if (groupingMenuOpen) {
+      setGroupingMenuOpen(false);
+      return;
+    }
+    const rect = groupingMenuTriggerRef.current?.getBoundingClientRect();
+    if (rect) {
+      setGroupingMenuPosition({
+        top: rect.bottom + 4,
+        left: Math.max(12, rect.right - 218),
+      });
+    }
+    setGroupingMenuOpen(true);
+  };
 
   return (
     <aside className="otto-sidebar">
@@ -281,21 +313,28 @@ export function Sidebar({
                 ref={groupingMenuTriggerRef}
                 type="button"
                 className="otto-session-grouping__trigger"
-                aria-label="任务分组方式"
+                aria-label="视图选项"
                 aria-haspopup="menu"
                 aria-expanded={groupingMenuOpen}
-                title={preference.mode === 'time' ? '当前按时间分组' : '当前按工作目录分组'}
-                onClick={() => setGroupingMenuOpen((open) => !open)}
+                onClick={toggleGroupingMenu}
               >
-                {preference.mode === 'time' ? <IconList size={14} /> : <IconFolder size={14} />}
-                <IconChevronDown size={11} />
+                <IconPersonalization size={16} />
               </button>
-              {groupingMenuOpen ? (
-                <div className="otto-session-grouping__menu" role="menu" aria-label="任务分组方式">
+              {groupingMenuOpen ? createPortal(
+                <div
+                  ref={groupingMenuSurfaceRef}
+                  className="otto-session-grouping__menu"
+                  role="menu"
+                  aria-label="视图选项"
+                  style={groupingMenuPosition}
+                >
+                  <div className="otto-session-grouping__menulabel" role="presentation">
+                    分组方式
+                  </div>
                   {([
-                    ['time', '按时间', IconList],
-                    ['workspace', '按工作目录', IconFolder],
-                  ] as const).map(([mode, label, Icon]) => (
+                    ['time', '按时间'],
+                    ['workspace', '按工作目录'],
+                  ] as const).map(([mode, label]) => (
                     <button
                       key={mode}
                       ref={mode === preference.mode ? groupingMenuItemRef : undefined}
@@ -309,12 +348,12 @@ export function Sidebar({
                         groupingMenuTriggerRef.current?.focus();
                       }}
                     >
-                      <Icon size={14} />
                       <span>{label}</span>
-                      {preference.mode === mode ? <IconCheck size={14} /> : <span />}
+                      {preference.mode === mode ? <IconCheck size={16} /> : null}
                     </button>
                   ))}
-                </div>
+                </div>,
+                document.body,
               ) : null}
             </div>
           </div>
