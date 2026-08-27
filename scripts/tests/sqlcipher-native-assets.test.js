@@ -288,6 +288,11 @@ describe('SQLCipher native asset gate', () => {
       'SQLCIPHER_SOURCE_REVISION: e2a6040f2ae5cfff2b3e08eb3320007d93cdf3fc',
     );
     expect(nativeWorkflow).toContain('--write-matrix-manifest');
+    expect(nativeWorkflow).toContain('- runner: ubuntu-22.04');
+    expect(nativeWorkflow).toContain('- runner: ubuntu-22.04-arm');
+    expect(nativeWorkflow).toContain("GLIBC_MAX_VERSION: '2.35'");
+    expect(nativeWorkflow.match(/readelf --version-info/g)).toHaveLength(2);
+    expect(nativeWorkflow.match(/sort -Vu \| tail -n 1/g)).toHaveLength(2);
     expect(nativeWorkflow).toContain(
       'subject-path: native/sqlcipher/matrix-manifest.json',
     );
