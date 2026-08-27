@@ -11815,6 +11815,12 @@ h6.otto-prose__h {
 .otto-sidebar-account__identity[aria-expanded="true"] {
   background: var(--otto-accent-soft);
 }
+.otto-sidebar-account__identity--static {
+  cursor: default;
+}
+.otto-sidebar-account__identity--static:hover {
+  background: transparent;
+}
 .otto-sidebar-account__identity:focus-visible,
 .otto-sidebar-account__settings:focus-visible,
 .otto-sidebar-account__menuitem:focus-visible {

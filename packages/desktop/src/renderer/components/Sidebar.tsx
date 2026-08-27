@@ -485,23 +485,38 @@ export function Sidebar({
         ) : null}
         {enterpriseAccount ? (
           <div className="otto-sidebar-account" ref={accountMenuRef}>
-            <button
-              ref={accountMenuTriggerRef}
-              type="button"
-              className="otto-sidebar-account__identity"
-              aria-label={`${enterpriseAccount.name}，${enterpriseAccount.department || '个人空间'}`}
-              aria-haspopup="menu"
-              aria-expanded={accountMenuOpen}
-              onClick={() => setAccountMenuOpen((open) => !open)}
-            >
-              <span className="otto-sidebar-account__avatar" aria-hidden>
-                <IconUserAvatar size={34} />
-              </span>
-              <span className="otto-sidebar-account__copy">
-                <strong>{enterpriseAccount.name}</strong>
-                <small>{enterpriseAccount.department || '个人空间'}</small>
-              </span>
-            </button>
+            {onLogout ? (
+              <button
+                ref={accountMenuTriggerRef}
+                type="button"
+                className="otto-sidebar-account__identity"
+                aria-label={`${enterpriseAccount.name}，${enterpriseAccount.department || '个人空间'}`}
+                aria-haspopup="menu"
+                aria-expanded={accountMenuOpen}
+                onClick={() => setAccountMenuOpen((open) => !open)}
+              >
+                <span className="otto-sidebar-account__avatar" aria-hidden>
+                  <IconUserAvatar size={34} />
+                </span>
+                <span className="otto-sidebar-account__copy">
+                  <strong>{enterpriseAccount.name}</strong>
+                  <small>{enterpriseAccount.department || '个人空间'}</small>
+                </span>
+              </button>
+            ) : (
+              <div
+                className="otto-sidebar-account__identity otto-sidebar-account__identity--static"
+                aria-label={`${enterpriseAccount.name}，${enterpriseAccount.department || '个人空间'}`}
+              >
+                <span className="otto-sidebar-account__avatar" aria-hidden>
+                  <IconUserAvatar size={34} />
+                </span>
+                <span className="otto-sidebar-account__copy">
+                  <strong>{enterpriseAccount.name}</strong>
+                  <small>{enterpriseAccount.department || '个人空间'}</small>
+                </span>
+              </div>
+            )}
             <button
               type="button"
               className={'otto-sidebar-account__settings' + (hubActive || activeView === 'hub' ? ' is-active' : '')}
@@ -516,23 +531,21 @@ export function Sidebar({
               <IconSettings size={17} />
               {updateBadge ? <span className="otto-sidebar-account__update" aria-label="有可用更新" /> : null}
             </button>
-            {accountMenuOpen ? (
+            {accountMenuOpen && onLogout ? (
               <div className="otto-sidebar-account__menu" role="menu" aria-label="账户菜单">
-                {onLogout ? (
-                  <button
-                    ref={accountMenuItemRef}
-                    type="button"
-                    role="menuitem"
-                    className="otto-sidebar-account__menuitem otto-sidebar-account__menuitem--danger"
-                    onClick={() => {
-                      setAccountMenuOpen(false);
-                      setLogoutConfirmOpen(true);
-                    }}
-                  >
-                    <IconLogOut size={16} />
-                    <span>退出登录</span>
-                  </button>
-                ) : null}
+                <button
+                  ref={accountMenuItemRef}
+                  type="button"
+                  role="menuitem"
+                  className="otto-sidebar-account__menuitem otto-sidebar-account__menuitem--danger"
+                  onClick={() => {
+                    setAccountMenuOpen(false);
+                    setLogoutConfirmOpen(true);
+                  }}
+                >
+                  <IconLogOut size={16} />
+                  <span>退出登录</span>
+                </button>
               </div>
             ) : null}
           </div>
