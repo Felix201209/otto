@@ -833,7 +833,7 @@
 
 .otto-module-marketplace__modules {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -913,7 +913,13 @@
   cursor: not-allowed;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 760px) {
+  .otto-module-marketplace__modules {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
   .otto-module-marketplace__modules {
     grid-template-columns: 1fr;
   }
