@@ -80,22 +80,24 @@ function renderWorkspace(
   return { ...view, onActivate, onOpenMarketplace, onLayoutChange };
 }
 
-function renderControlledWorkspace() {
-  function Harness() {
-    const [layout, setLayout] = React.useState(enterpriseLayout);
-    return (
-      <ModuleWorkspace
-        presentation="panel"
-        layout={layout}
-        defaultLayout={enterpriseLayout}
-        modules={modules}
-        onActivate={vi.fn()}
-        onOpenMarketplace={vi.fn()}
-        onLayoutChange={setLayout}
-      />
-    );
-  }
-  return render(<Harness />);
+function ControlledWorkspace({ scopeKey = 'scope-a' }: { scopeKey?: string }) {
+  const [layout, setLayout] = React.useState(enterpriseLayout);
+  return (
+    <ModuleWorkspace
+      presentation="panel"
+      scopeKey={scopeKey}
+      layout={layout}
+      defaultLayout={enterpriseLayout}
+      modules={modules}
+      onActivate={vi.fn()}
+      onOpenMarketplace={vi.fn()}
+      onLayoutChange={setLayout}
+    />
+  );
+}
+
+function renderControlledWorkspace(scopeKey = 'scope-a') {
+  return render(<ControlledWorkspace scopeKey={scopeKey} />);
 }
 
 beforeEach(() => {
@@ -222,6 +224,31 @@ describe('ModuleWorkspace', () => {
     expect(screen.queryByRole('button', { name: '撤销移除' })).toBeNull();
   });
 
+  it('invalidates stale undo after another layout edit', () => {
+    renderControlledWorkspace();
+    fireEvent.click(screen.getByRole('button', { name: '功能组菜单：园区服务' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '编辑模块' }));
+    fireEvent.click(screen.getByRole('button', { name: '移除 园区公告' }));
+    expect(screen.getByRole('button', { name: '撤销移除' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '功能组菜单：园区服务' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '显示三行' }));
+    expect(screen.queryByRole('button', { name: '撤销移除' })).toBeNull();
+    expect(document.querySelector('[data-group-id="park-services"] .otto-module-group__grid--rows-3')).toBeTruthy();
+  });
+
+  it('clears transient editing and undo state when the storage scope changes', () => {
+    const view = renderControlledWorkspace('scope-a');
+    fireEvent.click(screen.getByRole('button', { name: '功能组菜单：园区服务' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '编辑模块' }));
+    fireEvent.click(screen.getByRole('button', { name: '移除 园区公告' }));
+    expect(screen.getByRole('button', { name: '撤销移除' })).toBeTruthy();
+
+    view.rerender(<ControlledWorkspace scopeKey="scope-b" />);
+    expect(screen.queryByRole('button', { name: '撤销移除' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '移除 满意度调查' })).toBeNull();
+  });
+
   it('deletes a non-last group only after confirmation and can undo', () => {
     renderControlledWorkspace();
     fireEvent.click(screen.getByRole('button', { name: '功能组菜单：园区服务' }));
@@ -245,6 +272,29 @@ describe('ModuleWorkspace', () => {
     fireEvent.click(screen.getByRole('button', { name: '恢复默认' }));
     expect(screen.getAllByRole('heading', { level: 2 }).slice(0, 2).map((heading) => heading.textContent))
       .toEqual(['园区服务', '日常办公']);
+  });
+
+  it('supports first/last group moves and four-way keyboard module ordering', () => {
+    renderControlledWorkspace();
+    fireEvent.click(screen.getByRole('button', { name: '功能组菜单：园区服务' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '移到最后功能组' }));
+    expect(screen.getAllByRole('heading', { level: 2 }).slice(0, 2).map((heading) => heading.textContent))
+      .toEqual(['日常办公', '园区服务']);
+
+    fireEvent.click(screen.getByRole('button', { name: '功能组菜单：园区服务' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '编辑模块' }));
+    fireEvent.click(screen.getByRole('button', { name: '模块菜单：满意度调查' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '移到最前模块' }));
+    const grid = document.querySelector('[data-group-id="park-services"] .otto-module-group__grid');
+    expect(grid?.querySelectorAll('.otto-module-tile')[0]?.getAttribute('aria-label'))
+      .toBe('打开 满意度调查');
+
+    fireEvent.click(screen.getByRole('button', { name: '模块菜单：满意度调查' }));
+    expect((screen.getByRole('menuitem', { name: '向前移动模块' }) as HTMLButtonElement).disabled)
+      .toBe(true);
+    fireEvent.click(screen.getByRole('menuitem', { name: '移到最后模块' }));
+    expect(grid?.querySelectorAll('.otto-module-tile')[1]?.getAttribute('aria-label'))
+      .toBe('打开 满意度调查');
   });
 
   it('dismisses a group menu on outside click and Escape', () => {

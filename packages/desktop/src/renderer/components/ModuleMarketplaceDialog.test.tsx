@@ -96,6 +96,24 @@ describe('ModuleMarketplaceDialog', () => {
     expect(onManageExperts).toHaveBeenCalledTimes(1);
   });
 
+  it('uses group identity rather than duplicate display names for module ownership', () => {
+    renderDialog({
+      targetGroupId: 'second',
+      layout: {
+        version: 1,
+        groups: [
+          { id: 'first', name: '重复名称', rows: 2, moduleIds: ['agent-ppt'] },
+          { id: 'second', name: '重复名称', rows: 2, moduleIds: [] },
+        ],
+      },
+    });
+
+    const ppt = screen.getByRole('checkbox', { name: 'PPT 创作专家' }) as HTMLInputElement;
+    expect(ppt.disabled).toBe(false);
+    expect(ppt.checked).toBe(false);
+    expect(ppt.closest('label')?.textContent).toContain('将从“重复名称”移动');
+  });
+
   it('closes from backdrop and Escape', () => {
     const { onClose } = renderDialog();
     const dialog = screen.getByRole('dialog', { name: '添加模块' });

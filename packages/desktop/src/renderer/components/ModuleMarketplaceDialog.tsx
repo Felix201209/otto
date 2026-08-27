@@ -71,9 +71,11 @@ export function ModuleMarketplaceDialog({
   }, [open, targetGroupId]);
 
   const moduleLocation = useMemo(() => {
-    const result = new Map<string, string>();
+    const result = new Map<string, { groupId: string; groupName: string }>();
     for (const group of layout.groups) {
-      for (const moduleId of group.moduleIds) result.set(moduleId, group.name);
+      for (const moduleId of group.moduleIds) {
+        result.set(moduleId, { groupId: group.id, groupName: group.name });
+      }
     }
     return result;
   }, [layout]);
@@ -164,7 +166,7 @@ export function ModuleMarketplaceDialog({
                 <div className="otto-module-marketplace__modules">
                   {categoryModules.map((module) => {
                     const location = moduleLocation.get(module.id);
-                    const inTargetGroup = location === targetGroup.name;
+                    const inTargetGroup = location?.groupId === targetGroup.id;
                     const unavailable = module.availability !== 'available';
                     const disabled = inTargetGroup || unavailable;
                     return (
@@ -188,7 +190,7 @@ export function ModuleMarketplaceDialog({
                               : unavailable
                                 ? module.disabledReason ?? '当前不可用'
                                 : location
-                                  ? `将从“${location}”移动`
+                                  ? `将从“${location.groupName}”移动`
                                   : module.description ?? '可添加到当前功能组'}
                           </small>
                         </span>
