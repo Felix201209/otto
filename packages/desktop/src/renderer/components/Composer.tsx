@@ -1142,13 +1142,6 @@ export function Composer({
         setContextMenu({ x: e.clientX, y: e.clientY });
       }}
     >
-      {pendingAgent ? (
-        <div className="otto-composer__agent-chip" role="status">
-          <ModuleIcon icon={pendingAgent.icon} label={pendingAgent.title} size={18} />
-          <span>{pendingAgent.title}</span>
-          <button type="button" aria-label={`移除 ${pendingAgent.title}`} onClick={onClearPendingAgent}>×</button>
-        </div>
-      ) : null}
       {/* 右键菜单 */}
       {contextMenu ? (
         <>
@@ -1254,6 +1247,21 @@ export function Composer({
         </div>
       ) : null}
       <div className="otto-composer__inner">
+        {pendingAgent ? (
+          <div className="otto-composer__agent-slot" aria-label="已启用的智能体">
+            <div className="otto-composer__agent-chip" role="status">
+              <ModuleIcon icon={pendingAgent.icon} label={pendingAgent.title} size={14} />
+              <span>{pendingAgent.title}</span>
+              <button
+                type="button"
+                aria-label={`移除 ${pendingAgent.title}`}
+                onClick={onClearPendingAgent}
+              >
+                <IconClose size={12} />
+              </button>
+            </div>
+          </div>
+        ) : null}
         {attachments.length > 0 || attaching || attachError ? (
           <div className="otto-attachments">
             {attachments.map((attachment) => {

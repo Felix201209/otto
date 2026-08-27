@@ -207,7 +207,10 @@ describe('右侧模块 Agent 标签', () => {
         onSetModel={vi.fn()}
       />,
     );
+    const agentStatus = screen.getByRole('status');
+    const composerInner = document.querySelector('.otto-composer__inner');
     expect(screen.getByText('PPT 创作专家')).toBeTruthy();
+    expect(composerInner?.contains(agentStatus)).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: '移除 PPT 创作专家' }));
     expect(onClearPendingAgent).toHaveBeenCalledTimes(1);
 

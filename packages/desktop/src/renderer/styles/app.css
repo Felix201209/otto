@@ -2549,8 +2549,10 @@ h6.otto-prose__h {
     box-shadow var(--otto-dur) var(--otto-ease);
 }
 .otto-composer__inner:focus-within {
-  border-color: var(--otto-accent);
-  box-shadow: var(--otto-shadow-focus);
+  border-color: color-mix(in srgb, var(--otto-text-secondary) 55%, var(--otto-border-strong));
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--otto-text) 7%, transparent),
+    var(--otto-shadow-sm);
 }
 .otto-composer__textarea {
   display: block;
@@ -9450,8 +9452,8 @@ h6.otto-prose__h {
   backdrop-filter: blur(16px) saturate(130%);
 }
 .otto-composer__inner:focus-within {
-  border-color: var(--otto-accent);
-  box-shadow: 0 0 0 3px var(--otto-accent-soft);
+  border-color: color-mix(in srgb, var(--otto-text-secondary) 55%, var(--otto-border-strong));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--otto-text) 7%, transparent);
 }
 
 .otto-right-panel {
@@ -9626,8 +9628,10 @@ h6.otto-prose__h {
 }
 
 .otto-composer__inner:focus-within {
-  border-color: color-mix(in srgb, var(--otto-accent) 58%, var(--otto-border));
-  box-shadow: 0 0 0 3px var(--otto-accent-soft), 0 5px 18px rgba(28, 25, 23, 0.06);
+  border-color: color-mix(in srgb, var(--otto-text-secondary) 55%, var(--otto-border-strong));
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--otto-text) 7%, transparent),
+    0 5px 18px rgba(28, 25, 23, 0.06);
 }
 
 .otto-msg-user__bubble {
@@ -12232,28 +12236,58 @@ h6.otto-prose__h {
   cursor: pointer;
 }
 
+.otto-composer__agent-slot {
+  display: flex;
+  min-width: 0;
+  padding: 10px 14px 0;
+}
+
 .otto-composer__agent-chip {
-  position: absolute;
-  left: 28px;
-  bottom: calc(100% - 8px);
-  z-index: 4;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  max-width: calc(100% - 56px);
-  min-height: 34px;
-  padding: 5px 7px 5px 10px;
-  border: 1px solid color-mix(in srgb, var(--otto-accent) 35%, var(--otto-border));
-  border-radius: 11px;
-  background: var(--otto-surface);
+  gap: 6px;
+  max-width: min(100%, 280px);
+  height: 27px;
+  padding: 0 4px 0 8px;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-pill);
+  background: color-mix(in srgb, var(--otto-text) 3%, var(--otto-surface));
   color: var(--otto-text);
-  box-shadow: var(--otto-shadow-sm);
-  font-size: 12px;
-  font-weight: 650;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1;
+}
+.otto-composer__agent-chip > .otto-module-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--otto-text-secondary);
 }
 .otto-composer__agent-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.otto-composer__agent-chip button { width: 22px; height: 22px; border: 0; border-radius: 7px; background: transparent; color: var(--otto-text-tertiary); cursor: pointer; }
-.otto-composer__agent-chip button:hover { background: var(--otto-surface-hover); color: var(--otto-text); }
+.otto-composer__agent-chip button {
+  width: 19px;
+  height: 19px;
+  flex: 0 0 19px;
+  border: 0;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: transparent;
+  color: var(--otto-text-tertiary);
+  cursor: pointer;
+}
+.otto-composer__agent-chip button:hover {
+  background: color-mix(in srgb, var(--otto-text) 6%, transparent);
+  color: var(--otto-text);
+}
+.otto-composer__agent-chip button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--otto-text) 12%, transparent);
+}
 
 .otto-workspace-dialog-overlay {
   position: fixed;
