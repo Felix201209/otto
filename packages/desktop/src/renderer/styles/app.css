@@ -9890,8 +9890,8 @@ h6.otto-prose__h {
   line-height: 20px;
   font-variant-numeric: tabular-nums;
 }
-.otto-workspace-group__toggle > svg:nth-of-type(2) {
-  color: var(--otto-accent);
+.otto-workspace-group__icon {
+  color: color-mix(in srgb, var(--otto-text) 60%, transparent);
 }
 .otto-workspace-group__unread {
   min-width: 16px;

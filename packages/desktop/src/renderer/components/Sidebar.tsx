@@ -27,7 +27,7 @@ import {
   IconUserAvatar,
   IconSettings,
   IconLogOut,
-  IconFolder,
+  IconFolderOpen,
   IconCheck,
   IconPersonalization,
 } from './icons.js';
@@ -431,7 +431,7 @@ export function Sidebar({
                             size={12}
                             className={'otto-conversations__chevron' + (collapsed ? ' is-collapsed' : '')}
                           />
-                          <IconFolder size={14} />
+                          <IconFolderOpen size={16} className="otto-workspace-group__icon" />
                           <span className="otto-workspace-group__label">{group.label}</span>
                           <span className="otto-workspace-group__count">{group.sessions.length}</span>
                           {groupUnreadCount > 0 ? (

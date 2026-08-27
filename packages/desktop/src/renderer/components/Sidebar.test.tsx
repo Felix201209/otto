@@ -395,7 +395,10 @@ describe('Sidebar：任务分组方式', () => {
       .getAttribute('aria-checked')).toBe('true');
     fireEvent.click(within(menu).getByRole('menuitemradio', { name: '按工作目录' }));
 
-    expect(screen.getByRole('button', { name: 'project，2 个任务' })).toBeTruthy();
+    const project = screen.getByRole('button', { name: 'project，2 个任务' });
+    const projectIcon = project.querySelector('.otto-workspace-group__icon');
+    expect(projectIcon?.getAttribute('width')).toBe('16');
+    expect(projectIcon?.getAttribute('height')).toBe('16');
     expect(screen.getByRole('button', { name: 'Desktop，1 个任务' })).toBeTruthy();
     expect(screen.getByText('项目新任务').closest('.otto-session-group')
       ?.classList.contains('otto-session-group--workspace')).toBe(true);
