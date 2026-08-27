@@ -29,6 +29,70 @@
 - All module dialogs are coordinated by one App-level discriminated-union modal state. Opening a module, switching account/organization/server, signing out, or opening a mutually exclusive surface must not leave stacked or stale business dialogs behind.
 - Do not package the App or perform manual real-device visual acceptance as part of this plan unless separately requested.
 
+## Engineering review amendment (2026-08-27)
+
+This amendment is mandatory and overrides any earlier step that could be read more loosely. The final cutover must not begin until every gate below has a passing automated test.
+
+### Gate A: Resolve capabilities before creating or persisting a layout
+
+- Add an App-level, read-only capability snapshot with an explicit `loading | ready | failed` state. It must derive from the same authenticated edition, organization-feature, park-context, and role inputs already used by the current RightPanel and `ParkServicesPlugin`; the module catalog remains a narrowing view, never an authorization source.
+- While the snapshot is `loading` or `failed`, render a non-editable loading/unavailable state. Do not call `createDefaultModuleWorkspace`, do not expose edit/add/remove controls, and do not write localStorage.
+- Initialize a first-time default layout only after the snapshot is `ready`. A temporary feature-fetch failure must not persist a permanently incomplete default layout.
+- Preserve hidden module IDs in raw storage when a feature or role is temporarily unavailable. Permanently deleted custom-expert IDs are different: remove those orphan IDs from all groups only after the expert deletion itself has persisted successfully.
+- Add tests for slow feature loading, failed feature loading, later recovery, organization/account/server switching during loading, temporary permission loss, and permanent custom-expert deletion.
+
+### Gate B: Scope every extracted business dialog and asynchronous result
+
+- Enterprise-memory, auto-Skill, marketplace drafts, custom-expert management, and staged Agent state must carry the current normalized server/edition/organization/account scope key.
+- Use a request epoch or equivalent stale-result guard for every asynchronous list/detail/revision refresh. Closing a dialog or switching scope must prevent an old request from painting data, notices, errors, or selections into the new scope.
+- Clear transient dialog drafts, staged Agent chips, open menus, confirmation state, and undo state on scope change. Do not clear persisted business data.
+- Add a regression test that starts an old-organization request, switches organization, resolves the old request last, and proves no old data is rendered.
+
+### Gate C: Coordinate module business surfaces without suppressing security UI
+
+- “One App-level modal state” applies to module business surfaces only: marketplace, enterprise memory, auto-Skill, and custom-expert manager. Existing A2A permission/consultation and other security approval dialogs keep their current independent, higher-priority behavior.
+- Opening Settings closes any module business modal but must not mutate the saved right-panel collapsed preference. Opening a module from the right rail returns to the chat surface and closes Settings without changing that preference.
+- `ParkServicesPlugin` currently opens through a global event and owns nested service windows, polling, notifications, and landing targets. Add only a narrow open/close/status bridge: before opening Park, close another module business modal; before opening another mutually exclusive surface, request Park to close its top-level window; report Park open/closed state to the coordinator. Do not rewrite its polling, notification, service-window, or backend behavior.
+- Background park notifications must continue to work when the top-level Park window is closed. Collapsing the right panel must never close an active Park workflow.
+- Test modal precedence, Settings transitions, security-dialog coexistence, notification-driven Park opening, and all Park deep links (`overview`, normal services, `staff-tasks`, and `my-applications`).
+
+### Gate D: Treat staged Agent send as one correlated front-end transaction
+
+- Only module-tile clicks stage a composer chip. Existing slash-command/immediate-launch entry points retain their current behavior so the migration does not remove the one-click power-user path.
+- On submit, prepare text, file/image/folder attachments, source, and enterprise authorized context through the same helper as an ordinary send. Generate a unique `clientRequestId`, keep pending launches in a map keyed by that ID, and consume only the matching `session_created` response.
+- After the exact session is created, apply the current work directory through the existing `set_session_workspace` path, preserve the current authorization mode through the existing authorization path, then send the prepared task once. Do not change backend frame types or IPC contracts.
+- Prevent double submit and cross-request payload exchange. On synchronous rejection, keep the draft and chip. On timeout, disconnect, sign-out, account/server switch, or server error, clear only the matching pending launch and provide a retryable user-visible failure; never leak it into a later session.
+- Add tests for concurrent launches, attachment-only sends, enterprise context, workspace propagation, each authorization mode, disconnect/timeout, scope change, cancellation, and exact once-only delivery.
+
+### Gate E: Complete the workspace interaction contract before production wiring
+
+- Replace the two independent group/module menu states with one discriminated popover state. Opening one menu closes the other; outside click and Escape close it; focus returns to its trigger.
+- Keep module activation and drag handles separate. Add verified edge auto-scroll for both the right-panel group scroller and an overflowing module group. If the current Motion `Reorder` implementation cannot provide stable 2D reflow with nested scrolling, stop and replace only the sortable layer before cutover.
+- Undo, edit, rename, confirmation, and marketplace selection are scope-bound. The undo notice must not cover the composer or survive a panel/page/scope transition.
+- Test `presentation="panel"` and `presentation="page"`, narrow widths, keyboard reorder, reduced motion, internal 6/9-capacity scrolling, menu exclusivity, outside dismissal, and focus restoration.
+
+### Gate F: Make final deletion evidence-based and atomic
+
+- Do not delete any old RightPanel branch merely because a component with a similar name exists. First prove replacement parity for enterprise-memory APIs, auto-Skill actions, all Park targets, fixed/custom Agent launch, custom-expert persistence, Skill Zone navigation, and Product Workspace contacts.
+- Move Product Workspace friends into Organization as a separate “常用联系人” section using the existing `workspace.friends` and `product.actions.addFriend` paths. Do not merge them into organization members, do not add Organization to the module catalog, and do not add new IPC.
+- At cutover, wire exactly one `useModuleWorkspace` production instance in App and make both RightPanel presentations thin consumers. Only after App-level integration tests pass may the old tabs, lists, drawer, state/effects/handlers, props, and CSS be removed.
+- Audit deletions from the frozen base SHA and retain backend/preload/native APIs. Stage only explicit right-workspace files; the repository may contain unrelated user edits, so broad `git add` commands are forbidden.
+
+### Revised execution order
+
+1. Freeze the base SHA and add characterization tests for every existing right-rail business path.
+2. Finish the isolated layout/catalog/hook foundation, including capability readiness and orphan rules (Gate A).
+3. Finish workspace, marketplace, menu, accessibility, and drag behavior in isolation (Gate E).
+4. Add the App capability snapshot and the narrow Park coordinator bridge (Gates A and C).
+5. Extract enterprise memory and auto-Skill with scope epochs while keeping the old UI reachable (Gate B).
+6. Implement the correlated staged-Agent transaction, including workspace and authorization propagation (Gate D).
+7. Implement custom-expert manager cleanup and Organization contacts parity (Gates A and F).
+8. Add App-level replacement-path tests for both panel/page presentations and all modal precedence rules.
+9. Perform one atomic production cutover to ModuleWorkspace.
+10. Delete obsolete RightPanel UI/state/CSS, run reference and frozen-SHA audits, then run the complete verification matrix.
+
+The branch is not eligible for the atomic cutover if any gate is incomplete, even when isolated component tests are green.
+
 ## Final module inventory and activation contract
 
 | Category | Module | Activation | Existing behavior to preserve |
