@@ -348,6 +348,39 @@ describe('Sidebar：任务分组方式', () => {
     }),
   ];
 
+  it('分组菜单从按钮右下方展开，并在窗口右侧保留安全边距', () => {
+    const originalInnerWidth = window.innerWidth;
+    try {
+      renderSidebar({ sessions: workspaceSessions, preferenceScope });
+      const trigger = screen.getByRole('button', { name: '视图选项' });
+      vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
+        x: 220,
+        y: 72,
+        width: 28,
+        height: 28,
+        top: 72,
+        right: 248,
+        bottom: 100,
+        left: 220,
+        toJSON: () => ({}),
+      });
+
+      fireEvent.click(trigger);
+      const menu = screen.getByRole('menu', { name: '视图选项' });
+      expect(menu.style.left).toBe('220px');
+      expect(menu.style.top).toBe('104px');
+
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 400 });
+      fireEvent.resize(window);
+      expect(menu.style.left).toBe('170px');
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: originalInnerWidth,
+      });
+    }
+  });
+
   it('默认保持按时间，并可从菜单切换到按工作目录', () => {
     renderSidebar({ sessions: workspaceSessions, preferenceScope });
 

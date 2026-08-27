@@ -44,6 +44,21 @@ import {
   type SessionListPreference,
 } from '../sessionListView.js';
 
+const GROUPING_MENU_WIDTH = 218;
+const GROUPING_MENU_VIEWPORT_MARGIN = 12;
+const GROUPING_MENU_TRIGGER_GAP = 4;
+
+function getGroupingMenuPosition(rect: DOMRect): { top: number; left: number } {
+  const maxLeft = Math.max(
+    GROUPING_MENU_VIEWPORT_MARGIN,
+    window.innerWidth - GROUPING_MENU_WIDTH - GROUPING_MENU_VIEWPORT_MARGIN,
+  );
+  return {
+    top: rect.bottom + GROUPING_MENU_TRIGGER_GAP,
+    left: Math.min(Math.max(GROUPING_MENU_VIEWPORT_MARGIN, rect.left), maxLeft),
+  };
+}
+
 function formatTime(ts: number): string {
   const d = new Date(ts);
   const hh = String(d.getHours()).padStart(2, '0');
@@ -242,10 +257,7 @@ export function Sidebar({
     const repositionMenu = (): void => {
       const rect = groupingMenuTriggerRef.current?.getBoundingClientRect();
       if (!rect) return;
-      setGroupingMenuPosition({
-        top: rect.bottom + 4,
-        left: Math.max(12, rect.right - 218),
-      });
+      setGroupingMenuPosition(getGroupingMenuPosition(rect));
     };
     window.addEventListener('resize', repositionMenu);
     window.addEventListener('scroll', repositionMenu, true);
@@ -264,10 +276,7 @@ export function Sidebar({
     }
     const rect = groupingMenuTriggerRef.current?.getBoundingClientRect();
     if (rect) {
-      setGroupingMenuPosition({
-        top: rect.bottom + 4,
-        left: Math.max(12, rect.right - 218),
-      });
+      setGroupingMenuPosition(getGroupingMenuPosition(rect));
     }
     setGroupingMenuOpen(true);
   };
