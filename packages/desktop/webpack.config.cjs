@@ -15,6 +15,7 @@
  */
 
 const path = require('path');
+const webpack = require('webpack');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 
 module.exports = (_env, argv) => {
@@ -63,6 +64,13 @@ module.exports = (_env, argv) => {
       ],
     },
     plugins: [
+      // Renderer 在 sandbox 中不能读取任意运行时环境变量。只在构建命令明确
+      // 设置 OTTO_INTERNAL_TEST_ACCESS=1 时烘焙本地免登录入口；普通构建恒为关闭。
+      new webpack.DefinePlugin({
+        __OTTO_INTERNAL_TEST_ACCESS__: JSON.stringify(
+          process.env.OTTO_INTERNAL_TEST_ACCESS === '1',
+        ),
+      }),
       new HtmlWebpackPlugin({
         template: path.resolve(__dirname, 'src/renderer/index.html'),
         filename: 'index.html',
