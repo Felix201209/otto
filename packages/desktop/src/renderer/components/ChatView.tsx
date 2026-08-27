@@ -251,7 +251,7 @@ export function ChatView({
         {onToggleRightPanel ? (
           <button
             type="button"
-            className={`otto-main__panel-toggle${rightPanelCollapsed ? '' : ' is-active'}`}
+            className="otto-main__panel-toggle"
             aria-label={rightPanelCollapsed ? '展开右侧栏' : '折叠右侧栏'}
             aria-pressed={!rightPanelCollapsed}
             title={rightPanelCollapsed ? '展开右侧栏' : '折叠右侧栏'}

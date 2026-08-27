@@ -1037,9 +1037,6 @@
   background: color-mix(in srgb, var(--otto-text) 6%, transparent);
   color: var(--otto-text);
 }
-.otto-main__panel-toggle.is-active {
-  color: var(--otto-accent);
-}
 .otto-main__panel-toggle:focus-visible {
   outline: 2px solid var(--otto-accent);
   outline-offset: 2px;
