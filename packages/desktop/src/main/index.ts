@@ -52,6 +52,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { HealthInfo, ServerEndpoint } from 'otto-server';
 import { WorkspaceDirectoryStore } from './workspace-directory-store.js';
+import { MainWindowPresentationController } from './main-window-presentation.js';
 
 function ignoreBrokenPipe(stream: NodeJS.WriteStream): void {
   stream.on('error', (error: NodeJS.ErrnoException) => {
@@ -477,6 +478,15 @@ let endpointRetryTimer: ReturnType<typeof setTimeout> | undefined;
 let endpointRetryAttempt = 0;
 /** 主窗口单例引用。 */
 let mainWindow: BrowserWindow | undefined;
+/** 每个主窗口的展示时序；避免 renderer 就绪前被第二实例强制显示。 */
+const mainWindowPresentations = new WeakMap<
+  BrowserWindow,
+  MainWindowPresentationController
+>();
+/** 应用尚未 ready 时到达的第二实例聚焦请求。 */
+let pendingMainWindowFocusRequest = false;
+/** IPC、菜单和托盘初始化完成后，才允许外部事件创建主窗口。 */
+let mainWindowCreationReady = false;
 /** macOS 后台提醒句柄；窗口重新聚焦时主动取消。 */
 let dockBounceId: number | undefined;
 /** 系统托盘：保持引用，避免被 GC 后托盘图标消失。 */
@@ -1865,14 +1875,22 @@ async function toggleEnterpriseTrayPopover(): Promise<void> {
 function showMainWindow(): void {
   hideEnterpriseTrayPopover();
   clearBackgroundAttention();
+  if (!app.isReady() || !mainWindowCreationReady) {
+    pendingMainWindowFocusRequest = true;
+    return;
+  }
   if (!mainWindow || mainWindow.isDestroyed()) {
     mainWindow = createWindow();
     mainWindow.webContents.once('did-finish-load', pushEndpointToRenderer);
-    return;
   }
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
+  const presentation = mainWindowPresentations.get(mainWindow);
+  if (presentation) {
+    presentation.requestShow({ focus: true });
+  } else {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
 }
 
 function createTray(): void {
@@ -2011,10 +2029,17 @@ function createWindow(): BrowserWindow {
     },
   });
 
-  win.once('ready-to-show', () => {
-    win.show();
+  const presentation = new MainWindowPresentationController(win);
+  mainWindowPresentations.set(win, presentation);
+  let initialIndicatorsUpdated = false;
+  const markWindowReady = (): void => {
+    presentation.markReady();
+    if (initialIndicatorsUpdated) return;
+    initialIndicatorsUpdated = true;
     updateUnreadIndicators(notificationService.getUnreadSessions());
-  });
+  };
+
+  win.once('ready-to-show', markWindowReady);
   win.on('focus', clearBackgroundAttention);
   win.on('close', (event) => {
     if (isQuitting || process.platform === 'darwin') return;
@@ -2024,6 +2049,9 @@ function createWindow(): BrowserWindow {
 
   hardenWebContents(win);
   win.webContents.once('did-finish-load', () => {
+    // ready-to-show 在后台/遮挡启动时不保证及时触发。renderer 完成加载后作为
+    // 安全兜底展示；控制器会合并两个信号，避免重复 show 或抢焦点。
+    markWindowReady();
     void incrementalUpdateService
       .applyActiveRendererPatches()
       .catch((error) => {
@@ -4856,9 +4884,14 @@ if (!gotLock) {
     registerIpc();
     installAppMenu(() => mainWindow);
     createTray();
+    mainWindowCreationReady = true;
 
     // 先建窗（show:false，ready-to-show 再显），同时并发确保 server。
     mainWindow = createWindow();
+    if (pendingMainWindowFocusRequest) {
+      pendingMainWindowFocusRequest = false;
+      mainWindowPresentations.get(mainWindow)?.requestShow({ focus: true });
+    }
     applyCsp();
     await ensureEndpoint();
     startEnterpriseIdentityRefresh();
