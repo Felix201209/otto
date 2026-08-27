@@ -212,6 +212,45 @@ export function addOrMoveModules(
   };
 }
 
+function nextUniqueLabel(base: string, existing: Set<string>): string {
+  if (!existing.has(base)) return base;
+  let suffix = 2;
+  while (existing.has(`${base} ${suffix}`)) suffix += 1;
+  return `${base} ${suffix}`;
+}
+
+export function createModuleGroup(layout: ModuleWorkspaceLayout): ModuleWorkspaceLayout {
+  const names = new Set(layout.groups.map((group) => group.name));
+  const ids = new Set(layout.groups.map((group) => group.id));
+  const name = nextUniqueLabel('新功能组', names);
+  let id = 'custom-group';
+  let suffix = 2;
+  while (ids.has(id)) {
+    id = `custom-group-${suffix}`;
+    suffix += 1;
+  }
+  return {
+    ...layout,
+    groups: [...layout.groups.map(cloneGroup), { id, name, rows: 2, moduleIds: [] }],
+  };
+}
+
+export function validateModuleGroupName(
+  layout: ModuleWorkspaceLayout,
+  groupId: string,
+  name: string,
+): string | null {
+  const normalized = name.trim();
+  if (!normalized) return '功能组名称不能为空';
+  if (Array.from(normalized).length > MODULE_GROUP_NAME_MAX_LENGTH) {
+    return `功能组名称不能超过 ${MODULE_GROUP_NAME_MAX_LENGTH} 个字符`;
+  }
+  if (layout.groups.some((group) => group.id !== groupId && group.name === normalized)) {
+    return '功能组名称不能重复';
+  }
+  return null;
+}
+
 export function removeModuleFromGroup(
   layout: ModuleWorkspaceLayout,
   groupId: string,

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   addOrMoveModules,
+  createModuleGroup,
   createDefaultModuleWorkspace,
   deleteModuleGroup,
   getModuleWorkspaceStorageKey,
@@ -13,6 +14,7 @@ import {
   reorderModulesInGroup,
   restoreDefaultModuleWorkspace,
   updateModuleGroupRows,
+  validateModuleGroupName,
   type ModuleWorkspaceCapabilities,
   type ModuleWorkspaceLayout,
 } from './moduleWorkspace.js';
@@ -166,6 +168,24 @@ describe('module workspace parsing and normalization', () => {
 });
 
 describe('module workspace layout operations', () => {
+  it('creates groups with stable unique default names and IDs', () => {
+    const first = createModuleGroup(sampleLayout());
+    const second = createModuleGroup(first);
+
+    expect(first.groups.at(-1)).toEqual({
+      id: 'custom-group', name: '新功能组', rows: 2, moduleIds: [],
+    });
+    expect(second.groups.at(-1)).toEqual({
+      id: 'custom-group-2', name: '新功能组 2', rows: 2, moduleIds: [],
+    });
+  });
+
+  it('rejects blank and duplicate group names without mutating layout', () => {
+    expect(validateModuleGroupName(sampleLayout(), 'park-services', '   ')).toBe('功能组名称不能为空');
+    expect(validateModuleGroupName(sampleLayout(), 'park-services', '日常办公')).toBe('功能组名称不能重复');
+    expect(validateModuleGroupName(sampleLayout(), 'park-services', '园区协作')).toBeNull();
+  });
+
   it('moves modules between groups without duplicates', () => {
     const next = addOrMoveModules(sampleLayout(), 'park-services', ['agent-ppt', 'agent-excel']);
 

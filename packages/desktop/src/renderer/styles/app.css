@@ -12233,6 +12233,34 @@ h6.otto-prose__h {
   background: color-mix(in srgb, var(--otto-danger) 8%, transparent);
 }
 /* ── 可配置模块工作区 ───────────────────────────────────────────── */
+.otto-module-workspace-shell {
+  position: relative;
+  min-width: 0;
+}
+
+.otto-module-workspace__toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 14px 0;
+}
+
+.otto-module-workspace__toolbar button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--otto-border);
+  border-radius: 9px;
+  background: var(--otto-surface);
+  color: var(--otto-text-secondary);
+  font: 550 12px var(--otto-font);
+  cursor: pointer;
+}
+
+.otto-module-workspace__toolbar button:hover {
+  border-color: var(--otto-accent);
+  color: var(--otto-accent);
+}
+
 .otto-module-workspace {
   display: flex;
   min-width: 0;
@@ -12268,6 +12296,98 @@ h6.otto-prose__h {
   color: var(--text, #171717);
   font-size: 15px;
   font-weight: 650;
+}
+
+.otto-module-group__menu-wrap {
+  position: relative;
+}
+
+.otto-module-group__menu-button {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--otto-text-tertiary);
+  cursor: pointer;
+}
+
+.otto-module-group__menu-button:hover,
+.otto-module-group__menu-button[aria-expanded="true"] {
+  background: var(--otto-surface-hover);
+  color: var(--otto-text);
+}
+
+.otto-module-group__menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 15;
+  display: grid;
+  width: 154px;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid var(--otto-border);
+  border-radius: 10px;
+  background: var(--otto-surface);
+  box-shadow: var(--otto-shadow-pop);
+}
+
+.otto-module-group__menu button {
+  min-height: 34px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--otto-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.otto-module-group__menu button:hover:not(:disabled) {
+  background: var(--otto-surface-hover);
+}
+
+.otto-module-group__menu button:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.otto-module-group__menu button.is-danger {
+  color: var(--otto-danger);
+}
+
+.otto-module-group__rename {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px;
+}
+
+.otto-module-group__rename input {
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--otto-accent);
+  border-radius: 7px;
+  background: var(--otto-surface);
+  color: var(--otto-text);
+}
+
+.otto-module-group__rename > button {
+  border: 0;
+  border-radius: 7px;
+  background: var(--otto-accent);
+  color: white;
+  cursor: pointer;
+}
+
+.otto-module-group__rename [role="alert"] {
+  grid-column: 1 / -1;
+  color: var(--otto-danger);
+  font-size: 11px;
 }
 
 .otto-module-group__grid {
@@ -12312,6 +12432,43 @@ h6.otto-prose__h {
   color: var(--text, #171717);
   cursor: pointer;
   transition: background-color 150ms ease, border-color 150ms ease, transform 150ms ease;
+}
+
+.otto-module-tile-wrap {
+  position: relative;
+  min-width: 0;
+  min-height: 82px;
+}
+
+.otto-module-tile-wrap > .otto-module-tile {
+  width: 100%;
+  height: 100%;
+}
+
+.otto-module-group.is-editing .otto-module-tile-wrap {
+  animation: otto-module-edit-wiggle 180ms ease-in-out infinite alternate;
+}
+
+.otto-module-tile__remove {
+  position: absolute;
+  top: -4px;
+  left: -4px;
+  z-index: 2;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--otto-danger) 35%, white);
+  border-radius: 50%;
+  background: var(--otto-danger);
+  color: white;
+  font-size: 17px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+@keyframes otto-module-edit-wiggle {
+  from { transform: rotate(-0.45deg); }
+  to { transform: rotate(0.45deg); }
 }
 
 .otto-module-tile:hover:not(:disabled) {
@@ -12370,6 +12527,31 @@ h6.otto-prose__h {
   color: var(--accent, #1677ff);
 }
 
+.otto-module-workspace__undo {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 110;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 11px 14px;
+  border: 1px solid var(--otto-border);
+  border-radius: 11px;
+  background: var(--otto-text);
+  color: var(--otto-surface);
+  box-shadow: var(--otto-shadow-pop);
+  font-size: 12px;
+}
+
+.otto-module-workspace__undo button {
+  border: 0;
+  background: transparent;
+  color: var(--otto-accent);
+  font-weight: 650;
+  cursor: pointer;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .otto-module-tile {
     transition: none;
@@ -12377,5 +12559,9 @@ h6.otto-prose__h {
 
   .otto-module-tile:hover:not(:disabled) {
     transform: none;
+  }
+
+  .otto-module-group.is-editing .otto-module-tile-wrap {
+    animation: none;
   }
 }
