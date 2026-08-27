@@ -592,7 +592,11 @@ export function ModuleWorkspace({
                       title={disabled ? module.disabledReason : module.description}
                       onClick={() => onActivate(module)}
                     >
-                      <ModuleIcon icon={module.icon} label={module.label} />
+                      <ModuleIcon
+                        icon={module.icon}
+                        label={module.label}
+                        size={presentation === 'panel' ? 26 : 28}
+                      />
                       <span>{module.label}</span>
                     </button>
                     {editingGroupId === group.id ? (

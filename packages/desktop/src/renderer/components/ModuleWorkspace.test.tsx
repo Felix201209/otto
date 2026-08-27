@@ -166,8 +166,10 @@ describe('ModuleWorkspace', () => {
     (presentation) => {
       const { container, onActivate } = renderWorkspace(presentation);
       const workspace = container.querySelector('.otto-module-workspace');
+      const parkIcon = container.querySelector('[data-module-icon="park-announcement"] svg');
 
       expect(workspace?.getAttribute('data-presentation')).toBe(presentation);
+      expect(parkIcon?.getAttribute('width')).toBe(presentation === 'panel' ? '26' : '28');
       fireEvent.click(screen.getByRole('button', { name: '打开 园区公告' }));
       expect(onActivate).toHaveBeenCalledWith(expect.objectContaining({ id: 'park-announcement' }));
     },
