@@ -199,7 +199,11 @@ jobs:
                  throw new Error(\"legal documents missing\");
                }
                for (const document of documents) {
-                 if (!/^[0-9a-f]{64}$/.test(document.sha256 || \"\")) {
+                 const documentHash =
+                   typeof document.sha256 === \"string\"
+                     ? document.sha256
+                     : document.hash;
+                 if (!/^[0-9a-f]{64}$/.test(documentHash || \"\")) {
                    throw new Error(\"legal document hash invalid\");
                  }
                }

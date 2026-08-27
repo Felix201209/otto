@@ -8,6 +8,10 @@ const workflow = readFileSync(
   path.join(repoRoot, '.github', 'workflows', 'release.yml'),
   'utf8',
 );
+const deployWorkflow = readFileSync(
+  path.join(repoRoot, '.github', 'workflows', 'deploy-server.yml'),
+  'utf8',
+);
 
 describe('V1.9.13 enterprise candidate source identity', () => {
   it('pins the reviewed V1.9.13 source instead of a moving development branch', () => {
@@ -94,5 +98,10 @@ describe('V1.9.13 enterprise candidate source identity', () => {
     expect(validateServerIntegrationBaseline({ rootDir: repoRoot })).toEqual(
       [],
     );
+  });
+
+  it('accepts the stable legal-document hash response contract during production verification', () => {
+    expect(deployWorkflow).toContain('typeof document.sha256 === \\"string\\"');
+    expect(deployWorkflow).toContain(': document.hash;');
   });
 });
