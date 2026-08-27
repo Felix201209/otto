@@ -4,16 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to deploy, for example 1.9.3 or v1.9.3.'
+        description: 'Only v1.9.11 is accepted by this audited hotfix branch.'
         required: true
         type: string
       dry_run:
-        description: 'Run remote dry-run only.'
+        description: 'Validate without switching the production release.'
         required: false
         type: boolean
-        default: false
-  release:
-    types: [published]
+        default: true
 
 permissions:
   contents: read
@@ -23,68 +21,34 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  RELEASES_REPO: Felix201209/otto-releases
   DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
-  DEPLOY_CONFIG_PATH: ${{ secrets.DEPLOY_CONFIG_PATH || '/etc/otto-enterprise/enterprise.env' }}
 
 jobs:
   deploy:
-    name: Sync and Upgrade Server
+    name: Hotfix Registration Legal Documents
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
 
     steps:
-      - name: Checkout source
+      - name: Checkout audited hotfix
         uses: actions/checkout@v4
 
-      - name: Resolve version
-        id: version
+      - name: Validate request and deployment secrets
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "release" ]; then
-            TAG="${{ github.event.release.tag_name }}"
-          else
-            TAG="${{ inputs.version }}"
-          fi
-          TAG="${TAG#v}"
-          echo "version=$TAG" >> "$GITHUB_OUTPUT"
-          echo "tag=v$TAG" >> "$GITHUB_OUTPUT"
-
-      - name: Validate deployment secrets
-        shell: bash
-        run: |
-          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          VERSION="${VERSION#v}"
+          test "$VERSION" = '1.9.11'
+          test "${{ github.ref_name }}" = 'hotfix/registration-legal-docs-20260827'
           test -n "${{ secrets.DEPLOY_HOST }}"
           test -n "${{ secrets.DEPLOY_USER }}"
           test -n "${{ secrets.DEPLOY_SSH_KEY }}"
           test -n "${{ secrets.DEPLOY_KNOWN_HOSTS }}"
-          test -n "${{ secrets.OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY }}"
+          test -n "${{ secrets.DEPLOY_SUDO_PASSWORD }}"
+          bash -n scripts/production-registration-legal-hotfix.sh
 
-      - name: Download enterprise release asset
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p release-download
-          gh release download "${{ steps.version.outputs.tag }}" \
-            --repo "${RELEASES_REPO}" \
-            --pattern "otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz" \
-            --pattern "otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz.sha256" \
-            --pattern "otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz.sig" \
-            --dir release-download
-          cd release-download
-          sha256sum -c ./*.sha256
-          ARCHIVE="$(find . -type f -name 'otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz' -print -quit)"
-          SIGNATURE="${ARCHIVE}.sig"
-          test -n "$ARCHIVE"
-          test -f "$SIGNATURE"
-          OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY="${{ secrets.OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY }}" \
-            node ../scripts/verify-enterprise-package-signature.mjs "$ARCHIVE" "$SIGNATURE"
-          ls -lh
-
-      - name: Configure SSH
+      - name: Configure pinned SSH host and key
         shell: bash
         run: |
           set -euo pipefail
@@ -95,40 +59,37 @@ jobs:
           printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
-      - name: Upload enterprise package
+      - name: Upload hotfix script
         shell: bash
         run: |
           set -euo pipefail
-          REMOTE_DIR="/var/tmp/otto-enterprise-github/${{ steps.version.outputs.tag }}-${GITHUB_RUN_ID}"
+          REMOTE_DIR="/var/tmp/otto-registration-legal-hotfix-${GITHUB_RUN_ID}"
           echo "REMOTE_DIR=$REMOTE_DIR" >> "$GITHUB_ENV"
           ssh -i ~/.ssh/id_deploy -p "${DEPLOY_PORT}" \
             "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
             "mkdir -p '$REMOTE_DIR'"
-          scp -i ~/.ssh/id_deploy -P "${DEPLOY_PORT}" release-download/* \
+          scp -i ~/.ssh/id_deploy -P "${DEPLOY_PORT}" \
+            scripts/production-registration-legal-hotfix.sh \
             "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:$REMOTE_DIR/"
 
-      - name: Install or upgrade on server
+      - name: Validate or apply hotfix
         shell: bash
         env:
-          DRY_RUN_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+          DEPLOY_SUDO_PASSWORD: ${{ secrets.DEPLOY_SUDO_PASSWORD }}
+          DRY_RUN_INPUT: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
-          DRY_RUN_FLAG=""
-          if [ "$DRY_RUN_INPUT" = "true" ]; then
-            DRY_RUN_FLAG="--dry-run"
-          fi
+          MODE=apply
+          if [ "$DRY_RUN_INPUT" = true ]; then MODE=dry-run; fi
+          printf '%s\n' "$DEPLOY_SUDO_PASSWORD" | \
+            ssh -i ~/.ssh/id_deploy -p "${DEPLOY_PORT}" \
+              "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+              "sudo -S -p '' bash '$REMOTE_DIR/production-registration-legal-hotfix.sh' '$GITHUB_RUN_ID' '$MODE'"
+
+      - name: Clean remote staging directory
+        if: always()
+        shell: bash
+        run: |
           ssh -i ~/.ssh/id_deploy -p "${DEPLOY_PORT}" \
             "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
-            "set -euo pipefail
-             cd '$REMOTE_DIR'
-             sha256sum -c ./*.sha256
-             ARCHIVE=\$(ls otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz | head -n 1)
-             rm -rf unpack
-             mkdir unpack
-             tar -xzf \"\$ARCHIVE\" -C unpack
-             PKG_DIR=\$(find unpack -mindepth 1 -maxdepth 1 -type d | head -n 1)
-             if [ -L /opt/otto-enterprise/current ]; then
-               sudo \"\$PKG_DIR/upgrade.sh\" --config '${DEPLOY_CONFIG_PATH}' $DRY_RUN_FLAG
-             else
-               sudo \"\$PKG_DIR/install.sh\" --config '${DEPLOY_CONFIG_PATH}' $DRY_RUN_FLAG
-             fi"
+            "rm -rf '$REMOTE_DIR'"
