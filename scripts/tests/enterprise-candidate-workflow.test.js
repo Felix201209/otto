@@ -12,7 +12,7 @@ const workflow = readFileSync(
 describe('V1.9.13 enterprise candidate source identity', () => {
   it('pins the reviewed V1.9.13 source instead of a moving development branch', () => {
     expect(workflow).toContain(
-      'REVIEWED_RELEASE_SOURCE: d54a7d8cf944c6ad36cd57a5fc18140244175116',
+      'REVIEWED_RELEASE_SOURCE: 3e959b09370bbb8ec02944d291c6c8040a106b06',
     );
     expect(workflow).not.toContain('origin/internal');
     expect(workflow).toContain(
@@ -40,7 +40,7 @@ describe('V1.9.13 enterprise candidate source identity', () => {
       'sha256sum scripts/enterprise-runtime-dependencies.mjs',
     );
     expect(workflow).toContain(
-      'ENTERPRISE_UPGRADER_SHA256: d27b62b5e865003c0d59506d39bf1ba9201b7c64fa97ebf8fab58ff95a3cbb7b',
+      'ENTERPRISE_UPGRADER_SHA256: 7eacbdf922c536679f7b84e3feca7f2c8303e961c14ac44ad3852299bd96e604',
     );
     expect(workflow).toContain(
       'ENTERPRISE_RELEASE_VERIFIER_SHA256: 514c385c6b492a2e974f49e31b09ec2fd9c8fb7996f91431744cf3a9be7560dc',
@@ -50,6 +50,12 @@ describe('V1.9.13 enterprise candidate source identity', () => {
     );
     expect(workflow).toContain(
       'sha256sum deployment/enterprise-oneclick/tools/verify-release.mjs',
+    );
+    expect(workflow).toContain(
+      "':(exclude)deployment/enterprise-oneclick/runtime/run.mjs'",
+    );
+    expect(workflow).toContain(
+      'deployment/enterprise-oneclick/runtime/run.mjs |',
     );
     expect(workflow).toContain(
       'SQLCIPHER_NATIVE_WORKFLOW_SHA256: e51190ac18eed1f40d8f43da606eda688cd5d85fcdd4e2bc25ef58b272bf7eaa',
