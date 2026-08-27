@@ -24,8 +24,10 @@ env:
   ELECTRON_VERSION: '43.2.0'
   SQLCIPHER_SOURCE_REVISION: e2a6040f2ae5cfff2b3e08eb3320007d93cdf3fc
   REVIEWED_RELEASE_SOURCE: 82b5e0c101a44358efbb900b0c2be62455c2412b
-  ENTERPRISE_PACKAGE_BUILDER_SHA256: 4f9ccab292a015879e9e9a65f587d7a54f3ca537de5cd58ad8bcc4a14b7f0e0c
+  ENTERPRISE_PACKAGE_BUILDER_SHA256: c52158ef3025b0bd6d6cdd1dab429111d0c781411f1448647c74238d19f0515c
   ENTERPRISE_RUNTIME_DEPS_SHA256: 6218482a35cc049147020b0d7ef3933fac9a147c44aab0905b26629573d64569
+  ENTERPRISE_UPGRADER_SHA256: 561432a5504a3bc506ea94b9b32d468989fa4de4a50f3f0d022b9fb2e0ea0482
+  ENTERPRISE_RELEASE_VERIFIER_SHA256: 514c385c6b492a2e974f49e31b09ec2fd9c8fb7996f91431744cf3a9be7560dc
 
 jobs:
   sqlcipher-native:
@@ -69,27 +71,37 @@ jobs:
             "$ENTERPRISE_PACKAGE_BUILDER_SHA256"
           test "$(sha256sum scripts/enterprise-runtime-dependencies.mjs | awk '{print $1}')" = \
             "$ENTERPRISE_RUNTIME_DEPS_SHA256"
+          test "$(sha256sum deployment/enterprise-oneclick/upgrade.sh | awk '{print $1}')" = \
+            "$ENTERPRISE_UPGRADER_SHA256"
+          test "$(sha256sum deployment/enterprise-oneclick/tools/verify-release.mjs | awk '{print $1}')" = \
+            "$ENTERPRISE_RELEASE_VERIFIER_SHA256"
           git diff --quiet "$REVIEWED_RELEASE_SOURCE" "$GITHUB_SHA" -- \
             package.json package-lock.json tsconfig.json \
             packages/server \
             packages/core/package.json \
             packages/core/tsconfig.json \
             packages/core/src/services/aliyunSmsSender.ts \
-            deployment/enterprise-oneclick \
             native/sqlcipher-node \
             scripts/build_package.js \
             scripts/copy_files.js \
             scripts/verify-enterprise-package-signature.mjs \
             scripts/verify-sqlcipher-native-assets.mjs
+          git diff --quiet "$REVIEWED_RELEASE_SOURCE" "$GITHUB_SHA" -- \
+            deployment/enterprise-oneclick \
+            ':(exclude)deployment/enterprise-oneclick/upgrade.sh' \
+            ':(exclude)deployment/enterprise-oneclick/tools/verify-release.mjs'
           while IFS= read -r changed; do
             case "$changed" in
               .github/workflows/release.yml | \
               .github/workflows/deploy-server.yml | \
               scripts/build-enterprise-oneclick.mjs | \
               scripts/enterprise-runtime-dependencies.mjs | \
+              deployment/enterprise-oneclick/upgrade.sh | \
+              deployment/enterprise-oneclick/tools/verify-release.mjs | \
               scripts/sign-enterprise-package.mjs | \
               scripts/validate-server-integration-baseline.mjs | \
               scripts/tests/sign-enterprise-package.test.js | \
+              scripts/tests/enterprise-oneclick-installer.test.js | \
               scripts/tests/enterprise-deploy-workflow.test.js | \
               scripts/tests/enterprise-candidate-workflow.test.js | \
               scripts/tests/enterprise-runtime-dependencies.test.js) ;;
@@ -104,7 +116,7 @@ jobs:
           npm install --global "npm@${NPM_VERSION}" --ignore-scripts
           test "$(npm --version)" = "$NPM_VERSION"
 
-      - name: Install locked dependencies
+      - name: Install dependencies
         run: npm ci
         env:
           PYTHON: python3.12
@@ -152,7 +164,7 @@ jobs:
           gh attestation verify native/sqlcipher-node/matrix-manifest.json \
             --repo "$GITHUB_REPOSITORY"
 
-      - name: Repository and server quality gates
+      - name: Release quality gates
         shell: bash
         run: |
           set -euo pipefail
@@ -164,6 +176,11 @@ jobs:
           npm run build --workspace=packages/core
           npm run typecheck --workspace=packages/server
           npm test --workspace=packages/server
+
+      - name: Focused regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
           npm run test:scripts -- --run \
             scripts/tests/enterprise-oneclick-installer.test.js \
             scripts/tests/sqlcipher-native-assets.test.js \

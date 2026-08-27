@@ -180,9 +180,7 @@ describe('enterprise one-click service layout', () => {
     );
     const commitMarker = installer.indexOf('rm -f "$TRANSACTION_MARKER"');
 
-    expect(installer).toContain(
-      'BOOTSTRAP_SECRET_DIR="${DATA_DIR}/bootstrap"',
-    );
+    expect(installer).toContain('BOOTSTRAP_SECRET_DIR="${DATA_DIR}/bootstrap"');
     expect(installer).toContain(
       'BOOTSTRAP_SECRET_TARGET="${BOOTSTRAP_SECRET_DIR}/deployment-enrollment.secret"',
     );
@@ -443,6 +441,9 @@ describe('enterprise one-click schema contract', () => {
     );
     expect(bundle).toContain('schemaFrom: supportedSchemaFrom');
     expect(bundle).toContain('schemaTo: schemaVersion');
+    expect(bundle).toContain(
+      '${buildCommit.slice(0, 12)}-${sourceInputSha256.slice(0, 12)}',
+    );
     expect(bundle).toContain("filesBelow(path.join(serverDist, 'src'))");
     expect(bundle).toContain(".filter((relative) => relative.endsWith('.js'))");
     expect(databaseTool).toContain('function expectedSchemaVersion()');
@@ -468,6 +469,7 @@ describe('enterprise one-click schema contract', () => {
     expect(verifyRelease).toContain("options.delete('--allow-legacy-lstc')");
     expect(verifyRelease).toContain("? ['stable', 'transition', 'lstc']");
     expect(upgrader).toContain('"$CURRENT_REAL" --allow-legacy-lstc');
+    expect(upgrader).toContain('--allow-registration-legal-hotfix');
     expect(installer).toContain('RELEASE_SCHEMA_TO=');
     expect(installer).toContain('"$IMPORT_SCHEMA" -le "$RELEASE_SCHEMA_TO"');
     expect(exporter).toContain('SCHEMA_TO=');
@@ -691,6 +693,85 @@ describe('enterprise one-click schema contract', () => {
       });
       expect(unmarked.status).toBe(3);
       expect(unmarked.stderr).toContain('manifest.json 格式不正确');
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts only the audited V1.9.11 registration legal hotfix delta', () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), 'otto-oneclick-hotfix-'));
+    try {
+      const authDirectory = path.join(sandbox, 'src', 'enterprise');
+      mkdirSync(authDirectory, { recursive: true });
+      const packageText = `${JSON.stringify({ type: 'module', version: '1.9.11' })}\n`;
+      const importMarker = "import * as db from './db.js';\n";
+      const responseMarker =
+        '            organization: invite ? { id: organization.id, name: organization.name } : null,\n';
+      const legalImport =
+        "import { CURRENT_LEGAL_DOCUMENTS, legalDocumentHash } from '../modules/data_governance/legalDocuments.js';\n";
+      const legalResponse =
+        '            legalDocuments: CURRENT_LEGAL_DOCUMENTS.map((document) => ({ id: document.id, version: document.version, hash: legalDocumentHash(document) })),\n';
+      const originalAuth = `${importMarker}const invite = null;\nconst organization = { id: 'o', name: 'Otto' };\nconst result = {\n${responseMarker}};\n`;
+      const patchedAuth = originalAuth
+        .replace(importMarker, importMarker + legalImport)
+        .replace(responseMarker, responseMarker + legalResponse);
+      const authPath = path.join(authDirectory, 'authRoutes.js');
+      writeFileSync(path.join(sandbox, 'package.json'), packageText);
+      writeFileSync(authPath, patchedAuth);
+      writeFileSync(
+        path.join(sandbox, 'HOTFIX-INFO'),
+        'registration legal documents response; GitHub Actions run 33029322305\n',
+      );
+      writeFileSync(
+        path.join(sandbox, 'HOTFIX-PREVIOUS-RELEASE'),
+        '/opt/otto-enterprise/releases/1.9.11-reviewed\n',
+      );
+      const hash = (value) => createHash('sha256').update(value).digest('hex');
+      const manifest = {
+        format: 'otto-enterprise-release-v1',
+        version: '1.9.11',
+        releaseChannel: 'stable',
+        buildCommit: '0'.repeat(40),
+        sourceCommit: '1'.repeat(40),
+        database: {
+          schemaFrom: SUPPORTED_SCHEMA_VERSIONS,
+          schemaTo: ENTERPRISE_SCHEMA_VERSION,
+          futureSchemaPolicy: 'reject',
+          encryption: 'sqlcipher-required',
+          nativeRuntime: 'node',
+          nativeRuntimeVersion: '22.23.1',
+          nativeTargets: ['linux-x64', 'linux-arm64'],
+        },
+        files: {
+          'package.json': hash(packageText),
+          'src/enterprise/authRoutes.js': hash(originalAuth),
+        },
+      };
+      writeFileSync(
+        path.join(sandbox, 'manifest.json'),
+        `${JSON.stringify(manifest)}\n`,
+      );
+
+      const strict = spawnSync(process.execPath, [VERIFY_RELEASE, sandbox], {
+        encoding: 'utf8',
+      });
+      expect(strict.status).toBe(3);
+
+      const audited = spawnSync(
+        process.execPath,
+        [VERIFY_RELEASE, sandbox, '--allow-registration-legal-hotfix'],
+        { encoding: 'utf8' },
+      );
+      expect(audited.status, audited.stderr).toBe(0);
+
+      writeFileSync(authPath, `${patchedAuth}// unrelated mutation\n`);
+      const mutated = spawnSync(
+        process.execPath,
+        [VERIFY_RELEASE, sandbox, '--allow-registration-legal-hotfix'],
+        { encoding: 'utf8' },
+      );
+      expect(mutated.status).toBe(3);
+      expect(mutated.stderr).toContain('基线 SHA-256 不匹配');
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }

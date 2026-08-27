@@ -303,12 +303,10 @@ const sourceInputFiles = [
     path.join('native/sqlcipher-node', relative),
   ),
   ...filesBelow(sourceDir)
-    .filter((relative) =>
-      !isEnrollmentSecretArtifact(path.join(sourceDir, relative)),
+    .filter(
+      (relative) => !isEnrollmentSecretArtifact(path.join(sourceDir, relative)),
     )
-    .map((relative) =>
-      path.join('deployment/enterprise-oneclick', relative),
-    ),
+    .map((relative) => path.join('deployment/enterprise-oneclick', relative)),
 ].sort();
 const sourceInputHashes = Object.fromEntries(
   sourceInputFiles.map((relative) => [
@@ -622,7 +620,7 @@ export class FeatureFlagManager {
     releaseRoot,
   ]);
 
-  const finalPackageName = `${packageNameBase}-${buildCommit.slice(0, 12)}`;
+  const finalPackageName = `${packageNameBase}-${buildCommit.slice(0, 12)}-${sourceInputSha256.slice(0, 12)}`;
   const finalPackageRoot = path.join(temporaryRoot, finalPackageName);
   cpSync(packageRoot, finalPackageRoot, { recursive: true });
   rmSync(packageRoot, { recursive: true, force: true });

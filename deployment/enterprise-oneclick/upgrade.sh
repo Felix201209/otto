@@ -89,7 +89,8 @@ SQLCIPHER_RELEASE_BINDING="${SCRIPT_DIR}/release/native/sqlcipher/linux-${RUNTIM
   || otto_die "升级包缺少当前架构的 SQLCipher Node.js 原生产物：linux-${RUNTIME_ARCH}" 3
 
 CURRENT_INFO="$("$NODE_PATH" "${SCRIPT_DIR}/tools/verify-release.mjs" \
-  "$CURRENT_REAL" --allow-legacy-lstc --allow-legacy-sqlite)"
+  "$CURRENT_REAL" --allow-legacy-lstc --allow-legacy-sqlite \
+  --allow-registration-legal-hotfix)"
 CURRENT_VERSION="$("$NODE_PATH" -e "const x=JSON.parse(process.argv[1]);console.log(x.version)" "$CURRENT_INFO")"
 CURRENT_BUILD="$("$NODE_PATH" -e "const x=JSON.parse(process.argv[1]);console.log(x.buildCommit)" "$CURRENT_INFO")"
 if [ "$CURRENT_BUILD" = "$BUILD_ID" ]; then

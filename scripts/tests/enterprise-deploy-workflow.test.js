@@ -40,5 +40,12 @@ describe('enterprise production deployment workflow', () => {
 
   it('accepts only the reviewed V1.9.13 package in this deployment branch', () => {
     expect(workflow).toContain('test "$TAG" = \'1.9.13\'');
+    expect(workflow).toContain('package_identity:');
+    expect(workflow).toContain(
+      '[[ "$PACKAGE_ID" =~ ^[0-9a-f]{12}-[0-9a-f]{12}$ ]]',
+    );
+    expect(workflow).toContain(
+      '${{ steps.version.outputs.package_id }}.tar.gz',
+    );
   });
 });

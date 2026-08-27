@@ -7,6 +7,10 @@ on:
         description: 'Version to deploy, for example 1.9.3 or v1.9.3.'
         required: true
         type: string
+      package_identity:
+        description: 'Exact signed package identity: release-content-source-input.'
+        required: true
+        type: string
       dry_run:
         description: 'Run remote dry-run only.'
         required: false
@@ -47,8 +51,11 @@ jobs:
           TAG="${{ inputs.version }}"
           TAG="${TAG#v}"
           test "$TAG" = '1.9.13'
+          PACKAGE_ID='${{ inputs.package_identity }}'
+          [[ "$PACKAGE_ID" =~ ^[0-9a-f]{12}-[0-9a-f]{12}$ ]]
           echo "version=$TAG" >> "$GITHUB_OUTPUT"
           echo "tag=v$TAG" >> "$GITHUB_OUTPUT"
+          echo "package_id=$PACKAGE_ID" >> "$GITHUB_OUTPUT"
 
       - name: Fail closed unless production apply is explicit
         shell: bash
@@ -83,9 +90,9 @@ jobs:
           mkdir -p release-download
           gh release download "${{ steps.version.outputs.tag }}" \
             --repo "${RELEASES_REPO}" \
-            --pattern "otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz" \
-            --pattern "otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz.sha256" \
-            --pattern "otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz.sig" \
+            --pattern "otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.package_id }}.tar.gz" \
+            --pattern "otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.package_id }}.tar.gz.sha256" \
+            --pattern "otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.package_id }}.tar.gz.sig" \
             --dir release-download
           cd release-download
           sha256sum -c ./*.sha256
@@ -136,7 +143,8 @@ jobs:
             "set -euo pipefail
              cd '$REMOTE_DIR'
              sha256sum -c ./*.sha256
-             ARCHIVE=\$(ls otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz | head -n 1)
+             ARCHIVE='otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.package_id }}.tar.gz'
+             test -f \"\$ARCHIVE\"
              rm -rf unpack
              mkdir unpack
              tar -xzf \"\$ARCHIVE\" -C unpack

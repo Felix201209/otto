@@ -28,7 +28,7 @@ describe('V1.9.13 enterprise candidate source identity', () => {
     expect(workflow).toContain('deployment/enterprise-oneclick');
     expect(workflow).toContain('scripts/build-enterprise-oneclick.mjs');
     expect(workflow).toContain(
-      'ENTERPRISE_PACKAGE_BUILDER_SHA256: 4f9ccab292a015879e9e9a65f587d7a54f3ca537de5cd58ad8bcc4a14b7f0e0c',
+      'ENTERPRISE_PACKAGE_BUILDER_SHA256: c52158ef3025b0bd6d6cdd1dab429111d0c781411f1448647c74238d19f0515c',
     );
     expect(workflow).toContain(
       'ENTERPRISE_RUNTIME_DEPS_SHA256: 6218482a35cc049147020b0d7ef3933fac9a147c44aab0905b26629573d64569',
@@ -38,6 +38,18 @@ describe('V1.9.13 enterprise candidate source identity', () => {
     );
     expect(workflow).toContain(
       'sha256sum scripts/enterprise-runtime-dependencies.mjs',
+    );
+    expect(workflow).toContain(
+      'ENTERPRISE_UPGRADER_SHA256: 561432a5504a3bc506ea94b9b32d468989fa4de4a50f3f0d022b9fb2e0ea0482',
+    );
+    expect(workflow).toContain(
+      'ENTERPRISE_RELEASE_VERIFIER_SHA256: 514c385c6b492a2e974f49e31b09ec2fd9c8fb7996f91431744cf3a9be7560dc',
+    );
+    expect(workflow).toContain(
+      'sha256sum deployment/enterprise-oneclick/upgrade.sh',
+    );
+    expect(workflow).toContain(
+      'sha256sum deployment/enterprise-oneclick/tools/verify-release.mjs',
     );
     expect(workflow).toContain(
       'unexpected change beyond reviewed V1.9.13 source',

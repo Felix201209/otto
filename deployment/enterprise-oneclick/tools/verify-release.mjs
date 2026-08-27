@@ -32,6 +32,9 @@ async function filesBelow(root, current = root) {
 const options = new Set(process.argv.slice(3));
 const allowLegacyLstc = options.delete('--allow-legacy-lstc');
 const allowLegacySqlite = options.delete('--allow-legacy-sqlite');
+const allowRegistrationLegalHotfix = options.delete(
+  '--allow-registration-legal-hotfix',
+);
 if (options.size > 0) fail(`unsupported option: ${[...options].join(', ')}`);
 const allowedReleaseChannels = allowLegacyLstc
   ? ['stable', 'transition', 'lstc']
@@ -39,6 +42,18 @@ const allowedReleaseChannels = allowLegacyLstc
 
 const root = path.resolve(process.argv[2] || '');
 if (!process.argv[2]) fail('用法：verify-release.mjs <release-dir>');
+
+const registrationLegalHotfixFiles = ['HOTFIX-INFO', 'HOTFIX-PREVIOUS-RELEASE'];
+const registrationLegalHotfixTarget = 'src/enterprise/authRoutes.js';
+const registrationLegalImport =
+  "import { CURRENT_LEGAL_DOCUMENTS, legalDocumentHash } from '../modules/data_governance/legalDocuments.js';\n";
+const registrationLegalResponse =
+  '            legalDocuments: CURRENT_LEGAL_DOCUMENTS.map((document) => ({ id: document.id, version: document.version, hash: legalDocumentHash(document) })),\n';
+
+function occurrences(source, marker) {
+  return source.split(marker).length - 1;
+}
+
 let manifest;
 try {
   manifest = JSON.parse(
@@ -100,14 +115,60 @@ const actualFiles = (await filesBelow(root)).filter(
   (file) => file !== 'manifest.json',
 );
 const expectedFiles = Object.keys(manifest.files).sort();
-if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles)) {
+const comparableActualFiles = allowRegistrationLegalHotfix
+  ? actualFiles.filter((file) => !registrationLegalHotfixFiles.includes(file))
+  : actualFiles;
+if (JSON.stringify(comparableActualFiles) !== JSON.stringify(expectedFiles)) {
   fail(
     `release 文件集合不一致\n期望：${expectedFiles.join(', ')}\n实际：${actualFiles.join(', ')}`,
   );
 }
+if (allowRegistrationLegalHotfix) {
+  if (
+    manifest.version !== '1.9.11' ||
+    !registrationLegalHotfixFiles.every((file) => actualFiles.includes(file))
+  ) {
+    fail('registration legal hotfix 标记与 V1.9.11 不匹配');
+  }
+  const hotfixInfo = await readFile(path.join(root, 'HOTFIX-INFO'), 'utf8');
+  const previousRelease = await readFile(
+    path.join(root, 'HOTFIX-PREVIOUS-RELEASE'),
+    'utf8',
+  );
+  if (
+    !/^registration legal documents response; GitHub Actions run [1-9][0-9]*\n$/.test(
+      hotfixInfo,
+    ) ||
+    !/^\/opt\/otto-enterprise\/releases\/[A-Za-z0-9][A-Za-z0-9._-]*\n$/.test(
+      previousRelease,
+    )
+  ) {
+    fail('registration legal hotfix 审计标记无效');
+  }
+}
 for (const relative of expectedFiles) {
   const expected = manifest.files[relative];
   if (!/^[0-9a-f]{64}$/.test(expected)) fail(`manifest hash 非法：${relative}`);
+  if (
+    allowRegistrationLegalHotfix &&
+    relative === registrationLegalHotfixTarget
+  ) {
+    const patched = await readFile(path.join(root, relative), 'utf8');
+    if (
+      occurrences(patched, registrationLegalImport) !== 1 ||
+      occurrences(patched, registrationLegalResponse) !== 1
+    ) {
+      fail('registration legal hotfix 代码标记无效');
+    }
+    const normalized = patched
+      .replace(registrationLegalImport, '')
+      .replace(registrationLegalResponse, '');
+    const actual = createHash('sha256').update(normalized).digest('hex');
+    if (actual !== expected) {
+      fail(`registration legal hotfix 基线 SHA-256 不匹配：${relative}`);
+    }
+    continue;
+  }
   const actual = await sha256(path.join(root, relative));
   if (actual !== expected) fail(`SHA-256 不匹配：${relative}`);
 }
