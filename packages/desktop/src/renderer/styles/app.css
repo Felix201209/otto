@@ -2887,6 +2887,15 @@ h6.otto-prose__h {
   animation: otto-menu-in 140ms var(--otto-ease);
   transform-origin: bottom left;
 }
+.otto-modelmenu-portal {
+  position: fixed;
+  z-index: 1100;
+}
+.otto-modelmenu-portal > .otto-modelmenu {
+  position: static;
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+}
 @keyframes otto-menu-in {
   from {
     opacity: 0;
@@ -9730,8 +9739,12 @@ h6.otto-prose__h {
 }
 
 .otto-account-workspace__tabs button.is-active {
-  background: var(--otto-sidebar-nav-selected);
+  background: color-mix(in srgb, var(--otto-text) 10%, var(--otto-sidebar-bg));
   color: var(--otto-text);
+}
+
+.otto-account-workspace__tabs button.is-active:hover {
+  background: color-mix(in srgb, var(--otto-text) 12%, var(--otto-sidebar-bg));
 }
 
 .otto-account-workspace__tabs button:focus-visible {
@@ -9808,9 +9821,9 @@ h6.otto-prose__h {
 
 .otto-account-hero {
   display: block;
-  margin: 0 4px 22px;
-  padding: 0 2px 18px;
-  border-bottom: 1px solid var(--otto-border);
+  margin: 0 4px 14px;
+  padding: 0 2px;
+  border-bottom: 0;
 }
 
 .otto-account-page__back {
@@ -12549,23 +12562,28 @@ h6.otto-prose__h {
   font-size: 12px;
 }
 .otto-custom-agent-icon-picker__panel {
-  width: 100%;
+  width: min(100%, 640px);
   box-sizing: border-box;
-  margin-top: 8px;
-  padding: 10px;
+  margin-top: 6px;
+  padding: 8px;
   border: 1px solid var(--otto-border);
   border-radius: 12px;
   background: var(--otto-surface);
   box-shadow: 0 12px 32px rgba(15, 23, 42, 0.1);
 }
+.otto-custom-agent-icon-picker__header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 7px;
+  border-bottom: 1px solid var(--otto-border);
+}
 .otto-custom-agent-icon-picker__tabs {
   display: flex;
   gap: 4px;
-  margin-bottom: 10px;
-  border-bottom: 1px solid var(--otto-border);
 }
 .otto-custom-agent-icon-picker__tabs > button {
-  min-height: 34px;
+  min-height: 30px;
   border: 0;
   border-radius: 7px 7px 0 0;
   background: transparent;
@@ -12576,18 +12594,39 @@ h6.otto-prose__h {
   color: var(--otto-text);
   font-weight: 600;
 }
+.otto-custom-agent-icon-picker__close {
+  width: 30px;
+  height: 30px;
+  margin-bottom: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: var(--otto-text-secondary);
+  cursor: pointer;
+}
+.otto-custom-agent-icon-picker__close:hover {
+  background: var(--otto-surface-hover);
+  color: var(--otto-text);
+}
+.otto-custom-agent-icon-picker__close:focus-visible {
+  outline: none;
+  box-shadow: var(--otto-shadow-focus);
+}
 .otto-custom-agent-icon-picker__grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 7px;
+  gap: 4px;
 }
 .otto-custom-agent-icon-picker__grid > button {
   display: grid;
   min-width: 0;
-  min-height: 62px;
+  min-height: 54px;
   place-items: center;
   gap: 3px;
-  padding: 6px 4px;
+  padding: 4px 3px;
   border-color: transparent;
   background: transparent;
 }

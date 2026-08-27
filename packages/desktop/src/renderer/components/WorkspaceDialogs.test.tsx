@@ -211,6 +211,29 @@ describe('WorkspaceDialogs', () => {
     expect(screen.getByLabelText('选择本地图片')).toBeTruthy();
   });
 
+  it('图标选择面板可以明确关闭，且不会修改当前图标', () => {
+    const onUpdateIcon = vi.fn();
+    render(<CustomAgentManagerDialog
+      open
+      agents={[{
+        id: 'custom-bid',
+        name: '招投标助手',
+        instructions: '整理投标材料。',
+        createdAt: '2026-08-27T00:00:00.000Z',
+      }]}
+      onCreate={vi.fn()}
+      onDelete={vi.fn()}
+      onUpdateIcon={onUpdateIcon}
+      onClose={vi.fn()}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: '更换招投标助手的图标' }));
+    fireEvent.click(screen.getByRole('button', { name: '关闭图标选择器' }));
+
+    expect(screen.queryByRole('region', { name: '模块图标选择器' })).toBeNull();
+    expect(onUpdateIcon).not.toHaveBeenCalled();
+  });
+
   it('更换图标保存失败时保留选择器并显示错误', async () => {
     render(<CustomAgentManagerDialog
       open

@@ -19,6 +19,7 @@
  */
 
 import React, { useCallback, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { ModelInfo } from 'otto-server';
 import * as transport from '../transport.js';
 import type { Attachment } from '../state/useOttoStore.js';
@@ -351,6 +352,7 @@ export function Composer({
   const [dragOver, setDragOver] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const composerRef = useRef<HTMLDivElement>(null);
+  const modelTriggerRef = useRef<HTMLButtonElement>(null);
   const [recording, setRecording] = useState(false);
   const [, setVoiceProcessing] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
@@ -1422,6 +1424,7 @@ export function Composer({
 
           <div className="otto-model-anchor otto-popover-anchor">
             <button
+              ref={modelTriggerRef}
               type="button"
               className="otto-modelpill"
               onClick={() => setOpenPopover((value) => value === 'model' ? null : 'model')}
@@ -1434,7 +1437,8 @@ export function Composer({
               <IconChevronDown size={14} className="otto-modelpill__chev" />
             </button>
             {openPopover === 'model' && !disabled ? (
-              <ModelMenu
+              <ModelMenuPopover
+                anchorRef={modelTriggerRef}
                 models={models}
                 current={currentModel}
                 onPick={(id) => {
@@ -1533,6 +1537,75 @@ function AuthorizationModeIcon({
   if (kind === 'manual') return <IconHand size={size} />;
   if (kind === 'session') return <IconShieldEllipsis size={size} />;
   return <IconShieldCheck size={size} />;
+}
+
+function ModelMenuPopover({
+  anchorRef,
+  models,
+  current,
+  onPick,
+  onManage,
+}: {
+  anchorRef: React.RefObject<HTMLButtonElement | null>;
+  models: ModelInfo[];
+  current: string | null;
+  onPick: (id: string) => void;
+  onManage?: () => void;
+}): React.JSX.Element {
+  const portalRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<React.CSSProperties>({
+    left: 0,
+    top: 0,
+    visibility: 'hidden',
+  });
+
+  const updatePosition = useCallback(() => {
+    const anchor = anchorRef.current;
+    const portal = portalRef.current;
+    if (!anchor || !portal) return;
+
+    const anchorRect = anchor.getBoundingClientRect();
+    const menuRect = portal.getBoundingClientRect();
+    const viewportPadding = 8;
+    const gap = 6;
+    const left = Math.min(
+      Math.max(viewportPadding, anchorRect.left),
+      Math.max(viewportPadding, window.innerWidth - menuRect.width - viewportPadding),
+    );
+    const above = anchorRect.top - menuRect.height - gap;
+    const below = anchorRect.bottom + gap;
+    const top = above >= viewportPadding
+      ? above
+      : Math.min(below, Math.max(viewportPadding, window.innerHeight - menuRect.height - viewportPadding));
+
+    setPosition({ left, top, visibility: 'visible' });
+  }, [anchorRef]);
+
+  React.useLayoutEffect(() => {
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    const observer = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(updatePosition);
+    if (portalRef.current) observer?.observe(portalRef.current);
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+      observer?.disconnect();
+    };
+  }, [updatePosition]);
+
+  return createPortal(
+    <div
+      ref={portalRef}
+      className="otto-modelmenu-portal otto-popover-anchor"
+      style={position}
+    >
+      <ModelMenu models={models} current={current} onPick={onPick} onManage={onManage} />
+    </div>,
+    document.body,
+  );
 }
 
 function ModelMenu({

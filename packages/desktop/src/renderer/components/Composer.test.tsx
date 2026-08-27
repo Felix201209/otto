@@ -95,6 +95,28 @@ describe('输入区工具布局与弹层', () => {
     expect(screen.queryByRole('listbox', { name: '选择模型' })).toBeNull();
   });
 
+  it('模型列表通过全局浮层渲染，不受输入面板层级限制', () => {
+    const { container } = render(
+      <Composer
+        models={makeModels(2)}
+        currentModel="m0"
+        sessionId="s1"
+        workspacePath="/Users/yang/project"
+        onSend={vi.fn()}
+        onSetModel={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(container.querySelector('.otto-modelpill') as Element);
+    const menu = screen.getByRole('listbox', { name: '选择模型' });
+    const portal = menu.parentElement;
+
+    expect(menu.closest('.otto-composer__inner')).toBeNull();
+    expect(portal?.classList.contains('otto-modelmenu-portal')).toBe(true);
+    expect(portal?.classList.contains('otto-popover-anchor')).toBe(true);
+    expect(portal?.parentElement).toBe(document.body);
+  });
+
   it('回形针菜单同时保留添加文件与目录附件能力', () => {
     render(
       <Composer models={[]} currentModel={null} sessionId="s1" onSend={vi.fn()} onSetModel={vi.fn()} />,

@@ -11,6 +11,7 @@ import {
   type CustomAgentIcon,
 } from '../customAgentIcons.js';
 import { GeneratedIcon } from './GeneratedIcon.js';
+import { IconClose } from './icons.js';
 import { ModuleIcon } from './ModuleIcon.js';
 
 export function CustomAgentIconPicker({
@@ -63,22 +64,32 @@ export function CustomAgentIconPicker({
       </button>
       {open ? (
         <section className="otto-custom-agent-icon-picker__panel" aria-label="模块图标选择器">
-          <div className="otto-custom-agent-icon-picker__tabs" role="tablist" aria-label="图标来源">
+          <div className="otto-custom-agent-icon-picker__header">
+            <div className="otto-custom-agent-icon-picker__tabs" role="tablist" aria-label="图标来源">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === 'preset'}
+                onClick={() => setTab('preset')}
+              >
+                图标库
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === 'upload'}
+                onClick={() => setTab('upload')}
+              >
+                上传图片
+              </button>
+            </div>
             <button
               type="button"
-              role="tab"
-              aria-selected={tab === 'preset'}
-              onClick={() => setTab('preset')}
+              className="otto-custom-agent-icon-picker__close"
+              aria-label="关闭图标选择器"
+              onClick={() => setOpen(false)}
             >
-              图标库
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={tab === 'upload'}
-              onClick={() => setTab('upload')}
-            >
-              上传图片
+              <IconClose size={16} />
             </button>
           </div>
           {tab === 'preset' ? (
