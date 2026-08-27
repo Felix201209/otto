@@ -10498,9 +10498,6 @@ h6.otto-prose__h {
   text-align: left;
   transition: background var(--otto-dur-fast) var(--otto-ease), color var(--otto-dur-fast) var(--otto-ease);
 }
-.otto-sidebar__navitem:first-child {
-  margin-bottom: 6px;
-}
 .otto-sidebar__navicon {
   width: 18px;
   height: 18px;

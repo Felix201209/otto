@@ -10,6 +10,8 @@
  */
 
 import type React from 'react';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { act, render, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { SessionSummary } from 'otto-server';
@@ -238,6 +240,13 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
       '企业管理',
     ]);
     expect(buttons.every((button) => button.querySelector('.otto-sidebar__navicon'))).toBe(true);
+  });
+
+  it('新建对话与其他主导航入口使用一致的纵向间距', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/renderer/styles/app.css'), 'utf8');
+    expect(css).not.toMatch(
+      /\.otto-sidebar__navitem:first-child\s*\{[^}]*margin-bottom\s*:/,
+    );
   });
 
   it('个人账号和非管理员企业账号不显示企业管理', () => {
