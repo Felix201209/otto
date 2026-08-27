@@ -268,6 +268,60 @@ describe('ParkServicesPlugin', () => {
     expect(screen.queryByLabelText('园区服务列表')).toBeNull();
   });
 
+  it.each([
+    ['announcement', '园区公告'],
+    ['satisfaction', '满意度调查'],
+    ['renovation', '装修管理'],
+    ['parking', '停车办理'],
+    ['network-phone', '网络与固话'],
+    ['meeting-room', '会议室预约'],
+    ['electric-card', '电卡服务'],
+    ['repair', '物业报修'],
+    ['vehicle-visit', '车辆与访客'],
+  ] as const)('模块目标 %s 与既有“%s”业务窗口保持连接', (target, name) => {
+    render(<ParkServicesPlugin />);
+    openDialog(target);
+
+    expect(screen.getByRole('dialog', { name })).toBeTruthy();
+  });
+
+  it('本地管理员预览在真实登录失效时仍复用园区业务窗口', async () => {
+    const enterpriseParkView = vi.fn(async () => {
+      throw new Error('登录已失效，请重新登录');
+    });
+    const enterpriseSession = vi.fn(async () => ({ serverUrl: '', account: null }));
+    const enterpriseTicketList = vi.fn(async () => []);
+    const enterpriseParkPublications = vi.fn(async () => []);
+    Object.assign(window.otto, {
+      enterpriseParkView,
+      enterpriseSession,
+      enterpriseTicketList,
+      enterpriseParkPublications,
+    });
+
+    render(<ParkServicesPlugin internalAdminPreview />);
+    openDialog('repair');
+
+    expect(screen.getByRole('dialog', { name: '物业报修' })).toBeTruthy();
+    await waitFor(() => expect(enterpriseParkView).toHaveBeenCalled());
+    expect(screen.getByRole('dialog', { name: '物业报修' })).toBeTruthy();
+  });
+
+  it('本地管理员预览的园区统计入口落到只读统计面板', () => {
+    const enterpriseParkStatistics = vi.fn(async () => {
+      throw new Error('登录已失效，请重新登录');
+    });
+    Object.assign(window.otto, { enterpriseParkStatistics });
+
+    render(<ParkServicesPlugin internalAdminPreview />);
+    openDialog('overview');
+
+    const statistics = screen.getByLabelText('产业园服务统计');
+    expect(statistics.textContent).toContain('入驻企业0');
+    expect(statistics.textContent).toContain('服务使用0');
+    expect(enterpriseParkStatistics).not.toHaveBeenCalled();
+  });
+
   it('协调桥可关闭顶层及服务窗口，同时发布开关状态', async () => {
     const states: boolean[] = [];
     const onState = (event: Event): void => {

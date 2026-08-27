@@ -1283,7 +1283,7 @@ function OttoWorkspaceApp({
         onLogout={onLogout}
         unreadSessions={state.unreadSessions}
       />
-      <ParkServicesPlugin />
+      <ParkServicesPlugin internalAdminPreview={internalAdminPreview} />
 
       {mainView === 'organization' ? (
         <OrganizationPage

@@ -1359,8 +1359,12 @@ function ParkServiceWindow({
   </div>;
 }
 
-export function ParkServicesPlugin(): React.JSX.Element {
-  const [parkEnabled, setParkEnabled] = useState(() => typeof window.otto?.enterpriseParkView !== 'function');
+export function ParkServicesPlugin({ internalAdminPreview = false }: {
+  internalAdminPreview?: boolean;
+} = {}): React.JSX.Element {
+  const [parkEnabled, setParkEnabled] = useState(() => (
+    internalAdminPreview || typeof window.otto?.enterpriseParkView !== 'function'
+  ));
   const [parkAdminOrganization, setParkAdminOrganization] = useState(false);
   const [parkStatistics, setParkStatistics] = useState<EnterpriseParkStatistics | null>(null);
   const [parkStatisticsError, setParkStatisticsError] = useState('');
@@ -1479,6 +1483,13 @@ export function ParkServicesPlugin(): React.JSX.Element {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
+      if (internalAdminPreview) {
+        setParkEnabled(true);
+        setParkAdminOrganization(true);
+        setBrand(DEFAULT_BRAND);
+        setServices(defaultServices(DEFAULT_PARK));
+        return;
+      }
       const enterpriseParkView = window.otto?.enterpriseParkView;
       if (typeof enterpriseParkView === 'function') {
         try {
@@ -1544,9 +1555,30 @@ export function ParkServicesPlugin(): React.JSX.Element {
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [internalAdminPreview]);
 
   useEffect(() => {
+    if (internalAdminPreview) {
+      setParkStatistics(open ? {
+        parkId: 'internal-admin-preview',
+        parkName: DEFAULT_PARK,
+        generatedAt: new Date().toISOString(),
+        organizationCount: 0,
+        activeOrganizationCount: 0,
+        totalServiceUses: 0,
+        totalAmountCny: 0,
+        recurringMonthlyCny: 0,
+        vehicleVisits: 0,
+        meetingRoomBookings: 0,
+        firstUsedAt: null,
+        lastUsedAt: null,
+        services: [],
+        organizations: [],
+      } : null);
+      setParkStatisticsError('');
+      setExpandedOrganizationId(null);
+      return undefined;
+    }
     if (!parkAdminOrganization) {
       setParkStatistics(null);
       setParkStatisticsError('');
@@ -1579,9 +1611,10 @@ export function ParkServicesPlugin(): React.JSX.Element {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [open, parkAdminOrganization]);
+  }, [internalAdminPreview, open, parkAdminOrganization]);
 
   useEffect(() => {
+    if (internalAdminPreview) return undefined;
     if (parkEnabled !== true) return undefined;
     if (!window.otto?.enterpriseParkPublications) return undefined;
     let cancelled = false;
@@ -1606,7 +1639,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
     void poll();
     const timer = window.setInterval(() => { void poll(); }, 5000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [parkEnabled]);
+  }, [internalAdminPreview, parkEnabled]);
 
   useEffect(() => {
     if (open && !selected && !pendingLandingTarget) firstItemRef.current?.focus();
@@ -1711,6 +1744,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
   }, [openServiceWindow, parkEnabled, services]);
 
   useEffect(() => {
+    if (internalAdminPreview) return undefined;
     if (parkEnabled !== true) return undefined;
     if (!window.otto?.enterpriseSession || !window.otto?.enterpriseTicketList) return undefined;
     let cancelled = false;
@@ -1859,7 +1893,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
     void poll();
     const timer = window.setInterval(() => { void poll(); }, 5000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [parkEnabled]);
+  }, [internalAdminPreview, parkEnabled]);
 
   const close = (): void => {
     setSelected(null);
