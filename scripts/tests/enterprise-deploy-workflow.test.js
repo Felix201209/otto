@@ -25,6 +25,18 @@ describe('enterprise production deployment workflow', () => {
     expect(upgrade).toBeGreaterThan(backup);
   });
 
+  it('passes the existing sudo secret over stdin without putting it in the remote command', () => {
+    expect(workflow).toContain('test -n "${{ secrets.DEPLOY_SUDO_PASSWORD }}"');
+    expect(workflow).toContain(
+      'DEPLOY_SUDO_PASSWORD: ${{ secrets.DEPLOY_SUDO_PASSWORD }}',
+    );
+    expect(workflow).toContain('printf \'%s\\n\' "$DEPLOY_SUDO_PASSWORD" |');
+    expect(workflow).toContain("sudo -S -p '' -v");
+    expect(workflow).not.toContain(
+      'sudo -S -p \'\' -v "${{ secrets.DEPLOY_SUDO_PASSWORD }}"',
+    );
+  });
+
   it('accepts only the reviewed V1.9.13 package in this deployment branch', () => {
     expect(workflow).toContain('test "$TAG" = \'1.9.13\'');
   });

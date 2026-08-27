@@ -71,6 +71,7 @@ jobs:
           test -n "${{ secrets.DEPLOY_USER }}"
           test -n "${{ secrets.DEPLOY_SSH_KEY }}"
           test -n "${{ secrets.DEPLOY_KNOWN_HOSTS }}"
+          test -n "${{ secrets.DEPLOY_SUDO_PASSWORD }}"
           test -n "${{ secrets.OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY }}"
 
       - name: Download enterprise release asset
@@ -123,15 +124,18 @@ jobs:
         shell: bash
         env:
           DRY_RUN_INPUT: ${{ inputs.dry_run }}
+          DEPLOY_SUDO_PASSWORD: ${{ secrets.DEPLOY_SUDO_PASSWORD }}
         run: |
           set -euo pipefail
           DRY_RUN_FLAG=""
           if [ "$DRY_RUN_INPUT" = "true" ]; then
             DRY_RUN_FLAG="--dry-run"
           fi
+          printf '%s\n' "$DEPLOY_SUDO_PASSWORD" | \
           ssh -i ~/.ssh/id_deploy -p "${DEPLOY_PORT}" \
             "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
             "set -euo pipefail
+             sudo -S -p '' -v
              cd '$REMOTE_DIR'
              sha256sum -c ./*.sha256
              ARCHIVE=\$(ls otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz | head -n 1)
