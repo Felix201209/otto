@@ -11,7 +11,7 @@
  * 自动投递，并用结构化处理表完成受理、回复、办理和验收。
  */
 
-import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type {
   EnterpriseAccount,
   EnterpriseParkPublication,
@@ -1368,9 +1368,16 @@ export function ParkServicesPlugin(): React.JSX.Element {
   const [historyCategory, setHistoryCategory] = useState('all');
   const [historySort, setHistorySort] = useState<'desc' | 'asc'>('desc');
   const [pendingNotificationSessionId, setPendingNotificationSessionId] = useState<string | null>(null);
+  const [pendingLandingTarget, setPendingLandingTarget] = useState<
+    'overview' | 'staff-tasks' | 'my-applications' | null
+  >(null);
   const [windowMode, setWindowMode] = useState<'normal' | 'minimized' | 'maximized'>('normal');
   const [windowPosition, setWindowPosition] = useState({ x: 0, y: 0 });
   const firstItemRef = useRef<HTMLButtonElement>(null);
+  const statisticsRef = useRef<HTMLElement>(null);
+  const staffTasksRef = useRef<HTMLElement>(null);
+  const applicationsRef = useRef<HTMLElement>(null);
+  const focusedLandingElementRef = useRef<HTMLElement | null>(null);
   const windowDrag = useRef<{
     pointerId: number;
     originX: number;
@@ -1581,8 +1588,21 @@ export function ParkServicesPlugin(): React.JSX.Element {
   }, [parkEnabled]);
 
   useEffect(() => {
-    if (open && !selected) firstItemRef.current?.focus();
-  }, [open, selected]);
+    if (open && !selected && !pendingLandingTarget) firstItemRef.current?.focus();
+  }, [open, pendingLandingTarget, selected]);
+
+  useLayoutEffect(() => {
+    if (!open || selected || !pendingLandingTarget) return;
+    const target = pendingLandingTarget === 'overview'
+      ? statisticsRef.current
+      : pendingLandingTarget === 'staff-tasks'
+        ? staffTasksRef.current
+        : applicationsRef.current;
+    if (!target?.isConnected || focusedLandingElementRef.current === target) return;
+    target.focus({ preventScroll: true });
+    target.scrollIntoView?.({ block: 'nearest' });
+    focusedLandingElementRef.current = target;
+  }, [assignedTasks.length, open, parkStatistics, pendingLandingTarget, selected]);
 
   useEffect(() => {
     const onPublicationHandled = (event: Event): void => {
@@ -1598,10 +1618,15 @@ export function ParkServicesPlugin(): React.JSX.Element {
   }, []);
 
   useEffect(() => {
-    const showParkSession = (sessionId?: string): void => {
+    const showParkSession = (
+      sessionId?: string,
+      landingTarget?: 'overview' | 'staff-tasks' | 'my-applications',
+    ): void => {
       setSelected(null);
       setFocusTicket(null);
       setPendingNotificationSessionId(sessionId?.startsWith('park:') ? sessionId : null);
+      focusedLandingElementRef.current = null;
+      setPendingLandingTarget(landingTarget ?? null);
       setWindowMode('normal');
       setOpen(true);
     };
@@ -1618,12 +1643,19 @@ export function ParkServicesPlugin(): React.JSX.Element {
           setSelected(null);
           setFocusTicket(null);
           setPendingNotificationSessionId(null);
+          focusedLandingElementRef.current = null;
+          setPendingLandingTarget(null);
           setWindowMode('normal');
           openServiceWindow(service);
           return;
         }
       }
-      showParkSession(sessionId);
+      showParkSession(
+        sessionId,
+        target === 'overview' || target === 'staff-tasks' || target === 'my-applications'
+          ? target
+          : undefined,
+      );
     };
     const unsubscribeNotification = window.otto.onNotificationSessionOpen?.((sessionId) => {
       if (sessionId.startsWith('park:')) showParkSession(sessionId);
@@ -1789,6 +1821,8 @@ export function ParkServicesPlugin(): React.JSX.Element {
   const close = (): void => {
     setSelected(null);
     setFocusTicket(null);
+    focusedLandingElementRef.current = null;
+    setPendingLandingTarget(null);
     setOpen(false);
     setWindowMode('normal');
     setWindowPosition({ x: 0, y: 0 });
@@ -2045,7 +2079,12 @@ export function ParkServicesPlugin(): React.JSX.Element {
           <ServiceDemo service={selected} onBack={() => { setSelected(null); setFocusTicket(null); }} onComplete={completeService} focusTicket={focusTicket} />
         ) : (
           <div className="otto-park-dialog__landing">
-            {parkAdminOrganization ? <section className="otto-park-statistics" aria-label="产业园服务统计">
+            {parkAdminOrganization ? <section
+              ref={statisticsRef}
+              className="otto-park-statistics"
+              aria-label="产业园服务统计"
+              tabIndex={-1}
+            >
               <div className="otto-park-statistics__head">
                 <div>
                   <strong>产业园服务统计</strong>
@@ -2122,10 +2161,17 @@ export function ParkServicesPlugin(): React.JSX.Element {
                 </div>
               </section>
               <aside className="otto-park-home-activity" aria-label="园区待办与历史">
-                {assignedTasks.length || assignedHistory.length ? <div className="otto-park-staff-workspace">
-                  {assignedTasks.length ? <section className="otto-park-staff-tasks" aria-label="我的园区待办">
+                {assignedTasks.length || assignedHistory.length || pendingLandingTarget === 'staff-tasks' ? <div className="otto-park-staff-workspace">
+                  {assignedTasks.length || pendingLandingTarget === 'staff-tasks' ? <section
+                    ref={staffTasksRef}
+                    className="otto-park-staff-tasks"
+                    aria-label="我的园区待办"
+                    tabIndex={-1}
+                  >
                     <div className="otto-park-staff-panel__head"><strong>我的园区待办</strong><span>{assignedTasks.length} 项待处理 · 仅工作人员可见</span></div>
-                    <div className="otto-park-staff-tasks__items">{assignedTasks.map((ticket) => <button key={ticket.id} type="button" onClick={() => openAssignedTicket(ticket)} aria-label={`打开工作人员待办：${ticket.title}`}><span>{ticket.title}</span><em>{ticket.status} {!ticket.readAt ? '· 新' : ''}</em></button>)}</div>
+                    <div className="otto-park-staff-tasks__items">{assignedTasks.length
+                      ? assignedTasks.map((ticket) => <button key={ticket.id} type="button" onClick={() => openAssignedTicket(ticket)} aria-label={`打开工作人员待办：${ticket.title}`}><span>{ticket.title}</span><em>{ticket.status} {!ticket.readAt ? '· 新' : ''}</em></button>)
+                      : <div className="otto-park-staff-history__empty">当前没有待处理的园区任务。</div>}</div>
                   </section> : null}
                   {assignedHistory.length ? <section className="otto-park-staff-history" aria-label="我的园区服务历史记录">
                     <div className="otto-park-staff-panel__head"><strong>工作人员办理历史</strong><span>{visibleAssignedHistory.length} / {assignedHistory.length} 条 · 仅工作人员可见</span></div>
@@ -2160,7 +2206,12 @@ export function ParkServicesPlugin(): React.JSX.Element {
                     </div>
                   </section> : null}
                 </div> : null}
-                <section className="otto-park-staff-history otto-park-own-history" aria-label="我的园区申请历史记录">
+                <section
+                  ref={applicationsRef}
+                  className="otto-park-staff-history otto-park-own-history"
+                  aria-label="我的园区申请历史记录"
+                  tabIndex={-1}
+                >
                   <div className="otto-park-staff-panel__head"><strong>我的申请历史</strong><span>{ownHistory.length} 条 · 点击查看完整处理记录</span></div>
                   <div className="otto-park-staff-history__items">
                     {ownHistory.length ? ownHistory.map((ticket) => {

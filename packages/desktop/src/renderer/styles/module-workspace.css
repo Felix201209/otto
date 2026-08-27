@@ -1,0 +1,81 @@
+/**
+ * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
+ */
+
+/* Motion reorder affordances are isolated from the shared application stylesheet. */
+.otto-module-group-reorder-item,
+.otto-module-reorder-item {
+  min-width: 0;
+  list-style: none;
+}
+
+.otto-module-group-reorder-item {
+  border-radius: 16px;
+}
+
+.otto-module-group__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.otto-module-group__drag-handle,
+.otto-module-tile__drag-handle {
+  border: 0;
+  background: transparent;
+  color: var(--otto-text-tertiary);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.otto-module-group__drag-handle:active,
+.otto-module-tile__drag-handle:active {
+  cursor: grabbing;
+}
+
+.otto-module-group__drag-handle {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  font-size: 17px;
+}
+
+.otto-module-group__drag-handle:hover,
+.otto-module-group__drag-handle:focus-visible {
+  background: var(--otto-surface-hover);
+  color: var(--otto-text);
+}
+
+.otto-module-group.is-editing .otto-module-tile-wrap {
+  animation: none;
+  border-radius: 12px;
+  outline: 1px dashed color-mix(in srgb, var(--otto-accent) 35%, transparent);
+  outline-offset: -2px;
+}
+
+.otto-module-tile__drag-handle {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  z-index: 3;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--otto-surface) 92%, transparent);
+  font-size: 15px;
+  line-height: 24px;
+}
+
+.otto-module-tile__drag-handle:hover,
+.otto-module-tile__drag-handle:focus-visible {
+  background: var(--otto-surface-hover);
+  color: var(--otto-text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .otto-module-group-reorder-item,
+  .otto-module-reorder-item {
+    transform: none !important;
+  }
+}

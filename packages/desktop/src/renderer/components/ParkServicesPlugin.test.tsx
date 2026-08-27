@@ -265,6 +265,32 @@ describe('ParkServicesPlugin', () => {
     expect(screen.queryByLabelText('园区服务列表')).toBeNull();
   });
 
+  it('可直达我的申请区域，而不是只打开园区服务首页', async () => {
+    render(<ParkServicesPlugin />);
+    openDialog('my-applications');
+
+    const applications = screen.getByLabelText('我的园区申请历史记录');
+    await waitFor(() => expect(document.activeElement).toBe(applications));
+  });
+
+  it('有工作人员权限时可直达园区待办区域', async () => {
+    installRepairBridge('worker');
+    render(<ParkServicesPlugin />);
+    openDialog('staff-tasks');
+
+    const tasks = await screen.findByLabelText('我的园区待办');
+    await waitFor(() => expect(document.activeElement).toBe(tasks));
+  });
+
+  it('工作人员没有待办时仍可直达空状态区域', async () => {
+    installRepairBridge('worker', 0);
+    render(<ParkServicesPlugin />);
+    openDialog('staff-tasks');
+
+    const tasks = await screen.findByLabelText('我的园区待办');
+    expect(within(tasks).getByText('当前没有待处理的园区任务。')).toBeTruthy();
+  });
+
   it('园区窗口支持最小化、最大化还原和拖动', async () => {
     render(<ParkServicesPlugin />);
     openDialog();

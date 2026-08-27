@@ -3,6 +3,9 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+// Motion exposes its React runtime through this documented package entrypoint.
+// eslint-disable-next-line import/no-internal-modules
+import { Reorder, useDragControls, useReducedMotion } from 'motion/react';
 
 import type { ModuleDefinition } from '../moduleCatalog.js';
 import {
@@ -18,6 +21,68 @@ import {
 } from '../moduleWorkspace.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import { ModuleIcon } from './ModuleIcon.js';
+import '../styles/module-workspace.css';
+
+interface DraggableItemProps {
+  value: string;
+  className: string;
+  dataAttribute: Record<string, string>;
+  reducedMotion: boolean;
+  stopDragEndPropagation?: boolean;
+  onDragEnd(): void;
+  children(dragControls: ReturnType<typeof useDragControls>): React.ReactNode;
+}
+
+function DraggableItem({
+  value,
+  className,
+  dataAttribute,
+  reducedMotion,
+  stopDragEndPropagation = false,
+  onDragEnd,
+  children,
+}: DraggableItemProps): React.JSX.Element {
+  const dragControls = useDragControls();
+  return (
+    <Reorder.Item
+      as="div"
+      value={value}
+      className={className}
+      dragListener={false}
+      dragControls={dragControls}
+      layout
+      whileDrag={reducedMotion ? undefined : {
+        scale: 1.015,
+        boxShadow: '0 12px 30px rgba(15, 23, 42, 0.14)',
+      }}
+      transition={reducedMotion ? { duration: 0 } : {
+        type: 'spring',
+        stiffness: 420,
+        damping: 34,
+      }}
+      onDragEnd={(event: MouseEvent | TouchEvent | PointerEvent) => {
+        if (stopDragEndPropagation) event.stopPropagation();
+        onDragEnd();
+      }}
+      {...dataAttribute}
+    >
+      {children(dragControls)}
+    </Reorder.Item>
+  );
+}
+
+function mergeVisibleModuleOrder(
+  existingModuleIds: readonly string[],
+  orderedVisibleModuleIds: readonly string[],
+): string[] {
+  const visible = new Set(orderedVisibleModuleIds);
+  let visibleIndex = 0;
+  return existingModuleIds.map((moduleId) => (
+    visible.has(moduleId)
+      ? orderedVisibleModuleIds[visibleIndex++] ?? moduleId
+      : moduleId
+  ));
+}
 
 export interface ModuleWorkspaceProps {
   presentation: 'panel' | 'page';
@@ -56,9 +121,12 @@ export function ModuleWorkspace({
     previousLayout: ModuleWorkspaceLayout;
     appliedSignature: string;
   } | null>(null);
+  const [transientLayout, setTransientLayout] = useState(layout);
   const menuRef = useRef<HTMLDivElement>(null);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const transientLayoutRef = useRef(layout);
   const previousScopeRef = useRef(scopeKey);
+  const reducedMotion = Boolean(useReducedMotion());
   const modulesById = useMemo(
     () => new Map(modules.map((module) => [module.id, module])),
     [modules],
@@ -104,6 +172,11 @@ export function ModuleWorkspace({
       undoTimerRef.current = null;
     }
   }, [scopeKey]);
+
+  useEffect(() => {
+    transientLayoutRef.current = layout;
+    setTransientLayout(layout);
+  }, [layout]);
 
   useEffect(() => {
     if (!undoState || JSON.stringify(layout) === undoState.appliedSignature) return;
@@ -162,6 +235,17 @@ export function ModuleWorkspace({
     setOpenModuleMenuKey(null);
   };
 
+  const updateTransientLayout = (next: ModuleWorkspaceLayout): void => {
+    transientLayoutRef.current = next;
+    setTransientLayout(next);
+  };
+
+  const persistTransientLayout = (): void => {
+    const next = transientLayoutRef.current;
+    if (JSON.stringify(next) === JSON.stringify(layout)) return;
+    commitLayout(next);
+  };
+
   return (
     <section className="otto-module-workspace-shell" aria-label="功能组">
       <div className="otto-module-workspace__toolbar">
@@ -176,20 +260,37 @@ export function ModuleWorkspace({
           </button>
         ) : null}
       </div>
-      <div
-        className={`otto-module-workspace otto-module-workspace--${presentation}`}
+      <Reorder.Group
+        as="div"
+        axis={presentation === 'panel' ? 'y' : undefined}
+        values={transientLayout.groups.map((group) => group.id)}
+        onReorder={(orderedGroupIds) => updateTransientLayout(
+          reorderModuleGroups(transientLayoutRef.current, orderedGroupIds),
+        )}
+        className={`otto-module-workspace otto-module-workspace--${presentation}${
+          reducedMotion ? ' is-reduced-motion' : ''
+        }`}
         data-presentation={presentation}
+        data-reorder-group="groups"
       >
-        {layout.groups.map((group, groupIndex) => {
+        {transientLayout.groups.map((group, groupIndex) => {
         const groupModules = group.moduleIds
           .map((moduleId) => modulesById.get(moduleId))
           .filter((module): module is ModuleDefinition => Boolean(module));
         const capacity = group.rows * 3;
         const overflowing = groupModules.length > capacity;
         return (
+          <DraggableItem
+            key={group.id}
+            value={group.id}
+            className="otto-module-group-reorder-item"
+            dataAttribute={{ 'data-reorder-group-item': group.id }}
+            reducedMotion={reducedMotion}
+            onDragEnd={persistTransientLayout}
+          >
+            {(groupDragControls) => (
           <article
             className={`otto-module-group${editingGroupId === group.id ? ' is-editing' : ''}`}
-            key={group.id}
             data-group-id={group.id}
           >
             <header className="otto-module-group__header">
@@ -223,6 +324,16 @@ export function ModuleWorkspace({
                   {renameDraft.error ? <span role="alert">{renameDraft.error}</span> : null}
                 </div>
               ) : <h2>{group.name}</h2>}
+              <div className="otto-module-group__header-actions">
+                {editingGroupId === group.id ? (
+                  <button
+                    type="button"
+                    className="otto-module-group__drag-handle"
+                    aria-label={`拖动功能组：${group.name}`}
+                    title="拖动调整功能组顺序"
+                    onPointerDown={(event) => groupDragControls.start(event)}
+                  >⠿</button>
+                ) : null}
               <div className="otto-module-group__menu-wrap" ref={openMenuId === group.id ? menuRef : undefined}>
                 <button
                   type="button"
@@ -298,11 +409,27 @@ export function ModuleWorkspace({
                   </div>
                 ) : null}
               </div>
+              </div>
             </header>
-            <div
+            <Reorder.Group
+              as="div"
+              axis="xy"
+              values={groupModules.map((module) => module.id)}
+              onReorder={(orderedVisibleIds) => {
+                const current = transientLayoutRef.current;
+                const currentGroup = current.groups.find((candidate) => candidate.id === group.id);
+                if (!currentGroup) return;
+                const mergedOrder = mergeVisibleModuleOrder(
+                  currentGroup.moduleIds,
+                  orderedVisibleIds,
+                );
+                updateTransientLayout(reorderModulesInGroup(current, group.id, mergedOrder));
+              }}
               className={`otto-module-group__grid otto-module-group__grid--rows-${group.rows}${
                 overflowing ? ' is-overflowing' : ''
               }`}
+              data-reorder-group={`modules:${group.id}`}
+              layoutScroll={overflowing}
               tabIndex={overflowing ? 0 : undefined}
               aria-label={`${group.name}模块`}
             >
@@ -310,9 +437,20 @@ export function ModuleWorkspace({
                 const disabled = module.availability !== 'available';
                 const moduleMenuKey = `${group.id}:${module.id}`;
                 return (
+                  <DraggableItem
+                    key={module.id}
+                    value={module.id}
+                    className="otto-module-reorder-item"
+                    dataAttribute={{
+                      'data-reorder-module-item': `${group.id}:${module.id}`,
+                    }}
+                    reducedMotion={reducedMotion}
+                    stopDragEndPropagation
+                    onDragEnd={persistTransientLayout}
+                  >
+                    {(moduleDragControls) => (
                   <div
                     className="otto-module-tile-wrap"
-                    key={module.id}
                     ref={openModuleMenuKey === moduleMenuKey ? menuRef : undefined}
                   >
                     <button
@@ -328,6 +466,13 @@ export function ModuleWorkspace({
                     </button>
                     {editingGroupId === group.id ? (
                       <>
+                        <button
+                          type="button"
+                          className="otto-module-tile__drag-handle"
+                          aria-label={`拖动模块：${module.label}`}
+                          title="拖动调整模块顺序"
+                          onPointerDown={(event) => moduleDragControls.start(event)}
+                        >⠿</button>
                         <button
                           type="button"
                           className="otto-module-tile__remove"
@@ -377,12 +522,14 @@ export function ModuleWorkspace({
                       </>
                     ) : null}
                   </div>
+                    )}
+                  </DraggableItem>
                 );
               })}
               {groupModules.length === 0 ? (
                 <div className="otto-module-group__empty">还没有添加模块</div>
               ) : null}
-            </div>
+            </Reorder.Group>
             <button
               type="button"
               className="otto-module-group__add"
@@ -393,9 +540,11 @@ export function ModuleWorkspace({
               添加模块
             </button>
           </article>
+            )}
+          </DraggableItem>
         );
         })}
-      </div>
+      </Reorder.Group>
       {undoState ? (
         <div className="otto-module-workspace__undo" role="status">
           <span>{undoState.label}</span>
