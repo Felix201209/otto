@@ -16,10 +16,31 @@ if (host !== '127.0.0.1') {
   );
 }
 const port = Number(required('OTTO_ENTERPRISE_PORT'));
-if (!Number.isInteger(port) || port < 1 || port > 65535) {
+if (!Number.isInteger(port) || port < 0 || port > 65535) {
   throw new Error(
-    'OTTO_ENTERPRISE_PORT must be an integer between 1 and 65535',
+    'OTTO_ENTERPRISE_PORT must be an integer between 0 and 65535',
   );
+}
+const readinessFileValue = process.env.OTTO_ENTERPRISE_READY_FILE?.trim();
+const readinessFile = readinessFileValue
+  ? path.resolve(readinessFileValue)
+  : null;
+if (readinessFile && !path.isAbsolute(readinessFileValue)) {
+  throw new Error('OTTO_ENTERPRISE_READY_FILE must be an absolute path');
+}
+if (readinessFile) {
+  const readinessDirectoryMetadata = fs.lstatSync(path.dirname(readinessFile));
+  if (
+    readinessDirectoryMetadata.isSymbolicLink() ||
+    !readinessDirectoryMetadata.isDirectory()
+  ) {
+    throw new Error(
+      'OTTO_ENTERPRISE_READY_FILE parent must be a regular directory',
+    );
+  }
+  if (fs.existsSync(readinessFile)) {
+    throw new Error('OTTO_ENTERPRISE_READY_FILE must not already exist');
+  }
 }
 const publicUrl = required('OTTO_ENTERPRISE_PUBLIC_URL');
 const parsedPublicUrl = new URL(publicUrl);
@@ -122,6 +143,47 @@ const server = startEnterpriseServer({
   appVersion,
   buildCommit,
 });
+
+if (readinessFile) {
+  server.once('listening', () => {
+    try {
+      const address = server.address();
+      if (
+        !address ||
+        typeof address === 'string' ||
+        address.address !== host ||
+        !Number.isInteger(address.port) ||
+        address.port < 1 ||
+        address.port > 65535
+      ) {
+        throw new Error('server did not bind a valid loopback TCP address');
+      }
+      fs.writeFileSync(
+        readinessFile,
+        `${JSON.stringify({
+          host: address.address,
+          port: address.port,
+          version: appVersion,
+          buildCommit,
+        })}\n`,
+        { encoding: 'utf8', mode: 0o600, flag: 'wx' },
+      );
+    } catch (error) {
+      process.stderr.write(
+        `[Otto Enterprise] cannot publish canary readiness: ${error.message}\n`,
+      );
+      server.close((closeError) => {
+        closeEnterpriseDatabase();
+        if (closeError) {
+          process.stderr.write(
+            `[Otto Enterprise] cannot stop failed canary: ${closeError.message}\n`,
+          );
+        }
+        process.exit(1);
+      });
+    }
+  });
+}
 
 let stopping = false;
 function shutdown(signal) {

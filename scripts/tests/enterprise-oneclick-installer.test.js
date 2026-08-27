@@ -1151,14 +1151,31 @@ describe('enterprise one-click runtime configuration contract', () => {
 });
 
 describe('enterprise one-click health contract', () => {
-  it('assigns every upgrade canary an isolated loopback port', () => {
+  it('lets every upgrade canary bind an isolated loopback port without a reserve race', () => {
     const upgrader = readFileSync(UPGRADE_SH, 'utf8');
+    const runtime = readFileSync(RUNTIME_ENTRY, 'utf8');
 
-    expect(upgrader).toContain('CANARY_PORT="${OTTO_UPGRADE_CANARY_PORT:-}"');
-    expect(upgrader).toContain('server.listen(0, "127.0.0.1"');
-    expect(upgrader).toContain('export OTTO_ENTERPRISE_PORT="$CANARY_PORT"');
+    expect(upgrader).toContain(
+      'CANARY_READY_FILE="${TXN_DIR}/canary-ready.json"',
+    );
+    expect(upgrader).toContain('export OTTO_ENTERPRISE_PORT="0"');
+    expect(upgrader).toContain(
+      'export OTTO_ENTERPRISE_READY_FILE="$CANARY_READY_FILE"',
+    );
+    expect(upgrader).toContain('升级 canary 启动后提前退出');
+    expect(upgrader).toContain('升级 canary 就绪文件无效');
     expect(upgrader).toContain('"http://127.0.0.1:${CANARY_PORT}"');
+    expect(upgrader).not.toContain('server.listen(0, "127.0.0.1"');
     expect(upgrader).not.toContain('OTTO_ENTERPRISE_PORT="17777"');
+    expect(upgrader).toContain(
+      '"${TARGET_RELEASE}/native/sqlcipher/linux-${RUNTIME_ARCH}/better_sqlite3.node"',
+    );
+    expect(upgrader).not.toContain(
+      '"${INSTALL_ROOT}/current/native/sqlcipher/linux-${RUNTIME_ARCH}/better_sqlite3.node"',
+    );
+    expect(runtime).toContain('OTTO_ENTERPRISE_READY_FILE');
+    expect(runtime).toContain("server.once('listening'");
+    expect(runtime).toContain("flag: 'wx'");
   });
 
   it('requires upgrade, A2A and park repair capabilities in canary and acceptance docs', () => {

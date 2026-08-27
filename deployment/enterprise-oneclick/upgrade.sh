@@ -206,32 +206,12 @@ export OTTO_DATABASE_ENCRYPTION_KEY_ID="oneclick-offline-database-key"
 export OTTO_DATABASE_ENCRYPTION_KEY_READONLY="true"
 export OTTO_SQLCIPHER_NATIVE_BINDING="$SQLCIPHER_RELEASE_BINDING"
 
-CANARY_PORT="${OTTO_UPGRADE_CANARY_PORT:-}"
-if [ -z "$CANARY_PORT" ]; then
-  CANARY_PORT="$("$NODE_PATH" --input-type=module -e '
-    import { createServer } from "node:net";
-    const server = createServer();
-    server.once("error", (error) => {
-      process.stderr.write(`cannot reserve canary port: ${error.message}\n`);
-      process.exit(1);
-    });
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string" || !Number.isInteger(address.port)) {
-        process.stderr.write("cannot determine canary port\n");
-        process.exit(1);
-      }
-      process.stdout.write(String(address.port));
-      server.close();
-    });
-  ')" || otto_die "无法分配升级 canary 端口" 5
-fi
-[[ "$CANARY_PORT" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$CANARY_PORT" -le 65535 ] \
-  || otto_die "OTTO_UPGRADE_CANARY_PORT 必须是 1 到 65535 的整数" 3
-
+CANARY_READY_FILE="${TXN_DIR}/canary-ready.json"
+CANARY_PORT=""
 export OTTO_ENTERPRISE_DIR="$CANARY_DIR"
 export OTTO_ENTERPRISE_HOST="127.0.0.1"
-export OTTO_ENTERPRISE_PORT="$CANARY_PORT"
+export OTTO_ENTERPRISE_PORT="0"
+export OTTO_ENTERPRISE_READY_FILE="$CANARY_READY_FILE"
 OTTO_PUBLIC_HOST="${OTTO_PUBLIC_HOST:-localhost}"
 OTTO_PUBLIC_PORT="${OTTO_PUBLIC_PORT:-7777}"
 OTTO_ENTERPRISE_PUBLIC_URL="${OTTO_ENTERPRISE_PUBLIC_URL:-https://${OTTO_PUBLIC_HOST}:${OTTO_PUBLIC_PORT}}"
@@ -245,7 +225,7 @@ export OTTO_LICENSE_TRUST_FILE="${SCRIPT_DIR}/release/license-public-keys.json"
 "$NODE_PATH" "${SCRIPT_DIR}/tools/migrate-check.mjs" \
   "${SCRIPT_DIR}/release" "$CANARY_DIR" \
   --baseline "$BASELINE_INSPECTION" >/dev/null
-otto_log "启动 127.0.0.1:${CANARY_PORT} 升级 canary"
+otto_log "启动 127.0.0.1:自动分配端口 升级 canary"
 env \
   -u OTTO_CONTROL_URL \
   -u OTTO_CONTROL_ORIGIN \
@@ -255,15 +235,47 @@ env \
 CANARY_PID=$!
 CANARY_OK=0
 for _ in $(seq 1 30); do
-  if "$NODE_PATH" "${SCRIPT_DIR}/tools/health-check.mjs" \
-    "http://127.0.0.1:${CANARY_PORT}" "$RELEASE_VERSION" "$BUILD_ID" \
-    "$RELEASE_SCHEMA_TO" \
-    "$([ "$OTTO_ALLOW_SMS_DISABLED" = "1" ] && printf 'allow-sms-disabled' || printf 'require-sms')" \
-    "$OTTO_ENTERPRISE_ADMIN_TOKEN" \
-    allow-unactivated-deployment \
-    >/dev/null 2>&1; then
-    CANARY_OK=1
-    break
+  if ! kill -0 "$CANARY_PID" >/dev/null 2>&1; then
+    sed -n '1,160p' "${TXN_DIR}/canary.log" >&2
+    otto_die "升级 canary 启动后提前退出" 5
+  fi
+  if [ -f "$CANARY_READY_FILE" ]; then
+    CANARY_PORT="$("$NODE_PATH" --input-type=module - \
+      "$CANARY_READY_FILE" "$RELEASE_VERSION" "$BUILD_ID" <<'NODE'
+import { lstatSync, readFileSync } from 'node:fs';
+const [readyFile, expectedVersion, expectedBuild] = process.argv.slice(2);
+const metadata = lstatSync(readyFile);
+if (metadata.isSymbolicLink() || !metadata.isFile()) {
+  throw new Error('canary readiness file is not a regular file');
+}
+const ready = JSON.parse(readFileSync(readyFile, 'utf8'));
+if (
+  !ready ||
+  ready.host !== '127.0.0.1' ||
+  !Number.isInteger(ready.port) ||
+  ready.port < 1 ||
+  ready.port > 65535 ||
+  ready.version !== expectedVersion ||
+  ready.buildCommit !== expectedBuild
+) {
+  throw new Error('canary readiness content does not match the release');
+}
+process.stdout.write(String(ready.port));
+NODE
+    )" || {
+      sed -n '1,160p' "${TXN_DIR}/canary.log" >&2
+      otto_die "升级 canary 就绪文件无效" 5
+    }
+    if "$NODE_PATH" "${SCRIPT_DIR}/tools/health-check.mjs" \
+      "http://127.0.0.1:${CANARY_PORT}" "$RELEASE_VERSION" "$BUILD_ID" \
+      "$RELEASE_SCHEMA_TO" \
+      "$([ "$OTTO_ALLOW_SMS_DISABLED" = "1" ] && printf 'allow-sms-disabled' || printf 'require-sms')" \
+      "$OTTO_ENTERPRISE_ADMIN_TOKEN" \
+      allow-unactivated-deployment \
+      >/dev/null 2>&1; then
+      CANARY_OK=1
+      break
+    fi
   fi
   sleep 1
 done
@@ -306,7 +318,7 @@ fi
 UPDATED_CONFIG="${TXN_DIR}/enterprise.env.next"
 "$NODE_PATH" --input-type=module - "$CONFIG_PATH" "$UPDATED_CONFIG" \
   "$OTTO_DATABASE_ENCRYPTION_KEY_FILE" \
-  "${INSTALL_ROOT}/current/native/sqlcipher/linux-${RUNTIME_ARCH}/better_sqlite3.node" <<'NODE'
+  "${TARGET_RELEASE}/native/sqlcipher/linux-${RUNTIME_ARCH}/better_sqlite3.node" <<'NODE'
 import { readFileSync, writeFileSync } from 'node:fs';
 const [source, target, keyPath, bindingPath] = process.argv.slice(2);
 const managedKeys = new Set([
