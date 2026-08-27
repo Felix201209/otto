@@ -153,10 +153,13 @@ describe('企业管理分区导航', () => {
     render(<AccountManagementPage currentAccount={ADMIN} onBack={() => undefined} />);
 
     const tabs = screen.getAllByRole('tab');
-    expect(tabs.map((tab) => tab.querySelector('span')?.textContent)).toEqual([
+    expect(tabs.map((tab) => tab.querySelector('strong')?.textContent)).toEqual([
       '组织结构', '成员目录', '产业园端', '企业能力',
     ]);
     const membersTab = screen.getByRole('tab', { name: /成员目录/ });
+    const secondaryNavigation = screen.getByRole('complementary', { name: '企业管理导航' });
+    expect(secondaryNavigation.contains(screen.getByRole('tablist', { name: '企业管理分类' }))).toBe(true);
+    expect(secondaryNavigation.contains(screen.getByRole('tabpanel'))).toBe(false);
     expect(membersTab.getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('heading', { name: '企业管理' })).toBeTruthy();
     expect(screen.queryByText('CEO 企业管理中心')).toBeNull();

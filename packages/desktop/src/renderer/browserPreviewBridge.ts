@@ -201,6 +201,24 @@ if (!previewWindow.otto) {
     createdAt: new Date(Date.now() - 12 * 60_000).toISOString(),
   });
 
+  const previewDepartments = [{
+    id: 'preview-park-dept',
+    organizationId: previewAccount.organizationId,
+    name: '园区管理部',
+    parentDepartmentId: null,
+    memberCount: 1,
+    positions: [{
+      id: 'preview-park-admin-position',
+      organizationId: previewAccount.organizationId,
+      departmentId: 'preview-park-dept',
+      title: '园区管理员',
+      roleMapping: 'enterprise_admin',
+      createdAt: previewAccount.createdAt,
+      updatedAt: previewAccount.updatedAt,
+    }],
+    createdAt: previewAccount.createdAt,
+    updatedAt: previewAccount.updatedAt,
+  }];
   const bridge: Record<string, unknown> = {
     connect: () => {
       connected = true;
@@ -468,6 +486,15 @@ if (!previewWindow.otto) {
     enterpriseE2eeRecoveryExport: () =>
       Promise.resolve('{"v":1,"preview":true}'),
     enterpriseE2eeRecoveryImport: () => Promise.resolve(),
+    enterpriseAccounts: () => Promise.resolve([previewAccount]),
+    enterpriseOrganizationInviteGet: () => Promise.resolve({
+      organization: {
+        id: previewAccount.organizationId,
+        name: previewAccount.organizationName,
+      },
+      invite: null,
+    }),
+    enterpriseOrganizationDepartments: () => Promise.resolve(previewDepartments),
     enterpriseOrganizationFeaturesGet: () => Promise.resolve({
       enterprise_tree: true,
       park_service: true,
@@ -477,6 +504,10 @@ if (!previewWindow.otto) {
       knowledge: true,
       skill_market: true,
     }),
+    enterpriseParkServices: () => Promise.resolve([]),
+    enterpriseParkSpecialists: () => Promise.resolve([]),
+    enterpriseParkAnnouncementResults: () => Promise.resolve([]),
+    enterpriseParkSurveyResults: () => Promise.resolve([]),
     enterpriseOrganizationView: (organizationId?: string) => {
       const features = {
         enterprise_tree: true,

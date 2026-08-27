@@ -9665,42 +9665,51 @@ h6.otto-prose__h {
 .otto-account-page {
   --identity-night: var(--otto-text);
   --identity-lime: #a8d7ff;
-  padding: 34px clamp(24px, 4vw, 58px) 56px;
-  background: color-mix(in srgb, var(--otto-sidebar-bg) 44%, var(--otto-bg));
+  overflow: hidden;
+  padding: 0;
+  background: var(--otto-bg);
 }
 
 .otto-account-page__content {
-  max-width: 1240px;
-  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 218px minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
 }
 
 .otto-account-workspace {
-  display: grid;
-  grid-template-columns: 184px minmax(0, 1fr);
-  align-items: start;
-  gap: 26px;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 28px clamp(24px, 3.2vw, 48px) 52px;
+  background: var(--otto-bg);
+}
+
+.otto-account-workspace__rail {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 12px;
+  border-right: 1px solid var(--otto-border);
+  background: color-mix(in srgb, var(--otto-sidebar-bg) 82%, var(--otto-bg));
 }
 
 .otto-account-workspace__tabs {
-  position: sticky;
-  top: 18px;
   display: grid;
   gap: 4px;
-  padding: 8px;
-  border: 1px solid var(--otto-border);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--otto-surface) 88%, transparent);
-  box-shadow: var(--otto-shadow-xs);
+  padding: 0;
 }
 
 .otto-account-workspace__tabs button {
   position: relative;
-  display: grid;
-  gap: 2px;
-  min-height: 52px;
-  padding: 8px 12px 8px 15px;
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 8px;
   background: transparent;
   color: var(--otto-text-secondary);
   text-align: left;
@@ -9711,14 +9720,7 @@ h6.otto-prose__h {
 }
 
 .otto-account-workspace__tabs button::before {
-  content: '';
-  position: absolute;
-  top: 10px;
-  bottom: 10px;
-  left: 5px;
-  width: 2px;
-  border-radius: 999px;
-  background: transparent;
+  content: none;
 }
 
 .otto-account-workspace__tabs button:hover {
@@ -9731,18 +9733,29 @@ h6.otto-prose__h {
   color: var(--otto-text);
 }
 
-.otto-account-workspace__tabs button.is-active::before {
-  background: color-mix(in srgb, var(--otto-text) 62%, transparent);
-}
-
 .otto-account-workspace__tabs button:focus-visible {
   outline: none;
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--otto-text) 22%, transparent);
 }
 
+.otto-account-workspace__tabs button > svg {
+  flex: 0 0 auto;
+  color: var(--otto-text-tertiary);
+}
+
+.otto-account-workspace__tabs button.is-active > svg {
+  color: var(--otto-text);
+}
+
 .otto-account-workspace__tabs span {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.otto-account-workspace__tabs strong {
   font-size: 13px;
-  font-weight: 550;
+  font-weight: 560;
   line-height: 18px;
 }
 
@@ -9757,7 +9770,10 @@ h6.otto-prose__h {
 }
 
 .otto-account-workspace__panel {
+  width: 100%;
+  max-width: 1120px;
   min-width: 0;
+  margin: 0 auto;
 }
 
 .otto-account-workspace__head {
@@ -9765,9 +9781,9 @@ h6.otto-prose__h {
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
-  min-height: 58px;
-  margin-bottom: 16px;
-  padding: 1px 2px 14px;
+  min-height: 52px;
+  margin-bottom: 20px;
+  padding: 0 0 16px;
   border-bottom: 1px solid var(--otto-border);
 }
 
@@ -9790,14 +9806,22 @@ h6.otto-prose__h {
 }
 
 .otto-account-hero {
-  margin-bottom: 28px;
-  padding: 0 2px;
-  align-items: flex-start;
+  display: block;
+  margin: 0 4px 22px;
+  padding: 0 2px 18px;
+  border-bottom: 1px solid var(--otto-border);
 }
 
 .otto-account-page__back {
-  margin-bottom: 22px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 20px;
   color: var(--otto-text-tertiary);
+}
+
+.otto-account-page__back svg {
+  transform: rotate(180deg);
 }
 
 .otto-account-page__eyebrow,
@@ -9811,20 +9835,26 @@ h6.otto-prose__h {
 }
 
 .otto-account-hero h1 {
-  margin: 9px 0 8px;
+  margin: 8px 0 6px;
   color: var(--otto-text);
-  font-size: 32px;
-  font-weight: 700;
-  letter-spacing: -.045em;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -.035em;
 }
 
 .otto-account-hero p {
-  max-width: 650px;
+  max-width: 184px;
+  margin: 0;
   color: var(--otto-text-secondary);
-  font-size: 13px;
+  font-size: 11px;
+  line-height: 1.55;
 }
 
 .otto-account-page__create {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   min-height: 38px;
   height: 38px;
   border-radius: 10px;
@@ -10045,29 +10075,50 @@ h6.otto-prose__h {
 }
 
 @media (max-width: 820px) {
-  .otto-account-workspace {
+  .otto-account-page__content {
     grid-template-columns: 1fr;
-    gap: 16px;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .otto-account-workspace__rail {
+    overflow: visible;
+    padding: 12px 16px;
+    border-right: 0;
+    border-bottom: 1px solid var(--otto-border);
+  }
+
+  .otto-account-hero {
+    margin: 0 0 10px;
+    padding: 0;
+    border-bottom: 0;
+  }
+
+  .otto-account-hero p,
+  .otto-account-page__eyebrow {
+    display: none;
+  }
+
+  .otto-account-page__back {
+    margin-bottom: 8px;
+  }
+
+  .otto-account-hero h1 {
+    margin: 0;
+    font-size: 18px;
+  }
+
+  .otto-account-workspace {
+    padding: 22px 18px 42px;
   }
 
   .otto-account-workspace__tabs {
-    position: static;
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .otto-account-workspace__tabs button {
     min-width: 0;
-    padding: 8px 9px;
-    text-align: center;
-  }
-
-  .otto-account-workspace__tabs button::before {
-    top: auto;
-    right: 12px;
-    bottom: 4px;
-    left: 12px;
-    width: auto;
-    height: 2px;
+    justify-content: center;
+    padding: 7px;
   }
 
   .otto-account-metrics {

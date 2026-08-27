@@ -19,6 +19,14 @@ import {
   EnterpriseAdministrationPanel,
   type EnterpriseAdministrationSection,
 } from './EnterpriseAdministrationPanel.js';
+import {
+  IconBuilding,
+  IconChevron,
+  IconDashboard,
+  IconIdBadge,
+  IconNetwork,
+  IconPlus,
+} from './icons.js';
 
 type EnterpriseManagementSection = 'members' | EnterpriseAdministrationSection;
 
@@ -670,30 +678,35 @@ export function AccountManagementPage({
     label: string;
     description: string;
     meta: string;
+    icon: React.ComponentType<{ size?: number; className?: string }>;
   }> = [
     {
       id: 'organization',
       label: '组织结构',
       description: '管理部门、职位和权限映射',
       meta: `${organizationDepartments.length} 个部门`,
+      icon: IconNetwork,
     },
     {
       id: 'members',
       label: '成员目录',
       description: '管理成员身份、邀请和访问状态',
       meta: `${accounts.length} 名成员`,
+      icon: IconIdBadge,
     },
     {
       id: 'park',
       label: '产业园端',
       description: '管理入驻、园区服务和内容发布',
       meta: currentPark?.brandName || '园区服务',
+      icon: IconBuilding,
     },
     {
       id: 'capabilities',
       label: '企业能力',
       description: '控制企业级功能的启用范围',
       meta: configurationFeatures ? `${enabledFeatureCount} 项已开启` : '正在读取',
+      icon: IconDashboard,
     },
   ];
   const activeSectionCopy = managementSections.find((section) => section.id === activeSection)
@@ -741,36 +754,44 @@ export function AccountManagementPage({
         className="otto-account-page__content"
         aria-hidden={editing ? true : undefined}
       >
-      <header className="otto-account-hero">
-        <div>
-          <button type="button" className="otto-account-page__back" onClick={onBack}>← 返回工作台</button>
+      <aside className="otto-account-workspace__rail" aria-label="企业管理导航">
+        <header className="otto-account-hero">
+          <button type="button" className="otto-account-page__back" onClick={onBack}>
+            <IconChevron size={14} />
+            返回工作台
+          </button>
           <div className="otto-account-page__eyebrow">ENTERPRISE MANAGEMENT</div>
           <h1>企业管理</h1>
           <p>管理组织结构、成员身份、企业能力和产业园服务。</p>
-        </div>
-      </header>
+        </header>
+        <nav className="otto-account-workspace__tabs" aria-label="企业管理分类" role="tablist">
+          {managementSections.map((section, sectionIndex) => {
+            const SectionIcon = section.icon;
+            return (
+              <button
+                key={section.id}
+                id={`otto-enterprise-tab-${section.id}`}
+                type="button"
+                role="tab"
+                aria-selected={activeSection === section.id}
+                aria-controls="otto-enterprise-management-panel"
+                tabIndex={activeSection === section.id ? 0 : -1}
+                className={activeSection === section.id ? 'is-active' : ''}
+                onClick={() => selectManagementSection(section.id)}
+                onKeyDown={(event) => handleSectionKeyDown(event, sectionIndex)}
+              >
+                <SectionIcon size={17} />
+                <span>
+                  <strong>{section.label}</strong>
+                  <small>{section.meta}</small>
+                </span>
+              </button>
+            );
+          })}
+        </nav>
+      </aside>
 
       <div className="otto-account-workspace">
-        <nav className="otto-account-workspace__tabs" aria-label="企业管理分类" role="tablist">
-          {managementSections.map((section, sectionIndex) => (
-            <button
-              key={section.id}
-              id={`otto-enterprise-tab-${section.id}`}
-              type="button"
-              role="tab"
-              aria-selected={activeSection === section.id}
-              aria-controls="otto-enterprise-management-panel"
-              tabIndex={activeSection === section.id ? 0 : -1}
-              className={activeSection === section.id ? 'is-active' : ''}
-              onClick={() => selectManagementSection(section.id)}
-              onKeyDown={(event) => handleSectionKeyDown(event, sectionIndex)}
-            >
-              <span>{section.label}</span>
-              <small>{section.meta}</small>
-            </button>
-          ))}
-        </nav>
-
         <section
           id="otto-enterprise-management-panel"
           className="otto-account-workspace__panel"
@@ -790,7 +811,8 @@ export function AccountManagementPage({
                 disabled={loading}
                 aria-label="新增账号"
               >
-                <span>＋</span> 新增成员
+                <IconPlus size={15} />
+                新增成员
               </button>
             ) : null}
           </header>
