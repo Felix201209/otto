@@ -9687,8 +9687,8 @@ h6.otto-prose__h {
   border: 0;
   border-radius: 0;
   background: transparent;
-  --otto-task-row-hover: color-mix(in srgb, var(--otto-text) 6%, transparent);
-  --otto-task-row-selected: color-mix(in srgb, var(--otto-accent) 5%, var(--otto-sidebar-bg));
+  --otto-task-row-hover: var(--otto-sidebar-row-hover);
+  --otto-task-row-selected: var(--otto-sidebar-row-selected);
   --otto-task-muted: color-mix(in srgb, var(--otto-text) 52%, transparent);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
     'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
@@ -10190,6 +10190,10 @@ h6.otto-prose__h {
   width: 264px;
   min-width: 264px;
   background: color-mix(in srgb, var(--otto-sidebar-bg) 92%, var(--otto-bg));
+  --otto-sidebar-row-hover: color-mix(in srgb, var(--otto-text) 4%, var(--otto-sidebar-bg));
+  --otto-sidebar-row-selected: color-mix(in srgb, var(--otto-text) 5%, var(--otto-sidebar-bg));
+  --otto-sidebar-nav-selected: color-mix(in srgb, var(--otto-text) 7%, var(--otto-sidebar-bg));
+  --otto-sidebar-nav-selected-hover: color-mix(in srgb, var(--otto-text) 8%, var(--otto-sidebar-bg));
 }
 
 .otto-main {
@@ -10921,62 +10925,79 @@ h6.otto-prose__h {
 /* ══════════════ 主导航（Sidebar Navigation） ══════════════ */
 
 .otto-sidebar__nav {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 4px 12px 10px;
-  border-bottom: 1px solid var(--otto-border);
+  margin-bottom: 4px;
+  padding: 4px 10px 9px;
+  border-bottom: 0;
+}
+.otto-sidebar__nav::after {
+  content: '';
+  position: absolute;
+  right: 10px;
+  bottom: 0;
+  left: 10px;
+  height: 1px;
+  background: color-mix(in srgb, var(--otto-text) 7%, transparent);
 }
 .otto-sidebar__navitem {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 36px;
-  padding: 0 10px;
+  min-height: 34px;
+  padding: 0 14px;
   border: 0;
   border-radius: 8px;
   background: transparent;
   color: var(--otto-text-secondary);
-  font-size: 13px;
-  font-weight: 500;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
   cursor: pointer;
   text-align: left;
   transition: background var(--otto-dur-fast) var(--otto-ease), color var(--otto-dur-fast) var(--otto-ease);
 }
 .otto-sidebar__navitem:hover {
-  background: var(--otto-accent-soft);
-  color: var(--otto-accent);
+  background: var(--otto-sidebar-row-hover);
+  color: var(--otto-text);
 }
 .otto-sidebar__navitem.is-active {
-  background: var(--otto-accent);
-  color: #fff;
-  font-weight: 650;
+  background: var(--otto-sidebar-nav-selected);
+  color: var(--otto-text);
+  font-weight: 500;
 }
 .otto-sidebar__navitem.is-active:hover {
-  background: var(--otto-accent);
-  color: #fff;
+  background: var(--otto-sidebar-nav-selected-hover);
+  color: var(--otto-text);
 }
 .otto-sidebar__navitem b {
   margin-left: auto;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  background: var(--otto-accent-soft);
-  color: var(--otto-accent);
+  background: color-mix(in srgb, var(--otto-text) 7%, var(--otto-sidebar-bg));
+  color: var(--otto-text-secondary);
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  box-shadow: none;
 }
 .otto-sidebar__navitem.is-active b {
-  background: rgba(255,255,255,.22);
-  color: #fff;
+  background: color-mix(in srgb, var(--otto-text) 11%, var(--otto-sidebar-bg));
+  color: var(--otto-text);
 }
 .otto-sidebar__navitem:focus-visible {
-  outline: 2px solid var(--otto-accent);
-  outline-offset: 1px;
+  outline: none;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--otto-text) 24%, transparent);
 }
 
 /* ── 统一未读角标 ── */
@@ -11002,7 +11023,11 @@ h6.otto-prose__h {
 
 @keyframes ottoAttentionPulse {
   0%, 100% { box-shadow: none; }
-  50% { box-shadow: 0 0 0 4px rgba(239, 68, 68, .18); }
+  50% {
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--otto-text) 18%, transparent),
+      0 0 0 2px color-mix(in srgb, var(--otto-text) 5%, transparent);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
