@@ -104,6 +104,21 @@ describe('输入区工具布局与弹层', () => {
     expect(screen.getByRole('menuitem', { name: '添加文件夹作为附件' })).toBeTruthy();
   });
 
+  it('发送按钮仅在有非空白内容时启用，并保持同一按钮语义', () => {
+    render(
+      <Composer models={[]} currentModel={null} sessionId="s1" onSend={vi.fn()} onSetModel={vi.fn()} />,
+    );
+    const textarea = document.querySelector('.otto-composer__textarea') as HTMLTextAreaElement;
+    const send = screen.getByRole('button', { name: '发送' }) as HTMLButtonElement;
+
+    expect(send.disabled).toBe(true);
+    expect(send.classList.contains('otto-send')).toBe(true);
+    fireEvent.change(textarea, { target: { value: '   ' } });
+    expect(send.disabled).toBe(true);
+    fireEvent.change(textarea, { target: { value: '开始执行' } });
+    expect(send.disabled).toBe(false);
+  });
+
   it('原生工作目录选择失败时给出非阻断错误，用户取消保持静默', async () => {
     const selectWorkspaceDirectory = vi.fn()
       .mockRejectedValueOnce(new Error('无法读取该目录'))

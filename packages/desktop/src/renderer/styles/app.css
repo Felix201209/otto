@@ -3517,48 +3517,62 @@ h6.otto-prose__h {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
-  /* 透明 1px 边：与 :disabled 的实描边同宽，让空心/实心切换时 border-color 可平滑插值。 */
-  border: 1px solid transparent;
+  width: 32px;
+  height: 32px;
+  border: 0;
   border-radius: 50%;
-  background: var(--otto-accent-gradient);
-  color: #fff;
+  background: var(--otto-text);
+  color: var(--otto-bg);
+  box-shadow: none;
   cursor: pointer;
   transition:
-    background var(--otto-dur-fast) var(--otto-ease),
-    border-color var(--otto-dur-fast) var(--otto-ease),
-    filter var(--otto-dur-fast) var(--otto-ease),
-    transform var(--otto-dur-fast) var(--otto-ease),
-    opacity var(--otto-dur-fast) var(--otto-ease);
+    background-color 180ms var(--otto-ease),
+    color 180ms var(--otto-ease),
+    transform 150ms var(--otto-ease),
+    box-shadow 180ms var(--otto-ease);
 }
-.otto-send:hover {
-  filter: brightness(1.06);
+.otto-send:not(.otto-send--stop) svg {
+  width: 20px;
+  height: 20px;
 }
-.otto-send:active {
-  transform: scale(0.94);
+.otto-send:not(:disabled):not(.otto-send--stop):hover {
+  background: color-mix(in srgb, var(--otto-text) 90%, var(--otto-bg));
+}
+.otto-send:not(:disabled):active {
+  transform: scale(0.95);
 }
 .otto-send:disabled {
-  background: transparent;
-  border: 1px solid var(--otto-border-strong);
+  background: color-mix(in srgb, var(--otto-text) 8%, var(--otto-bg));
+  border: 0;
   color: var(--otto-text-tertiary);
   cursor: default;
-  filter: none;
+  opacity: 1;
 }
 .otto-send:focus-visible {
   outline: none;
-  box-shadow: var(--otto-shadow-focus);
+  box-shadow:
+    0 0 0 2px var(--otto-bg),
+    0 0 0 4px color-mix(in srgb, var(--otto-text) 28%, transparent);
 }
 
-/* 停止按钮（流式生成中替换发送）：中性表面 + 实心方块，区别于 amber 发送。 */
+/* 停止按钮沿用同一圆形轮廓；默认克制，hover 才显示危险语义。 */
 .otto-send--stop {
-  background: var(--otto-surface-raised, rgba(255, 255, 255, 0.08));
-  border: 1px solid var(--otto-border-strong);
-  color: var(--otto-text-secondary, currentColor);
+  background: color-mix(in srgb, var(--otto-text) 8%, var(--otto-bg));
+  border: 0;
+  color: var(--otto-text-secondary);
 }
 .otto-send--stop:hover {
-  filter: none;
-  background: var(--otto-surface-hover, rgba(255, 255, 255, 0.14));
+  background: color-mix(in srgb, var(--otto-danger) 10%, var(--otto-bg));
+  color: var(--otto-danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .otto-send {
+    transition: none;
+  }
+  .otto-send:not(:disabled):active {
+    transform: none;
+  }
 }
 
 /* —— 斜杠命令面板（输入 `/` 唤起，浮在输入框上方）——
