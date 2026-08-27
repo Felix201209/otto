@@ -2647,8 +2647,7 @@ h6.otto-prose__h {
   display: flex;
   align-items: center;
   gap: 8px;
-  max-width: 760px;
-  margin: 0 auto 7px;
+  margin: 0 0 7px;
   padding: 0 4px;
 }
 .otto-contextpill {
