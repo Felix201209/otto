@@ -52,7 +52,7 @@ describe('V1.9.13 enterprise candidate source identity', () => {
       'sha256sum deployment/enterprise-oneclick/tools/verify-release.mjs',
     );
     expect(workflow).toContain(
-      'SQLCIPHER_NATIVE_WORKFLOW_SHA256: 25f70e506ab855f2a3f5cde357e3a01ab95118c1675c78e9073b9053ac846d8a',
+      'SQLCIPHER_NATIVE_WORKFLOW_SHA256: 9776e66615b393c85dedd3cefedc98272e3d4613103bfce257d691bf2b897003',
     );
     expect(workflow).toContain(
       'sha256sum .github/workflows/sqlcipher-native.yml',

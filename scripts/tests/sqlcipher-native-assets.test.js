@@ -291,6 +291,11 @@ describe('SQLCipher native asset gate', () => {
     expect(nativeWorkflow).toContain('- runner: ubuntu-22.04');
     expect(nativeWorkflow).toContain('- runner: ubuntu-22.04-arm');
     expect(nativeWorkflow).toContain("GLIBC_MAX_VERSION: '2.35'");
+    expect(nativeWorkflow).toContain(
+      'sudo apt-get install -y binutils g++-12 gcc-12 libssl-dev make tcl',
+    );
+    expect(nativeWorkflow.match(/export CC=gcc-12/g)).toHaveLength(2);
+    expect(nativeWorkflow.match(/export CXX=g\+\+-12/g)).toHaveLength(2);
     expect(nativeWorkflow.match(/readelf --version-info/g)).toHaveLength(2);
     expect(nativeWorkflow.match(/sort -Vu \| tail -n 1/g)).toHaveLength(2);
     expect(nativeWorkflow).toContain(
