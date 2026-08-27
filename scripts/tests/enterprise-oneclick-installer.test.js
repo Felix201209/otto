@@ -672,6 +672,7 @@ describe('enterprise one-click runtime configuration contract', () => {
         /write_env "\$ENV_TEMP" \\\n([\s\S]*?)\ninstall -o root/,
       )?.[1] ?? '';
     const keys = [
+      'OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE',
       'OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE',
       'OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE',
       'OTTO_FIELD_ENCRYPTION_KEY_FILE',
@@ -697,6 +698,16 @@ describe('enterprise one-click runtime configuration contract', () => {
       expect(runtimeEnv).toContain(`  ${key} `);
       expect(readme).toContain(`\`${key}\``);
     }
+  });
+
+  it('requires independently readable key custody before enabling backup replicas', () => {
+    const installer = readFileSync(INSTALL_SH, 'utf8');
+
+    expect(installer).toContain(
+      '启用异地备份时必须配置独立的 OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE',
+    );
+    expect(installer).toContain('独立备份恢复密钥与当前归档密钥不一致');
+    expect(installer).toContain('服务账号无法读取独立备份恢复密钥');
   });
 
   it('preserves repair notification and Feishu configuration through installation', () => {

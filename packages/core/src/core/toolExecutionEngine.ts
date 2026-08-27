@@ -29,7 +29,7 @@ import {
   ToolSchedulerAdapter,
   ToolExecutionContext,
 } from './toolSchedulerAdapter.js';
-import { MCPResponseGuard } from '../services/mcpResponseGuard.js';
+import { MCPResponseGuard, getGlobalMCPResponseGuard } from '../services/mcpResponseGuard.js';
 import type { HookEventHandler } from '../hooks/hookEventHandler.js';
 import { getWorkLogger, inferCategory, describeAction } from '../orchestration/workLog.js';
 import { getRealtimeWatcher } from '../orchestration/autoSkillGenerator.js';
@@ -288,11 +288,7 @@ export class ToolExecutionEngine {
     this.approvalMode = options.approvalMode ?? ApprovalMode.DEFAULT;
     this.getPreferredEditor = options.getPreferredEditor;
     // 🛡️ 初始化MCP响应保护器
-    this.mcpResponseGuard = new MCPResponseGuard({
-      maxResponseSize: 100 * 1024, // 100KB - 激进的大小限制，防止一轮请求就消耗完上下文
-      contextLowThreshold: 0.2, // 20%
-      contextCriticalThreshold: 0.1, // 10%
-    });
+    this.mcpResponseGuard = getGlobalMCPResponseGuard();
     // 📁 初始化文件操作队列
     this.fileOperationQueue = new FileOperationQueue();
 
@@ -1188,8 +1184,11 @@ export class ToolExecutionEngine {
         }
       } catch (guardError) {
         console.warn(`[ToolExecutionEngine] MCP响应保护失败: ${guardError}`);
-        // 如果保护失败，继续使用原始响应（不中断工具执行）
-        guardedLlmContent = toolResult.llmContent || '';
+        // fail-closed：保护器异常时禁止把未经约束的原始 MCP 正文重新注入模型。
+        guardedLlmContent = [{
+          text: '[MCP 响应已被安全阻止：响应保护失败。请缩小查询范围后重试。]',
+        }];
+        guardDetails = '[GUARD] 响应保护失败，原始正文已阻止';
       }
 
       // 转换为响应格式

@@ -2179,7 +2179,12 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
     expect(server.store.getHistory(s.sessionId)).toHaveLength(1);
     expect(calls.run).toBe(1);
     expect(c.frames.filter((f) => f.type === 'message_start')).toHaveLength(1);
+
     c.close();
+    await waitUntil(() => calls.cancel === 1);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(calls.run).toBe(1);
+    expect(server.store.getHistory(s.sessionId)).toHaveLength(1);
   });
 });
 

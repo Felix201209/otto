@@ -54,6 +54,7 @@ export * from './core/turn.js';
 export * from './core/turnCheckpoint.js';
 export * from './core/invalidStreamError.js';
 export * from './core/ottoRequest.js';
+export * from './core/modelRequestSafety.js';
 export * from './core/coreToolScheduler.js';
 export * from './core/nonInteractiveToolExecutor.js';
 export * from './tools/task.js';

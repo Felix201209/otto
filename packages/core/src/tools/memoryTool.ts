@@ -11,6 +11,7 @@ import * as path from 'path';
 import { homedir } from 'os';
 import { glob } from 'glob';
 import { Config } from '../config/config.js';
+import { withMemoryFileWriteLock } from '../memory/memoryFileLock.js';
 
 const memoryToolSchemaData: FunctionDeclaration = {
   name: 'save_memory',
@@ -306,33 +307,17 @@ export class MemoryTool extends BaseTool<SaveMemoryParams, ToolResult> {
     processedText = processedText.replace(/^(-+\s*)+/, '').trim();
     const newMemoryItem = `- ${processedText}`;
 
-    // 正确性:按文件串行化 read-modify-write,防止并发(最多 6 个 Sub-Agent +
-    // 异步飞书消息分发)同时写同一记忆文件 → "后写覆盖先写、事实丢失"。
-    const prev =
-      MemoryTool.memoryWriteChains.get(memoryFilePath) ?? Promise.resolve();
-    const run = prev
-      .catch(() => undefined)
-      .then(() =>
-        MemoryTool.writeMemoryEntryLocked(
-          memoryFilePath,
-          newMemoryItem,
-          fsAdapter,
-        ),
-      );
-    MemoryTool.memoryWriteChains.set(memoryFilePath, run);
-    try {
-      await run;
-    } finally {
-      if (MemoryTool.memoryWriteChains.get(memoryFilePath) === run) {
-        MemoryTool.memoryWriteChains.delete(memoryFilePath);
-      }
-    }
+    // 用户写入与后台维护共享同一把按文件锁，防止并发覆盖和事实丢失。
+    await withMemoryFileWriteLock(memoryFilePath, () =>
+      MemoryTool.writeMemoryEntryLocked(
+        memoryFilePath,
+        newMemoryItem,
+        fsAdapter,
+      ),
+    );
   }
 
-  /** 按文件串行化的记忆写入链(进程内 mutex,消除并发丢更新)。 */
-  private static memoryWriteChains = new Map<string, Promise<void>>();
-
-  /** 记忆写入临界区:read-modify-write,由 memoryWriteChains 保证同文件串行。 */
+  /** 记忆写入临界区，由共享文件锁保证同文件串行。 */
   private static async writeMemoryEntryLocked(
     memoryFilePath: string,
     newMemoryItem: string,

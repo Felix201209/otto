@@ -24,6 +24,8 @@ const ENDPOINT_FILE = path.join(CONFIG_DIR, 'server-endpoint.json');
  */
 export interface ServerEndpointRecord extends ServerEndpoint {
   controlToken?: string;
+  /** 仅写入可信端点文件，用于区分桌面托管进程与用户手动启动的 CLI。 */
+  owner?: 'desktop';
 }
 
 export function endpointFilePath(): string {
@@ -36,6 +38,7 @@ export function writeEndpoint(
   port: number,
   clientToken: string,
   controlToken?: string,
+  owner?: 'desktop',
 ): ServerEndpoint {
   if (!clientToken.trim()) {
     throw new Error('clientToken 不能为空');
@@ -48,6 +51,7 @@ export function writeEndpoint(
     startedAt: Date.now(),
     clientToken,
     ...(controlToken ? { controlToken } : {}),
+    ...(owner ? { owner } : {}),
   };
   fs.mkdirSync(CONFIG_DIR, { recursive: true });
   fs.writeFileSync(ENDPOINT_FILE, JSON.stringify(ep, null, 2), { mode: 0o600 });
@@ -77,7 +81,8 @@ export function readEndpointRecord(): ServerEndpointRecord | undefined {
       typeof parsed.pid !== 'number' ||
       typeof parsed.startedAt !== 'number' ||
       typeof parsed.clientToken !== 'string' ||
-      !parsed.clientToken.trim()
+      !parsed.clientToken.trim() ||
+      (parsed.owner !== undefined && parsed.owner !== 'desktop')
     ) {
       return undefined;
     }

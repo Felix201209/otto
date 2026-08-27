@@ -35,6 +35,12 @@ describe('encrypted object store', () => {
       content,
     });
 
+    expect(store.inspect(object.key)?.pendingSinceMs).toEqual(
+      expect.any(Number),
+    );
+    store.markCommitted(object.key);
+    expect(store.inspect(object.key)?.pendingSinceMs).toBeNull();
+
     expect(store.read(object.key)).toEqual(content);
     expect(store.listKeys()).toEqual([object.key]);
     const raw = fs.readFileSync(path.join(root, ...object.key.split('/')));

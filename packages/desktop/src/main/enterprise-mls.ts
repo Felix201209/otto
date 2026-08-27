@@ -86,6 +86,11 @@ export interface EnterpriseMlsTransportEvent {
   expiresAt: string;
 }
 
+export interface EnterpriseMlsInboundConversationHead {
+  peerAccountId: string;
+  latestSequence: number;
+}
+
 export interface EnterpriseMlsAttachmentSession {
   conversationId: string;
   sessionGeneration: number;
@@ -184,6 +189,9 @@ export interface EnterpriseMlsTransportClient {
     limit?: number,
   ): Promise<EnterpriseMlsTransportEvent[]>;
   listMlsInboundConversationPeers(deviceId: string): Promise<string[]>;
+  listMlsInboundConversationHeads?(
+    deviceId: string,
+  ): Promise<EnterpriseMlsInboundConversationHead[] | null>;
   getMlsAttachmentSession?(
     peerAccountId: string,
     deviceId: string,
@@ -298,6 +306,7 @@ export interface EnterpriseMlsKernel {
     conversationId: string,
     peerAccountId: string,
   ): Promise<MlsPendingReceivedApplication[]>;
+  listPendingReceivedApplicationPeers(): Promise<string[]>;
   acknowledgeReceivedApplication(
     conversationId: string,
     peerAccountId: string,
@@ -599,6 +608,34 @@ export function parseEnterpriseMlsInboundConversationPeerPage(
     }
     previous = peerAccountId;
     return peerAccountId;
+  });
+}
+
+export function parseEnterpriseMlsInboundConversationHeadPage(
+  value: unknown,
+  afterPeerAccountId = '',
+): EnterpriseMlsInboundConversationHead[] {
+  if (!Array.isArray(value) || value.length > 500) {
+    throw new Error('enterprise MLS inbound conversation heads are invalid');
+  }
+  let previous = afterPeerAccountId;
+  return value.map((entry) => {
+    const head = entry as Partial<EnterpriseMlsInboundConversationHead>;
+    if (
+      !head ||
+      typeof head.peerAccountId !== 'string' ||
+      !IDENTIFIER.test(head.peerAccountId) ||
+      head.peerAccountId <= previous ||
+      !Number.isSafeInteger(head.latestSequence) ||
+      (head.latestSequence ?? 0) < 1
+    ) {
+      throw new Error('enterprise MLS inbound conversation heads are invalid');
+    }
+    previous = head.peerAccountId;
+    return {
+      peerAccountId: head.peerAccountId,
+      latestSequence: head.latestSequence,
+    } as EnterpriseMlsInboundConversationHead;
   });
 }
 
@@ -1089,6 +1126,12 @@ export class EnterpriseMlsSessionManager {
     );
   }
 
+  listPendingReceivedApplicationPeers(): Promise<string[]> {
+    return this.withReadyKernel((active) =>
+      active.kernel.listPendingReceivedApplicationPeers(),
+    );
+  }
+
   acknowledgeReceivedApplication(
     peerAccountId: string,
     eventId: string,
@@ -1251,6 +1294,7 @@ export interface EnterpriseMlsSessionOperations {
   listPendingReceivedApplications(
     peerAccountId: string,
   ): Promise<MlsPendingReceivedApplication[]>;
+  listPendingReceivedApplicationPeers(): Promise<string[]>;
   acknowledgeReceivedApplication(
     peerAccountId: string,
     eventId: string,
@@ -1321,6 +1365,27 @@ export class EnterpriseMlsSessionCoordinator {
       this.transport.listMlsInboundConversationPeers(scope.deviceId),
     ]);
     return [...new Set([...localPeers, ...inboundPeers])].sort();
+  }
+
+  private async listChangedConversationPeers(): Promise<string[]> {
+    const listHeads = this.transport.listMlsInboundConversationHeads;
+    if (!listHeads) return this.listActiveConversationPeers();
+    const scope = this.sessions.activeScope();
+    const heads = await listHeads.call(this.transport, scope.deviceId);
+    if (heads === null) return this.listActiveConversationPeers();
+    const changed: string[] = [];
+    for (const head of heads) {
+      const cursor = await this.sessions.transportCursor(head.peerAccountId);
+      if (head.latestSequence > cursor) changed.push(head.peerAccountId);
+    }
+    return changed;
+  }
+  async listUnreadConversationPeers(): Promise<string[]> {
+    const [changedPeers, pendingPeers] = await Promise.all([
+      this.listChangedConversationPeers(),
+      this.sessions.listPendingReceivedApplicationPeers(),
+    ]);
+    return [...new Set([...changedPeers, ...pendingPeers])].sort();
   }
 
   ensurePublishedKeyPackageInventory(
@@ -2098,7 +2163,7 @@ export class EnterpriseMlsSessionCoordinator {
   }
 
   async pollAllActiveSessions(limit = 100): Promise<number> {
-    const peers = await this.listActiveConversationPeers();
+    const peers = await this.listChangedConversationPeers();
     let processedEvents = 0;
     const failures: unknown[] = [];
     for (const peerAccountId of peers) {
@@ -2493,8 +2558,10 @@ export interface EnterpriseMlsInboundPollOperations {
   pollAllActiveSessions(limit?: number): Promise<number>;
 }
 
-export type EnterpriseMlsInboundPollSchedulerOptions =
-  EnterpriseMlsOutboxRetrySchedulerOptions;
+export interface EnterpriseMlsInboundPollSchedulerOptions
+  extends EnterpriseMlsOutboxRetrySchedulerOptions {
+  backgroundIdleDelayMs?: number;
+}
 
 /**
  * Background receive loop for active, persistently peer-bound conversations.
@@ -2506,6 +2573,7 @@ export class EnterpriseMlsInboundPollScheduler {
   private readonly baseDelayMs: number;
   private readonly maxDelayMs: number;
   private readonly idleDelayMs: number;
+  private readonly backgroundIdleDelayMs: number;
   private readonly jitterRatio: number;
   private readonly random: () => number;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -2514,6 +2582,7 @@ export class EnterpriseMlsInboundPollScheduler {
   private generation = 0;
   private failures = 0;
   private wakeRequested = false;
+  private foreground = true;
 
   constructor(
     private readonly operations: EnterpriseMlsInboundPollOperations,
@@ -2521,7 +2590,9 @@ export class EnterpriseMlsInboundPollScheduler {
   ) {
     this.baseDelayMs = options.baseDelayMs ?? 1_000;
     this.maxDelayMs = options.maxDelayMs ?? 60_000;
-    this.idleDelayMs = options.idleDelayMs ?? 5_000;
+    this.idleDelayMs = options.idleDelayMs ?? 15_000;
+    this.backgroundIdleDelayMs =
+      options.backgroundIdleDelayMs ?? 60_000;
     this.jitterRatio = options.jitterRatio ?? 0.2;
     this.random = options.random ?? Math.random;
     if (
@@ -2531,6 +2602,8 @@ export class EnterpriseMlsInboundPollScheduler {
       this.maxDelayMs < this.baseDelayMs ||
       !Number.isSafeInteger(this.idleDelayMs) ||
       this.idleDelayMs < 1 ||
+      !Number.isSafeInteger(this.backgroundIdleDelayMs) ||
+      this.backgroundIdleDelayMs < this.idleDelayMs ||
       !Number.isFinite(this.jitterRatio) ||
       this.jitterRatio < 0 ||
       this.jitterRatio > 0.5
@@ -2546,6 +2619,16 @@ export class EnterpriseMlsInboundPollScheduler {
     this.failures = 0;
     this.wakeRequested = false;
     this.schedule(0, this.generation);
+  }
+
+  setForeground(foreground: boolean): void {
+    if (this.foreground === foreground) return;
+    this.foreground = foreground;
+    if (!this.running || this.inFlight) return;
+    this.schedule(
+      foreground ? 0 : this.backgroundIdleDelayMs,
+      this.generation,
+    );
   }
 
   wake(): void {
@@ -2606,7 +2689,17 @@ export class EnterpriseMlsInboundPollScheduler {
       this.schedule(0, generation);
       return;
     }
-    this.schedule(failed ? this.retryDelay() : this.idleDelayMs, generation);
+    this.schedule(
+      failed
+        ? Math.max(
+            this.retryDelay(),
+            this.foreground ? 0 : this.backgroundIdleDelayMs,
+          )
+        : this.foreground
+          ? this.idleDelayMs
+          : this.backgroundIdleDelayMs,
+      generation,
+    );
   }
 
   private retryDelay(): number {

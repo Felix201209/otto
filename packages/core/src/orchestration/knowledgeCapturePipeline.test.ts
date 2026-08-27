@@ -328,4 +328,59 @@ describe('KnowledgeCapturePipeline', () => {
     );
     expect(recordFiles).toHaveLength(2);
   });
+
+  it('keeps the previous index and its records when capacity publication fails', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'otto-capture-'));
+    tempDirs.push(root);
+    const pipeline = new KnowledgeCapturePipeline({
+      rootDir: root,
+      workLogger: { log: vi.fn(async () => undefined) },
+      maxKnowledgeRecords: 1,
+    });
+    await pipeline.captureAfterAgent({
+      promptId: 'atomic-1',
+      requestText: '请记住偏好：先保留旧记录',
+      responseText: '确认，这是旧记录。',
+    });
+    const indexPath = path.join(root, 'memory-index.json');
+    const before = await fs.readFile(indexPath, 'utf8');
+    const beforeIndex = JSON.parse(before) as {
+      records: Array<{ file: string }>;
+    };
+    const oldRecordPath = path.join(
+      root,
+      'knowledge',
+      beforeIndex.records[0]!.file,
+    );
+    const originalWrite = (
+      pipeline as unknown as {
+        writeJsonAtomic(filePath: string, value: unknown): Promise<void>;
+      }
+    ).writeJsonAtomic.bind(pipeline);
+    (
+      pipeline as unknown as {
+        writeJsonAtomic(filePath: string, value: unknown): Promise<void>;
+      }
+    ).writeJsonAtomic = async (filePath, value) => {
+      if (filePath === indexPath) throw new Error('injected index failure');
+      await originalWrite(filePath, value);
+    };
+
+    await expect(
+      pipeline.captureAfterAgent({
+        promptId: 'atomic-2',
+        requestText: '请记住偏好：尝试替换记录',
+        responseText: '确认，这是新记录。',
+      }),
+    ).rejects.toThrow('injected index failure');
+
+    expect(await fs.readFile(indexPath, 'utf8')).toBe(before);
+    await expect(fs.readFile(oldRecordPath, 'utf8')).resolves.toContain(
+      '先保留旧记录',
+    );
+    const afterFiles = (await fs.readdir(path.join(root, 'knowledge'))).filter(
+      (file) => file.endsWith('.json'),
+    );
+    expect(afterFiles).toEqual([beforeIndex.records[0]!.file]);
+  });
 });

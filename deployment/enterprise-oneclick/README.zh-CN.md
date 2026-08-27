@@ -269,11 +269,18 @@ sudo /opt/otto-enterprise/deploy/restore-backup.sh \
   /var/lib/otto-enterprise/backups/otto-enterprise-*.otto-backup
 ```
 
-`OTTO_BACKUP_ENCRYPTION_KEY` 必须由客户和交付方按合同约定离线托管；只剩备份文件但
-丢失该密钥时无法解密。需要异地副本时，将 NFS、对象存储网关或备份卷挂载到
-`/var/backups/otto-enterprise`，再设置
-`OTTO_BACKUP_REPLICA_DIR=/var/backups/otto-enterprise`。异地副本写入后会重新计算
-SHA-256，上传或复制失败不会阻断 Otto 业务，但会进入健康状态告警。
+`OTTO_BACKUP_ENCRYPTION_KEY` 必须由客户和交付方按合同约定托管；只剩备份文件但
+丢失该密钥时无法解密。服务会记录不含密钥材料的 SHA-256 密钥标识。已有备份时若当前
+密钥缺失、被替换或无法解密历史归档，新备份会 fail closed，不会生成新密钥掩盖事故。
+旧部署首次升级时会流式验证最新历史归档，验证成功后才登记密钥标识。
+
+独立恢复副本通过 `OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE` 指向已挂载的密钥托管
+卷或 Secret 文件。该路径必须位于数据目录和所有备份目录之外；挂载缺失时服务拒绝把
+密钥落回本机目录。需要异地副本时，将备份卷挂载到
+`/var/backups/otto-enterprise`，设置
+`OTTO_BACKUP_REPLICA_DIR=/var/backups/otto-enterprise`，并同时配置独立恢复密钥路径。
+异地副本只复制加密归档与元数据，不复制明文密钥；写入后会重新计算 SHA-256。副本或
+密钥托管失败不会中断 Otto 业务，但会进入健康状态告警，管理员页不会显示为完整成功。
 
 高安全部署可以预先创建三个恰好 32 字节的原始密钥文件，并在配置中填写
 `OTTO_ACCOUNT_SYNC_ENCRYPTION_KEY_FILE`、`OTTO_ATTACHMENT_ENCRYPTION_KEY_FILE`、

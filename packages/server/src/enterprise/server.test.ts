@@ -2579,6 +2579,17 @@ describe('预设账号登录、管理与标签工单投递 API', () => {
         })
       ).status,
     ).toBe(201);
+    const inboundHeads = await fetch(
+      `${base}/enterprise/e2ee/mls/inbound-conversations?deviceId=${encodeURIComponent(bobDevice.deviceId)}&limit=100&includeHeads=1`,
+      { headers: { authorization: `Bearer ${bobToken}` } },
+    );
+    expect(inboundHeads.status).toBe(200);
+    expect(inboundHeads.headers.get('cache-control')).toBe('no-store');
+    await expect(inboundHeads.json()).resolves.toEqual({
+      conversationHeads: [
+        { peerAccountId: alice.id, latestSequence: 3 },
+      ],
+    });
     const nextGroupId = opaque('next');
     expect(
       (

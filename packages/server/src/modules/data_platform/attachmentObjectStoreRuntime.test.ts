@@ -17,6 +17,8 @@ const encryptedStore: EncryptedObjectStore = {
     key: `${'a'.repeat(2)}/${'b'.repeat(2)}/${'c'.repeat(64)}.otto-object`,
   })),
   read: vi.fn(() => Buffer.from('ciphertext')),
+  markCommitted: vi.fn(),
+  inspect: vi.fn(() => null),
   delete: vi.fn(),
   listKeys: vi.fn(() => []),
   sizeBytes: vi.fn(() => 0),

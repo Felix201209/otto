@@ -185,11 +185,17 @@ describe('旧企业模型显示迁移', () => {
 });
 
 describe('执行授权菜单', () => {
-  it('默认全局自动，并可降级到当前会话或手动后再恢复', () => {
+  it('新安装默认手动，只有用户明确选择后才启用自动授权', () => {
     const send = vi.spyOn(transport, 'send').mockImplementation(() => {});
     localStorage.clear();
     renderComposer([], null);
-    fireEvent.click(screen.getByRole('button', { name: '执行授权：所有会话自动' }));
+    expect(screen.getByRole('button', { name: '执行授权：手动授权' })).toBeTruthy();
+    expect(send).not.toHaveBeenCalledWith({
+      type: 'set_authorization_mode',
+      payload: { sessionId: 's1', mode: 'auto', scope: 'all' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '执行授权：手动授权' }));
     expect(document.querySelector('.otto-authorization__option-icon--manual svg')).toBeTruthy();
     expect(document.querySelector('.otto-authorization__option-icon--session svg')).toBeTruthy();
     expect(document.querySelector('.otto-authorization__option-icon--global svg')).toBeTruthy();
@@ -215,7 +221,7 @@ describe('执行授权菜单', () => {
     fireEvent.click(screen.getByRole('menuitemradio', { name: /手动授权/ }));
     expect(send).toHaveBeenLastCalledWith({
       type: 'set_authorization_mode',
-      payload: { sessionId: 's1', mode: 'manual', scope: 'session' },
+      payload: { sessionId: 's1', mode: 'manual', scope: 'all' },
     });
     expect(screen.getByRole('button', { name: '执行授权：手动授权' })).toBeTruthy();
 
@@ -227,6 +233,69 @@ describe('执行授权菜单', () => {
       payload: { sessionId: 's1', mode: 'auto', scope: 'all' },
     });
   });
+
+  it('只恢复用户曾明确保存的所有会话自动授权', () => {
+    const send = vi.spyOn(transport, 'send').mockImplementation(() => {});
+    localStorage.setItem('otto.authorization.global-auto', '1');
+
+    renderComposer([], null);
+
+    expect(screen.getByRole('button', { name: '执行授权：所有会话自动' })).toBeTruthy();
+    expect(send).toHaveBeenCalledWith({
+      type: 'set_authorization_mode',
+      payload: { sessionId: 's1', mode: 'auto', scope: 'all' },
+    });
+  });
+
+  it.each(['0', 'invalid'] as const)(
+    '本地值 %s 时安全保持手动授权并清除服务端旧 auto 状态',
+    (stored) => {
+      const send = vi.spyOn(transport, 'send').mockImplementation(() => {});
+      localStorage.setItem('otto.authorization.global-auto', stored);
+
+      renderComposer([], null);
+
+      expect(screen.getByRole('button', { name: '执行授权：手动授权' })).toBeTruthy();
+      expect(localStorage.getItem('otto.authorization.global-auto')).toBe('0');
+      expect(send).toHaveBeenCalledWith({
+        type: 'set_authorization_mode',
+        payload: { sessionId: 's1', mode: 'manual', scope: 'all' },
+      });
+    },
+  );
+
+  it('断线时不修改授权，重连后先同步手动安全基线', () => {
+    const send = vi.spyOn(transport, 'send').mockImplementation(() => {});
+    localStorage.setItem('otto.authorization.global-auto', '0');
+    const props = {
+      models: [] as ModelInfo[],
+      currentModel: null,
+      sessionId: 's1',
+      onSend: vi.fn(),
+      onSetModel: vi.fn(),
+    };
+    const view = render(<Composer {...props} connected={false} />);
+
+    expect(send).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '执行授权：手动授权' }));
+    fireEvent.click(
+      screen.getByRole('menuitemradio', { name: /自动授权（仅当前会话）/ }),
+    );
+
+    expect(send).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: '执行授权：手动授权' })).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toContain(
+      '连接已断开，授权模式未修改',
+    );
+
+    view.rerender(<Composer {...props} connected />);
+
+    expect(send).toHaveBeenCalledWith({
+      type: 'set_authorization_mode',
+      payload: { sessionId: 's1', mode: 'manual', scope: 'all' },
+    });
+  });
+
 
   it('离开仅当前会话自动的会话时在服务端 fail closed 回手动', () => {
     const send = vi.spyOn(transport, 'send').mockImplementation(() => {});
@@ -421,11 +490,28 @@ describe('模型菜单 provider 分组与勾选', () => {
 });
 
 describe('语音录音配件', () => {
-  it('输入栏不再展示语音输入图标入口', () => {
-    render(
+  it('输入栏不暴露或初始化麦克风采集', () => {
+    const mediaDevicesDescriptor = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices');
+    const getUserMedia = vi.fn();
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    try {
+      const { unmount } = render(
       <Composer models={[]} currentModel={null} sessionId="s1" onSend={vi.fn()} onSetModel={vi.fn()} />,
-    );
-    expect(screen.queryByRole('button', { name: '语音输入' })).toBeNull();
+      );
+      expect(screen.queryByRole('button', { name: '语音输入' })).toBeNull();
+      expect(getUserMedia).not.toHaveBeenCalled();
+      unmount();
+      expect(getUserMedia).not.toHaveBeenCalled();
+    } finally {
+      if (mediaDevicesDescriptor) {
+        Object.defineProperty(navigator, 'mediaDevices', mediaDevicesDescriptor);
+      } else {
+        delete (navigator as unknown as { mediaDevices?: MediaDevices }).mediaDevices;
+      }
+    }
   });
 });
 

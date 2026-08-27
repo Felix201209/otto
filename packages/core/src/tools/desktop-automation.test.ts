@@ -6,7 +6,6 @@ import os from 'os';
 import { DesktopAutomationTool } from './desktop-automation.js';
 import type { DesktopAutomationToolParams } from './desktop-automation.js';
 import { createMockConfig } from '../utils/test-helpers.js';
-import { ProcessGuard } from '../utils/process-guard.js';
 import {
   DoctorService,
   type CommandRunner,
@@ -178,6 +177,53 @@ describe('DesktopAutomationTool', () => {
     }
   });
 
+  it.runIf(['darwin', 'win32'].includes(os.platform()))(
+    'forwards the caller AbortSignal to the automation process boundary',
+    async () => {
+      const executeProcess = vi.fn().mockResolvedValue({ stdout: 'ok', stderr: '' });
+      const controller = new AbortController();
+      const t = new DesktopAutomationTool(
+        createMockConfig(),
+        new DoctorService(),
+        executeProcess,
+      );
+
+      await t.execute({ action: 'screen_info' }, controller.signal);
+
+      expect(executeProcess).toHaveBeenCalled();
+      expect(executeProcess.mock.calls[0][0].signal).toBe(controller.signal);
+    },
+  );
+  it.runIf(os.platform() === 'win32')(
+    'releases Windows input state after an automation command is cancelled',
+    async () => {
+      const controller = new AbortController();
+      const abort = new Error('cancelled');
+      abort.name = 'AbortError';
+      const executeProcess = vi
+        .fn()
+        .mockImplementationOnce(async () => {
+          controller.abort(abort);
+          throw abort;
+        })
+        .mockResolvedValueOnce({ stdout: '', stderr: '' });
+      const t = new DesktopAutomationTool(
+        createMockConfig(),
+        new DoctorService(),
+        executeProcess,
+      );
+
+      const result = await t.execute(
+        { action: 'drag', x: 1, y: 1, to_x: 2, to_y: 2 },
+        controller.signal,
+      );
+
+      expect(String(result.llmContent)).toContain('drag FAIL');
+      expect(executeProcess).toHaveBeenCalledTimes(2);
+      expect(executeProcess.mock.calls[1][0].signal).toBeUndefined();
+      expect(executeProcess.mock.calls[1][0].timeoutMs).toBe(2_000);
+    },
+  );
   // --- doctor 前置：cliclick（仅 mac 键鼠/输入类动作）---
   const isMac = os.platform() === 'darwin';
 
@@ -200,27 +246,21 @@ describe('DesktopAutomationTool', () => {
     // 窗口类走 osascript，不应触发 cliclick 前置体检。用 spy 断言 doctor.check
     // 对 window_manager 未被调用（若被调用即说明误拦），同时对 keyboard 会被调用。
     // mock ProcessGuard.exec 让底层 osascript 秒回，避免真实执行副作用/超时。
-    const execSpy = vi
-      .spyOn(ProcessGuard, 'exec')
-      .mockResolvedValue({ stdout: '', stderr: '' });
-    try {
-      const doctor = new DoctorService(makeRunner(new Set()), NO_MODULES, 'darwin', () => false);
-      const spy = vi.spyOn(doctor, 'check');
-      const t = new DesktopAutomationTool(createMockConfig(), doctor);
+    const executeProcess = vi.fn().mockResolvedValue({ stdout: '', stderr: '' });
+    const doctor = new DoctorService(makeRunner(new Set()), NO_MODULES, 'darwin', () => false);
+    const spy = vi.spyOn(doctor, 'check');
+    const t = new DesktopAutomationTool(createMockConfig(), doctor, executeProcess);
 
-      // keyboard：应触发 cliclick 前置（doctor.check 被调用）。
-      await t.execute({ action: 'keyboard', keys: 'cmd+c' }, new AbortController().signal);
-      expect(spy).toHaveBeenCalled();
+    // keyboard：应触发 cliclick 前置（doctor.check 被调用）。
+    await t.execute({ action: 'keyboard', keys: 'cmd+c' }, new AbortController().signal);
+    expect(spy).toHaveBeenCalled();
 
-      // window_manager：不应触发 cliclick 前置。重置计数后单独验证。
-      spy.mockClear();
-      await t.execute(
-        { action: 'window_manager', app_name: '__NoSuchApp_ZZZ__', window_operation: 'tile_left' },
-        new AbortController().signal,
-      );
-      expect(spy).not.toHaveBeenCalled();
-    } finally {
-      execSpy.mockRestore();
-    }
+    // window_manager：不应触发 cliclick 前置。重置计数后单独验证。
+    spy.mockClear();
+    await t.execute(
+      { action: 'window_manager', app_name: '__NoSuchApp_ZZZ__', window_operation: 'tile_left' },
+      new AbortController().signal,
+    );
+    expect(spy).not.toHaveBeenCalled();
   });
 });

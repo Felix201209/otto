@@ -2075,6 +2075,20 @@ export function createClusteredEnterpriseServer(
         path === '/enterprise/e2ee/mls/inbound-conversations' &&
         method === 'GET'
       ) {
+        if (url.searchParams.get('includeHeads') === '1') {
+          const conversationHeads =
+            await repository.listMlsInboundConversationHeads({
+              organizationId: member.organizationId,
+              accountId: member.id,
+              deviceId: url.searchParams.get('deviceId') || '',
+              afterPeerAccountId:
+                url.searchParams.get('afterPeerAccountId') || undefined,
+              limit: Number(url.searchParams.get('limit') || 100),
+            });
+          res.setHeader('Cache-Control', 'no-store');
+          sendJson(res, 200, { conversationHeads });
+          return;
+        }
         const peerAccountIds = await repository.listMlsInboundConversationPeers(
           {
             organizationId: member.organizationId,

@@ -51,6 +51,11 @@ import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { HealthInfo, ServerEndpoint } from 'otto-server';
+import {
+  observeDesktopWindowActivity,
+  resumeDesktopWindow,
+  suspendDesktopWindow,
+} from './window-lifecycle.js';
 
 function ignoreBrokenPipe(stream: NodeJS.WriteStream): void {
   stream.on('error', (error: NodeJS.ErrnoException) => {
@@ -166,6 +171,8 @@ import {
   EnterpriseMlsPrivateMessageService,
   FileEnterpriseMlsMessageHistory,
 } from './enterprise-mls-private-messages.js';
+import { EnterpriseAtoaResponseLedger } from './enterprise-atoa-response-ledger.js';
+import { createEnterpriseAtoaResponseLedgerCommandHandler } from './enterprise-atoa-response-ledger-ipc.js';
 import {
   ENTERPRISE_TRAY_POPOVER_WIDTH,
   enterpriseTrayPopoverHeight,
@@ -478,6 +485,10 @@ let tray: Tray | undefined;
 let trayRestarting = false;
 let enterpriseTrayPopoverWindow: BrowserWindow | undefined;
 let enterpriseTrayContacts: EnterpriseTrayContact[] = [];
+let enterpriseTrayRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+let enterpriseTrayRefreshInFlight: Promise<void> | undefined;
+const ENTERPRISE_TRAY_REFRESH_INTERVAL_MS = 60_000;
+
 /** 用户主动退出标记；关闭窗口时不退出，只有菜单/托盘退出才真正结束进程。 */
 let isQuitting = false;
 /** 视频编辑器窗口（OpenReel）。 */
@@ -601,6 +612,7 @@ const IPC = {
   enterpriseFederationAtoaDeny: 'otto:enterprise-federation-atoa-deny',
   enterpriseFederationAtoaDispatch: 'otto:enterprise-federation-atoa-dispatch',
   enterpriseFederationAtoaRespond: 'otto:enterprise-federation-atoa-respond',
+  enterpriseAtoaResponseLedger: 'otto:enterprise-atoa-response-ledger',
   enterpriseFederationContactVerification:
     'otto:enterprise-federation-contact-verification',
   enterpriseFederationContactVerify: 'otto:enterprise-federation-contact-verify',
@@ -721,6 +733,12 @@ async function synchronizeAuthenticatedEnterpriseAccount(
     await enterpriseMls.close();
     return;
   }
+  try {
+    enterpriseAtoaResponseLedger.cleanupSubmitted();
+  } catch (error) {
+    console.warn('[otto-desktop] A2A response ledger cleanup failed:', error);
+  }
+
   let e2eeDevice: Awaited<
     ReturnType<EnterpriseClient['ensureE2eeDeviceReady']>
   > | null = null;
@@ -807,6 +825,18 @@ function assertEnterpriseE2eeSecureStorage(): void {
   }
 }
 
+const enterpriseAtoaResponseLedger = new EnterpriseAtoaResponseLedger({
+  directory: path.join(app.getPath('userData'), 'enterprise-atoa-responses'),
+  protect(plaintext) {
+    assertEnterpriseE2eeSecureStorage();
+    return safeStorage.encryptString(plaintext).toString('base64');
+  },
+  unprotect(protectedValue) {
+    assertEnterpriseE2eeSecureStorage();
+    return safeStorage.decryptString(Buffer.from(protectedValue, 'base64'));
+  },
+});
+
 const enterpriseE2eeVault = new EnterpriseE2eeKeyVault({
   directory: path.join(app.getPath('userData'), 'enterprise-e2ee'),
   deviceName: () => `${os.hostname()} (${process.platform})`,
@@ -874,6 +904,20 @@ const enterpriseClient = new EnterpriseClient(
   },
   enterpriseE2ee,
 );
+const enterpriseAtoaResponseLedgerCommand =
+  createEnterpriseAtoaResponseLedgerCommandHandler({
+    ledger: enterpriseAtoaResponseLedger,
+    identity() {
+      const account = enterpriseClient.authenticatedAccountSnapshot();
+      const session = enterpriseClient.snapshot();
+      if (!account || !session.token || !session.serverUrl) return null;
+      return { serverUrl: session.serverUrl, accountId: account.id };
+    },
+    normalizeSources(value) {
+      return normalizeEnterpriseAtoaSources(value);
+    },
+  });
+
 const enterpriseMlsCoordinator = new EnterpriseMlsSessionCoordinator(
   enterpriseMls,
   enterpriseClient,
@@ -1512,7 +1556,7 @@ function trayTooltip(unreadCount: number): string {
   return lines.join('\n');
 }
 
-async function refreshEnterpriseTrayContacts(): Promise<void> {
+async function performEnterpriseTrayContactsRefresh(): Promise<void> {
   if (!enterpriseClient.snapshot().token) {
     enterpriseTrayContacts = [];
     updateUnreadIndicators(notificationService.getUnreadSessions());
@@ -1529,6 +1573,34 @@ async function refreshEnterpriseTrayContacts(): Promise<void> {
   }
   updateUnreadIndicators(notificationService.getUnreadSessions());
   syncEnterpriseTrayPopover();
+}
+
+function refreshEnterpriseTrayContacts(): Promise<void> {
+  if (enterpriseTrayRefreshInFlight) return enterpriseTrayRefreshInFlight;
+  const operation = performEnterpriseTrayContactsRefresh();
+  const tracked = operation.finally(() => {
+    if (enterpriseTrayRefreshInFlight === tracked) {
+      enterpriseTrayRefreshInFlight = undefined;
+    }
+  });
+  enterpriseTrayRefreshInFlight = tracked;
+  return tracked;
+}
+
+function scheduleEnterpriseTrayRefresh(): void {
+  if (isQuitting) return;
+  if (enterpriseTrayRefreshTimer) clearTimeout(enterpriseTrayRefreshTimer);
+  enterpriseTrayRefreshTimer = setTimeout(() => {
+    enterpriseTrayRefreshTimer = undefined;
+    void refreshEnterpriseTrayContacts().finally(scheduleEnterpriseTrayRefresh);
+  }, ENTERPRISE_TRAY_REFRESH_INTERVAL_MS);
+  enterpriseTrayRefreshTimer.unref?.();
+}
+
+function stopEnterpriseTrayRefresh(): void {
+  if (!enterpriseTrayRefreshTimer) return;
+  clearTimeout(enterpriseTrayRefreshTimer);
+  enterpriseTrayRefreshTimer = undefined;
 }
 
 async function listEnterpriseUnreadMessageNotifications(
@@ -1862,6 +1934,7 @@ function showMainWindow(): void {
     return;
   }
   if (mainWindow.isMinimized()) mainWindow.restore();
+  resumeDesktopWindow(mainWindow);
   mainWindow.show();
   mainWindow.focus();
 }
@@ -1945,10 +2018,9 @@ function createTray(): void {
   setInterval(() => {
     if (tray && !tray.isDestroyed()) updateMenu();
   }, 2000);
-  void refreshEnterpriseTrayContacts();
-  setInterval(() => {
-    void refreshEnterpriseTrayContacts();
-  }, 8000);
+  void refreshEnterpriseTrayContacts()
+    .catch(() => undefined)
+    .finally(scheduleEnterpriseTrayRefresh);
 
   tray.on('click', () => {
     void toggleEnterpriseTrayPopover();
@@ -2001,6 +2073,9 @@ function createWindow(): BrowserWindow {
       preload: path.join(__dirname, '../preload/index.js'),
     },
   });
+  observeDesktopWindowActivity(win, (foreground) => {
+    enterpriseMlsInboundPoll.setForeground(foreground);
+  });
 
   win.once('ready-to-show', () => {
     win.show();
@@ -2010,7 +2085,7 @@ function createWindow(): BrowserWindow {
   win.on('close', (event) => {
     if (isQuitting || process.platform === 'darwin') return;
     event.preventDefault();
-    win.hide();
+    suspendDesktopWindow(win);
   });
 
   hardenWebContents(win);
@@ -3230,6 +3305,10 @@ function registerIpc(): void {
       });
     },
   );
+  ipcMain.handle(IPC.enterpriseAtoaResponseLedger, (_event, input: unknown) => {
+    loadEnterpriseSession();
+    return enterpriseAtoaResponseLedgerCommand(input);
+  });
   ipcMain.handle(
     IPC.enterpriseFederationContactVerification,
     async (_event, contactId: unknown) => {
@@ -4861,6 +4940,7 @@ if (!gotLock) {
     }
     stopEnterpriseIdentityRefresh();
     stopEnterpriseModuleUpdatePolling();
+    stopEnterpriseTrayRefresh();
     stopEnterpriseSkillUsageReporting();
     if (quitCleanupFinished) return;
     event.preventDefault();

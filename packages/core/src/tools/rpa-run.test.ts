@@ -1,6 +1,6 @@
 /** @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0 */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createMockConfig } from '../utils/test-helpers.js';
 import { RpaRunTool } from './rpa-run.js';
 
@@ -35,5 +35,37 @@ describe('RpaRunTool', () => {
   it('loads the optional RPA runtime for a read-only status lookup', async () => {
     const result = await tool.execute({ action: 'status', run_id: 'rpa-00000000-0000-0000-0000-000000000000' }, new AbortController().signal);
     expect(String(result.llmContent)).toContain('"found":false');
+  });
+
+  it('fails closed without loading RPA after task authorization was revoked', async () => {
+    const cancelled = new AbortController();
+    cancelled.abort();
+    const runtime = vi.spyOn(tool as never, 'runner' as never);
+
+    const result = await tool.execute(
+      { action: 'status', run_id: 'rpa-00000000-0000-0000-0000-000000000000' },
+      cancelled.signal,
+    );
+
+    expect(String(result.llmContent)).toContain('CANCELLED');
+    expect(runtime).not.toHaveBeenCalled();
+    runtime.mockRestore();
+  });
+
+  it('does not publish a late RPA result after cancellation wins the race', async () => {
+    const localTool = new RpaRunTool(createMockConfig());
+    let release!: (value: unknown) => void;
+    const pending = new Promise((resolve) => { release = resolve; });
+    vi.spyOn(localTool as never, 'runner' as never).mockResolvedValue({
+      runNext: () => pending,
+    } as never);
+    const controller = new AbortController();
+    const execution = localTool.execute({ action: 'run_next', run_id: 'rpa-00000000-0000-0000-0000-000000000000' }, controller.signal);
+    controller.abort();
+    release(null);
+
+    const result = await execution;
+    expect(String(result.llmContent)).toContain('CANCELLED');
+    expect(String(result.llmContent)).not.toContain('OK');
   });
 });

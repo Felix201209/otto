@@ -556,6 +556,9 @@ describe('clustered PostgreSQL enterprise server', () => {
     }));
     const listMlsTransportEvents = vi.fn(async () => []);
     const listMlsInboundConversationPeers = vi.fn(async () => ['acc_peer']);
+    const listMlsInboundConversationHeads = vi.fn(async () => [
+      { peerAccountId: 'acc_peer', latestSequence: 4 },
+    ]);
     const repo = {
       ...repository(),
       publishMlsKeyPackage,
@@ -565,6 +568,7 @@ describe('clustered PostgreSQL enterprise server', () => {
       appendMlsTransportEvent,
       listMlsTransportEvents,
       listMlsInboundConversationPeers,
+      listMlsInboundConversationHeads,
     } as unknown as PostgresEnterpriseCoreRepository;
     const { baseUrl } = await listen(repo);
     const headers = {
@@ -629,6 +633,17 @@ describe('clustered PostgreSQL enterprise server', () => {
     await expect(inbound.json()).resolves.toEqual({
       peerAccountIds: ['acc_peer'],
     });
+    const heads = await fetch(
+      `${baseUrl}/enterprise/e2ee/mls/inbound-conversations?deviceId=admin-device&afterPeerAccountId=acc_aaron&limit=25&includeHeads=1`,
+      { headers },
+    );
+    expect(heads.status).toBe(200);
+    expect(heads.headers.get('cache-control')).toBe('no-store');
+    await expect(heads.json()).resolves.toEqual({
+      conversationHeads: [
+        { peerAccountId: 'acc_peer', latestSequence: 4 },
+      ],
+    });
     const eventsUrl = `${baseUrl}/enterprise/e2ee/mls/conversations/acc_peer/events`;
     const appended = await fetch(eventsUrl, {
       method: 'POST',
@@ -680,6 +695,13 @@ describe('clustered PostgreSQL enterprise server', () => {
       limit: 25,
     });
 
+    expect(listMlsInboundConversationHeads).toHaveBeenCalledWith({
+      organizationId: 'org_default',
+      accountId: 'acc_admin',
+      deviceId: 'admin-device',
+      afterPeerAccountId: 'acc_aaron',
+      limit: 25,
+    });
     const health = (await (
       await fetch(`${baseUrl}/enterprise/health`)
     ).json()) as { capabilities: string[] };

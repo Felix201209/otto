@@ -8,7 +8,8 @@
  * 通过给工具注入「装了 fake runner/resolver 的真实 DoctorService」来模拟环境，
  * 不 mock 全局模块，也不真的启动浏览器。
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import fs from 'node:fs';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { WebAutomationTool } from './web-automation.js';
 import { createMockConfig } from '../utils/test-helpers.js';
 import {
@@ -73,6 +74,51 @@ describe('WebAutomationTool', () => {
     expect(tool.validateToolParams({ action: 'navigate', url: 'https://a.com' })).toBeNull();
   });
 
+  it('pre-aborted execution does not run dependency checks or create work', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const check = vi.fn();
+    const doctor = { check } as unknown as DoctorService;
+    const executeProcess = vi.fn();
+    const t = new WebAutomationTool(createMockConfig(), doctor, executeProcess);
+
+    await expect(
+      t.execute(
+        { action: 'navigate', url: 'https://example.com' },
+        controller.signal,
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(check).not.toHaveBeenCalled();
+    expect(executeProcess).not.toHaveBeenCalled();
+  });
+
+  it('passes AbortSignal to the process and removes its temporary script', async () => {
+    const doctor = new DoctorService(
+      RUNNER_BIN_PRESENT,
+      RESOLVER_HAS_PLAYWRIGHT,
+      'darwin',
+      () => false,
+    );
+    const controller = new AbortController();
+    let scriptFile = '';
+    const executeProcess = vi.fn(async (options: { command: string; signal?: AbortSignal }) => {
+      const match = options.command.match(/node "([^"]+)"/);
+      scriptFile = match?.[1] ?? '';
+      expect(options.signal).toBe(controller.signal);
+      expect(scriptFile).not.toBe('');
+      expect(fs.existsSync(scriptFile)).toBe(true);
+      return { stdout: JSON.stringify({ summary: 'ok' }), stderr: '' };
+    });
+    const t = new WebAutomationTool(createMockConfig(), doctor, executeProcess);
+
+    await t.execute(
+      { action: 'navigate', url: 'https://example.com' },
+      controller.signal,
+    );
+
+    expect(executeProcess).toHaveBeenCalledOnce();
+    expect(fs.existsSync(scriptFile)).toBe(false);
+  });
   // --- doctor 前置：playwright 缺失 fail-loud（重点） ---
   it('fails loudly when playwright node module is missing, even if binary is on PATH', async () => {
     // which playwright 命中（模拟全局二进制在），但 node 模块解析失败。

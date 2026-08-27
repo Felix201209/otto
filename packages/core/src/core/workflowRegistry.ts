@@ -3,8 +3,8 @@
  * Singleton so WorkflowTool, WorkflowAgentBridge, and the /workflow panel all share state.
  */
 
-export type WorkflowStatus = 'running' | 'completed' | 'failed';
-export type AgentStatus = 'running' | 'completed' | 'failed';
+export type WorkflowStatus = 'running' | 'completed' | 'failed' | 'cancelled';
+export type AgentStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 
 export interface WorkflowAgentRecord {
   agentId: string;
@@ -110,7 +110,7 @@ export const WorkflowRegistry = {
     tokenUsage?: { inputTokens: number; outputTokens: number; totalTokens: number },
   ): void {
     const r = records.find(r => r.id === id);
-    if (!r) return;
+    if (!r || r.status !== 'running') return;
     r.status = status;
     r.endTime = Date.now();
     if (tokenUsage) {
@@ -123,9 +123,28 @@ export const WorkflowRegistry = {
     notify(true);  // immediate: workflow ended
   },
 
+  cancelWorkflow(id: string): void {
+    const record = records.find((candidate) => candidate.id === id);
+    if (!record || record.status !== 'running') return;
+    const endTime = Date.now();
+    record.status = 'cancelled';
+    record.endTime = endTime;
+    const agents = record.phases.length
+      ? record.phases.flatMap((phase) => phase.agents)
+      : record.agents;
+    for (const agent of agents) {
+      if (agent.status !== 'running') continue;
+      agent.status = 'cancelled';
+      agent.endTime = endTime;
+      agent.currentPhase = undefined;
+    }
+    trimAgentData(record);
+    notify(true);
+  },
+
   startAgent(workflowId: string, agentId: string, label: string, prompt: string, model?: string, phaseIndex?: number): void {
     const r = records.find(r => r.id === workflowId);
-    if (!r) return;
+    if (!r || r.status !== 'running') return;
 
     const agent: WorkflowAgentRecord = {
       agentId,
@@ -188,7 +207,7 @@ export const WorkflowRegistry = {
     tokenUsage?: { inputTokens: number; outputTokens: number; totalTokens: number },
   ): void {
     const agent = findAgent(workflowId, agentId);
-    if (!agent) return;
+    if (!agent || agent.status !== 'running') return;
     agent.status = status;
     agent.endTime = Date.now();
     agent.outcome = outcome;

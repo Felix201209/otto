@@ -253,7 +253,13 @@ function formatWorkflowDuration(ms: number): string {
 }
 
 function workflowStatusLabel(status: string): string {
-  return status === 'completed' ? '已完成' : status === 'failed' ? '失败' : '运行中';
+  return status === 'completed'
+    ? '已完成'
+    : status === 'failed'
+      ? '失败'
+      : status === 'cancelled'
+        ? '已取消'
+        : '运行中';
 }
 
 function workflowStatusClass(status: string): string {
@@ -261,7 +267,9 @@ function workflowStatusClass(status: string): string {
     ? 'otto-hub__wfstatus--done'
     : status === 'failed'
       ? 'otto-hub__wfstatus--fail'
-      : 'otto-hub__wfstatus--run';
+      : status === 'cancelled'
+        ? 'otto-hub__wfstatus--cancel'
+        : 'otto-hub__wfstatus--run';
 }
 
 export function WorkflowsPanel({ data }: { data: UseSettingsData }): React.JSX.Element {

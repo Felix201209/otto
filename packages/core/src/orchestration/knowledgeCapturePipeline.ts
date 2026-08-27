@@ -9,7 +9,7 @@
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { getWorkLogger, type WorkLogEntry } from './workLog.js';
 import { redactSensitiveText } from '../utils/redaction.js';
 
@@ -761,6 +761,9 @@ export class KnowledgeCapturePipeline {
     }
     await this.ensureDirs();
     const index = await this.readKnowledgeIndex();
+    const transactionId = randomUUID().replace(/-/g, '').slice(0, 16);
+    const writtenFiles = new Set<string>();
+    const supersededFiles = new Set<string>();
     let created = 0;
     let deduplicated = 0;
     for (const candidate of candidates) {
@@ -770,7 +773,11 @@ export class KnowledgeCapturePipeline {
         (record) => record.contentHash === contentHash,
       );
       const timestamp = this.now().toISOString();
-      const file = `${candidate.type}-${contentHash.slice(0, 24)}.json`;
+      // Knowledge records are immutable once an index references them. A new
+      // generation is written first and only becomes authoritative when the
+      // index rename commits. This keeps the old index readable if publishing
+      // the replacement index fails midway through capacity eviction.
+      const file = `${candidate.type}-${contentHash.slice(0, 24)}-${transactionId}-${writtenFiles.size}.json`;
       const existingRecord = existing
         ? await this.readKnowledgeRecord(existing.file)
         : undefined;
@@ -819,6 +826,7 @@ export class KnowledgeCapturePipeline {
             occurrences: 1,
           };
       await this.writeJsonAtomic(path.join(this.knowledgeDir, file), record);
+      writtenFiles.add(file);
       const indexEntry: KnowledgeIndexEntry = {
         id: record.id,
         contentHash: record.contentHash,
@@ -839,6 +847,7 @@ export class KnowledgeCapturePipeline {
         file,
       };
       if (existing) {
+        if (existing.file !== file) supersededFiles.add(existing.file);
         index.records[index.records.indexOf(existing)] = indexEntry;
         deduplicated += 1;
       } else {
@@ -850,15 +859,35 @@ export class KnowledgeCapturePipeline {
       right.updatedAt.localeCompare(left.updatedAt),
     );
     const evicted = index.records.splice(this.maxKnowledgeRecords);
-    await Promise.all(
-      evicted.map((entry) =>
-        fs
-          .rm(path.join(this.knowledgeDir, entry.file), { force: true })
-          .catch(() => undefined),
-      ),
-    );
     index.updatedAt = this.now().toISOString();
-    await this.writeJsonAtomic(this.knowledgeIndexPath, index);
+    try {
+      // Publish the index before removing any record reachable from the old
+      // index. A failed index write leaves the previous generation intact.
+      await this.writeJsonAtomic(this.knowledgeIndexPath, index);
+    } catch (error) {
+      await Promise.all(
+        [...writtenFiles].map((file) =>
+          fs
+            .rm(path.join(this.knowledgeDir, file), { force: true })
+            .catch(() => undefined),
+        ),
+      );
+      throw error;
+    }
+    const referencedFiles = new Set(index.records.map((entry) => entry.file));
+    const obsoleteFiles = new Set([
+      ...evicted.map((entry) => entry.file),
+      ...supersededFiles,
+    ]);
+    await Promise.all(
+      [...obsoleteFiles]
+        .filter((file) => !referencedFiles.has(file))
+        .map((file) =>
+          fs
+            .rm(path.join(this.knowledgeDir, file), { force: true })
+            .catch(() => undefined),
+        ),
+    );
     return { created, deduplicated, total: index.records.length };
   }
 

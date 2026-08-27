@@ -73,6 +73,7 @@ OTTO_BOOTSTRAP_PASSWORD="${OTTO_BOOTSTRAP_PASSWORD:-auto}"
 OTTO_BOOTSTRAP_NAME="${OTTO_BOOTSTRAP_NAME:-系统管理员}"
 OTTO_ALLOW_SMS_DISABLED="${OTTO_ALLOW_SMS_DISABLED:-0}"
 OTTO_BACKUP_ENCRYPTION_KEY="${OTTO_BACKUP_ENCRYPTION_KEY:-auto}"
+OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE="${OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE:-}"
 OTTO_BACKUP_INTERVAL_HOURS="${OTTO_BACKUP_INTERVAL_HOURS:-24}"
 OTTO_BACKUP_RETENTION_DAYS="${OTTO_BACKUP_RETENTION_DAYS:-30}"
 OTTO_BACKUP_MINIMUM_RETAINED="${OTTO_BACKUP_MINIMUM_RETAINED:-3}"
@@ -173,6 +174,25 @@ esac
 if [ -n "$OTTO_BACKUP_REPLICA_DIR" ] \
   && [ "$OTTO_BACKUP_REPLICA_DIR" != "/var/backups/otto-enterprise" ]; then
   otto_die "一键部署的异地备份挂载点固定为 /var/backups/otto-enterprise"
+fi
+if [ -n "$OTTO_BACKUP_REPLICA_DIR" ] && [ -z "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" ]; then
+  otto_die "启用异地备份时必须配置独立的 OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE"
+fi
+if [ -n "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" ]; then
+  [[ "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" = /* ]] || otto_die "OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE 必须使用绝对路径"
+  recovery_parent="$(dirname -- "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE")"
+  [ -d "$recovery_parent" ] && [ ! -L "$recovery_parent" ] || otto_die "备份恢复密钥目录必须预先挂载为真实目录"
+  if [ -e "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" ] || [ -L "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" ]; then
+    [ -f "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" ] && [ ! -L "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" ] || otto_die "备份恢复密钥必须是普通文件且不能是符号链接"
+  fi
+  case "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" in
+    "$DATA_DIR"|"$DATA_DIR"/*) otto_die "备份恢复密钥不能放在 Otto 数据目录内" ;;
+  esac
+  if [ -n "$OTTO_BACKUP_REPLICA_DIR" ]; then
+    case "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" in
+      "$OTTO_BACKUP_REPLICA_DIR"|"$OTTO_BACKUP_REPLICA_DIR"/*) otto_die "备份恢复密钥不能放在备份副本目录内" ;;
+    esac
+  fi
 fi
 case "$OTTO_TELEMETRY_ENDPOINT" in
   ""|https://*) ;;
@@ -685,6 +705,19 @@ if [ -n "$OTTO_BACKUP_REPLICA_DIR" ]; then
   chown otto-enterprise:otto-enterprise "$OTTO_BACKUP_REPLICA_DIR"
   chmod 0700 "$OTTO_BACKUP_REPLICA_DIR"
 fi
+if [ -n "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" ]; then
+  RECOVERY_KEY_CREATED=0
+  if [ ! -e "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" ]; then
+    "$NODE_PATH" --input-type=module -e "import fs from 'node:fs'; const value=process.argv[1]; const key=/^[0-9a-f]{64}$/i.test(value)?Buffer.from(value,'hex'):Buffer.from(value,'base64'); fs.writeFileSync(process.argv[2], key.toString('base64')+'\n', { flag:'wx', mode:0o600 });" "$OTTO_BACKUP_ENCRYPTION_KEY" "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" || otto_die "无法写入独立备份恢复密钥"
+    RECOVERY_KEY_CREATED=1
+  fi
+  "$NODE_PATH" --input-type=module -e "import fs from 'node:fs'; const parse=(value)=>/^[0-9a-f]{64}$/i.test(value)?Buffer.from(value,'hex'):Buffer.from(value,'base64'); const active=parse(process.argv[1]); const recovery=parse(fs.readFileSync(process.argv[2],'utf8').trim()); if(active.length!==32||recovery.length!==32||!active.equals(recovery))process.exit(1);" "$OTTO_BACKUP_ENCRYPTION_KEY" "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" || otto_die "独立备份恢复密钥与当前归档密钥不一致"
+  if [ "$RECOVERY_KEY_CREATED" -eq 1 ]; then
+    chown otto-enterprise:otto-enterprise "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE"
+    chmod 0600 "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE"
+  fi
+  runuser -u otto-enterprise -- test -r "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" || otto_die "otto-enterprise 服务账号无法读取独立备份恢复密钥"
+fi # 独立恢复密钥托管已核验
 install -o otto-enterprise -g otto-enterprise -m 0600 \
   "${CANARY_DIR}/data.db" "${DATA_DIR}/data.db"
 DATA_CREATED=1
@@ -715,6 +748,7 @@ write_env "$ENV_TEMP" \
   OTTO_APP_VERSION "$RELEASE_VERSION" \
   OTTO_BUILD_COMMIT "$BUILD_ID" \
   OTTO_BACKUP_ENCRYPTION_KEY "$OTTO_BACKUP_ENCRYPTION_KEY" \
+  OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE "$OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE" \
   OTTO_BACKUP_INTERVAL_HOURS "$OTTO_BACKUP_INTERVAL_HOURS" \
   OTTO_BACKUP_RETENTION_DAYS "$OTTO_BACKUP_RETENTION_DAYS" \
   OTTO_BACKUP_MINIMUM_RETAINED "$OTTO_BACKUP_MINIMUM_RETAINED" \

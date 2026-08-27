@@ -153,6 +153,7 @@ function dependencies(
     },
     spawnDetached: vi.fn(() => exitedChild) as unknown as ServerManagerDependencies['spawnDetached'],
     pidAlive: () => true,
+    killProcess: vi.fn() as unknown as ServerManagerDependencies['killProcess'],
     probeHealth: async (_host, port) => port === MAIN_ENDPOINT.port,
     fetchImpl: vi.fn() as unknown as typeof fetch,
     enterpriseListenTimeoutMs: 25,
@@ -328,6 +329,59 @@ describe('ServerManager trusted enterprise identity bridge', () => {
   });
 });
 
+describe('ServerManager desktop-owned detached lifecycle', () => {
+  it('恢复桌面托管的 detached server 后，明确退出 Otto 会终止它', async () => {
+    const recovered = { ...MAIN_ENDPOINT, owner: 'desktop' as const };
+    const clearEndpoint = vi.fn();
+    const mod = {
+      ...discoveredMainModule(),
+      readEndpointRecord: vi.fn(() => recovered),
+      clearEndpoint,
+    } as unknown as Awaited<
+      ReturnType<ServerManagerDependencies['loadOttoServer']>
+    >;
+    let alive = true;
+    const killProcess = vi.fn((_pid: number, signal?: NodeJS.Signals | number) => {
+      if (signal === 'SIGTERM') alive = false;
+      return true;
+    }) as unknown as ServerManagerDependencies['killProcess'];
+    const manager = new ServerManager({
+      dependencies: dependencies({
+        loadOttoServer: async () => mod,
+        pidAlive: () => alive,
+        killProcess,
+      }),
+    });
+
+    await expect(manager.ensure()).resolves.toMatchObject({
+      endpoint: MAIN_ENDPOINT,
+      ownership: 'detached',
+    });
+    await manager.shutdown(true);
+
+    expect(killProcess).toHaveBeenCalledWith(MAIN_ENDPOINT.pid, 'SIGTERM');
+    expect(clearEndpoint).toHaveBeenCalledOnce();
+  });
+
+  it('明确退出 Otto 不终止用户手动启动的 CLI server', async () => {
+    const mod = discoveredMainModule();
+    const killProcess = vi.fn() as unknown as ServerManagerDependencies['killProcess'];
+    const manager = new ServerManager({
+      dependencies: dependencies({
+        loadOttoServer: async () => mod,
+        killProcess,
+      }),
+    });
+
+    await expect(manager.ensure()).resolves.toMatchObject({
+      ownership: 'discovered',
+    });
+    await manager.shutdown(true);
+
+    expect(killProcess).not.toHaveBeenCalled();
+    expect(mod.clearEndpoint).not.toHaveBeenCalled();
+  });
+});
 describe('ServerManager enterprise lifecycle', () => {
   it('复用已运行的主服务时仍会启动企业后台服务', async () => {
     const local = fakeHttpServer((server) => queueMicrotask(() => server.emit('listening')));

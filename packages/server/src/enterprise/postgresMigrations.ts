@@ -925,6 +925,16 @@ CREATE INDEX attachment_objects_mls_message
   ) WHERE mls_conversation_id IS NOT NULL;
 `,
   },
+  {
+    version: 15,
+    name: 'mls-inbound-head-discovery-index',
+    sql: `
+CREATE INDEX mls_conversations_participant_b
+  ON mls_conversations (
+    organization_id, participant_b_account_id, participant_a_account_id
+  );
+`,
+  },
 ];
 
 export const ENTERPRISE_POSTGRES_SCHEMA_VERSION =

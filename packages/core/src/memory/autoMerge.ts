@@ -29,6 +29,12 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { homedir } from 'os';
+import {
+  atomicWriteTextFile,
+  deduplicateGlobalMemoryContent,
+  GLOBAL_MEMORY_SECTION_HEADER,
+} from './globalMemoryMaintenance.js';
+import { withMemoryFileWriteLock } from './memoryFileLock.js';
 
 // ============================================================
 // 类型定义
@@ -166,7 +172,7 @@ const DEFAULT_TOKEN_ESTIMATOR: TokenEstimator = {
   },
 };
 
-const MEMORY_SECTION_HEADER = '## Otto Added Memories';
+const MEMORY_SECTION_HEADER = GLOBAL_MEMORY_SECTION_HEADER;
 
 // ============================================================
 // 自动记忆合并/分割引擎
@@ -366,52 +372,29 @@ export class AutoMemoryEngine {
     after: number;
     removed: number;
   }> {
-    let raw: string;
-    try {
-      raw = await fs.readFile(this.config.globalMdPath, 'utf-8');
-    } catch {
-      return { before: 0, after: 0, removed: 0 };
-    }
-
-    const headerIdx = raw.indexOf(MEMORY_SECTION_HEADER);
-    if (headerIdx < 0) return { before: 0, after: 0, removed: 0 };
-
-    const before = raw.substring(0, headerIdx + MEMORY_SECTION_HEADER.length);
-    const afterHeader = raw.substring(headerIdx + MEMORY_SECTION_HEADER.length);
-    const nextSection = afterHeader.indexOf('\n## ');
-    const after = nextSection >= 0 ? afterHeader.substring(nextSection) : '';
-
-    // 提取所有 fact 行
-    const sectionBody =
-      nextSection >= 0 ? afterHeader.substring(0, nextSection) : afterHeader;
-    const lines = sectionBody.split('\n');
-    const facts: string[] = [];
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith('-')) continue;
-      const fact = trimmed.replace(/^-\s*/, '').trim();
-      if (!fact) continue;
-      if (!facts.includes(fact)) {
-        facts.push(fact);
+    return withMemoryFileWriteLock(this.config.globalMdPath, async () => {
+      let raw: string;
+      try {
+        raw = await fs.readFile(this.config.globalMdPath, 'utf-8');
+      } catch {
+        return { before: 0, after: 0, removed: 0 };
       }
-    }
 
-    const beforeCount = sectionBody.split('\n').filter(l => l.trim().startsWith('-')).length;
-    const afterCount = facts.length;
+      const result = deduplicateGlobalMemoryContent(raw);
+      if (result.removed === 0) {
+        return { before: result.before, after: result.after, removed: 0 };
+      }
 
-    if (beforeCount === afterCount) {
-      return { before: beforeCount, after: afterCount, removed: 0 };
-    }
-
-    // 重写文件
-    const factLines = facts.map(f => `- ${f}\n`).join('');
-    const newContent = `${before}\n${factLines}${after}`;
-    await fs.writeFile(this.config.globalMdPath, newContent, 'utf-8');
-
-    console.log(
-      `[AutoMemory] Deduplicated global.md: ${beforeCount} → ${afterCount} facts (${beforeCount - afterCount} removed)`,
-    );
-    return { before: beforeCount, after: afterCount, removed: beforeCount - afterCount };
+      await atomicWriteTextFile(this.config.globalMdPath, result.content);
+      console.log(
+        `[AutoMemory] Deduplicated global.md: ${result.before} → ${result.after} facts (${result.removed} removed)`,
+      );
+      return {
+        before: result.before,
+        after: result.after,
+        removed: result.removed,
+      };
+    });
   }
 
   // ── 持久化 ─────────────────────────────────────────────

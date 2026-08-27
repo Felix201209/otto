@@ -42,21 +42,34 @@ export class HabitAnalyzer {
   private readonly ops: OperationRecord[] = [];
   private readonly maxOps: number;
   private readonly analysisIntervalMs: number;
+  private startupTimer: ReturnType<typeof setTimeout> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private onInsights?: (insights: HabitInsight[]) => void;
   private analysisInFlight = false;
   private config: Config | null = null;
+  private llmAnalysisEnabled: boolean;
+  private opsRevision = 0;
+  private lastAnalyzedRevision = 0;
+  private stopped = false;
+  private lifecycleRevision = 0;
 
-  constructor(opts: { maxOps?: number; analysisIntervalMs?: number } = {}) {
+  constructor(opts: {
+    maxOps?: number;
+    analysisIntervalMs?: number;
+    llmAnalysisEnabled?: boolean;
+  } = {}) {
     this.maxOps = opts.maxOps ?? 2000;
     this.analysisIntervalMs = opts.analysisIntervalMs ?? 2 * 60 * 60 * 1000;
+    this.llmAnalysisEnabled = opts.llmAnalysisEnabled ?? false;
   }
 
   setConfig(config: Config): void { this.config = config; }
+  setLlmAnalysisEnabled(enabled: boolean): void { this.llmAnalysisEnabled = enabled; }
   setCallback(cb: (insights: HabitInsight[]) => void): void { this.onInsights = cb; }
 
   feed(op: OperationRecord): void {
     this.ops.push(op);
+    this.opsRevision += 1;
     if (this.ops.length > this.maxOps) {
       this.ops.splice(0, this.ops.length - this.maxOps);
     }
@@ -64,27 +77,47 @@ export class HabitAnalyzer {
 
   start(): void {
     if (this.timer) return;
-    setTimeout(() => { void this.runAnalysis(); }, 10 * 60 * 1000).unref?.();
+    this.stopped = false;
+    this.startupTimer = setTimeout(() => {
+      this.startupTimer = null;
+      void this.runAnalysis();
+    }, 10 * 60 * 1000);
+    this.startupTimer.unref?.();
     this.timer = setInterval(() => { void this.runAnalysis(); }, this.analysisIntervalMs);
     this.timer.unref?.();
   }
 
   stop(): void {
+    this.stopped = true;
+    this.lifecycleRevision += 1;
+    if (this.startupTimer) {
+      clearTimeout(this.startupTimer);
+      this.startupTimer = null;
+    }
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
   }
 
   async runAnalysis(): Promise<HabitInsight[]> {
+    if (this.stopped) return [];
     if (this.analysisInFlight) return [];
     if (this.ops.length < 20) return [];
+    const analysisRevision = this.opsRevision;
+    if (analysisRevision <= this.lastAnalyzedRevision) return [];
+    const analysisLifecycleRevision = this.lifecycleRevision;
     this.analysisInFlight = true;
     try {
-      const insights = this.config ? await this.llmAnalyze(this.config) : this.basicAnalyze();
+      const insights = this.config && this.llmAnalysisEnabled
+        ? await this.llmAnalyze(this.config)
+        : this.basicAnalyze();
+      if (this.stopped || analysisLifecycleRevision !== this.lifecycleRevision) return [];
       if (insights.length > 0) this.onInsights?.(insights);
       return insights;
     } catch (err) {
+      if (this.stopped || analysisLifecycleRevision !== this.lifecycleRevision) return [];
       console.warn('[HabitAnalyzer] LLM failed, using basic:', (err as Error)?.message);
       return this.basicAnalyze();
     } finally {
+      this.lastAnalyzedRevision = Math.max(this.lastAnalyzedRevision, analysisRevision);
       this.analysisInFlight = false;
     }
   }

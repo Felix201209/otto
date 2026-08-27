@@ -88,6 +88,8 @@ interface ChatViewProps {
   /** 服务端权威企业、账号与角色身份，不从本地昵称推断。 */
   identityLabel?: string;
   busy: boolean;
+  /** 当前与本地 Otto Server 的真实连接状态。 */
+  connected?: boolean;
   modelManagementLabel?: string;
   onSend: (
     text: string,
@@ -143,6 +145,7 @@ export function ChatView({
   currentModel,
   identityLabel,
   busy,
+  connected = true,
   modelManagementLabel = '模型与个人 API 设置',
   onSend,
   onCancel,
@@ -366,6 +369,7 @@ export function ChatView({
         currentModel={currentModel}
         // 切换/新建会话后据此自动聚焦输入框。
         sessionId={session?.sessionId ?? null}
+        connected={connected}
         // 无会话才整体禁用；生成中（busy）由 Composer 把发送按钮换成停止，textarea 仍可输入。
         disabled={!session}
         busy={busy}

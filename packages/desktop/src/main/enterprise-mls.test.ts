@@ -17,6 +17,7 @@ import {
   EnterpriseMlsOutboxRetryScheduler,
   enterpriseMlsDirectConversationId,
   parseEnterpriseMlsTransportEvent,
+  type EnterpriseMlsInboundConversationHead,
   type EnterpriseMlsKeyPackageInventory,
   type EnterpriseMlsSessionOperations,
   type EnterpriseMlsTransportClient,
@@ -192,6 +193,9 @@ function fakeKernel() {
         senderDeviceScope: 'server/org-a/account-b/device-b',
         createdAt,
       }),
+    ),
+    listPendingReceivedApplicationPeers: vi.fn(
+      async (): Promise<string[]> => [],
     ),
     listPendingReceivedApplications: vi.fn(
       async (): Promise<MlsPendingReceivedApplication[]> => [],
@@ -410,6 +414,7 @@ describe('EnterpriseMlsSessionManager', () => {
       'account-b',
     );
     await manager.listPendingReceivedApplications('account-b');
+    await manager.listPendingReceivedApplicationPeers();
     await manager.acknowledgeReceivedApplication(
       'account-b',
       `mls-${'b'.repeat(64)}`,
@@ -430,6 +435,7 @@ describe('EnterpriseMlsSessionManager', () => {
       'account-b',
     );
     expect(kernel.listPendingApplicationPeers).toHaveBeenCalledOnce();
+    expect(kernel.listPendingReceivedApplicationPeers).toHaveBeenCalledOnce();
     expect(kernel.listConversationPeers).toHaveBeenCalledOnce();
     expect(kernel.acknowledgePendingApplication).toHaveBeenCalledWith(
       conversationId,
@@ -619,7 +625,7 @@ function coordinatorHarness(keyPackages: MlsKeyPackage[] = []) {
     listPendingApplicationPeers: vi.fn(async (): Promise<string[]> => []),
     listConversationPeers: vi.fn(async (): Promise<string[]> => ['account-b']),
     acknowledgePendingApplication: vi.fn(async () => undefined),
-    transportCursor: vi.fn(async () => 0),
+    transportCursor: vi.fn(async (_peerAccountId: string) => 0),
     advanceTransportCursor: vi.fn(async () => undefined),
     receiveTransportCommit: vi.fn(
       async (
@@ -682,6 +688,9 @@ function coordinatorHarness(keyPackages: MlsKeyPackage[] = []) {
         senderDeviceScope: `${'f'.repeat(64)}/org-a/${peerAccountId}/${senderDeviceId}`,
         createdAt,
       }),
+    ),
+    listPendingReceivedApplicationPeers: vi.fn(
+      async (): Promise<string[]> => [],
     ),
     listPendingReceivedApplications: vi.fn(
       async (): Promise<MlsPendingReceivedApplication[]> => [],
@@ -750,6 +759,9 @@ function coordinatorHarness(keyPackages: MlsKeyPackage[] = []) {
       async (): Promise<EnterpriseMlsTransportEvent[]> => [],
     ),
     listMlsInboundConversationPeers: vi.fn(async (): Promise<string[]> => []),
+    listMlsInboundConversationHeads: vi.fn<
+      () => Promise<EnterpriseMlsInboundConversationHead[] | null>
+    >(async () => null),
     listApprovedMlsDeviceIds: vi.fn(async (accountId: string) =>
       accountId === 'account-a' ? ['device-a'] : ['device-b'],
     ),
@@ -1666,6 +1678,57 @@ describe('EnterpriseMlsSessionCoordinator', () => {
     expect(sessions.listPendingReceivedApplications).not.toHaveBeenCalled();
   });
 
+  it('uses conversation watermarks to avoid polling unchanged peer sessions', async () => {
+    const { sessions, transport } = coordinatorHarness();
+    sessions.listConversationPeers.mockResolvedValue(['account-b', 'account-c']);
+    sessions.transportCursor.mockImplementation(async (peerAccountId) =>
+      peerAccountId === 'account-b' ? 12 : 7,
+    );
+    transport.listMlsInboundConversationHeads.mockResolvedValue([
+      { peerAccountId: 'account-b', latestSequence: 12 },
+      { peerAccountId: 'account-c', latestSequence: 9 },
+    ]);
+    transport.listMlsTransportEvents.mockResolvedValue([]);
+    const coordinator = new EnterpriseMlsSessionCoordinator(
+      sessions,
+      transport,
+    );
+
+    await expect(coordinator.pollAllActiveSessions()).resolves.toBe(0);
+
+    expect(transport.listMlsInboundConversationHeads).toHaveBeenCalledWith(
+      'device-a',
+    );
+    expect(transport.listMlsTransportEvents).toHaveBeenCalledOnce();
+    expect(transport.listMlsTransportEvents).toHaveBeenCalledWith(
+      'account-c',
+      7,
+      100,
+    );
+  });
+  it('uses one head request and zero event requests for 100 unchanged peers', async () => {
+    const { sessions, transport } = coordinatorHarness();
+    const peers = Array.from(
+      { length: 100 },
+      (_, index) => `account-${String(index).padStart(3, '0')}`,
+    );
+    sessions.transportCursor.mockResolvedValue(42);
+    sessions.listPendingReceivedApplicationPeers.mockResolvedValue([]);
+    transport.listMlsInboundConversationHeads.mockResolvedValue(
+      peers.map((peerAccountId) => ({ peerAccountId, latestSequence: 42 })),
+    );
+    const coordinator = new EnterpriseMlsSessionCoordinator(
+      sessions,
+      transport,
+    );
+
+    await expect(coordinator.listUnreadConversationPeers()).resolves.toEqual([]);
+
+    expect(transport.listMlsInboundConversationHeads).toHaveBeenCalledOnce();
+    expect(sessions.listPendingReceivedApplicationPeers).toHaveBeenCalledOnce();
+    expect(transport.listMlsTransportEvents).not.toHaveBeenCalled();
+  });
+
   it('polls an inbound Welcome peer before the local conversation is opened', async () => {
     const { group, sessions, transport } = coordinatorHarness();
     sessions.listConversationPeers.mockResolvedValue([]);
@@ -1818,5 +1881,60 @@ describe('EnterpriseMlsInboundPollScheduler', () => {
     await scheduler.stop();
     await vi.advanceTimersByTimeAsync(2_000);
     expect(pollAllActiveSessions).toHaveBeenCalledTimes(2);
+  });
+  it('does not enter a rapid retry loop after a hidden-window failure', async () => {
+    vi.useFakeTimers();
+    const pollAllActiveSessions = vi.fn(async () => {
+      throw new Error('offline');
+    });
+    const scheduler = new EnterpriseMlsInboundPollScheduler(
+      { pollAllActiveSessions },
+      {
+        baseDelayMs: 100,
+        maxDelayMs: 200,
+        idleDelayMs: 100,
+        backgroundIdleDelayMs: 1_000,
+        jitterRatio: 0,
+      },
+    );
+
+    scheduler.start();
+    scheduler.setForeground(false);
+    scheduler.wake();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(pollAllActiveSessions).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(pollAllActiveSessions).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(pollAllActiveSessions).toHaveBeenCalledTimes(2);
+    await scheduler.stop();
+  });
+
+  it('slows background polling and wakes immediately when the window returns', async () => {
+    vi.useFakeTimers();
+    const pollAllActiveSessions = vi.fn(async () => 0);
+    const scheduler = new EnterpriseMlsInboundPollScheduler(
+      { pollAllActiveSessions },
+      {
+        idleDelayMs: 100,
+        backgroundIdleDelayMs: 1_000,
+        jitterRatio: 0,
+      },
+    );
+
+    scheduler.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(pollAllActiveSessions).toHaveBeenCalledOnce();
+
+    scheduler.setForeground(false);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(pollAllActiveSessions).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(pollAllActiveSessions).toHaveBeenCalledTimes(2);
+
+    scheduler.setForeground(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(pollAllActiveSessions).toHaveBeenCalledTimes(3);
+    await scheduler.stop();
   });
 });

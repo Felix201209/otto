@@ -43,6 +43,7 @@ import {
 import {
   ENTERPRISE_MLS_CIPHERSUITE,
   enterpriseMlsDirectConversationId,
+  parseEnterpriseMlsInboundConversationHeadPage,
   parseEnterpriseMlsInboundConversationPeerPage,
   parseEnterpriseMlsAttachmentSession,
   parseEnterpriseMlsKeyPackageInventory,
@@ -50,6 +51,7 @@ import {
   parseEnterpriseMlsTransportEvent,
   type EnterpriseMlsAppendTransportEventInput,
   type EnterpriseMlsAttachmentSession,
+  type EnterpriseMlsInboundConversationHead,
   type EnterpriseMlsKeyPackageInventory,
   type EnterpriseMlsPublishedKeyPackage,
   type EnterpriseMlsTransportEvent,
@@ -1536,6 +1538,76 @@ export class EnterpriseClient {
       throw new Error('enterprise MLS inbound conversation limit exceeded');
     }
     return peerAccountIds;
+  }
+
+  async listMlsInboundConversationHeads(
+    deviceId: string,
+  ): Promise<EnterpriseMlsInboundConversationHead[] | null> {
+    const account = await this.requireMlsTransportAccount();
+    const pageLimit = 500;
+    const maximumPeers = 1_000;
+    const conversationHeads: EnterpriseMlsInboundConversationHead[] = [];
+    let afterPeerAccountId = '';
+    while (conversationHeads.length < maximumPeers) {
+      const query = new URLSearchParams({
+        deviceId,
+        limit: String(pageLimit),
+        includeHeads: '1',
+      });
+      if (afterPeerAccountId) {
+        query.set('afterPeerAccountId', afterPeerAccountId);
+      }
+      const response = await this.request<{
+        conversationHeads?: unknown;
+        peerAccountIds?: unknown;
+      }>(
+        `/enterprise/e2ee/mls/inbound-conversations?${query.toString()}`,
+      );
+      if (
+        !Object.prototype.hasOwnProperty.call(response, 'conversationHeads')
+      ) {
+        const legacyPeers = parseEnterpriseMlsInboundConversationPeerPage(
+          response.peerAccountIds,
+          afterPeerAccountId,
+        );
+        if (legacyPeers.some((peerAccountId) => peerAccountId === account.id)) {
+          throw new Error(
+            'enterprise MLS inbound conversation binding is invalid',
+          );
+        }
+        return null;
+      }
+      const page = parseEnterpriseMlsInboundConversationHeadPage(
+        response.conversationHeads,
+        afterPeerAccountId,
+      );
+      if (page.some((head) => head.peerAccountId === account.id)) {
+        throw new Error(
+          'enterprise MLS inbound conversation binding is invalid',
+        );
+      }
+      conversationHeads.push(...page);
+      if (page.length < pageLimit) return conversationHeads;
+      afterPeerAccountId = page.at(-1)!.peerAccountId;
+    }
+    const overflowQuery = new URLSearchParams({
+      deviceId,
+      afterPeerAccountId,
+      limit: '1',
+      includeHeads: '1',
+    });
+    const overflow = await this.request<{ conversationHeads: unknown }>(
+      `/enterprise/e2ee/mls/inbound-conversations?${overflowQuery.toString()}`,
+    );
+    if (
+      parseEnterpriseMlsInboundConversationHeadPage(
+        overflow.conversationHeads,
+        afterPeerAccountId,
+      ).length > 0
+    ) {
+      throw new Error('enterprise MLS inbound conversation limit exceeded');
+    }
+    return conversationHeads;
   }
 
   async getMlsAttachmentSession(

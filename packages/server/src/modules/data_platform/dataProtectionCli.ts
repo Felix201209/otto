@@ -58,6 +58,8 @@ async function main(): Promise<void> {
     dataDirectory,
     encryptionKey: process.env.OTTO_BACKUP_ENCRYPTION_KEY,
     encryptionKeyPath: process.env.OTTO_BACKUP_ENCRYPTION_KEY_FILE,
+    encryptionKeyRecoveryPath:
+      process.env.OTTO_BACKUP_ENCRYPTION_KEY_RECOVERY_FILE,
   });
   if (command === 'verify') {
     const result = await verifyDataProtectionBackup({

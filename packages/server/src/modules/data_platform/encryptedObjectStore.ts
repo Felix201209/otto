@@ -17,6 +17,11 @@ const OBJECT_MAGIC = Buffer.from('OTTOOBJ1');
 const NONCE_BYTES = 12;
 const TAG_BYTES = 16;
 
+export interface EncryptedObjectMetadata {
+  lastModifiedAtMs: number;
+  pendingSinceMs: number | null;
+}
+
 export interface EncryptedObjectStore {
   readonly backend: 'encrypted-filesystem';
   put(input: { namespace: string; objectId: string; content: Buffer }): {
@@ -24,6 +29,8 @@ export interface EncryptedObjectStore {
     key: string;
   };
   read(key: string): Buffer;
+  markCommitted(key: string): void;
+  inspect(key: string): EncryptedObjectMetadata | null;
   delete(key: string): void;
   listKeys(): string[];
   sizeBytes(): number;
@@ -109,6 +116,17 @@ export function createEncryptedObjectStore(input: {
     return absolute;
   }
 
+  function resolvePendingPath(target: string): string {
+    const pendingPath = `${target}.pending`;
+    if (fs.existsSync(pendingPath)) {
+      const metadata = fs.lstatSync(pendingPath);
+      if (metadata.isSymbolicLink() || !metadata.isFile()) {
+        throw new Error('object storage pending marker is unsafe');
+      }
+    }
+    return pendingPath;
+  }
+
   function ensureObjectParent(target: string): void {
     const relative = path.relative(root, path.dirname(target));
     let parent = root;
@@ -149,16 +167,23 @@ export function createEncryptedObjectStore(input: {
         cipher.getAuthTag(),
         ciphertext,
       ]);
+      const pendingPath = resolvePendingPath(target);
       const temporary = `${target}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
+      let objectPublished = false;
       try {
+        // The marker is created before the object becomes visible. It remains
+        // until the caller commits the authoritative SQLite metadata row.
+        fs.writeFileSync(pendingPath, 'pending\n', { mode: 0o600 });
         fs.writeFileSync(temporary, payload, { flag: 'wx', mode: 0o600 });
         fs.renameSync(temporary, target);
+        objectPublished = true;
       } finally {
         try {
           fs.rmSync(temporary, { force: true });
         } catch {
           // Preserve the storage error that caused cleanup.
         }
+        if (!objectPublished) fs.rmSync(pendingPath, { force: true });
       }
       return { backend: 'encrypted-filesystem', key };
     },
@@ -187,8 +212,27 @@ export function createEncryptedObjectStore(input: {
         decipher.final(),
       ]);
     },
+    markCommitted(key) {
+      const target = resolveKey(key);
+      fs.rmSync(resolvePendingPath(target), { force: true });
+    },
+    inspect(key) {
+      const target = resolveKey(key);
+      if (!fs.existsSync(target)) return null;
+      const objectMetadata = fs.statSync(target);
+      const pendingPath = resolvePendingPath(target);
+      const pendingMetadata = fs.existsSync(pendingPath)
+        ? fs.statSync(pendingPath)
+        : null;
+      return {
+        lastModifiedAtMs: objectMetadata.mtimeMs,
+        pendingSinceMs: pendingMetadata?.mtimeMs ?? null,
+      };
+    },
     delete(key) {
-      fs.rmSync(resolveKey(key), { force: true });
+      const target = resolveKey(key);
+      fs.rmSync(target, { force: true });
+      fs.rmSync(resolvePendingPath(target), { force: true });
     },
     listKeys() {
       ensureStorageRoot(root);
