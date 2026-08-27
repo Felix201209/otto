@@ -9887,6 +9887,10 @@ h6.otto-prose__h {
   padding: 0 10px 0 14px;
   border-radius: 8px;
 }
+.otto-session-group--workspace > .otto-session {
+  width: calc(100% - 16px);
+  margin-left: 16px;
+}
 .otto-session-group > .otto-session + .otto-session {
   margin-top: 2px;
 }

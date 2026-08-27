@@ -403,7 +403,10 @@ export function Sidebar({
                     (session) => unreadSessions?.includes(session.sessionId),
                   ).length;
                   return (
-                    <div key={group.key} className="otto-session-group">
+                    <div
+                      key={group.key}
+                      className={`otto-session-group${group.collapsible ? ' otto-session-group--workspace' : ''}`}
+                    >
                       {group.collapsible ? (
                         <button
                           type="button"

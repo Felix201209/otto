@@ -384,6 +384,9 @@ describe('Sidebar：任务分组方式', () => {
   it('默认保持按时间，并可从菜单切换到按工作目录', () => {
     renderSidebar({ sessions: workspaceSessions, preferenceScope });
 
+    expect(screen.getByText('项目新任务').closest('.otto-session-group')
+      ?.classList.contains('otto-session-group--workspace')).toBe(false);
+
     fireEvent.click(screen.getByRole('button', { name: '视图选项' }));
     const menu = screen.getByRole('menu', { name: '视图选项' });
     expect(menu.parentElement).toBe(document.body);
@@ -394,6 +397,8 @@ describe('Sidebar：任务分组方式', () => {
 
     expect(screen.getByRole('button', { name: 'project，2 个任务' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Desktop，1 个任务' })).toBeTruthy();
+    expect(screen.getByText('项目新任务').closest('.otto-session-group')
+      ?.classList.contains('otto-session-group--workspace')).toBe(true);
     expect(JSON.parse(localStorage.getItem(sessionListPreferenceStorageKey(preferenceScope)) ?? '{}'))
       .toMatchObject({ mode: 'workspace' });
   });
