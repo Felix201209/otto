@@ -12,7 +12,7 @@ const workflow = readFileSync(
 describe('V1.9.13 enterprise candidate source identity', () => {
   it('pins the reviewed V1.9.13 source instead of a moving development branch', () => {
     expect(workflow).toContain(
-      'REVIEWED_RELEASE_SOURCE: 82b5e0c101a44358efbb900b0c2be62455c2412b',
+      'REVIEWED_RELEASE_SOURCE: e574b8c81560db3d3807178548754df2f73560ad',
     );
     expect(workflow).not.toContain('origin/internal');
     expect(workflow).toContain(
