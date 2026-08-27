@@ -12082,7 +12082,7 @@ h6.otto-prose__h {
   background: transparent;
   color: var(--text, #171717);
   cursor: pointer;
-  transition: background-color 150ms ease, border-color 150ms ease, transform 150ms ease;
+  transition: background-color 150ms ease;
 }
 
 .otto-module-tile-wrap {
@@ -12123,9 +12123,7 @@ h6.otto-prose__h {
 }
 
 .otto-module-tile:hover:not(:disabled) {
-  border-color: var(--line, #d9dde5);
   background: var(--surface-subtle, #f5f7fa);
-  transform: translateY(-1px);
 }
 
 .otto-module-tile:focus-visible {
@@ -12346,10 +12344,6 @@ h6.otto-prose__h {
 @media (prefers-reduced-motion: reduce) {
   .otto-module-tile {
     transition: none;
-  }
-
-  .otto-module-tile:hover:not(:disabled) {
-    transform: none;
   }
 
   .otto-module-group.is-editing .otto-module-tile-wrap {
