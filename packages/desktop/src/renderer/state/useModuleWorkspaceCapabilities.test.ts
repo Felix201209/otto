@@ -110,7 +110,7 @@ describe('useModuleWorkspaceCapabilities', () => {
       .toBe('available');
   });
 
-  it('fails closed when park capability loading fails', async () => {
+  it('isolates park capability loading failures from non-park modules', async () => {
     Object.assign(window.otto, {
       enterpriseParkView: vi.fn(async () => { throw new Error('park unavailable'); }),
       enterpriseTicketList: vi.fn(async () => []),
@@ -121,9 +121,32 @@ describe('useModuleWorkspaceCapabilities', () => {
       profiles: BASE_AGENT_PROFILES, customAgents: [],
     }));
 
-    await waitFor(() => expect(view.result.current.status).toBe('failed'));
+    await waitFor(() => expect(view.result.current.status).toBe('ready'));
     expect(view.result.current.modules.every((module) => !module.id.startsWith('park-')
       || module.availability === 'hidden')).toBe(true);
+    expect(view.result.current.modules.find((module) => module.id === 'enterprise-memory')?.availability)
+      .toBe('available');
+    expect(view.result.current.modules.find((module) => module.id === 'skill-zone')?.availability)
+      .toBe('available');
+  });
+
+  it('isolates park ticket loading failures from non-park modules', async () => {
+    Object.assign(window.otto, {
+      enterpriseTicketList: vi.fn(async () => { throw new Error('tickets unavailable'); }),
+    });
+    const view = renderHook(() => useModuleWorkspaceCapabilities({
+      edition: 'enterprise', serverUrl: 'https://enterprise.example.com',
+      organizationId: 'org-a', accountId: 'account-a', accountIsAdmin: false,
+      profiles: BASE_AGENT_PROFILES, customAgents: [],
+    }));
+
+    await waitFor(() => expect(view.result.current.status).toBe('ready'));
+    expect(view.result.current.modules.find((module) => module.id === 'park-announcement')?.availability)
+      .toBe('available');
+    expect(view.result.current.modules.find((module) => module.id === 'park-staff-tasks')?.availability)
+      .toBe('hidden');
+    expect(view.result.current.modules.find((module) => module.id === 'enterprise-memory')?.availability)
+      .toBe('available');
   });
 
   it('synchronously drops the previous privilege snapshot when account or role changes', async () => {

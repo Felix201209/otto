@@ -873,13 +873,19 @@ export function useOttoStore(
       maybeShowChatNotification(frame, activeRef.current, sessionsRef.current);
       dispatch({ kind: 'frame', frame });
       if (frame.type === 'error'
+        && !frame.payload.sessionId
         && (frame.payload.code === 'unknown_agent_profile'
           || frame.payload.code === 'forbidden_agent_profile')) {
-        // create_session errors do not carry clientRequestId. Fail closed: cancel every
-        // unresolved profile launch so a late session_created frame cannot inherit a
-        // prompt, workspace, or authorization context from a rejected transaction.
-        for (const pending of profileLaunchRef.current.values()) clearTimeout(pending.timeout);
-        profileLaunchRef.current.clear();
+        // create_session 错误帧没有 clientRequestId；同一 WebSocket 上请求与回包保持顺序，
+        // 因此只取消最早尚未确认的启动。不能清空整个 Map，否则一个被拒绝的 Agent
+        // 会连带取消其他合法的并发启动。
+        const oldestPending = profileLaunchRef.current.entries().next().value as
+          | [string, { timeout: ReturnType<typeof setTimeout> }]
+          | undefined;
+        if (oldestPending) {
+          clearTimeout(oldestPending[1].timeout);
+          profileLaunchRef.current.delete(oldestPending[0]);
+        }
       }
       if (frame.type === 'chat_complete' && frame.payload.tokenUsage) {
         const { sessionId, messageId, tokenUsage } = frame.payload;

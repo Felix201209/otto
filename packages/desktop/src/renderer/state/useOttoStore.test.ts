@@ -1205,11 +1205,11 @@ describe('Agent profile 启动动作', () => {
     expect(view.result.current.state.lastError).toContain('Agent 任务未发送');
   });
 
-  it('服务端拒绝创建 Agent 会话时清除所有待启动事务，迟到回包不会误发任务', () => {
+  it('服务端拒绝一个 Agent 会话时只清除最早的待启动事务', () => {
     const { view, push } = setup();
     act(() => {
       view.result.current.actions.launchAgentProfileWithPrompt('PPT', 'ppt', '不应发送的 PPT 任务');
-      view.result.current.actions.launchAgentProfileWithPrompt('会议', 'meeting', '不应发送的会议任务');
+      view.result.current.actions.launchAgentProfileWithPrompt('会议', 'meeting', '应继续发送的会议任务');
     });
     const creates = sendSpy.mock.calls
       .map(([frame]) => frame as { type: string; payload: { clientRequestId?: string } })
@@ -1219,19 +1219,63 @@ describe('Agent profile 启动动作', () => {
       type: 'error',
       payload: { code: 'forbidden_agent_profile', message: '当前账号无权启动该 Agent' },
     });
-    for (const [index, create] of creates.entries()) {
-      push({
-        type: 'session_created',
-        payload: {
-          session: makeSession({ sessionId: `late-${index}` }),
-          clientRequestId: create.payload.clientRequestId!,
-        },
-      });
-    }
+    push({
+      type: 'session_created',
+      payload: {
+        session: makeSession({ sessionId: 'late-rejected' }),
+        clientRequestId: creates[0].payload.clientRequestId!,
+      },
+    });
+    push({
+      type: 'session_created',
+      payload: {
+        session: makeSession({ sessionId: 'accepted-meeting' }),
+        clientRequestId: creates[1].payload.clientRequestId!,
+      },
+    });
+
+    const sentMessages = sendSpy.mock.calls
+      .map(([frame]) => frame as { type?: string; payload?: { sessionId?: string; content?: unknown } })
+      .filter((frame) => frame.type === 'send_user_message');
+    expect(sentMessages).toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          sessionId: 'accepted-meeting',
+          content: [{ type: 'text', value: '应继续发送的会议任务' }],
+        }),
+      }),
+    ]);
+    expect(view.result.current.state.lastError).toContain('当前账号无权启动该 Agent');
+  });
+
+  it('已有会话的 Agent 权限错误不会取消无关的新 Agent 启动', () => {
+    const { view, push } = setup();
+    act(() => {
+      view.result.current.actions.launchAgentProfileWithPrompt('PPT', 'ppt', '继续创建');
+    });
+    const create = sendSpy.mock.calls
+      .map(([frame]) => frame as { type: string; payload: { clientRequestId?: string } })
+      .find((frame) => frame.type === 'create_session')!;
+
+    push({
+      type: 'error',
+      payload: {
+        sessionId: 'existing-session',
+        code: 'forbidden_agent_profile',
+        message: '现有会话权限已变化',
+      },
+    });
+    push({
+      type: 'session_created',
+      payload: {
+        session: makeSession({ sessionId: 'new-ppt' }),
+        clientRequestId: create.payload.clientRequestId!,
+      },
+    });
 
     expect(sendSpy.mock.calls.some(([frame]) => (
-      (frame as { type?: string }).type === 'send_user_message'
-    ))).toBe(false);
-    expect(view.result.current.state.lastError).toContain('当前账号无权启动该 Agent');
+      (frame as { type?: string; payload?: { sessionId?: string } }).type === 'send_user_message'
+      && (frame as { payload?: { sessionId?: string } }).payload?.sessionId === 'new-ppt'
+    ))).toBe(true);
   });
 });

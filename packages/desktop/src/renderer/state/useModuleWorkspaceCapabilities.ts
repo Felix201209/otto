@@ -88,22 +88,34 @@ export function useModuleWorkspaceCapabilities(input: {
       setState({ key, status: 'failed', features: null, park: NO_PARK });
       return () => { cancelled = true; };
     }
-    void Promise.all([
-      getEnterpriseOrganizationFeatures(organizationId, { force: true }),
-      window.otto.enterpriseParkView(),
-    ]).then(async ([features, park]) => {
-      const hasParkContext = Boolean(park && park.status === 'active');
-      const tickets = hasParkContext ? await window.otto.enterpriseTicketList() : [];
+    void getEnterpriseOrganizationFeatures(organizationId, { force: true }).then(async (features) => {
+      let parkAuthorization = NO_PARK;
+      try {
+        const park = await window.otto.enterpriseParkView();
+        const hasParkContext = Boolean(park && park.status === 'active');
+        let canViewStaffTasks = false;
+        if (hasParkContext) {
+          try {
+            const tickets = await window.otto.enterpriseTicketList();
+            canViewStaffTasks = tickets.some((ticket) => ticket.isRecipient === true);
+          } catch {
+            // 工单是园区能力中的可选数据源；失败时仅隐藏员工待办入口。
+          }
+        }
+        parkAuthorization = {
+          hasParkContext,
+          canViewStatistics: hasParkContext && Boolean(park?.isAdminOrganization),
+          canViewStaffTasks,
+        };
+      } catch {
+        // 园区服务不可用时按模块 fail-closed，不影响 Agent、Skill 等独立能力。
+      }
       if (cancelled) return;
       setState({
         key,
         status: 'ready',
         features,
-        park: {
-          hasParkContext,
-          canViewStatistics: hasParkContext && Boolean(park?.isAdminOrganization),
-          canViewStaffTasks: hasParkContext && tickets.some((ticket) => ticket.isRecipient === true),
-        },
+        park: parkAuthorization,
       });
     }).catch(() => {
       if (!cancelled) setState({ key, status: 'failed', features: null, park: NO_PARK });

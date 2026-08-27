@@ -174,7 +174,7 @@ describe('ModuleWorkspace drag reorder contract', () => {
     expect(screen.getByRole('button', { name: '移除 园区公告' })).toBeTruthy();
   });
 
-  it('auto-scrolls the nearest group scroller when dragging near its edge', () => {
+  it('auto-scrolls the workspace viewport when dragging a group near its edge', () => {
     const { container } = render(
       <ModuleWorkspace
         presentation="panel"
@@ -186,21 +186,22 @@ describe('ModuleWorkspace drag reorder contract', () => {
       />,
     );
     const groupList = container.querySelector<HTMLElement>('[data-reorder-group="groups"]')!;
-    Object.defineProperty(groupList, 'scrollHeight', { configurable: true, value: 900 });
-    Object.defineProperty(groupList, 'clientHeight', { configurable: true, value: 300 });
-    groupList.getBoundingClientRect = () => ({
+    const viewport = container.querySelector<HTMLElement>('.otto-module-workspace-scroll-viewport')!;
+    Object.defineProperty(viewport, 'scrollHeight', { configurable: true, value: 900 });
+    Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 300 });
+    viewport.getBoundingClientRect = () => ({
       x: 0, y: 0, top: 0, left: 0, right: 320, bottom: 300, width: 320, height: 300,
       toJSON: () => ({}),
     });
-    groupList.scrollTop = 100;
+    viewport.scrollTop = 100;
 
     const bottomMove = new Event('pointermove', { bubbles: true });
     Object.defineProperty(bottomMove, 'clientY', { value: 295 });
     fireEvent(groupList, bottomMove);
-    expect(groupList.scrollTop).toBeGreaterThan(100);
+    expect(viewport.scrollTop).toBeGreaterThan(100);
     const topMove = new Event('pointermove', { bubbles: true });
     Object.defineProperty(topMove, 'clientY', { value: 2 });
     fireEvent(groupList, topMove);
-    expect(groupList.scrollTop).toBeLessThan(120);
+    expect(viewport.scrollTop).toBeLessThan(120);
   });
 });

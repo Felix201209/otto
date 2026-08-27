@@ -7,9 +7,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App.js';
 import type { EnterpriseAccount } from '../preload/index.js';
 import { uiModeStorageKey } from './uiModePreference.js';
+import { openParkServices } from './components/ParkServicesPlugin.js';
 
 const harness = vi.hoisted(() => ({
   auth: { current: null as unknown },
+  centralIdentity: {
+    current: { edition: 'personal' as 'personal' | 'enterprise', role: 'member', profiles: [] },
+  },
   storeActions: {
     cancel: vi.fn(),
     clearError: vi.fn(),
@@ -105,12 +109,14 @@ vi.mock('./state/useProductWorkspace.js', () => ({
   }),
 }));
 
-vi.mock('./state/centralEnterpriseIdentity.js', () => ({
-  resolveCentralEnterpriseIdentity: () => ({
-    edition: 'personal',
-    role: 'member',
-    profiles: [],
+vi.mock('./state/useModuleWorkspaceCapabilities.js', () => ({
+  useModuleWorkspaceCapabilities: () => ({
+    status: 'ready', ready: true, modules: [], retry: vi.fn(),
   }),
+}));
+
+vi.mock('./state/centralEnterpriseIdentity.js', () => ({
+  resolveCentralEnterpriseIdentity: () => harness.centralIdentity.current,
 }));
 
 vi.mock('./agents/departmentAgents.js', () => ({
@@ -131,11 +137,14 @@ vi.mock('./components/ChatView.js', () => ({
   ChatView: ({
     rightPanelCollapsed,
     onToggleRightPanel,
+    pendingAgent,
   }: {
     rightPanelCollapsed?: boolean;
     onToggleRightPanel?: () => void;
+    pendingAgent?: { title: string } | null;
   }) => (
     <main data-testid="chat-view">
+      {pendingAgent ? <span data-testid="pending-agent">{pendingAgent.title}</span> : null}
       {onToggleRightPanel ? (
         <button
           type="button"
@@ -150,9 +159,55 @@ vi.mock('./components/ChatView.js', () => ({
 }));
 
 vi.mock('./components/RightPanel.js', () => ({
-  RightPanel: ({ collapsed }: { collapsed?: boolean }) => (
-    <aside data-testid="work-panel" data-collapsed={collapsed ? 'true' : 'false'} />
+  RightPanel: ({
+    collapsed,
+    onActivate,
+  }: {
+    collapsed?: boolean;
+    onActivate?: (module: {
+      id: string;
+      label: string;
+      category: 'common';
+      icon: 'agent';
+      availability: 'available';
+      activation:
+        | { kind: 'agent'; profileId: string }
+        | { kind: 'dialog'; dialog: 'park'; target: 'announcement' }
+        | { kind: 'dialog'; dialog: 'enterprise-memory' }
+        | { kind: 'route'; route: 'skillzone' };
+    }) => void;
+  }) => (
+    <aside data-testid="work-panel" data-collapsed={collapsed ? 'true' : 'false'}>
+      <button type="button" onClick={() => onActivate?.({
+        id: 'park-announcement', label: '园区公告', category: 'common', icon: 'agent',
+        availability: 'available', activation: { kind: 'dialog', dialog: 'park', target: 'announcement' },
+      })}>activate-park</button>
+      <button type="button" onClick={() => onActivate?.({
+        id: 'enterprise-memory', label: '企业记忆', category: 'common', icon: 'agent',
+        availability: 'available', activation: { kind: 'dialog', dialog: 'enterprise-memory' },
+      })}>activate-memory</button>
+      <button type="button" onClick={() => onActivate?.({
+        id: 'skill-zone', label: 'Skill 专区', category: 'common', icon: 'agent',
+        availability: 'available', activation: { kind: 'route', route: 'skillzone' },
+      })}>activate-skill-zone</button>
+      <button type="button" onClick={() => onActivate?.({
+        id: 'agent-ppt', label: 'PPT 创作专家', category: 'common', icon: 'agent',
+        availability: 'available', activation: { kind: 'agent', profileId: 'ppt' },
+      })}>activate-agent</button>
+    </aside>
   ),
+}));
+
+vi.mock('./components/WorkspaceDialogs.js', () => ({
+  EnterpriseMemoryDialog: ({ open }: { open: boolean }) => (
+    open ? <div data-testid="enterprise-memory-dialog" /> : null
+  ),
+  AutoSkillDialog: () => null,
+  CustomAgentManagerDialog: () => null,
+}));
+
+vi.mock('./components/SkillZonePage.js', () => ({
+  SkillZonePage: () => <main data-testid="skill-zone-page" />,
 }));
 
 vi.mock('./components/ParkServicesPlugin.js', () => ({
@@ -258,6 +313,7 @@ function rightPanelPreferenceKey(account: EnterpriseAccount): string {
 beforeEach(() => {
   localStorage.clear();
   harness.auth.current = authFor(accountA, 'signed-in');
+  harness.centralIdentity.current = { edition: 'personal', role: 'member', profiles: [] };
   Object.defineProperty(window, 'otto', {
     configurable: true,
     writable: true,
@@ -346,6 +402,24 @@ describe('App UI mode integration', () => {
 
     expect(screen.getByTestId('settings-hub')).toBeTruthy();
     expect(screen.getByTestId('work-panel').dataset.collapsed).toBe('true');
+  });
+
+  it('routes workspace modules through the existing App-level activation chains', () => {
+    harness.centralIdentity.current = { edition: 'enterprise', role: 'member', profiles: [] };
+    localStorage.setItem(preferenceKey(accountA), 'work');
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'activate-park' }));
+    expect(openParkServices).toHaveBeenCalledWith('announcement');
+
+    fireEvent.click(screen.getByRole('button', { name: 'activate-memory' }));
+    expect(screen.getByTestId('enterprise-memory-dialog')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'activate-agent' }));
+    expect(screen.getByTestId('pending-agent').textContent).toBe('PPT 创作专家');
+
+    fireEvent.click(screen.getByRole('button', { name: 'activate-skill-zone' }));
+    expect(screen.getByTestId('skill-zone-page')).toBeTruthy();
   });
 
   it('uses the next account right-panel preference on the account-switch render', () => {
