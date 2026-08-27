@@ -34,6 +34,7 @@ interface DraggableItemProps {
   className: string;
   dataAttribute: Record<string, string>;
   reducedMotion: boolean;
+  dragListener?: boolean;
   stopDragEndPropagation?: boolean;
   onDragEnd(): void;
   children(dragControls: ReturnType<typeof useDragControls>): React.ReactNode;
@@ -44,6 +45,7 @@ function DraggableItem({
   className,
   dataAttribute,
   reducedMotion,
+  dragListener = false,
   stopDragEndPropagation = false,
   onDragEnd,
   children,
@@ -54,7 +56,7 @@ function DraggableItem({
       as="div"
       value={value}
       className={className}
-      dragListener={false}
+      dragListener={dragListener}
       dragControls={dragControls}
       layout
       whileDrag={reducedMotion ? undefined : {
@@ -131,10 +133,7 @@ export interface ModuleWorkspaceProps {
   onLayoutChange(next: ModuleWorkspaceLayout): void;
 }
 
-type WorkspacePopover =
-  | { kind: 'group'; id: string }
-  | { kind: 'module'; key: string }
-  | null;
+type WorkspacePopover = { kind: 'group'; id: string } | null;
 
 export function ModuleWorkspace({
   presentation,
@@ -408,7 +407,7 @@ export function ModuleWorkspace({
             reducedMotion={reducedMotion}
             onDragEnd={persistTransientLayout}
           >
-            {(groupDragControls) => (
+            {() => (
           <article
             className={`otto-module-group${editingGroupId === group.id ? ' is-editing' : ''}`}
             data-group-id={group.id}
@@ -445,15 +444,6 @@ export function ModuleWorkspace({
                 </div>
               ) : <h2>{group.name}</h2>}
               <div className="otto-module-group__header-actions">
-                {editingGroupId === group.id ? (
-                  <button
-                    type="button"
-                    className="otto-module-group__drag-handle"
-                    aria-label={`拖动功能组：${group.name}`}
-                    title="拖动调整功能组顺序"
-                    onPointerDown={(event) => groupDragControls.start(event)}
-                  >⠿</button>
-                ) : null}
               <div className="otto-module-group__menu-wrap" ref={openPopover?.kind === 'group' && openPopover.id === group.id ? menuRef : undefined}>
                 <button
                   type="button"
@@ -557,7 +547,7 @@ export function ModuleWorkspace({
             >
               {groupModules.map((module, moduleIndex) => {
                 const disabled = module.availability !== 'available';
-                const moduleMenuKey = `${group.id}:${module.id}`;
+                const editing = editingGroupId === group.id;
                 return (
                   <DraggableItem
                     key={module.id}
@@ -567,21 +557,38 @@ export function ModuleWorkspace({
                       'data-reorder-module-item': `${group.id}:${module.id}`,
                     }}
                     reducedMotion={reducedMotion}
+                    dragListener={editing}
                     stopDragEndPropagation
                     onDragEnd={persistTransientLayout}
                   >
-                    {(moduleDragControls) => (
+                    {() => (
                   <div
                     className="otto-module-tile-wrap"
-                    ref={openPopover?.kind === 'module' && openPopover.key === moduleMenuKey ? menuRef : undefined}
                   >
                     <button
                       type="button"
                       className="otto-module-tile"
                       aria-label={`打开 ${module.label}`}
-                      disabled={disabled || editingGroupId === group.id}
-                      title={disabled ? module.disabledReason : module.description}
-                      onClick={() => onActivate(module)}
+                      disabled={disabled}
+                      title={disabled ? module.disabledReason : editing ? '拖动调整模块顺序' : module.description}
+                      onClick={() => {
+                        if (!editing) onActivate(module);
+                      }}
+                      onKeyDown={(event) => {
+                        if (!editing) return;
+                        const targetIndex = event.key === 'ArrowLeft'
+                          ? moduleIndex - 1
+                          : event.key === 'ArrowRight'
+                            ? moduleIndex + 1
+                            : event.key === 'ArrowUp'
+                              ? moduleIndex - 3
+                              : event.key === 'ArrowDown'
+                                ? moduleIndex + 3
+                                : moduleIndex;
+                        if (targetIndex === moduleIndex) return;
+                        event.preventDefault();
+                        moveModule(group.id, module.id, targetIndex);
+                      }}
                     >
                       <ModuleIcon
                         icon={module.icon}
@@ -590,67 +597,18 @@ export function ModuleWorkspace({
                       />
                       <span>{module.label}</span>
                     </button>
-                    {editingGroupId === group.id ? (
-                      <>
-                        <button
-                          type="button"
-                          className="otto-module-tile__drag-handle"
-                          aria-label={`拖动模块：${module.label}`}
-                          title="拖动调整模块顺序"
-                          onPointerDown={(event) => moduleDragControls.start(event)}
-                        >⠿</button>
+                    {editing ? (
                         <button
                           type="button"
                           className="otto-module-tile__remove"
                           aria-label={`移除 ${module.label}`}
+                          title={`移除 ${module.label}`}
+                          onPointerDown={(event) => event.stopPropagation()}
                           onClick={() => applyWithUndo(
                             removeModuleFromGroup(layout, group.id, module.id),
                             '模块已移除',
                           )}
                         >−</button>
-                        <button
-                          type="button"
-                          className="otto-module-group__menu-button otto-module-tile__menu-button"
-                          aria-label={`模块菜单：${module.label}`}
-                          aria-expanded={openPopover?.kind === 'module' && openPopover.key === moduleMenuKey}
-                          onClick={(event) => {
-                            popoverTriggerRef.current = event.currentTarget;
-                            setOpenPopover((current) => (
-                              current?.kind === 'module' && current.key === moduleMenuKey
-                                ? null
-                                : { kind: 'module', key: moduleMenuKey }
-                            ));
-                          }}
-                        >···</button>
-                        {openPopover?.kind === 'module' && openPopover.key === moduleMenuKey ? (
-                          <div className="otto-module-group__menu otto-module-tile__menu" role="menu" aria-label={`${module.label}设置`}>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              disabled={moduleIndex === 0}
-                              onClick={() => moveModule(group.id, module.id, moduleIndex - 1)}
-                            >向前移动模块</button>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              disabled={moduleIndex === groupModules.length - 1}
-                              onClick={() => moveModule(group.id, module.id, moduleIndex + 1)}
-                            >向后移动模块</button>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              disabled={moduleIndex === 0}
-                              onClick={() => moveModule(group.id, module.id, 0)}
-                            >移到最前模块</button>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              disabled={moduleIndex === groupModules.length - 1}
-                              onClick={() => moveModule(group.id, module.id, groupModules.length - 1)}
-                            >移到最后模块</button>
-                          </div>
-                        ) : null}
-                      </>
                     ) : null}
                   </div>
                     )}

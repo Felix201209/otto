@@ -153,7 +153,7 @@ describe('ModuleWorkspace drag reorder contract', () => {
     expect(onLayoutChange.mock.calls[0][0].groups[1].moduleIds).toEqual(['agent-ppt']);
   });
 
-  it('retains drag handles but disables decorative motion for reduced-motion users', () => {
+  it('keeps the minimal edit controls for reduced-motion users', () => {
     vi.mocked(useReducedMotion).mockReturnValue(true);
     const { container } = render(
       <ModuleWorkspace
@@ -169,8 +169,9 @@ describe('ModuleWorkspace drag reorder contract', () => {
     fireEvent.click(screen.getByRole('button', { name: '功能组菜单：园区服务' }));
     fireEvent.click(screen.getByRole('menuitem', { name: '编辑模块' }));
     expect(container.querySelector('.otto-module-workspace.is-reduced-motion')).toBeTruthy();
-    expect(screen.getByRole('button', { name: '拖动功能组：园区服务' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: '拖动模块：园区公告' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '拖动功能组：园区服务' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '拖动模块：园区公告' })).toBeNull();
+    expect(screen.getByRole('button', { name: '移除 园区公告' })).toBeTruthy();
   });
 
   it('auto-scrolls the nearest group scroller when dragging near its edge', () => {

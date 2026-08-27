@@ -359,7 +359,7 @@ describe('ModuleWorkspace', () => {
     expect(screen.queryByRole('button', { name: '恢复默认布局' })).toBeNull();
   });
 
-  it('supports first/last group moves and four-way keyboard module ordering', () => {
+  it('supports first/last group moves and arrow-key module ordering', () => {
     renderControlledWorkspace();
     fireEvent.click(screen.getByRole('button', { name: '功能组菜单：园区服务' }));
     fireEvent.click(screen.getByRole('menuitem', { name: '移到最后功能组' }));
@@ -368,16 +368,13 @@ describe('ModuleWorkspace', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '功能组菜单：园区服务' }));
     fireEvent.click(screen.getByRole('menuitem', { name: '编辑模块' }));
-    fireEvent.click(screen.getByRole('button', { name: '模块菜单：满意度调查' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: '移到最前模块' }));
+    const satisfaction = screen.getByRole('button', { name: '打开 满意度调查' });
+    fireEvent.keyDown(satisfaction, { key: 'ArrowLeft' });
     const grid = document.querySelector('[data-group-id="park-services"] .otto-module-group__grid');
     expect(grid?.querySelectorAll('.otto-module-tile')[0]?.getAttribute('aria-label'))
       .toBe('打开 满意度调查');
 
-    fireEvent.click(screen.getByRole('button', { name: '模块菜单：满意度调查' }));
-    expect((screen.getByRole('menuitem', { name: '向前移动模块' }) as HTMLButtonElement).disabled)
-      .toBe(true);
-    fireEvent.click(screen.getByRole('menuitem', { name: '移到最后模块' }));
+    fireEvent.keyDown(satisfaction, { key: 'ArrowRight' });
     expect(grid?.querySelectorAll('.otto-module-tile')[1]?.getAttribute('aria-label'))
       .toBe('打开 满意度调查');
   });
@@ -396,16 +393,17 @@ describe('ModuleWorkspace', () => {
     expect(document.activeElement).toBe(menuButton);
   });
 
-  it('keeps group and module menus mutually exclusive', () => {
+  it('keeps editing visuals limited to remove controls', () => {
     renderControlledWorkspace();
     fireEvent.click(screen.getByRole('button', { name: '功能组菜单：园区服务' }));
     fireEvent.click(screen.getByRole('menuitem', { name: '编辑模块' }));
 
-    fireEvent.click(screen.getByRole('button', { name: '模块菜单：园区公告' }));
-    expect(screen.getByRole('menu', { name: '园区公告设置' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '移除 园区公告' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '拖动模块：园区公告' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '拖动功能组：园区服务' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '模块菜单：园区公告' })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: '功能组菜单：园区服务' }));
-    expect(screen.queryByRole('menu', { name: '园区公告设置' })).toBeNull();
     expect(screen.getByRole('menu', { name: '园区服务设置' })).toBeTruthy();
   });
 });
