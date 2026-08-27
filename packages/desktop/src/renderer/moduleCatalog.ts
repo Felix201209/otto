@@ -5,7 +5,8 @@
 import type { EnterpriseOrganizationFeatures } from '../preload/index.js';
 import type { AgentProfile } from './agents/departmentAgents.js';
 import type { CustomAgentDefinition } from './customAgents.js';
-import type { ModuleIconKey } from './components/ModuleIcon.js';
+import { customAgentIconToModuleIcon } from './customAgentIcons.js';
+import type { ModuleIconKey, ModuleIconSource } from './components/ModuleIcon.js';
 
 export type ModuleAvailability = 'available' | 'disabled' | 'hidden';
 export type ModuleCategory = 'common' | 'park' | 'capability' | 'custom-agent';
@@ -49,7 +50,7 @@ export interface ModuleDefinition {
   label: string;
   description?: string;
   category: ModuleCategory;
-  icon: ModuleIconKey;
+  icon: ModuleIconSource;
   activation: ModuleActivation;
   availability: ModuleAvailability;
   disabledReason?: string;
@@ -223,7 +224,7 @@ function customAgentModules(context: ModuleCatalogContext): ModuleDefinition[] {
     label: agent.name,
     description: agent.instructions,
     category: 'custom-agent',
-    icon: 'custom-agent',
+    icon: customAgentIconToModuleIcon(agent.icon),
     activation: {
       kind: 'agent',
       profileId: baseProfileId,

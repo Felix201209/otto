@@ -49,14 +49,14 @@ import {
   IconFolder,
   IconPlus,
 } from './icons.js';
-import type { ModuleIconKey } from './ModuleIcon.js';
+import type { ModuleIconSource } from './ModuleIcon.js';
 import { ModuleIcon } from './ModuleIcon.js';
 
 export interface PendingAgentSelection {
   moduleId: string;
   title: string;
   profileId: string;
-  icon: ModuleIconKey;
+  icon: ModuleIconSource;
   customAgentId?: string;
 }
 

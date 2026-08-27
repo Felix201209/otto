@@ -12437,6 +12437,189 @@ h6.otto-prose__h {
 .otto-workspace-dialog__list footer { margin-top: 10px; }
 .otto-workspace-dialog__error { color: var(--otto-danger); }
 
+/* 自定义专家模块图标 */
+.otto-module-icon--image {
+  display: inline-flex;
+  overflow: hidden;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+}
+.otto-module-icon--image img {
+  display: block;
+  object-fit: cover;
+}
+.otto-custom-agent-editor__icon {
+  display: flex !important;
+  align-items: center;
+  justify-content: flex-start !important;
+  gap: 14px;
+  color: var(--otto-text-secondary);
+  font-size: 12px;
+}
+.otto-custom-agent-icon-picker {
+  position: relative;
+  min-width: 0;
+}
+.otto-custom-agent-icon-picker.is-open {
+  width: 100%;
+}
+.otto-custom-agent-icon-picker__trigger {
+  display: inline-flex;
+  min-height: 44px !important;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 11px 4px 5px !important;
+  background: var(--otto-surface) !important;
+}
+.otto-custom-agent-icon-picker__trigger:hover {
+  background: var(--otto-surface-hover) !important;
+}
+.otto-custom-agent-icon-picker__trigger .otto-module-icon {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+}
+.otto-custom-agent-icon-picker__trigger > span:last-child {
+  color: var(--otto-text-secondary);
+  font-size: 12px;
+}
+.otto-custom-agent-icon-picker__panel {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--otto-border);
+  border-radius: 12px;
+  background: var(--otto-surface);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.1);
+}
+.otto-custom-agent-icon-picker__tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--otto-border);
+}
+.otto-custom-agent-icon-picker__tabs > button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 7px 7px 0 0;
+  background: transparent;
+  color: var(--otto-text-secondary);
+}
+.otto-custom-agent-icon-picker__tabs > button[aria-selected='true'] {
+  box-shadow: inset 0 -2px 0 var(--otto-text);
+  color: var(--otto-text);
+  font-weight: 600;
+}
+.otto-custom-agent-icon-picker__grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 7px;
+}
+.otto-custom-agent-icon-picker__grid > button {
+  display: grid;
+  min-width: 0;
+  min-height: 62px;
+  place-items: center;
+  gap: 3px;
+  padding: 6px 4px;
+  border-color: transparent;
+  background: transparent;
+}
+.otto-custom-agent-icon-picker__grid > button:hover {
+  border-color: var(--otto-border);
+  background: var(--otto-surface-hover);
+}
+.otto-custom-agent-icon-picker__grid > button.is-selected {
+  border-color: color-mix(in srgb, var(--otto-text) 18%, var(--otto-border));
+  background: color-mix(in srgb, var(--otto-text) 6%, var(--otto-surface));
+}
+.otto-custom-agent-icon-picker__grid > button span {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--otto-text-secondary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.otto-custom-agent-icon-picker__upload {
+  display: grid;
+  gap: 8px;
+}
+.otto-custom-agent-icon-picker__upload label {
+  display: grid;
+  min-height: 86px;
+  place-items: center;
+  border: 1px dashed var(--otto-border-strong);
+  border-radius: 10px;
+  background: var(--otto-bg);
+  color: var(--otto-text);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+.otto-custom-agent-icon-picker__upload label:hover {
+  background: var(--otto-surface-hover);
+}
+.otto-custom-agent-icon-picker__upload input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.otto-custom-agent-icon-picker__upload p {
+  margin: 0;
+  color: var(--otto-text-tertiary);
+  font-size: 11px;
+}
+.otto-custom-agent-list article {
+  overflow: visible;
+}
+.otto-custom-agent-list__heading {
+  display: flex !important;
+  align-items: flex-start;
+  gap: 11px !important;
+  color: var(--otto-text) !important;
+  font-size: inherit !important;
+}
+.otto-custom-agent-list__heading > .otto-module-icon {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+}
+.otto-custom-agent-list__heading > div {
+  min-width: 0;
+}
+.otto-custom-agent-list__heading h3 {
+  margin: 0 0 4px;
+}
+.otto-custom-agent-list__heading p {
+  margin: 0;
+}
+.otto-custom-agent-list article footer {
+  flex-wrap: wrap;
+}
+.otto-custom-agent-list article footer .otto-custom-agent-icon-picker.is-open {
+  order: 2;
+  flex: 0 0 100%;
+}
+
+@media (max-width: 760px) {
+  .otto-custom-agent-icon-picker__grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .otto-custom-agent-icon-picker__grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 .otto-org-page__contacts { margin-bottom: 16px; padding: 16px; border: 1px solid var(--otto-border); border-radius: 14px; background: var(--otto-surface); }
 .otto-org-page__contacts h2, .otto-org-page__contacts p { margin: 0; }
 .otto-org-page__contacts header p { margin-top: 3px; color: var(--otto-text-tertiary); font-size: 12px; }

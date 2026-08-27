@@ -4,7 +4,10 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { AutoSkillCandidateInfo } from 'otto-server';
 import type { CentralEnterpriseRole } from '../state/centralEnterpriseIdentity.js';
+import { customAgentIconToModuleIcon, type CustomAgentIcon } from '../customAgentIcons.js';
 import type { CustomAgentDefinition, CustomAgentDraft } from '../customAgents.js';
+import { CustomAgentIconPicker } from './CustomAgentIconPicker.js';
+import { ModuleIcon } from './ModuleIcon.js';
 
 function DialogFrame({ title, onClose, children }: {
   title: string; onClose(): void; children: React.ReactNode;
@@ -242,13 +245,106 @@ export function AutoSkillDialog({ open, candidates, lastAction, onRefresh, onCon
   return <DialogFrame title="自动 Skill 候选" onClose={onClose}><div className="otto-workspace-dialog__toolbar"><p>从重复工作成果中沉淀可复用流程。</p><button type="button" onClick={onRefresh}>立即分析</button></div>{lastAction?.kind === 'confirmed' ? <p role="status">Skill 已生成{lastAction.savedPath ? `：${lastAction.savedPath}` : ''}</p> : null}<div className="otto-workspace-dialog__list">{candidates.length ? candidates.map((candidate) => <article key={candidate.id}><h3>{candidate.name}</h3><p>{candidate.description}</p><small>{candidate.detectedPattern} · {candidate.occurrenceCount} 次重复</small><footer><button type="button" onClick={() => onConfirm(candidate.id)}>{candidate.recommendation === 'enhance' ? '确认增强' : '确认生成'}</button><button type="button" onClick={() => onReject(candidate.id)}>不再建议</button></footer></article>) : <p>暂无候选。点击“立即分析”扫描最近成果。</p>}</div></DialogFrame>;
 }
 
-export function CustomAgentManagerDialog({ open, agents, onCreate, onDelete, onClose }: {
-  open: boolean; agents: readonly CustomAgentDefinition[]; onCreate(draft: CustomAgentDraft): void | Promise<void>; onDelete(id: string): void; onClose(): void;
+export function CustomAgentManagerDialog({
+  open,
+  agents,
+  onCreate,
+  onDelete,
+  onUpdateIcon,
+  onClose,
+}: {
+  open: boolean;
+  agents: readonly CustomAgentDefinition[];
+  onCreate(draft: CustomAgentDraft): void | Promise<void>;
+  onDelete(id: string): void;
+  onUpdateIcon(id: string, icon: CustomAgentIcon): void;
+  onClose(): void;
 }): React.JSX.Element | null {
-  const [name, setName] = useState(''); const [instructions, setInstructions] = useState(''); const [error, setError] = useState('');
+  const [name, setName] = useState('');
+  const [instructions, setInstructions] = useState('');
+  const [icon, setIcon] = useState<CustomAgentIcon | undefined>();
+  const [error, setError] = useState('');
   useEffect(() => {
-    if (!open) { setName(''); setInstructions(''); setError(''); }
+    if (!open) {
+      setName('');
+      setInstructions('');
+      setIcon(undefined);
+      setError('');
+    }
   }, [open]);
   if (!open) return null;
-  return <DialogFrame title="我的专家" onClose={onClose}><form className="otto-workspace-dialog__editor" onSubmit={(event) => { event.preventDefault(); setError(''); void Promise.resolve(onCreate({ name, instructions })).then(() => { setName(''); setInstructions(''); }).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause))); }}><input aria-label="专家名称" maxLength={40} value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：招投标助手"/><textarea aria-label="职责说明" maxLength={2000} rows={4} value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="说明职责、交付格式和边界"/>{error ? <p role="alert" className="otto-workspace-dialog__error">{error}</p> : null}<button type="submit">创建专家</button></form><div className="otto-workspace-dialog__list">{agents.map((agent) => <article key={agent.id}><h3>{agent.name}</h3><p>{agent.instructions}</p><footer><button type="button" onClick={() => { if (window.confirm(`删除专家“${agent.name}”？`)) onDelete(agent.id); }}>删除</button></footer></article>)}{!agents.length ? <p>还没有自定义专家。</p> : null}</div></DialogFrame>;
+  return (
+    <DialogFrame title="我的专家" onClose={onClose}>
+      <form
+        className="otto-workspace-dialog__editor otto-custom-agent-editor"
+        onSubmit={(event) => {
+          event.preventDefault();
+          setError('');
+          void Promise.resolve()
+            .then(() => onCreate({ name, instructions, ...(icon ? { icon } : {}) }))
+            .then(() => {
+              setName('');
+              setInstructions('');
+              setIcon(undefined);
+            })
+            .catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
+        }}
+      >
+        <input
+          aria-label="专家名称"
+          maxLength={40}
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="例如：招投标助手"
+        />
+        <div className="otto-custom-agent-editor__icon">
+          <span>模块图标</span>
+          <CustomAgentIconPicker value={icon} label="模块" onChange={setIcon} />
+        </div>
+        <textarea
+          aria-label="职责说明"
+          maxLength={2000}
+          rows={4}
+          value={instructions}
+          onChange={(event) => setInstructions(event.target.value)}
+          placeholder="说明职责、交付格式和边界"
+        />
+        {error ? <p role="alert" className="otto-workspace-dialog__error">{error}</p> : null}
+        <button type="submit">创建专家</button>
+      </form>
+      <div className="otto-workspace-dialog__list otto-custom-agent-list">
+        {agents.map((agent) => (
+          <article key={agent.id}>
+            <div className="otto-custom-agent-list__heading">
+              <ModuleIcon
+                icon={customAgentIconToModuleIcon(agent.icon)}
+                label={agent.name}
+                size={36}
+              />
+              <div>
+                <h3>{agent.name}</h3>
+                <p>{agent.instructions}</p>
+              </div>
+            </div>
+            <footer>
+              <CustomAgentIconPicker
+                value={agent.icon}
+                label={agent.name}
+                onChange={(nextIcon) => onUpdateIcon(agent.id, nextIcon)}
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.confirm(`删除专家“${agent.name}”？`)) onDelete(agent.id);
+                }}
+              >
+                删除
+              </button>
+            </footer>
+          </article>
+        ))}
+        {!agents.length ? <p>还没有自定义专家。</p> : null}
+      </div>
+    </DialogFrame>
+  );
 }

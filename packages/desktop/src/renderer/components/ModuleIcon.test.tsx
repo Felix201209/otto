@@ -22,6 +22,10 @@ describe('ModuleIcon', () => {
         <ModuleIcon icon="generated:expert-presentation" label="PPT 创作专家" />
         <ModuleIcon icon="otto-avatar" label="Otto" />
         <ModuleIcon icon="custom-agent" label="招投标助手" />
+        <ModuleIcon
+          icon={{ kind: 'image', src: 'data:image/webp;base64,UklGRg==' }}
+          label="上传头像"
+        />
       </>,
     );
 
@@ -29,6 +33,9 @@ describe('ModuleIcon', () => {
     expect(view.container.querySelector('[data-module-icon="generated:expert-presentation"] img')).not.toBeNull();
     expect(view.container.querySelector('[data-module-icon="otto-avatar"]')).not.toBeNull();
     expect(view.container.querySelector('[data-module-icon="custom-agent"]')?.textContent).toBe('招');
+    expect(
+      view.container.querySelector('[data-module-icon="custom-image"] img')?.getAttribute('src'),
+    ).toBe('data:image/webp;base64,UklGRg==');
   });
 
   it('rejects unknown registry keys', () => {

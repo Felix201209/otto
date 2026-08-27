@@ -207,7 +207,7 @@ export function ModuleMarketplaceDialog({
         </div>
         <footer className="otto-module-marketplace__footer">
           <button type="button" className="otto-module-marketplace__manage" onClick={onManageExperts}>
-            管理专家
+            创建专家模块
           </button>
           <button
             type="button"

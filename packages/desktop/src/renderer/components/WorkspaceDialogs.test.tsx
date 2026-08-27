@@ -138,11 +138,98 @@ describe('WorkspaceDialogs', () => {
   });
 
   it('自定义专家草稿在关闭后清空', async () => {
-    const props = { agents: [], onCreate: vi.fn(), onDelete: vi.fn(), onClose: vi.fn() };
+    const props = {
+      agents: [], onCreate: vi.fn(), onDelete: vi.fn(), onUpdateIcon: vi.fn(), onClose: vi.fn(),
+    };
     const view = render(<CustomAgentManagerDialog open {...props} />);
     fireEvent.change(screen.getByRole('textbox', { name: '专家名称' }), { target: { value: '未保存草稿' } });
     view.rerender(<CustomAgentManagerDialog open={false} {...props} />);
     view.rerender(<CustomAgentManagerDialog open {...props} />);
     await waitFor(() => expect((screen.getByRole('textbox', { name: '专家名称' }) as HTMLInputElement).value).toBe(''));
+  });
+
+  it('创建专家时可以从 30 个预置图标中选择模块头像', async () => {
+    const onCreate = vi.fn();
+    render(<CustomAgentManagerDialog
+      open
+      agents={[]}
+      onCreate={onCreate}
+      onDelete={vi.fn()}
+      onUpdateIcon={vi.fn()}
+      onClose={vi.fn()}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: '选择模块图标' }));
+    expect(screen.getAllByRole('button', { name: /^选择图标：/ })).toHaveLength(30);
+    fireEvent.click(screen.getByRole('button', { name: '选择图标：客户成功' }));
+    await waitFor(() => expect(
+      screen.queryByRole('region', { name: '模块图标选择器' }),
+    ).toBeNull());
+    fireEvent.change(screen.getByRole('textbox', { name: '专家名称' }), {
+      target: { value: '续费助手' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: '职责说明' }), {
+      target: { value: '跟进客户续费风险。' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '创建专家' }));
+
+    await waitFor(() => expect(onCreate).toHaveBeenCalledWith({
+      name: '续费助手',
+      instructions: '跟进客户续费风险。',
+      icon: { kind: 'preset', name: 'agent-customer-success' },
+    }));
+  });
+
+  it('已有专家可以更换图标，并提供本地图片上传入口', async () => {
+    const onUpdateIcon = vi.fn();
+    render(<CustomAgentManagerDialog
+      open
+      agents={[{
+        id: 'custom-bid',
+        name: '招投标助手',
+        instructions: '整理投标材料。',
+        createdAt: '2026-08-27T00:00:00.000Z',
+      }]}
+      onCreate={vi.fn()}
+      onDelete={vi.fn()}
+      onUpdateIcon={onUpdateIcon}
+      onClose={vi.fn()}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: '更换招投标助手的图标' }));
+    fireEvent.click(screen.getByRole('button', { name: '选择图标：财务分析' }));
+    await waitFor(() => expect(onUpdateIcon).toHaveBeenCalledWith(
+      'custom-bid',
+      { kind: 'preset', name: 'agent-finance-analysis' },
+    ));
+    await waitFor(() => expect(
+      screen.queryByRole('region', { name: '模块图标选择器' }),
+    ).toBeNull());
+
+    fireEvent.click(screen.getByRole('button', { name: '更换招投标助手的图标' }));
+    fireEvent.click(screen.getByRole('tab', { name: '上传图片' }));
+    expect(screen.getByLabelText('选择本地图片')).toBeTruthy();
+  });
+
+  it('更换图标保存失败时保留选择器并显示错误', async () => {
+    render(<CustomAgentManagerDialog
+      open
+      agents={[{
+        id: 'custom-risk',
+        name: '风险助手',
+        instructions: '识别风险。',
+        createdAt: '2026-08-27T00:00:00.000Z',
+      }]}
+      onCreate={vi.fn()}
+      onDelete={vi.fn()}
+      onUpdateIcon={() => { throw new Error('本机存储不可用，专家未保存'); }}
+      onClose={vi.fn()}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: '更换风险助手的图标' }));
+    fireEvent.click(screen.getByRole('button', { name: '选择图标：经营管理' }));
+
+    expect((await screen.findByRole('alert')).textContent).toContain('本机存储不可用，专家未保存');
+    expect(screen.getByRole('region', { name: '模块图标选择器' })).toBeTruthy();
   });
 });

@@ -43,6 +43,27 @@ describe('自定义专家定义', () => {
     )).toThrow('专家名称不能超过 40 个字符');
   });
 
+  it('创建和读取时保留合法图标，同时兼容没有图标的旧记录', () => {
+    const icon = { kind: 'preset' as const, name: 'agent-customer-success' as const };
+    const created = createCustomAgent(
+      { name: '客户成功助手', instructions: '跟进客户风险。', icon },
+      { id: 'custom-icon', now: '2026-07-20T16:00:00.000Z' },
+    );
+    expect(created.icon).toEqual(icon);
+
+    const parsed = parseCustomAgents(JSON.stringify([
+      created,
+      {
+        id: 'custom-legacy',
+        name: '旧专家',
+        instructions: '旧数据没有图标字段。',
+        createdAt: '2026-07-20T16:00:00.000Z',
+      },
+    ]));
+    expect(parsed[0]?.icon).toEqual(icon);
+    expect(parsed[1]?.icon).toBeUndefined();
+  });
+
   it('读取持久化内容时丢弃损坏、越界或注入形态的记录', () => {
     const parsed = parseCustomAgents(JSON.stringify([
       {

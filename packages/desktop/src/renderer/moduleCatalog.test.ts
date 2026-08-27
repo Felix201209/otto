@@ -138,6 +138,7 @@ describe('custom expert modules', () => {
       name: '招投标助手',
       instructions: '整理招投标材料',
       createdAt: '2026-08-26T00:00:00.000Z',
+      icon: { kind: 'preset' as const, name: 'agent-customer-success' as const },
     };
     const before = structuredClone(customAgent);
     const catalog = buildModuleCatalog(enterpriseContext({ customAgents: [customAgent] }));
@@ -150,6 +151,7 @@ describe('custom expert modules', () => {
         profileId: 'otto-enterprise-work',
         customAgentId: 'custom-bid-helper',
       },
+      icon: 'generated:agent-customer-success',
       availability: 'available',
     });
     expect(customAgent).toEqual(before);

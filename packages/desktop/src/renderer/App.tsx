@@ -142,6 +142,10 @@ import {
   type CustomAgentDefinition,
   type CustomAgentDraft,
 } from './customAgents.js';
+import {
+  customAgentIconToModuleIcon,
+  type CustomAgentIcon,
+} from './customAgentIcons.js';
 import { useModuleWorkspaceCapabilities } from './state/useModuleWorkspaceCapabilities.js';
 import { useModuleWorkspace } from './state/useModuleWorkspace.js';
 import {
@@ -1162,6 +1166,17 @@ function OttoWorkspaceApp({
     if (pendingAgent?.customAgentId === agentId) setPendingAgent(null);
   };
 
+  const handleUpdateCustomAgentIcon = (agentId: string, icon: CustomAgentIcon): void => {
+    persistCustomAgents(customAgents.map((agent) => (
+      agent.id === agentId ? { ...agent, icon } : agent
+    )));
+    setPendingAgent((current) => (
+      current?.customAgentId === agentId
+        ? { ...current, icon: customAgentIconToModuleIcon(icon) }
+        : current
+    ));
+  };
+
   const activateModule = useCallback((module: ModuleDefinition): void => {
     if (module.availability !== 'available') return;
     const activation = module.activation;
@@ -1481,6 +1496,7 @@ function OttoWorkspaceApp({
         agents={customAgents}
         onCreate={handleCreateCustomAgent}
         onDelete={handleDeleteCustomAgent}
+        onUpdateIcon={handleUpdateCustomAgentIcon}
         onClose={() => setModuleModal(null)}
       />
 

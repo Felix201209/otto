@@ -2,16 +2,20 @@
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
+import { isCustomAgentIcon, type CustomAgentIcon } from './customAgentIcons.js';
+
 export interface CustomAgentDefinition {
   id: string;
   name: string;
   instructions: string;
   createdAt: string;
+  icon?: CustomAgentIcon;
 }
 
 export interface CustomAgentDraft {
   name: string;
   instructions: string;
+  icon?: CustomAgentIcon;
 }
 
 const MAX_CUSTOM_AGENTS = 12;
@@ -46,11 +50,15 @@ export function createCustomAgent(
   }
   if (!SAFE_ID.test(options.id)) throw new Error('专家编号格式不正确');
   if (!Number.isFinite(Date.parse(options.now))) throw new Error('创建时间格式不正确');
+  if (draft.icon !== undefined && !isCustomAgentIcon(draft.icon)) {
+    throw new Error('专家图标格式不正确');
+  }
   return {
     id: options.id,
     name,
     instructions,
     createdAt: options.now,
+    ...(draft.icon ? { icon: draft.icon } : {}),
   };
 }
 
@@ -86,6 +94,7 @@ export function parseCustomAgents(raw: string | null | undefined): CustomAgentDe
         name: item.name.trim(),
         instructions: item.instructions.trim(),
         createdAt: item.createdAt,
+        ...(isCustomAgentIcon(item.icon) ? { icon: item.icon } : {}),
       });
       if (result.length >= MAX_CUSTOM_AGENTS) break;
     }

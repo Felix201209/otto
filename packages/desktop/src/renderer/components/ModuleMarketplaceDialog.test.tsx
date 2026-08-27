@@ -92,7 +92,7 @@ describe('ModuleMarketplaceDialog', () => {
     expect(memory.disabled).toBe(true);
     expect(memory.closest('label')?.textContent).toContain('需要企业知识库权限');
 
-    fireEvent.click(screen.getByRole('button', { name: '管理专家' }));
+    fireEvent.click(screen.getByRole('button', { name: '创建专家模块' }));
     expect(onManageExperts).toHaveBeenCalledTimes(1);
   });
 
@@ -136,7 +136,7 @@ describe('ModuleMarketplaceDialog', () => {
     expect(document.activeElement).toBe(close);
 
     fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true });
-    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: '管理专家' }));
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: '创建专家模块' }));
     rerender(
       <ModuleMarketplaceDialog
         open={false}

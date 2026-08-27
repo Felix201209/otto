@@ -60,6 +60,7 @@ export type ModuleIconKey =
   | `generated:${GeneratedIconName}`
   | 'otto-avatar'
   | 'custom-agent';
+export type ModuleIconSource = ModuleIconKey | { kind: 'image'; src: string };
 
 function isGeneratedIconName(value: string): value is GeneratedIconName {
   return (GENERATED_ICON_NAMES as readonly string[]).includes(value);
@@ -79,7 +80,7 @@ export function hasModuleIcon(value: string): value is ModuleIconKey {
 }
 
 export interface ModuleIconProps {
-  icon: ModuleIconKey;
+  icon: ModuleIconSource;
   label: string;
   size?: number;
   className?: string;
@@ -92,6 +93,17 @@ export function ModuleIcon({
   className,
 }: ModuleIconProps): React.JSX.Element {
   const wrapperClassName = ['otto-module-icon', className].filter(Boolean).join(' ');
+  if (typeof icon !== 'string') {
+    return (
+      <span
+        className={`${wrapperClassName} otto-module-icon--image`}
+        data-module-icon="custom-image"
+        aria-hidden
+      >
+        <img src={icon.src} width={size} height={size} alt="" draggable={false} />
+      </span>
+    );
+  }
   if (isGeneratedModuleIcon(icon)) {
     const generatedName = icon.slice('generated:'.length) as GeneratedIconName;
     return (
