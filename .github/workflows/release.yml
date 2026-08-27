@@ -80,6 +80,7 @@ jobs:
               .github/workflows/release.yml | \
               .github/workflows/deploy-server.yml | \
               scripts/sign-enterprise-package.mjs | \
+              scripts/validate-server-integration-baseline.mjs | \
               scripts/tests/sign-enterprise-package.test.js | \
               scripts/tests/enterprise-deploy-workflow.test.js | \
               scripts/tests/enterprise-candidate-workflow.test.js) ;;

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { validateServerIntegrationBaseline } from '../validate-server-integration-baseline.mjs';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
 const workflow = readFileSync(
@@ -39,5 +40,11 @@ describe('V1.9.13 enterprise candidate source identity', () => {
     expect(workflow).toContain('test "$(npm --version)" = "$NPM_VERSION"');
     expect(workflow).toContain('run: npm ci');
     expect(workflow).not.toContain('npm install --package-lock-only');
+  });
+
+  it('retains the repository integration ledger checks in hardened backfill mode', () => {
+    expect(validateServerIntegrationBaseline({ rootDir: repoRoot })).toEqual(
+      [],
+    );
   });
 });

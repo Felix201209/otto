@@ -629,14 +629,36 @@ export function validateServerIntegrationBaseline({
     );
   const restrictsReleaseBranches = workflow.includes('refs/heads/release/*');
   const restrictsVersionTags = workflow.includes('refs/tags/v*');
-  if (!(
+  const hasStandardReleasePolicy =
     hasInternalFetch &&
     hasSourceRead &&
     hasInternalRead &&
     hasAncestorCheck &&
     restrictsReleaseBranches &&
-    restrictsVersionTags
-  )) {
+    restrictsVersionTags;
+  const reviewedBackfillSource =
+    /^\s*REVIEWED_RELEASE_SOURCE:\s*([0-9a-f]{40})\s*$/mu.exec(workflow)?.[1];
+  const hasHardenedBackfillPolicy = Boolean(
+    reviewedBackfillSource &&
+    workflow.includes('name: Enterprise Server Candidate') &&
+    workflow.includes('test "${{ inputs.version }}" = \'1.9.13\'') &&
+    workflow.includes(
+      'git merge-base --is-ancestor "$REVIEWED_RELEASE_SOURCE" "$GITHUB_SHA"',
+    ) &&
+    workflow.includes(
+      'git diff --quiet "$REVIEWED_RELEASE_SOURCE" "$GITHUB_SHA"',
+    ) &&
+    workflow.includes('unexpected change beyond reviewed V1.9.13 source') &&
+    /permissions:\s*\n\s*contents:\s*read/u.test(workflow) &&
+    !/permissions:\s*\n\s*contents:\s*write/u.test(workflow) &&
+    !/^\s*push:\s*$/mu.test(workflow) &&
+    !/^\s*release:\s*$/mu.test(workflow) &&
+    !workflow.includes('gh release') &&
+    workflow.includes('OTTO_ALLOW_UNSIGNED_ENTERPRISE_PACKAGE') &&
+    workflow.includes('test ! -e "$signature"') &&
+    workflow.includes('Upload candidate for isolated signing'),
+  );
+  if (!hasStandardReleasePolicy && !hasHardenedBackfillPolicy) {
     errors.push(
       'release workflow must require latest origin/internal as an ancestor and restrict additional commits to release refs',
     );
