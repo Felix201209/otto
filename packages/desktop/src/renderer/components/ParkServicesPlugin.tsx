@@ -21,6 +21,7 @@ import type {
   EnterpriseRepairTicketHistoryEntry,
 } from '../../preload/index.js';
 import defaultMeetingRoomImage from '../assets/meeting-room-default.png';
+import type { ParkModuleTarget } from '../moduleCatalog.js';
 import { parkISODate, parkMinuteOfDay } from '../parkBusinessTime.js';
 import {
   IconBuilding,
@@ -437,8 +438,8 @@ function defaultServices(park: string, actors: ParkActorDirectory = {}): ParkSer
 
 const PARK_OPEN_EVENT = 'otto:open-park-services';
 
-export function openParkServices(): void {
-  window.dispatchEvent(new CustomEvent(PARK_OPEN_EVENT));
+export function openParkServices(target?: ParkModuleTarget): void {
+  window.dispatchEvent(new CustomEvent(PARK_OPEN_EVENT, { detail: { target } }));
 }
 
 export function useParkBrand(): string {
@@ -1605,9 +1606,23 @@ export function ParkServicesPlugin(): React.JSX.Element {
       setOpen(true);
     };
     const onOpen = (event: Event): void => {
+      const target = event instanceof CustomEvent && typeof event.detail?.target === 'string'
+        ? event.detail.target as ParkModuleTarget
+        : undefined;
       const sessionId = event instanceof CustomEvent && typeof event.detail?.sessionId === 'string'
         ? event.detail.sessionId
         : undefined;
+      if (target && target !== 'overview' && target !== 'staff-tasks' && target !== 'my-applications') {
+        const service = services.find((item) => item.id === target);
+        if (service) {
+          setSelected(null);
+          setFocusTicket(null);
+          setPendingNotificationSessionId(null);
+          setWindowMode('normal');
+          openServiceWindow(service);
+          return;
+        }
+      }
       showParkSession(sessionId);
     };
     const unsubscribeNotification = window.otto.onNotificationSessionOpen?.((sessionId) => {
@@ -1618,7 +1633,7 @@ export function ParkServicesPlugin(): React.JSX.Element {
       unsubscribeNotification();
       window.removeEventListener(PARK_OPEN_EVENT, onOpen);
     };
-  }, [parkEnabled]);
+  }, [openServiceWindow, parkEnabled, services]);
 
   useEffect(() => {
     if (parkEnabled !== true) return undefined;

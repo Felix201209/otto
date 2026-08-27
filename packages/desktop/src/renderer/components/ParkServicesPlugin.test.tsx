@@ -40,9 +40,9 @@ afterEach(() => {
 });
 
 /** 经右侧面板同款事件通路打开弹窗。 */
-function openDialog(): void {
+function openDialog(target?: Parameters<typeof openParkServices>[0]): void {
   act(() => {
-    openParkServices();
+    openParkServices(target);
   });
 }
 
@@ -255,6 +255,14 @@ describe('ParkServicesPlugin', () => {
     expect(screen.queryByText('餐饮服务')).toBeNull();
     expect(document.querySelectorAll('.otto-park-service')).toHaveLength(9);
     expect(Array.from(document.querySelectorAll('.otto-park-service__name')).slice(0, 2).map((node) => node.textContent)).toEqual(['园区公告', '满意度调查']);
+  });
+
+  it('可直达指定园区服务，不改变原有业务窗口', () => {
+    render(<ParkServicesPlugin />);
+    openDialog('repair');
+
+    expect(screen.getByRole('dialog', { name: '物业报修' })).toBeTruthy();
+    expect(screen.queryByLabelText('园区服务列表')).toBeNull();
   });
 
   it('园区窗口支持最小化、最大化还原和拖动', async () => {

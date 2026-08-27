@@ -533,7 +533,7 @@ export function RightPanel({
                 <button
                   type="button"
                   className="otto-expert-card"
-                  onClick={openParkServices}
+                  onClick={() => openParkServices()}
                   title="装修管理 · 满意度调查 · 园区公告 · 停车位办理 · 网络与固话 · 会议室预约 · 电卡充电 · 客户报修 · 来访车辆"
                 >
                   <span className="otto-expert-card__body">
