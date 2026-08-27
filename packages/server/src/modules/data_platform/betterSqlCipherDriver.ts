@@ -214,7 +214,7 @@ export function createBetterSqlCipherDriver(input: {
     readOnly?: boolean;
   }): NativeDatabase {
     const database = new DatabaseConstructor(options.databasePath, {
-      readonly: options.readOnly,
+      readonly: options.readOnly ?? false,
       fileMustExist: !options.create,
       nativeBinding: nativeBindingPath,
       timeout: input.timeoutMs ?? 5_000,

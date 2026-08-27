@@ -46,7 +46,21 @@ function createFakeConstructor(input: { cipherVersion?: string | null } = {}): {
     closed = false;
     inTransaction = false;
 
-    constructor() {
+    constructor(
+      _filename: string,
+      options: {
+        readonly?: boolean;
+        fileMustExist?: boolean;
+        nativeBinding?: string;
+        timeout?: number;
+      },
+    ) {
+      if (
+        Object.prototype.hasOwnProperty.call(options, 'readonly') &&
+        typeof options.readonly !== 'boolean'
+      ) {
+        throw new TypeError('Expected the "readonly" option to be a boolean');
+      }
       instances.push(this);
     }
 
