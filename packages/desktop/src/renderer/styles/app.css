@@ -9739,7 +9739,6 @@ h6.otto-prose__h {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 2px;
   cursor: pointer;
 }
 .otto-session-grouping__trigger:hover,
@@ -9752,38 +9751,52 @@ h6.otto-prose__h {
   box-shadow: var(--otto-shadow-focus);
 }
 .otto-session-grouping__menu {
-  position: absolute;
-  z-index: 40;
-  top: calc(100% + 4px);
-  right: 0;
-  width: 150px;
-  padding: 5px;
-  border: 1px solid var(--otto-border);
-  border-radius: 10px;
+  position: fixed;
+  z-index: 1100;
+  box-sizing: border-box;
+  width: 218px;
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--otto-text) 10%, transparent);
+  border-radius: 12px;
   background: var(--otto-surface);
   box-shadow: var(--otto-shadow-pop);
+}
+.otto-session-grouping__menulabel {
+  padding: 4px 10px;
+  color: color-mix(in srgb, var(--otto-text) 52%, transparent);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
 }
 .otto-session-grouping__menuitem {
   width: 100%;
   min-height: 34px;
-  padding: 0 9px;
+  padding: 5px 10px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 10px;
   background: transparent;
-  color: var(--otto-text-secondary);
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 18px;
+  color: var(--otto-text);
+  display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   text-align: left;
-  font-size: 12px;
+  font-size: 14px;
+  line-height: 22px;
   cursor: pointer;
+}
+.otto-session-grouping__menuitem > span {
+  flex: 1;
+  min-width: 0;
+}
+.otto-session-grouping__menuitem > svg {
+  flex: 0 0 auto;
+  color: var(--otto-text);
 }
 .otto-session-grouping__menuitem:hover,
 .otto-session-grouping__menuitem:focus-visible {
   outline: none;
-  background: var(--otto-accent-soft);
-  color: var(--otto-accent);
+  background: color-mix(in srgb, var(--otto-text) 6%, transparent);
+  color: var(--otto-text);
 }
 .otto-conversations .otto-sessions {
   border-top: 0;
