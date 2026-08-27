@@ -84,6 +84,21 @@ function mergeVisibleModuleOrder(
   ));
 }
 
+function autoScrollAtPointer(
+  element: HTMLElement,
+  clientY: number,
+  threshold = 40,
+  step = 18,
+): void {
+  if (element.scrollHeight <= element.clientHeight) return;
+  const rect = element.getBoundingClientRect();
+  if (clientY >= rect.bottom - threshold) {
+    element.scrollTop += step;
+  } else if (clientY <= rect.top + threshold) {
+    element.scrollTop -= step;
+  }
+}
+
 export interface ModuleWorkspaceProps {
   presentation: 'panel' | 'page';
   scopeKey?: string;
@@ -95,6 +110,11 @@ export interface ModuleWorkspaceProps {
   onLayoutChange(next: ModuleWorkspaceLayout): void;
 }
 
+type WorkspacePopover =
+  | { kind: 'group'; id: string }
+  | { kind: 'module'; key: string }
+  | null;
+
 export function ModuleWorkspace({
   presentation,
   scopeKey = 'default',
@@ -105,8 +125,7 @@ export function ModuleWorkspace({
   onOpenMarketplace,
   onLayoutChange,
 }: ModuleWorkspaceProps): React.JSX.Element {
-  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  const [openModuleMenuKey, setOpenModuleMenuKey] = useState<string | null>(null);
+  const [openPopover, setOpenPopover] = useState<WorkspacePopover>(null);
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState<{
     groupId: string;
@@ -134,15 +153,13 @@ export function ModuleWorkspace({
 
   useEffect(() => {
     const onPointerDown = (event: MouseEvent): void => {
-      if ((openMenuId || openModuleMenuKey) && !menuRef.current?.contains(event.target as Node)) {
-        setOpenMenuId(null);
-        setOpenModuleMenuKey(null);
+      if (openPopover && !menuRef.current?.contains(event.target as Node)) {
+        setOpenPopover(null);
       }
     };
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
-        setOpenMenuId(null);
-        setOpenModuleMenuKey(null);
+        setOpenPopover(null);
         setRenameDraft(null);
       }
     };
@@ -152,7 +169,7 @@ export function ModuleWorkspace({
       document.removeEventListener('mousedown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [openMenuId, openModuleMenuKey]);
+  }, [openPopover]);
 
   useEffect(() => () => {
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
@@ -161,8 +178,7 @@ export function ModuleWorkspace({
   useEffect(() => {
     if (previousScopeRef.current === scopeKey) return;
     previousScopeRef.current = scopeKey;
-    setOpenMenuId(null);
-    setOpenModuleMenuKey(null);
+    setOpenPopover(null);
     setEditingGroupId(null);
     setRenameDraft(null);
     setConfirmState(null);
@@ -220,7 +236,7 @@ export function ModuleWorkspace({
     ids.splice(index, 1);
     ids.splice(targetIndex, 0, groupId);
     commitLayout(reorderModuleGroups(layout, ids));
-    setOpenMenuId(null);
+    setOpenPopover(null);
   };
 
   const moveModule = (groupId: string, moduleId: string, targetIndex: number): void => {
@@ -232,7 +248,7 @@ export function ModuleWorkspace({
     ids.splice(index, 1);
     ids.splice(targetIndex, 0, moduleId);
     commitLayout(reorderModulesInGroup(layout, groupId, ids));
-    setOpenModuleMenuKey(null);
+    setOpenPopover(null);
   };
 
   const updateTransientLayout = (next: ModuleWorkspaceLayout): void => {
@@ -272,6 +288,9 @@ export function ModuleWorkspace({
         }`}
         data-presentation={presentation}
         data-reorder-group="groups"
+        onPointerMove={(event: React.PointerEvent<HTMLDivElement>) => (
+          autoScrollAtPointer(event.currentTarget, event.clientY)
+        )}
       >
         {transientLayout.groups.map((group, groupIndex) => {
         const groupModules = group.moduleIds
@@ -334,24 +353,28 @@ export function ModuleWorkspace({
                     onPointerDown={(event) => groupDragControls.start(event)}
                   >⠿</button>
                 ) : null}
-              <div className="otto-module-group__menu-wrap" ref={openMenuId === group.id ? menuRef : undefined}>
+              <div className="otto-module-group__menu-wrap" ref={openPopover?.kind === 'group' && openPopover.id === group.id ? menuRef : undefined}>
                 <button
                   type="button"
                   className="otto-module-group__menu-button"
                   aria-label={`功能组菜单：${group.name}`}
-                  aria-expanded={openMenuId === group.id}
-                  onClick={() => setOpenMenuId((current) => current === group.id ? null : group.id)}
+                  aria-expanded={openPopover?.kind === 'group' && openPopover.id === group.id}
+                  onClick={() => setOpenPopover((current) => (
+                    current?.kind === 'group' && current.id === group.id
+                      ? null
+                      : { kind: 'group', id: group.id }
+                  ))}
                 >
                   ···
                 </button>
-                {openMenuId === group.id ? (
+                {openPopover?.kind === 'group' && openPopover.id === group.id ? (
                   <div className="otto-module-group__menu" role="menu" aria-label={`${group.name}设置`}>
                     <button
                       type="button"
                       role="menuitem"
                       onClick={() => {
                         setEditingGroupId((current) => current === group.id ? null : group.id);
-                        setOpenMenuId(null);
+                        setOpenPopover(null);
                       }}
                     >
                       {editingGroupId === group.id ? '完成编辑' : '编辑模块'}
@@ -361,7 +384,7 @@ export function ModuleWorkspace({
                       role="menuitem"
                       onClick={() => {
                         setRenameDraft({ groupId: group.id, value: group.name, error: null });
-                        setOpenMenuId(null);
+                        setOpenPopover(null);
                       }}
                     >重命名</button>
                     <button
@@ -369,7 +392,7 @@ export function ModuleWorkspace({
                       role="menuitem"
                       onClick={() => {
                         commitLayout(updateModuleGroupRows(layout, group.id, group.rows === 2 ? 3 : 2));
-                        setOpenMenuId(null);
+                        setOpenPopover(null);
                       }}
                     >{group.rows === 2 ? '显示三行' : '显示两行'}</button>
                     <button
@@ -403,7 +426,7 @@ export function ModuleWorkspace({
                       disabled={layout.groups.length <= 1}
                       onClick={() => {
                         setConfirmState({ kind: 'delete-group', groupId: group.id });
-                        setOpenMenuId(null);
+                        setOpenPopover(null);
                       }}
                     >删除功能组</button>
                   </div>
@@ -432,6 +455,9 @@ export function ModuleWorkspace({
               layoutScroll={overflowing}
               tabIndex={overflowing ? 0 : undefined}
               aria-label={`${group.name}模块`}
+              onPointerMove={(event: React.PointerEvent<HTMLDivElement>) => (
+                autoScrollAtPointer(event.currentTarget, event.clientY)
+              )}
             >
               {groupModules.map((module, moduleIndex) => {
                 const disabled = module.availability !== 'available';
@@ -451,7 +477,7 @@ export function ModuleWorkspace({
                     {(moduleDragControls) => (
                   <div
                     className="otto-module-tile-wrap"
-                    ref={openModuleMenuKey === moduleMenuKey ? menuRef : undefined}
+                    ref={openPopover?.kind === 'module' && openPopover.key === moduleMenuKey ? menuRef : undefined}
                   >
                     <button
                       type="button"
@@ -486,12 +512,14 @@ export function ModuleWorkspace({
                           type="button"
                           className="otto-module-group__menu-button otto-module-tile__menu-button"
                           aria-label={`模块菜单：${module.label}`}
-                          aria-expanded={openModuleMenuKey === moduleMenuKey}
-                          onClick={() => setOpenModuleMenuKey((current) => (
-                            current === moduleMenuKey ? null : moduleMenuKey
+                          aria-expanded={openPopover?.kind === 'module' && openPopover.key === moduleMenuKey}
+                          onClick={() => setOpenPopover((current) => (
+                            current?.kind === 'module' && current.key === moduleMenuKey
+                              ? null
+                              : { kind: 'module', key: moduleMenuKey }
                           ))}
                         >···</button>
-                        {openModuleMenuKey === moduleMenuKey ? (
+                        {openPopover?.kind === 'module' && openPopover.key === moduleMenuKey ? (
                           <div className="otto-module-group__menu otto-module-tile__menu" role="menu" aria-label={`${module.label}设置`}>
                             <button
                               type="button"

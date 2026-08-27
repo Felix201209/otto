@@ -19,11 +19,13 @@ type ModuleWorkspaceStorage = Pick<Storage, 'getItem' | 'setItem'>;
 export interface UseModuleWorkspaceInput {
   scope: ModuleWorkspaceStorageScope;
   capabilities: ModuleWorkspaceCapabilities;
+  ready?: boolean;
   visibleModuleIds?: readonly string[];
   storage?: ModuleWorkspaceStorage;
 }
 
 export interface UseModuleWorkspaceResult {
+  ready: boolean;
   layout: ModuleWorkspaceLayout;
   visibleLayout: ModuleWorkspaceLayout;
   setLayout(next: ModuleWorkspaceLayout): void;
@@ -33,8 +35,11 @@ export interface UseModuleWorkspaceResult {
 interface ScopedLayoutState {
   storageKey: string;
   capabilitySignature: string;
+  ready: boolean;
   layout: ModuleWorkspaceLayout;
 }
+
+const EMPTY_LAYOUT: ModuleWorkspaceLayout = { version: 1, groups: [] };
 
 function capabilitiesSignature(capabilities: ModuleWorkspaceCapabilities): string {
   return JSON.stringify([capabilities.edition, capabilities.availableModuleIds]);
@@ -75,6 +80,7 @@ function writeLayout(
 export function useModuleWorkspace({
   scope,
   capabilities,
+  ready = true,
   visibleModuleIds = capabilities.availableModuleIds,
   storage = window.localStorage,
 }: UseModuleWorkspaceInput): UseModuleWorkspaceResult {
@@ -85,34 +91,38 @@ export function useModuleWorkspace({
     [capabilitySignature],
   );
   const loadedLayout = useMemo(
-    () => readLayout(storage, storageKey, stableCapabilities),
-    [stableCapabilities, storage, storageKey],
+    () => ready ? readLayout(storage, storageKey, stableCapabilities) : EMPTY_LAYOUT,
+    [ready, stableCapabilities, storage, storageKey],
   );
   const [state, setState] = useState<ScopedLayoutState>(() => ({
     storageKey,
     capabilitySignature,
+    ready,
     layout: loadedLayout,
   }));
   const scopeMatches = state.storageKey === storageKey
-    && state.capabilitySignature === capabilitySignature;
+    && state.capabilitySignature === capabilitySignature
+    && state.ready === ready;
   const layout = scopeMatches ? state.layout : loadedLayout;
 
   useEffect(() => {
     if (scopeMatches) return;
-    setState({ storageKey, capabilitySignature, layout: loadedLayout });
-  }, [capabilitySignature, loadedLayout, scopeMatches, storageKey]);
+    setState({ storageKey, capabilitySignature, ready, layout: loadedLayout });
+  }, [capabilitySignature, loadedLayout, ready, scopeMatches, storageKey]);
 
   const commitLayout = useCallback((next: ModuleWorkspaceLayout): void => {
+    if (!ready) return;
     const normalized = normalizeModuleWorkspace(next);
-    setState({ storageKey, capabilitySignature, layout: normalized });
+    setState({ storageKey, capabilitySignature, ready, layout: normalized });
     writeLayout(storage, storageKey, normalized);
-  }, [capabilitySignature, storage, storageKey]);
+  }, [capabilitySignature, ready, storage, storageKey]);
 
   const restoreDefaults = useCallback((): void => {
+    if (!ready) return;
     const defaults = createDefaultModuleWorkspace(stableCapabilities);
-    setState({ storageKey, capabilitySignature, layout: defaults });
+    setState({ storageKey, capabilitySignature, ready, layout: defaults });
     writeLayout(storage, storageKey, defaults);
-  }, [capabilitySignature, stableCapabilities, storage, storageKey]);
+  }, [capabilitySignature, ready, stableCapabilities, storage, storageKey]);
 
   const visible = new Set(visibleModuleIds);
   const visibleLayout = {
@@ -124,6 +134,7 @@ export function useModuleWorkspace({
   };
 
   return {
+    ready,
     layout,
     visibleLayout,
     setLayout: commitLayout,

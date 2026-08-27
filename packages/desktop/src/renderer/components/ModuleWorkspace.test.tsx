@@ -308,4 +308,17 @@ describe('ModuleWorkspace', () => {
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('menu', { name: '园区服务设置' })).toBeNull();
   });
+
+  it('keeps group and module menus mutually exclusive', () => {
+    renderControlledWorkspace();
+    fireEvent.click(screen.getByRole('button', { name: '功能组菜单：园区服务' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '编辑模块' }));
+
+    fireEvent.click(screen.getByRole('button', { name: '模块菜单：园区公告' }));
+    expect(screen.getByRole('menu', { name: '园区公告设置' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '功能组菜单：园区服务' }));
+    expect(screen.queryByRole('menu', { name: '园区公告设置' })).toBeNull();
+    expect(screen.getByRole('menu', { name: '园区服务设置' })).toBeTruthy();
+  });
 });

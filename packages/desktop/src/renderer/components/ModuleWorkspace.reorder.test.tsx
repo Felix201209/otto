@@ -172,4 +172,34 @@ describe('ModuleWorkspace drag reorder contract', () => {
     expect(screen.getByRole('button', { name: '拖动功能组：园区服务' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '拖动模块：园区公告' })).toBeTruthy();
   });
+
+  it('auto-scrolls the nearest group scroller when dragging near its edge', () => {
+    const { container } = render(
+      <ModuleWorkspace
+        presentation="panel"
+        layout={layout}
+        modules={modules}
+        onActivate={vi.fn()}
+        onOpenMarketplace={vi.fn()}
+        onLayoutChange={vi.fn()}
+      />,
+    );
+    const groupList = container.querySelector<HTMLElement>('[data-reorder-group="groups"]')!;
+    Object.defineProperty(groupList, 'scrollHeight', { configurable: true, value: 900 });
+    Object.defineProperty(groupList, 'clientHeight', { configurable: true, value: 300 });
+    groupList.getBoundingClientRect = () => ({
+      x: 0, y: 0, top: 0, left: 0, right: 320, bottom: 300, width: 320, height: 300,
+      toJSON: () => ({}),
+    });
+    groupList.scrollTop = 100;
+
+    const bottomMove = new Event('pointermove', { bubbles: true });
+    Object.defineProperty(bottomMove, 'clientY', { value: 295 });
+    fireEvent(groupList, bottomMove);
+    expect(groupList.scrollTop).toBeGreaterThan(100);
+    const topMove = new Event('pointermove', { bubbles: true });
+    Object.defineProperty(topMove, 'clientY', { value: 2 });
+    fireEvent(groupList, topMove);
+    expect(groupList.scrollTop).toBeLessThan(120);
+  });
 });

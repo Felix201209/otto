@@ -43,6 +43,7 @@ interface HookProps {
   scope: ModuleWorkspaceStorageScope;
   capabilities: ModuleWorkspaceCapabilities;
   visibleModuleIds?: readonly string[];
+  ready?: boolean;
 }
 
 beforeEach(() => {
@@ -51,6 +52,35 @@ beforeEach(() => {
 });
 
 describe('useModuleWorkspace', () => {
+  it('does not create or persist a layout before capabilities are ready', () => {
+    const write = vi.spyOn(Storage.prototype, 'setItem');
+    const view = renderHook(
+      (props: HookProps) => useModuleWorkspace(props),
+      {
+        initialProps: {
+          scope: accountA,
+          capabilities: enterpriseCapabilities,
+          ready: false,
+        },
+      },
+    );
+
+    expect(view.result.current.ready).toBe(false);
+    expect(view.result.current.layout.groups).toEqual([]);
+    act(() => view.result.current.setLayout(createDefaultModuleWorkspace(enterpriseCapabilities)));
+    act(() => view.result.current.restoreDefaults());
+    expect(write).not.toHaveBeenCalled();
+
+    view.rerender({
+      scope: accountA,
+      capabilities: enterpriseCapabilities,
+      ready: true,
+    });
+    expect(view.result.current.ready).toBe(true);
+    expect(view.result.current.layout).toEqual(createDefaultModuleWorkspace(enterpriseCapabilities));
+    expect(write).not.toHaveBeenCalled();
+  });
+
   it('returns capability defaults when storage is missing without writing them', () => {
     const write = vi.spyOn(Storage.prototype, 'setItem');
     const view = renderHook(
