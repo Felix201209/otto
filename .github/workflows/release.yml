@@ -21,6 +21,7 @@ concurrency:
 env:
   NODE_VERSION: '22.23.1'
   SQLCIPHER_SOURCE_REVISION: e2a6040f2ae5cfff2b3e08eb3320007d93cdf3fc
+  REVIEWED_RELEASE_SOURCE: 82b5e0c101a44358efbb900b0c2be62455c2412b
 
 jobs:
   sqlcipher-native:
@@ -58,8 +59,32 @@ jobs:
           test "$(node -p "require('./package.json').version")" = '1.9.13'
           test "$(node -p "require('./packages/desktop/package.json').version")" = '1.9.13'
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          git fetch --no-tags origin internal
-          git merge-base --is-ancestor FETCH_HEAD "$GITHUB_SHA"
+          git cat-file -e "${REVIEWED_RELEASE_SOURCE}^{commit}"
+          git merge-base --is-ancestor "$REVIEWED_RELEASE_SOURCE" "$GITHUB_SHA"
+          git diff --quiet "$REVIEWED_RELEASE_SOURCE" "$GITHUB_SHA" -- \
+            package.json package-lock.json tsconfig.json \
+            packages/server \
+            packages/core/package.json \
+            packages/core/tsconfig.json \
+            packages/core/src/services/aliyunSmsSender.ts \
+            deployment/enterprise-oneclick \
+            native/sqlcipher-node \
+            scripts/build_package.js \
+            scripts/copy_files.js \
+            scripts/build-enterprise-oneclick.mjs \
+            scripts/verify-enterprise-package-signature.mjs \
+            scripts/verify-sqlcipher-native-assets.mjs
+          while IFS= read -r changed; do
+            case "$changed" in
+              .github/workflows/release.yml | \
+              .github/workflows/deploy-server.yml | \
+              scripts/sign-enterprise-package.mjs | \
+              scripts/tests/sign-enterprise-package.test.js | \
+              scripts/tests/enterprise-deploy-workflow.test.js | \
+              scripts/tests/enterprise-candidate-workflow.test.js) ;;
+              *) echo "unexpected change beyond reviewed V1.9.13 source: $changed" >&2; exit 4 ;;
+            esac
+          done < <(git diff --name-only "$REVIEWED_RELEASE_SOURCE" "$GITHUB_SHA")
 
       - name: Install locked dependencies
         run: npm ci
@@ -107,7 +132,8 @@ jobs:
             scripts/tests/enterprise-oneclick-installer.test.js \
             scripts/tests/sqlcipher-native-assets.test.js \
             scripts/tests/verify-enterprise-package-signature.test.js \
-            scripts/tests/sign-enterprise-package.test.js
+            scripts/tests/sign-enterprise-package.test.js \
+            scripts/tests/enterprise-candidate-workflow.test.js
 
       - name: Build Linux enterprise package candidate
         run: npm run bundle:enterprise
