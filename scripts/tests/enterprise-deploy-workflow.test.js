@@ -31,7 +31,8 @@ describe('enterprise production deployment workflow', () => {
       'DEPLOY_SUDO_PASSWORD: ${{ secrets.DEPLOY_SUDO_PASSWORD }}',
     );
     expect(workflow).toContain('printf \'%s\\n\' "$DEPLOY_SUDO_PASSWORD" |');
-    expect(workflow).toContain("sudo -S -p '' -v");
+    expect(workflow).toContain("sudo -k -S -p ''");
+    expect(workflow).not.toContain("sudo -S -p '' -v");
     expect(workflow).not.toContain(
       'sudo -S -p \'\' -v "${{ secrets.DEPLOY_SUDO_PASSWORD }}"',
     );

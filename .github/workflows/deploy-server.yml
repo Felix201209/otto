@@ -131,11 +131,9 @@ jobs:
           if [ "$DRY_RUN_INPUT" = "true" ]; then
             DRY_RUN_FLAG="--dry-run"
           fi
-          printf '%s\n' "$DEPLOY_SUDO_PASSWORD" | \
           ssh -i ~/.ssh/id_deploy -p "${DEPLOY_PORT}" \
             "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
             "set -euo pipefail
-             sudo -S -p '' -v
              cd '$REMOTE_DIR'
              sha256sum -c ./*.sha256
              ARCHIVE=\$(ls otto-enterprise-oneclick-v${{ steps.version.outputs.version }}-*.tar.gz | head -n 1)
@@ -144,11 +142,25 @@ jobs:
              tar -xzf \"\$ARCHIVE\" -C unpack
              PKG_DIR=\$(find unpack -mindepth 1 -maxdepth 1 -type d | head -n 1)
              test -n \"\$PKG_DIR\"
-             test -L /opt/otto-enterprise/current
-             if [ '$DRY_RUN_INPUT' != 'true' ]; then
-               sudo -n \"\$PKG_DIR/backup-now.sh\" '${DEPLOY_CONFIG_PATH}'
-             fi
-             sudo -n \"\$PKG_DIR/upgrade.sh\" --config '${DEPLOY_CONFIG_PATH}' $DRY_RUN_FLAG"
+             test -L /opt/otto-enterprise/current"
+          if [ "$DRY_RUN_INPUT" != "true" ]; then
+            printf '%s\n' "$DEPLOY_SUDO_PASSWORD" | \
+            ssh -i ~/.ssh/id_deploy -p "${DEPLOY_PORT}" \
+              "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+              "set -euo pipefail
+               cd '$REMOTE_DIR'
+               PKG_DIR=\$(find unpack -mindepth 1 -maxdepth 1 -type d | head -n 1)
+               test -n \"\$PKG_DIR\"
+               sudo -k -S -p '' \"\$PKG_DIR/backup-now.sh\" '${DEPLOY_CONFIG_PATH}'"
+          fi
+          printf '%s\n' "$DEPLOY_SUDO_PASSWORD" | \
+          ssh -i ~/.ssh/id_deploy -p "${DEPLOY_PORT}" \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "set -euo pipefail
+             cd '$REMOTE_DIR'
+             PKG_DIR=\$(find unpack -mindepth 1 -maxdepth 1 -type d | head -n 1)
+             test -n \"\$PKG_DIR\"
+             sudo -k -S -p '' \"\$PKG_DIR/upgrade.sh\" --config '${DEPLOY_CONFIG_PATH}' $DRY_RUN_FLAG"
 
       - name: Verify production version and public contracts
         if: ${{ inputs.dry_run == false }}
