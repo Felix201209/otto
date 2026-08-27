@@ -9976,12 +9976,6 @@ h6.otto-prose__h {
   font-size: 14px;
   letter-spacing: -0.01em;
 }
-.otto-main__identity {
-  margin-left: 10px;
-  color: var(--otto-text-tertiary);
-  font-size: 11px;
-  white-space: nowrap;
-}
 .otto-main__sync {
   color: var(--otto-accent);
 }
@@ -10226,15 +10220,6 @@ h6.otto-prose__h {
   font-weight: 650;
 }
 
-.otto-main__identity {
-  margin-left: 8px;
-  padding-left: 8px;
-  border-left: 1px solid var(--otto-border);
-  max-width: min(42vw, 440px);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .otto-thread {
   padding-top: 30px;
 }
@@ -10313,10 +10298,6 @@ h6.otto-prose__h {
 
   .otto-main__topbar {
     padding: 0 16px;
-  }
-
-  .otto-main__identity {
-    display: none;
   }
 }
 

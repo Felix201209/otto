@@ -1252,7 +1252,6 @@ function OttoWorkspaceApp({
               messages={activeMessages}
               models={state.models}
               currentModel={state.currentModel}
-              identityLabel={centralIdentity.identityLabel}
               busy={busy}
               onSend={handleSend}
               onCancel={actions.cancel}

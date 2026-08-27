@@ -65,7 +65,6 @@ function renderChat(
       messages={twoRounds()}
       models={MODELS}
       currentModel="m1"
-      identityLabel="北辰科技 · 产品部 · 产品经理 · 企业成员"
       busy={false}
       onSend={vi.fn()}
       onCancel={vi.fn()}
@@ -83,12 +82,11 @@ function renderChat(
 }
 
 describe('ChatView 重新生成携带消息 id', () => {
-  it('保留服务端权威身份，不再显示顶栏快捷操作', () => {
+  it('顶栏只显示会话标题，不显示身份说明和旧版快捷操作', () => {
     renderChat();
 
-    expect(
-      screen.getByText('北辰科技 · 产品部 · 产品经理 · 企业成员'),
-    ).toBeTruthy();
+    expect(screen.getByText('测试会话')).toBeTruthy();
+    expect(document.querySelector('.otto-main__identity')).toBeNull();
     expect(screen.queryByRole('button', { name: '切换到深色' })).toBeNull();
     expect(screen.queryByRole('button', { name: '切换到浅色' })).toBeNull();
     expect(screen.queryByRole('button', { name: '导出会话为 Markdown' })).toBeNull();
