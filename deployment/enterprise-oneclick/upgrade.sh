@@ -88,9 +88,11 @@ SQLCIPHER_RELEASE_BINDING="${SCRIPT_DIR}/release/native/sqlcipher/linux-${RUNTIM
 [ -f "$SQLCIPHER_RELEASE_BINDING" ] && [ ! -L "$SQLCIPHER_RELEASE_BINDING" ] \
   || otto_die "升级包缺少当前架构的 SQLCipher Node.js 原生产物：linux-${RUNTIME_ARCH}" 3
 
-CURRENT_INFO="$("$NODE_PATH" "${SCRIPT_DIR}/tools/verify-release.mjs" \
-  "$CURRENT_REAL" --allow-legacy-lstc --allow-legacy-sqlite \
-  --allow-registration-legal-hotfix)"
+CURRENT_VERIFY_OPTIONS=(--allow-legacy-lstc --allow-legacy-sqlite)
+if [ -f "${CURRENT_REAL}/HOTFIX-INFO" ] || [ -f "${CURRENT_REAL}/HOTFIX-PREVIOUS-RELEASE" ]; then
+  CURRENT_VERIFY_OPTIONS+=(--allow-registration-legal-hotfix)
+fi
+CURRENT_INFO="$("$NODE_PATH" "${SCRIPT_DIR}/tools/verify-release.mjs" "$CURRENT_REAL" "${CURRENT_VERIFY_OPTIONS[@]}")"
 CURRENT_VERSION="$("$NODE_PATH" -e "const x=JSON.parse(process.argv[1]);console.log(x.version)" "$CURRENT_INFO")"
 CURRENT_BUILD="$("$NODE_PATH" -e "const x=JSON.parse(process.argv[1]);console.log(x.buildCommit)" "$CURRENT_INFO")"
 if [ "$CURRENT_BUILD" = "$BUILD_ID" ]; then
