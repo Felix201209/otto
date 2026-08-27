@@ -11,7 +11,7 @@
 
 import type React from 'react';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
-import { render, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, render, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { SessionSummary } from 'otto-server';
 import { Sidebar } from './Sidebar.js';
 import { sessionListPreferenceStorageKey } from '../sessionListView.js';
@@ -125,6 +125,33 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
     fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByText('第二个任务')).toBeNull();
+  });
+
+  it('用户操作任务区时显示滚动条，静止后自动隐藏', () => {
+    vi.useFakeTimers();
+    try {
+      renderSidebar();
+      const workspace = screen.getByRole('button', { name: '任务（1）' })
+        .closest('.otto-sidebar__workspace');
+      expect(workspace).toBeTruthy();
+      expect(workspace?.classList.contains('is-scrollbar-active')).toBe(false);
+
+      fireEvent.pointerMove(workspace!);
+      expect(workspace?.classList.contains('is-scrollbar-active')).toBe(true);
+
+      act(() => vi.advanceTimersByTime(899));
+      expect(workspace?.classList.contains('is-scrollbar-active')).toBe(true);
+
+      act(() => vi.advanceTimersByTime(1));
+      expect(workspace?.classList.contains('is-scrollbar-active')).toBe(false);
+
+      fireEvent.scroll(workspace!);
+      expect(workspace?.classList.contains('is-scrollbar-active')).toBe(true);
+      act(() => vi.advanceTimersByTime(900));
+      expect(workspace?.classList.contains('is-scrollbar-active')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('企业合成会话未读也在 Otto 品牌区保留闪烁点', () => {

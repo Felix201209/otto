@@ -103,6 +103,7 @@ export function Sidebar({
   unreadSessions,
 }: SidebarProps): React.JSX.Element {
   const [sessionsOpen, setSessionsOpen] = useState(true);
+  const [workspaceScrollbarActive, setWorkspaceScrollbarActive] = useState(false);
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [joinEnterpriseOpen, setJoinEnterpriseOpen] = useState(false);
   const [logoutBusy, setLogoutBusy] = useState(false);
@@ -116,6 +117,7 @@ export function Sidebar({
   const groupingMenuSurfaceRef = useRef<HTMLDivElement>(null);
   const groupingMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const groupingMenuItemRef = useRef<HTMLButtonElement>(null);
+  const workspaceScrollbarHideTimerRef = useRef<number | null>(null);
   const preferenceKey = sessionListPreferenceStorageKey(preferenceScope);
   const [preferenceState, setPreferenceState] = useState<{
     key: string;
@@ -152,6 +154,17 @@ export function Sidebar({
     ?.filter((sessionId) => !countedEnterpriseSessions.has(sessionId)).length ?? 0;
   const unreadCount = enterpriseUnreadTotal + unreadSessionRemainder;
 
+  const revealWorkspaceScrollbar = (): void => {
+    setWorkspaceScrollbarActive(true);
+    if (workspaceScrollbarHideTimerRef.current !== null) {
+      window.clearTimeout(workspaceScrollbarHideTimerRef.current);
+    }
+    workspaceScrollbarHideTimerRef.current = window.setTimeout(() => {
+      setWorkspaceScrollbarActive(false);
+      workspaceScrollbarHideTimerRef.current = null;
+    }, 900);
+  };
+
   const commitPreference = (next: SessionListPreference): void => {
     setPreferenceState({ key: preferenceKey, preference: next });
     writeSessionListPreference(preferenceScope, next);
@@ -164,6 +177,12 @@ export function Sidebar({
       preference: readSessionListPreference(preferenceScope),
     });
   }, [preferenceKey, preferenceScope, preferenceState.key]);
+
+  useEffect(() => () => {
+    if (workspaceScrollbarHideTimerRef.current !== null) {
+      window.clearTimeout(workspaceScrollbarHideTimerRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     if (!activeWorkspaceGroupKey
@@ -287,7 +306,13 @@ export function Sidebar({
         />
       ) : null}
 
-      <div className="otto-sidebar__workspace">
+      <div
+        className={`otto-sidebar__workspace${workspaceScrollbarActive ? ' is-scrollbar-active' : ''}`}
+        onPointerMove={revealWorkspaceScrollbar}
+        onScroll={revealWorkspaceScrollbar}
+        onWheel={revealWorkspaceScrollbar}
+        onKeyDown={revealWorkspaceScrollbar}
+      >
         <section className="otto-conversations" aria-label="任务">
           <div className="otto-conversations__header">
             <button
