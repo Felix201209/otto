@@ -6,7 +6,7 @@
 
 /**
  * 左侧栏。以会话列表为主体：
- *   品牌 Otto / + 新建对话 / 可按时间或工作目录分组的会话列表（flex:1 主体）/
+ *   品牌 Otto / 带图标的主导航 / 可按时间或工作目录分组的会话列表（flex:1 主体）/
  *   底部账号区（辅助入口与当前账号）。
  *   常用工具（企业专家入口、全部智能体）已迁往右侧 RightPanel。
  *
@@ -22,7 +22,6 @@ import type { SessionSummary } from 'otto-server';
 import { computeNavBadgeCounts } from '../attentionCenter.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import {
-  IconPlus,
   IconChevronDown,
   IconUserAvatar,
   IconSettings,
@@ -30,6 +29,12 @@ import {
   IconFolderOpen,
   IconCheck,
   IconPersonalization,
+  IconSquarePen,
+  IconLayoutDashboard,
+  IconNetwork,
+  IconMessageCircle,
+  IconBriefcaseBusiness,
+  IconBuilding2,
 } from './icons.js';
 import { LogoutConfirmDialog } from './LogoutConfirmDialog.js';
 import { JoinEnterpriseDialog } from './JoinEnterpriseDialog.js';
@@ -299,27 +304,21 @@ export function Sidebar({
         ) : null}
       </div>
 
-      <button type="button" className="otto-newchat" onClick={onNewChat}>
-        <IconPlus size={15} />
-        新建对话
-      </button>
-
       {/* 主导航：企业管理员额外显示企业管理；设置仍位于底部账户区。 */}
-      {onNavigate ? (
-        <NavItems
-          activeView={activeView}
-          accountManagementActive={accountManagementActive}
-          enterpriseUnreadCounts={enterpriseUnreadCounts}
-          parkTicketUnreadCount={parkTicketUnreadCount}
-          unreadSessions={unreadSessions}
-          onNavigate={onNavigate}
-          onOpenAccounts={
-            enterpriseAccount?.accountType !== 'personal' && enterpriseAccount?.isAdmin
-              ? onOpenAccounts
-              : undefined
-          }
-        />
-      ) : null}
+      <NavItems
+        activeView={activeView}
+        accountManagementActive={accountManagementActive}
+        enterpriseUnreadCounts={enterpriseUnreadCounts}
+        parkTicketUnreadCount={parkTicketUnreadCount}
+        unreadSessions={unreadSessions}
+        onNewChat={onNewChat}
+        onNavigate={onNavigate}
+        onOpenAccounts={
+          enterpriseAccount?.accountType !== 'personal' && enterpriseAccount?.isAdmin
+            ? onOpenAccounts
+            : undefined
+        }
+      />
 
       <div
         className={`otto-sidebar__workspace${workspaceScrollbarActive ? ' is-scrollbar-active' : ''}`}
@@ -578,6 +577,7 @@ function NavItems({
   enterpriseUnreadCounts,
   parkTicketUnreadCount,
   unreadSessions,
+  onNewChat,
   onNavigate,
   onOpenAccounts,
 }: {
@@ -586,7 +586,8 @@ function NavItems({
   enterpriseUnreadCounts: EnterpriseUnreadCounts;
   parkTicketUnreadCount: number;
   unreadSessions?: string[];
-  onNavigate: (view: 'chat' | 'organization' | 'inbox' | 'work' | 'hub') => void;
+  onNewChat: () => void;
+  onNavigate?: (view: 'chat' | 'organization' | 'inbox' | 'work' | 'hub') => void;
   onOpenAccounts?: () => void;
 }): React.JSX.Element {
   const { inboxUnread, workUnread } = computeNavBadgeCounts(
@@ -614,17 +615,22 @@ function NavItems({
   }, [inboxUnread, workUnread]);
 
   const navItems = [
-    { key: 'chat', label: '工作台', view: 'chat', unread: 0 },
-    { key: 'organization', label: '组织架构', view: 'organization', unread: 0 },
-    { key: 'inbox', label: '我的消息', view: 'inbox', unread: inboxUnread },
-    { key: 'work', label: '我的工作', view: 'work', unread: workUnread },
+    { key: 'chat', label: '工作台', view: 'chat', unread: 0, icon: IconLayoutDashboard },
+    { key: 'organization', label: '组织架构', view: 'organization', unread: 0, icon: IconNetwork },
+    { key: 'inbox', label: '我的消息', view: 'inbox', unread: inboxUnread, icon: IconMessageCircle },
+    { key: 'work', label: '我的工作', view: 'work', unread: workUnread, icon: IconBriefcaseBusiness },
   ] as const;
 
   return (
     <nav className="otto-sidebar__nav" aria-label="主导航">
-      {navItems.map((item) => {
+      <button type="button" className="otto-sidebar__navitem" onClick={onNewChat}>
+        <IconSquarePen size={18} className="otto-sidebar__navicon" />
+        <span>新建对话</span>
+      </button>
+      {onNavigate ? navItems.map((item) => {
         const isActive = activeView === item.view;
         const hasAttention = attentionKeys.has(item.key) && !isActive;
+        const ItemIcon = item.icon;
         return (
           <button
             key={item.key}
@@ -637,6 +643,7 @@ function NavItems({
             aria-current={isActive ? 'page' : undefined}
             onClick={() => onNavigate(item.view)}
           >
+            <ItemIcon size={18} className="otto-sidebar__navicon" />
             <span>{item.label}</span>
             {item.unread > 0 ? (
               <b
@@ -649,7 +656,7 @@ function NavItems({
             ) : null}
           </button>
         );
-      })}
+      }) : null}
       {onOpenAccounts ? (
         <button
           type="button"
@@ -657,6 +664,7 @@ function NavItems({
           aria-current={accountManagementActive ? 'page' : undefined}
           onClick={onOpenAccounts}
         >
+          <IconBuilding2 size={18} className="otto-sidebar__navicon" />
           <span>企业管理</span>
         </button>
       ) : null}

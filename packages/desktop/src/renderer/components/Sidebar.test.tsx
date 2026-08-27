@@ -206,6 +206,7 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
 
     const primaryNav = screen.getByRole('navigation', { name: '主导航' });
     expect(within(primaryNav).getAllByRole('button').map((button) => button.textContent)).toEqual([
+      '新建对话',
       '工作台',
       '组织架构',
       '我的消息',
@@ -217,6 +218,26 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
     expect(screen.queryByText('CEO 管理')).toBeNull();
     fireEvent.click(enterpriseManagement);
     expect(onOpenAccounts).toHaveBeenCalledOnce();
+  });
+
+  it('主导航每个入口都有语义对应的图标，且新建对话与其他入口同级', () => {
+    renderSidebar({
+      enterpriseAccount: ENTERPRISE_ADMIN_ACCOUNT,
+      onNavigate: vi.fn(),
+      onOpenAccounts: vi.fn(),
+    });
+
+    const primaryNav = screen.getByRole('navigation', { name: '主导航' });
+    const buttons = within(primaryNav).getAllByRole('button');
+    expect(buttons.map((button) => button.textContent)).toEqual([
+      '新建对话',
+      '工作台',
+      '组织架构',
+      '我的消息',
+      '我的工作',
+      '企业管理',
+    ]);
+    expect(buttons.every((button) => button.querySelector('.otto-sidebar__navicon'))).toBe(true);
   });
 
   it('个人账号和非管理员企业账号不显示企业管理', () => {

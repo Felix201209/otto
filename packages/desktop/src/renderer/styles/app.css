@@ -561,39 +561,6 @@
   box-shadow: var(--otto-shadow-focus);
 }
 
-.otto-newchat {
-  margin: 0 14px 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  height: 38px;
-  border-radius: var(--otto-radius);
-  border: 1px solid var(--otto-border-strong);
-  background: var(--otto-surface);
-  color: var(--otto-text);
-  font-size: 13.5px;
-  font-weight: 500;
-  cursor: pointer;
-  transition:
-    border-color var(--otto-dur-fast) var(--otto-ease),
-    box-shadow var(--otto-dur-fast) var(--otto-ease),
-    transform var(--otto-dur-fast) var(--otto-ease);
-}
-.otto-newchat:hover {
-  border-color: var(--otto-accent);
-  color: var(--otto-accent);
-  box-shadow: var(--otto-shadow-sm);
-}
-.otto-newchat:active {
-  transform: translateY(0.5px);
-}
-.otto-newchat:focus-visible {
-  outline: none;
-  box-shadow: var(--otto-shadow-focus);
-}
-
-
 .otto-sessions {
   padding: 4px 10px 8px;
 }
@@ -9143,7 +9110,7 @@ h6.otto-prose__h {
 }
 
 .otto-sidebar__brandrow {
-  padding: 2px 18px 18px;
+  padding: 2px 18px 10px;
 }
 
 .otto-brand {
@@ -9152,23 +9119,6 @@ h6.otto-prose__h {
   color: var(--otto-text);
   font-size: 20px;
   letter-spacing: -0.035em;
-}
-
-.otto-newchat {
-  justify-content: flex-start;
-  margin: 0 16px 16px;
-  height: 34px;
-  padding: 0 4px;
-  border: 0;
-  background: transparent;
-  color: var(--otto-accent);
-  box-shadow: none;
-}
-.otto-newchat:hover {
-  border-color: transparent;
-  background: var(--otto-accent-soft);
-  color: var(--otto-accent-hover);
-  box-shadow: none;
 }
 
 .otto-conversations {
@@ -10456,10 +10406,12 @@ h6.otto-prose__h {
 .otto-sidebar__nav {
   position: relative;
   display: flex;
+  box-sizing: border-box;
+  width: 100%;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   margin-bottom: 4px;
-  padding: 4px 10px 9px;
+  padding: 2px 10px 10px;
   border-bottom: 0;
 }
 .otto-sidebar__nav::after {
@@ -10473,10 +10425,12 @@ h6.otto-prose__h {
 }
 .otto-sidebar__navitem {
   display: flex;
+  box-sizing: border-box;
+  width: 100%;
   align-items: center;
-  gap: 8px;
-  min-height: 34px;
-  padding: 0 14px;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 12px;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -10489,6 +10443,12 @@ h6.otto-prose__h {
   cursor: pointer;
   text-align: left;
   transition: background var(--otto-dur-fast) var(--otto-ease), color var(--otto-dur-fast) var(--otto-ease);
+}
+.otto-sidebar__navicon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  stroke-width: 1.75;
 }
 .otto-sidebar__navitem:hover {
   background: var(--otto-sidebar-row-hover);
