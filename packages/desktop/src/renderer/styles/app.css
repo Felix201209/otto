@@ -2700,38 +2700,84 @@ h6.otto-prose__h {
   animation: otto-menu-in 140ms var(--otto-ease);
   transform-origin: bottom left;
 }
-.otto-workspace__heading { padding: 5px 8px 7px; color: var(--otto-text-tertiary); font-size: 11px; font-weight: 650; }
+.otto-workspace__menu {
+  width: 296px;
+  padding: 6px 7px 7px;
+  border-color: var(--otto-border);
+  border-radius: 12px;
+  box-shadow: var(--otto-shadow);
+}
+.otto-workspace__heading {
+  padding: 4px 10px 6px;
+  color: var(--otto-text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+}
 .otto-workspace__option {
   width: 100%;
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) 18px;
+  grid-template-columns: 18px minmax(0, 1fr) 18px;
   align-items: center;
-  gap: 8px;
-  padding: 8px;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 10px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 8px;
   background: transparent;
   color: var(--otto-text);
   text-align: left;
   cursor: pointer;
 }
-.otto-workspace__option:hover, .otto-workspace__option.is-active { background: var(--otto-accent-soft); }
-.otto-workspace__option > span { min-width: 0; display: grid; gap: 2px; }
+.otto-workspace__option:hover {
+  background: color-mix(in srgb, var(--otto-text) 4%, var(--otto-surface));
+}
+.otto-workspace__option.is-active,
+.otto-workspace__option.is-active:hover {
+  background: color-mix(in srgb, var(--otto-text) 6%, var(--otto-surface));
+}
+.otto-workspace__option:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--otto-text) 20%, transparent);
+  outline-offset: -2px;
+}
+.otto-workspace__option > svg { color: var(--otto-text-secondary); }
+.otto-workspace__option > svg:last-child { color: var(--otto-text); }
+.otto-workspace__option > span { min-width: 0; display: grid; gap: 1px; }
 .otto-workspace__option strong, .otto-workspace__option small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.otto-workspace__option strong { font-size: 12.5px; }
-.otto-workspace__option small { color: var(--otto-text-tertiary); font-size: 10.5px; }
+.otto-workspace__option strong { font-size: 12.5px; font-weight: 550; line-height: 17px; }
+.otto-workspace__option small { color: var(--otto-text-tertiary); font-size: 10.5px; line-height: 14px; }
 .otto-workspace__add {
-  width: 100%;
-  margin-top: 5px;
-  padding: 9px 8px;
+  width: calc(100% - 8px);
+  min-height: 38px;
+  margin: 5px 4px 0;
+  padding: 7px 6px;
   border: 0;
   border-top: 1px solid var(--otto-border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
   background: transparent;
   color: var(--otto-text);
   text-align: left;
+  font: inherit;
+  font-size: 12.5px;
   cursor: pointer;
 }
-.otto-workspace__add:hover { color: var(--otto-accent); }
+.otto-workspace__add > span {
+  width: 18px;
+  color: var(--otto-text-secondary);
+  font-size: 18px;
+  font-weight: 300;
+  line-height: 1;
+  text-align: center;
+}
+.otto-workspace__add:hover {
+  background: color-mix(in srgb, var(--otto-text) 4%, var(--otto-surface));
+}
+.otto-workspace__add:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--otto-text) 20%, transparent);
+  outline-offset: -2px;
+}
 .otto-attachment-picker__menu { width: 220px; }
 .otto-attachment-picker__menu button {
   width: 100%;
