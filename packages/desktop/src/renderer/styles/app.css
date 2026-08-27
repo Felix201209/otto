@@ -2820,22 +2820,26 @@ h6.otto-prose__h {
 }
 .otto-authorization__trigger:focus-visible { outline: none; box-shadow: var(--otto-shadow-focus); }
 .otto-authorization__menu {
-  position: absolute; right: 0; bottom: calc(100% + 8px); width: 330px; padding: 6px 7px;
+  position: absolute; left: 0; right: auto; bottom: calc(100% + 8px);
+  width: min(370px, calc(100vw - 36px)); padding: 6px;
   border: 1px solid var(--otto-border); border-radius: 12px;
   background: var(--otto-surface); box-shadow: var(--otto-shadow); z-index: 40;
-  animation: otto-menu-in 140ms var(--otto-ease); transform-origin: bottom right;
+  animation: otto-menu-in 140ms var(--otto-ease); transform-origin: bottom left;
 }
 .otto-authorization__option {
-  width: 100%; min-height: 54px; padding: 7px 10px; border: 0; border-radius: 8px;
-  display: grid; grid-template-columns: 20px minmax(0, 1fr) 18px; align-items: center;
+  width: 100%; min-height: 56px; padding: 9px 10px; border: 0; border-radius: 8px;
+  display: grid; grid-template-columns: 18px minmax(0, 1fr) 16px; align-items: center;
   gap: 10px; background: transparent; color: var(--otto-text); text-align: left; cursor: pointer;
+  transition: background-color var(--otto-dur-fast) var(--otto-ease);
 }
 .otto-authorization__option:hover {
   background: color-mix(in srgb, var(--otto-text) 4%, var(--otto-surface));
 }
-.otto-authorization__option.is-active,
+.otto-authorization__option.is-active {
+  background: transparent;
+}
 .otto-authorization__option.is-active:hover {
-  background: color-mix(in srgb, var(--otto-text) 6%, var(--otto-surface));
+  background: color-mix(in srgb, var(--otto-text) 4%, var(--otto-surface));
 }
 .otto-authorization__option:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--otto-text) 20%, transparent);
@@ -2846,15 +2850,23 @@ h6.otto-prose__h {
   place-items: center;
   color: var(--otto-text-secondary);
 }
-.otto-authorization__option.is-active .otto-authorization__option-icon { color: var(--otto-text); }
+.otto-authorization__option-icon svg,
+.otto-authorization__selected { width: 16px; height: 16px; }
+.otto-authorization__option.is-active .otto-authorization__option-icon,
+.otto-authorization__option.is-active .otto-authorization__title,
+.otto-authorization__selected { color: var(--otto-accent); }
 .otto-authorization__copy { display: grid; gap: 2px; }
-.otto-authorization__title { font-size: 13px; line-height: 18px; font-weight: 600; }
-.otto-authorization__desc { color: var(--otto-text-tertiary); font-size: 11px; line-height: 16px; }
-.otto-authorization__selected { color: var(--otto-text); }
+.otto-authorization__title { font-size: 13.5px; line-height: 19px; font-weight: 500; }
+.otto-authorization__desc { color: var(--otto-text-tertiary); font-size: 11.5px; line-height: 17px; font-weight: 400; }
 
 @media (max-width: 760px) {
   .otto-authorization__trigger span { display: none; }
-  .otto-authorization__menu { width: min(390px, calc(100vw - 36px)); right: -42px; }
+  .otto-authorization__menu {
+    left: auto;
+    right: -42px;
+    width: min(370px, calc(100vw - 36px));
+    transform-origin: bottom right;
+  }
 }
 
 /* model pill */
