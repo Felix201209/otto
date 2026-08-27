@@ -317,16 +317,16 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
     expect(document.activeElement).toBe(accountTrigger);
   });
 
-  it('没有退出能力时账户身份保持静态，不打开空菜单', () => {
+  it('没有退出能力时仍可打开完整账户菜单，但退出动作明确禁用', () => {
     renderSidebar({
       enterpriseAccount: PERSONAL_ACCOUNT,
     });
 
     expect(screen.getByText('Felix')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Felix，个人空间' })).toBeNull();
-
-    fireEvent.click(screen.getByText('Felix'));
-    expect(screen.queryByRole('menu', { name: '账户菜单' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Felix，个人空间' }));
+    const accountMenu = screen.getByRole('menu', { name: '账户菜单' });
+    expect(within(accountMenu).getByRole('menuitem', { name: '退出登录' })
+      .hasAttribute('disabled')).toBe(true);
   });
 
   it('个人版账号的退出登录入口位于账户菜单内，且仍需二次确认', async () => {

@@ -184,6 +184,7 @@ export function App(): React.JSX.Element {
       <OttoWorkspaceApp
         account={INTERNAL_TEST_ADMIN_ENABLED ? INTERNAL_TEST_ADMIN_ACCOUNT : INTERNAL_TEST_ACCOUNT}
         serverUrl={INTERNAL_TEST_ADMIN_ENABLED ? 'internal://admin-preview' : 'internal://test'}
+        onLogout={auth.actions.logout}
         internalAdminPreview={INTERNAL_TEST_ADMIN_ENABLED}
       />
     );
