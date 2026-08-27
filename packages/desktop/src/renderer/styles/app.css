@@ -2793,8 +2793,7 @@ h6.otto-prose__h {
   cursor: pointer;
 }
 .otto-attachment-picker__menu button:hover { background: var(--otto-accent-soft); }
-.otto-model-anchor { margin-left: auto; }
-.otto-model-anchor .otto-modelmenu { left: auto; right: 0; transform-origin: bottom right; }
+.otto-model-anchor .otto-modelmenu { left: 0; right: auto; transform-origin: bottom left; }
 
 /* 执行授权：贴近发送按钮，菜单向上展开，沿用 Otto 的表面/边框/阴影 token。 */
 .otto-authorization { position: relative; }
@@ -2852,23 +2851,26 @@ h6.otto-prose__h {
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   height: 28px;
-  padding: 0 9px;
-  border: 1px solid var(--otto-border-strong);
+  padding: 0 4px 0 8px;
+  border: 0;
   border-radius: var(--otto-radius-pill);
-  background: var(--otto-surface);
+  background: transparent;
   color: var(--otto-text-secondary);
   font-size: 12.5px;
   font-weight: 500;
   cursor: pointer;
   transition:
-    border-color var(--otto-dur-fast) var(--otto-ease),
+    background-color var(--otto-dur-fast) var(--otto-ease),
     color var(--otto-dur-fast) var(--otto-ease);
 }
-.otto-modelpill:hover {
-  border-color: var(--otto-accent);
+.otto-modelpill:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--otto-text) 5%, transparent);
   color: var(--otto-text);
+}
+.otto-modelpill[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--otto-text) 5%, transparent);
 }
 .otto-modelpill:focus-visible {
   outline: none;
