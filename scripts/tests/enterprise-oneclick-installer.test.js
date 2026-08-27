@@ -1067,6 +1067,14 @@ describe('enterprise one-click runtime configuration contract', () => {
     expect(upgrade).toContain('export OTTO_DATABASE_ENCRYPTION="required"');
     expect(upgrade).toContain('--snapshot "$OLD_DATA_BACKUP"');
     expect(upgrade).toContain('--baseline "$BASELINE_INSPECTION"');
+    expect(upgrade).toContain(
+      '"${TARGET_RELEASE}/native/sqlcipher/linux-${RUNTIME_ARCH}/better_sqlite3.node"',
+    );
+    expect(upgrade).toContain('"$RELEASE_VERSION" "$BUILD_ID" <<\'NODE\'');
+    expect(upgrade).toContain("'OTTO_APP_VERSION'");
+    expect(upgrade).toContain("'OTTO_BUILD_COMMIT'");
+    expect(upgrade).toContain("['OTTO_APP_VERSION', appVersion]");
+    expect(upgrade).toContain("['OTTO_BUILD_COMMIT', buildCommit]");
     expect(upgrade).toContain('enterprise.env.before');
     expect(upgrade).toContain(
       'install -o root -g root -m 0600 "$CONFIG_BACKUP" "$CONFIG_PATH"',

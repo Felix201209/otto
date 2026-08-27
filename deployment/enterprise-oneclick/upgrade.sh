@@ -318,15 +318,19 @@ fi
 UPDATED_CONFIG="${TXN_DIR}/enterprise.env.next"
 "$NODE_PATH" --input-type=module - "$CONFIG_PATH" "$UPDATED_CONFIG" \
   "$OTTO_DATABASE_ENCRYPTION_KEY_FILE" \
-  "${TARGET_RELEASE}/native/sqlcipher/linux-${RUNTIME_ARCH}/better_sqlite3.node" <<'NODE'
+  "${TARGET_RELEASE}/native/sqlcipher/linux-${RUNTIME_ARCH}/better_sqlite3.node" \
+  "$RELEASE_VERSION" "$BUILD_ID" <<'NODE'
 import { readFileSync, writeFileSync } from 'node:fs';
-const [source, target, keyPath, bindingPath] = process.argv.slice(2);
+const [source, target, keyPath, bindingPath, appVersion, buildCommit] =
+  process.argv.slice(2);
 const managedKeys = new Set([
   'OTTO_DATABASE_ENCRYPTION',
   'OTTO_DATABASE_ENCRYPTION_KEY_FILE',
   'OTTO_DATABASE_ENCRYPTION_KEY_ID',
   'OTTO_DATABASE_ENCRYPTION_KEY_READONLY',
   'OTTO_SQLCIPHER_NATIVE_BINDING',
+  'OTTO_APP_VERSION',
+  'OTTO_BUILD_COMMIT',
 ]);
 const retained = readFileSync(source, 'utf8')
   .split(/\r?\n/)
@@ -341,6 +345,8 @@ for (const [key, value] of [
   ['OTTO_DATABASE_ENCRYPTION_KEY_ID', 'oneclick-offline-database-key'],
   ['OTTO_DATABASE_ENCRYPTION_KEY_READONLY', 'true'],
   ['OTTO_SQLCIPHER_NATIVE_BINDING', bindingPath],
+  ['OTTO_APP_VERSION', appVersion],
+  ['OTTO_BUILD_COMMIT', buildCommit],
 ]) retained.push(`${key}=${JSON.stringify(value)}`);
 writeFileSync(target, `${retained.join('\n')}\n`, { mode: 0o600 });
 NODE
