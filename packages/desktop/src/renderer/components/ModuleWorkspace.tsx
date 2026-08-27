@@ -2,7 +2,14 @@
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 // Motion exposes its React runtime through this documented package entrypoint.
 // eslint-disable-next-line import/no-internal-modules
 import { Reorder, useDragControls, useReducedMotion } from 'motion/react';
@@ -99,6 +106,22 @@ function autoScrollAtPointer(
   }
 }
 
+const FLOATING_SCROLLBAR_INSET = 4;
+const FLOATING_SCROLLBAR_MIN_THUMB = 28;
+const FLOATING_SCROLLBAR_HIDE_DELAY_MS = 800;
+
+interface FloatingScrollbarMetrics {
+  overflowing: boolean;
+  thumbHeight: number;
+  thumbOffset: number;
+}
+
+const EMPTY_SCROLLBAR_METRICS: FloatingScrollbarMetrics = {
+  overflowing: false,
+  thumbHeight: 0,
+  thumbOffset: 0,
+};
+
 export interface ModuleWorkspaceProps {
   presentation: 'panel' | 'page';
   scopeKey?: string;
@@ -142,13 +165,72 @@ export function ModuleWorkspace({
   const menuRef = useRef<HTMLDivElement>(null);
   const popoverTriggerRef = useRef<HTMLButtonElement | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollbarHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollViewportRef = useRef<HTMLDivElement>(null);
   const transientLayoutRef = useRef(layout);
   const previousScopeRef = useRef(scopeKey);
+  const [scrollbarMetrics, setScrollbarMetrics] = useState<FloatingScrollbarMetrics>(
+    EMPTY_SCROLLBAR_METRICS,
+  );
+  const [scrollbarVisible, setScrollbarVisible] = useState(false);
   const reducedMotion = Boolean(useReducedMotion());
   const modulesById = useMemo(
     () => new Map(modules.map((module) => [module.id, module])),
     [modules],
   );
+
+  const measureFloatingScrollbar = useCallback((): boolean => {
+    const viewport = scrollViewportRef.current;
+    if (presentation !== 'panel' || !viewport || viewport.clientHeight <= 0) {
+      setScrollbarMetrics((current) => (
+        current.overflowing ? EMPTY_SCROLLBAR_METRICS : current
+      ));
+      setScrollbarVisible(false);
+      return false;
+    }
+
+    const overflowing = viewport.scrollHeight > viewport.clientHeight + 1;
+    if (!overflowing) {
+      setScrollbarMetrics((current) => (
+        current.overflowing ? EMPTY_SCROLLBAR_METRICS : current
+      ));
+      setScrollbarVisible(false);
+      return false;
+    }
+
+    const trackHeight = Math.max(0, viewport.clientHeight - FLOATING_SCROLLBAR_INSET * 2);
+    const thumbHeight = Math.min(
+      trackHeight,
+      Math.max(
+        FLOATING_SCROLLBAR_MIN_THUMB,
+        Math.round(trackHeight * (viewport.clientHeight / viewport.scrollHeight)),
+      ),
+    );
+    const maxScrollTop = viewport.scrollHeight - viewport.clientHeight;
+    const maxThumbOffset = Math.max(0, trackHeight - thumbHeight);
+    const thumbOffset = maxScrollTop > 0
+      ? Math.round((viewport.scrollTop / maxScrollTop) * maxThumbOffset)
+      : 0;
+
+    setScrollbarMetrics((current) => (
+      current.overflowing
+      && current.thumbHeight === thumbHeight
+      && current.thumbOffset === thumbOffset
+        ? current
+        : { overflowing: true, thumbHeight, thumbOffset }
+    ));
+    return true;
+  }, [presentation]);
+
+  const revealFloatingScrollbar = useCallback((): void => {
+    if (!measureFloatingScrollbar()) return;
+    setScrollbarVisible(true);
+    if (scrollbarHideTimerRef.current) clearTimeout(scrollbarHideTimerRef.current);
+    scrollbarHideTimerRef.current = setTimeout(() => {
+      setScrollbarVisible(false);
+      scrollbarHideTimerRef.current = null;
+    }, FLOATING_SCROLLBAR_HIDE_DELAY_MS);
+  }, [measureFloatingScrollbar]);
 
   useEffect(() => {
     const closePopoverAndRestoreFocus = (): void => {
@@ -176,7 +258,19 @@ export function ModuleWorkspace({
 
   useEffect(() => () => {
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    if (scrollbarHideTimerRef.current) clearTimeout(scrollbarHideTimerRef.current);
   }, []);
+
+  useLayoutEffect(() => {
+    measureFloatingScrollbar();
+    const viewport = scrollViewportRef.current;
+    if (!viewport || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(() => measureFloatingScrollbar());
+    observer.observe(viewport);
+    const content = viewport.firstElementChild;
+    if (content instanceof HTMLElement) observer.observe(content);
+    return () => observer.disconnect();
+  }, [measureFloatingScrollbar, modules.length, transientLayout]);
 
   useEffect(() => {
     if (previousScopeRef.current === scopeKey) return;
@@ -266,7 +360,19 @@ export function ModuleWorkspace({
   };
 
   return (
-    <section className="otto-module-workspace-shell" aria-label="功能组">
+    <section
+      className={`otto-module-workspace-shell otto-module-workspace-shell--${presentation}`}
+      aria-label="功能组"
+    >
+      <div
+        ref={scrollViewportRef}
+        className={`otto-module-workspace-scroll-viewport otto-module-workspace-scroll-viewport--${presentation}`}
+        onPointerEnter={revealFloatingScrollbar}
+        onPointerMove={revealFloatingScrollbar}
+        onScroll={revealFloatingScrollbar}
+        onWheel={revealFloatingScrollbar}
+        onKeyDown={revealFloatingScrollbar}
+      >
       <Reorder.Group
         as="div"
         axis={presentation === 'panel' ? 'y' : undefined}
@@ -279,9 +385,10 @@ export function ModuleWorkspace({
         }`}
         data-presentation={presentation}
         data-reorder-group="groups"
-        onPointerMove={(event: React.PointerEvent<HTMLDivElement>) => (
-          autoScrollAtPointer(event.currentTarget, event.clientY)
-        )}
+        onPointerMove={(event: React.PointerEvent<HTMLDivElement>) => {
+          const viewport = scrollViewportRef.current;
+          if (viewport) autoScrollAtPointer(viewport, event.clientY);
+        }}
       >
         {transientLayout.groups.map((group, groupIndex) => {
         const groupModules = group.moduleIds
@@ -597,6 +704,23 @@ export function ModuleWorkspace({
               setUndoState(null);
             }}
           >撤销</button>
+        </div>
+      ) : null}
+      </div>
+      {presentation === 'panel' && scrollbarMetrics.overflowing ? (
+        <div
+          className={`otto-module-workspace__floating-scrollbar${
+            scrollbarVisible ? ' is-visible' : ''
+          }`}
+          aria-hidden="true"
+        >
+          <span
+            className="otto-module-workspace__floating-scrollbar-thumb"
+            style={{
+              height: `${scrollbarMetrics.thumbHeight}px`,
+              transform: `translateY(${scrollbarMetrics.thumbOffset}px)`,
+            }}
+          />
         </div>
       ) : null}
       <ConfirmDialog

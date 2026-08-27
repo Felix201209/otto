@@ -11907,7 +11907,49 @@ h6.otto-prose__h {
   position: relative;
   min-width: 0;
   height: 100%;
+  overflow: hidden;
+}
+
+.otto-module-workspace-scroll-viewport {
+  min-width: 0;
+  height: 100%;
   overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.otto-module-workspace-scroll-viewport--panel {
+  scrollbar-width: none;
+}
+
+.otto-module-workspace-scroll-viewport--panel::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.otto-module-workspace__floating-scrollbar {
+  position: absolute;
+  top: 4px;
+  right: 2px;
+  bottom: 4px;
+  z-index: 5;
+  width: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+
+.otto-module-workspace__floating-scrollbar.is-visible {
+  opacity: 1;
+}
+
+.otto-module-workspace__floating-scrollbar-thumb {
+  display: block;
+  width: 100%;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--otto-text) 24%, transparent);
+  will-change: transform;
 }
 
 .otto-module-workspace__loading {
@@ -12354,5 +12396,9 @@ h6.otto-prose__h {
 
   .otto-module-group.is-editing .otto-module-tile-wrap {
     animation: none;
+  }
+
+  .otto-module-workspace__floating-scrollbar {
+    transition: none;
   }
 }

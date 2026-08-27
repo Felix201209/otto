@@ -173,6 +173,39 @@ describe('ModuleWorkspace', () => {
     },
   );
 
+  it('shows a non-layout floating scrollbar only while the panel scroll area is active', () => {
+    const { container } = renderWorkspace('panel');
+    const viewport = container.querySelector<HTMLElement>('.otto-module-workspace-scroll-viewport');
+
+    expect(viewport?.classList.contains('otto-module-workspace-scroll-viewport--panel')).toBe(true);
+    expect(container.querySelector('.otto-module-workspace__floating-scrollbar')).toBeNull();
+    if (!viewport) throw new Error('missing module workspace scroll viewport');
+
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 300 },
+      scrollHeight: { configurable: true, value: 900 },
+      scrollTop: { configurable: true, writable: true, value: 150 },
+    });
+    fireEvent.scroll(viewport);
+
+    const scrollbar = container.querySelector<HTMLElement>('.otto-module-workspace__floating-scrollbar');
+    const thumb = scrollbar?.querySelector<HTMLElement>('.otto-module-workspace__floating-scrollbar-thumb');
+    expect(scrollbar?.classList.contains('is-visible')).toBe(true);
+    expect(thumb?.style.height).toBe('97px');
+    expect(thumb?.style.transform).toBe('translateY(49px)');
+
+    act(() => vi.advanceTimersByTime(900));
+    expect(scrollbar?.classList.contains('is-visible')).toBe(false);
+  });
+
+  it('keeps the full-page workspace on its native scroll presentation', () => {
+    const { container } = renderWorkspace('page');
+    const viewport = container.querySelector('.otto-module-workspace-scroll-viewport');
+
+    expect(viewport?.classList.contains('otto-module-workspace-scroll-viewport--page')).toBe(true);
+    expect(container.querySelector('.otto-module-workspace__floating-scrollbar')).toBeNull();
+  });
+
   it('uses a focusable internal scroller for overflowing groups', () => {
     const overflowModules = Array.from({ length: 9 }, (_, index): ModuleDefinition => ({
       id: `module-${index}`,
