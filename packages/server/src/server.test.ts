@@ -1671,6 +1671,377 @@ describe('OttoServer runtimeFactory（非 mock 路径）', () => {
     await server?.stop();
   });
 
+  it('默认会话在首条用户消息后生成一次 4～8 字标题', async () => {
+    const store = new InMemorySessionStore();
+    const session = store.createSession();
+    const generateTitle = vi.fn(async () => '登录故障排查');
+    const run = vi.fn(async () => undefined);
+    const factory: RuntimeFactory = async () => ({
+      run,
+      generateTitle,
+      cancel() {},
+      setModel() {},
+      getConfig() { return undefined; },
+      async dispose() {},
+    });
+    server = new OttoServer({ port: 0, mock: false, runtimeFactory: factory, store });
+    baseUrl = await startServer(server);
+    const client = await connectWs(baseUrl);
+    await client.waitFor((frame) => frame.type === 'welcome');
+    client.send({ type: 'subscribe', payload: { sessionId: session.sessionId } });
+    await client.waitFor((frame) => frame.type === 'history');
+
+    client.send({
+      type: 'send_user_message',
+      payload: {
+        sessionId: session.sessionId,
+        source: 'local',
+        content: [{ type: 'text', value: '帮我分析登录接口为什么报错' }],
+      },
+    });
+
+    const renamed = await client.waitFor(
+      (frame) => frame.type === 'session_upsert'
+        && frame.payload.session.title === '登录故障排查',
+    );
+    expect(renamed).toMatchObject({
+      type: 'session_upsert',
+      payload: { session: { title: '登录故障排查' } },
+    });
+    expect(generateTitle).toHaveBeenCalledOnce();
+    expect(generateTitle).toHaveBeenCalledWith('帮我分析登录接口为什么报错');
+
+    client.send({
+      type: 'send_user_message',
+      payload: {
+        sessionId: session.sessionId,
+        source: 'local',
+        content: [{ type: 'text', value: '再看一下日志' }],
+      },
+    });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    expect(generateTitle).toHaveBeenCalledOnce();
+    client.close();
+  });
+
+  it('附件作为首条消息时也基于文件内容生成标题', async () => {
+    const store = new InMemorySessionStore();
+    const session = store.createSession();
+    const generateTitle = vi.fn(async () => '合同风险分析');
+    server = new OttoServer({
+      port: 0,
+      mock: false,
+      store,
+      runtimeFactory: async () => ({
+        async run() {},
+        generateTitle,
+        cancel() {},
+        setModel() {},
+        getConfig() { return undefined; },
+        async dispose() {},
+      }),
+    });
+    baseUrl = await startServer(server);
+    const client = await connectWs(baseUrl);
+    await client.waitFor((frame) => frame.type === 'welcome');
+    client.send({ type: 'subscribe', payload: { sessionId: session.sessionId } });
+    await client.waitFor((frame) => frame.type === 'history');
+
+    client.send({
+      type: 'send_user_message',
+      payload: {
+        sessionId: session.sessionId,
+        source: 'local',
+        content: [{
+          type: 'text_file_content',
+          value: {
+            fileName: '供应商合同草案.txt',
+            content: '请重点检查违约责任和付款条件。',
+            size: 48,
+          },
+        }],
+      },
+    });
+
+    await client.waitFor(
+      (frame) => frame.type === 'session_upsert'
+        && frame.payload.session.title === '合同风险分析',
+    );
+    expect(generateTitle).toHaveBeenCalledOnce();
+    expect(generateTitle.mock.calls[0]?.[0]).toContain('供应商合同草案.txt');
+    expect(generateTitle.mock.calls[0]?.[0]).toContain('违约责任和付款条件');
+    client.close();
+  });
+
+  it('mock 模式不调用 AI 也会根据首条消息生成回退标题', async () => {
+    const store = new InMemorySessionStore();
+    const session = store.createSession();
+    server = new OttoServer({ port: 0, mock: true, store });
+    baseUrl = await startServer(server);
+    const client = await connectWs(baseUrl);
+    await client.waitFor((frame) => frame.type === 'welcome');
+    client.send({ type: 'subscribe', payload: { sessionId: session.sessionId } });
+    await client.waitFor((frame) => frame.type === 'history');
+
+    client.send({
+      type: 'send_user_message',
+      payload: {
+        sessionId: session.sessionId,
+        source: 'local',
+        content: [{ type: 'text', value: '帮我检查登录故障' }],
+      },
+    });
+
+    await client.waitFor(
+      (frame) => frame.type === 'session_upsert'
+        && frame.payload.session.title === '检查登录故障',
+    );
+    expect(store.getSession(session.sessionId)?.title).toBe('检查登录故障');
+    client.close();
+  });
+
+  it('模型返回不合规标题时使用首条消息的 4～8 字回退', async () => {
+    const store = new InMemorySessionStore();
+    const session = store.createSession();
+    const run = vi.fn(async () => undefined);
+    server = new OttoServer({
+      port: 0,
+      mock: false,
+      store,
+      runtimeFactory: async () => ({
+        run,
+        generateTitle: async () => '合同风险分析！',
+        cancel() {},
+        setModel() {},
+        getConfig() { return undefined; },
+        async dispose() {},
+      }),
+    });
+    baseUrl = await startServer(server);
+    const client = await connectWs(baseUrl);
+    await client.waitFor((frame) => frame.type === 'welcome');
+    client.send({ type: 'subscribe', payload: { sessionId: session.sessionId } });
+    await client.waitFor((frame) => frame.type === 'history');
+
+    client.send({
+      type: 'send_user_message',
+      payload: {
+        sessionId: session.sessionId,
+        source: 'local',
+        content: [{ type: 'text', value: '帮我检查合同风险' }],
+      },
+    });
+
+    await client.waitFor(
+      (frame) => frame.type === 'session_upsert'
+        && frame.payload.session.title === '检查合同风险',
+    );
+    expect(store.getSession(session.sessionId)?.title).toBe('检查合同风险');
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    client.close();
+  });
+
+  it('标题请求超时后释放等待并使用首条消息回退', async () => {
+    const store = new InMemorySessionStore();
+    const session = store.createSession();
+    const generateTitle = vi.fn(() => new Promise<string>(() => undefined));
+    server = new OttoServer({
+      port: 0,
+      mock: false,
+      store,
+      sessionTitleTimeoutMs: 20,
+      runtimeFactory: async () => ({
+        async run() {},
+        generateTitle,
+        cancel() {},
+        setModel() {},
+        getConfig() { return undefined; },
+        async dispose() {},
+      }),
+    });
+    baseUrl = await startServer(server);
+    const client = await connectWs(baseUrl);
+    await client.waitFor((frame) => frame.type === 'welcome');
+    client.send({ type: 'subscribe', payload: { sessionId: session.sessionId } });
+    await client.waitFor((frame) => frame.type === 'history');
+
+    client.send({
+      type: 'send_user_message',
+      payload: {
+        sessionId: session.sessionId,
+        source: 'local',
+        content: [{ type: 'text', value: '帮我排查支付异常' }],
+      },
+    });
+
+    await client.waitFor(
+      (frame) => frame.type === 'session_upsert'
+        && frame.payload.session.title === '排查支付异常',
+    );
+    expect(generateTitle).toHaveBeenCalledOnce();
+    client.close();
+  });
+
+  it('用户手动重命名后不被迟到的 AI 标题覆盖', async () => {
+    const store = new InMemorySessionStore();
+    const session = store.createSession();
+    let resolveTitle!: (title: string) => void;
+    const titlePending = new Promise<string>((resolve) => { resolveTitle = resolve; });
+    const generateTitle = vi.fn(() => titlePending);
+    server = new OttoServer({
+      port: 0,
+      mock: false,
+      store,
+      runtimeFactory: async () => ({
+        async run() {},
+        generateTitle,
+        cancel() {},
+        setModel() {},
+        getConfig() { return undefined; },
+        async dispose() {},
+      }),
+    });
+    baseUrl = await startServer(server);
+    const client = await connectWs(baseUrl);
+    await client.waitFor((frame) => frame.type === 'welcome');
+    client.send({ type: 'subscribe', payload: { sessionId: session.sessionId } });
+    await client.waitFor((frame) => frame.type === 'history');
+
+    client.send({
+      type: 'send_user_message',
+      payload: {
+        sessionId: session.sessionId,
+        source: 'local',
+        content: [{ type: 'text', value: '帮我分析登录故障' }],
+      },
+    });
+    await vi.waitFor(() => expect(generateTitle).toHaveBeenCalledOnce());
+    client.send({
+      type: 'rename_session',
+      payload: { sessionId: session.sessionId, title: '我的登录调查' },
+    });
+    await client.waitFor(
+      (frame) => frame.type === 'session_upsert'
+        && frame.payload.session.title === '我的登录调查',
+    );
+
+    resolveTitle('登录故障排查');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(store.getSession(session.sessionId)?.title).toBe('我的登录调查');
+    expect(client.frames.some(
+      (frame) => frame.type === 'session_upsert'
+        && frame.payload.session.title === '登录故障排查',
+    )).toBe(false);
+    client.close();
+  });
+
+  it('LRU 淘汰会清理旧标题状态，不污染复用同一 id 的新会话', async () => {
+    const store = new InMemorySessionStore({ maxSessions: 1 });
+    const first = store.createSession({ sessionId: 'reused-title-session' });
+    const generateTitle = vi.fn(async () => '登录故障排查');
+    server = new OttoServer({
+      port: 0,
+      mock: false,
+      store,
+      runtimeFactory: async () => ({
+        async run() {},
+        generateTitle,
+        cancel() {},
+        setModel() {},
+        getConfig() { return undefined; },
+        async dispose() {},
+      }),
+    });
+    baseUrl = await startServer(server);
+    const client = await connectWs(baseUrl);
+    await client.waitFor((frame) => frame.type === 'welcome');
+
+    client.send({
+      type: 'rename_session',
+      payload: { sessionId: first.sessionId, title: '我的旧标题' },
+    });
+    await client.waitFor(
+      (frame) => frame.type === 'session_upsert'
+        && frame.payload.session.title === '我的旧标题',
+    );
+
+    store.createSession({ sessionId: 'evicts-old-session' });
+    const recreated = store.createSession({ sessionId: first.sessionId });
+    client.send({ type: 'subscribe', payload: { sessionId: recreated.sessionId } });
+    await client.waitFor((frame) => frame.type === 'history');
+    client.send({
+      type: 'send_user_message',
+      payload: {
+        sessionId: recreated.sessionId,
+        source: 'local',
+        content: [{ type: 'text', value: '帮我分析登录故障' }],
+      },
+    });
+
+    await client.waitFor(
+      (frame) => frame.type === 'session_upsert'
+        && frame.payload.session.title === '登录故障排查',
+    );
+    expect(generateTitle).toHaveBeenCalledOnce();
+    client.close();
+  });
+
+  it('连续首发时按接收顺序选第一条，不被更快完成缓存的消息抢占', async () => {
+    const sourceFile = path.join(tmpHome, '第一份合同.txt');
+    fs.writeFileSync(sourceFile, Buffer.alloc(4 * 1024 * 1024, 1));
+    const store = new InMemorySessionStore();
+    const session = store.createSession();
+    const generateTitle = vi.fn(async (input: string) =>
+      input.includes('第一份合同') ? '首份合同检查' : '第二消息分析');
+    server = new OttoServer({
+      port: 0,
+      mock: false,
+      store,
+      chatFileCacheDir: path.join(tmpHome, 'title-order-cache'),
+      runtimeFactory: async () => ({
+        async run() {},
+        generateTitle,
+        cancel() {},
+        setModel() {},
+        getConfig() { return undefined; },
+        async dispose() {},
+      }),
+    });
+    baseUrl = await startServer(server);
+    const client = await connectWs(baseUrl);
+    await client.waitFor((frame) => frame.type === 'welcome');
+    client.send({ type: 'subscribe', payload: { sessionId: session.sessionId } });
+    await client.waitFor((frame) => frame.type === 'history');
+
+    client.send({
+      type: 'send_user_message',
+      payload: {
+        sessionId: session.sessionId,
+        source: 'local',
+        content: [{
+          type: 'file_reference',
+          value: { fileName: '第一份合同.txt', filePath: sourceFile },
+        }],
+      },
+    });
+    client.send({
+      type: 'send_user_message',
+      payload: {
+        sessionId: session.sessionId,
+        source: 'local',
+        content: [{ type: 'text', value: '第二条消息内容' }],
+      },
+    });
+
+    await client.waitFor(
+      (frame) => frame.type === 'session_upsert'
+        && frame.payload.session.title === '首份合同检查',
+    );
+    expect(generateTitle).toHaveBeenCalledOnce();
+    expect(generateTitle).toHaveBeenCalledWith(expect.stringContaining('第一份合同'));
+    client.close();
+  });
+
   it('工作目录默认用户级，切换后销毁旧 runtime 并以新 cwd 重建', async () => {
     const first = path.join(tmpHome, 'workspace-one');
     const second = path.join(tmpHome, 'workspace-two');

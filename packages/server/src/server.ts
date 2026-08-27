@@ -178,6 +178,52 @@ const AUTO_COMPRESS_MIN_MESSAGES = 30;
 /** 后台维护周期（ms）：记忆合并/压缩 + 上下文自动压缩。 */
 const MAINTENANCE_INTERVAL_MS = 10 * 60 * 1000;
 
+const DEFAULT_SESSION_TITLE = '新会话';
+const SESSION_TITLE_INPUT_MAX_CHARS = 4_000;
+const DEFAULT_SESSION_TITLE_TIMEOUT_MS = 15_000;
+
+function normalizeGeneratedSessionTitle(raw: string): string | undefined {
+  const title = raw
+    .split(/\r?\n/, 1)[0]
+    ?.trim()
+    .replace(/^[“”"'《》【】]+|[“”"'《》【】]+$/g, '');
+  return title && /^[\p{Script=Han}]{4,8}$/u.test(title) ? title : undefined;
+}
+
+function fallbackSessionTitle(firstUserMessage: string): string {
+  const withoutPolitePrefix = firstUserMessage
+    .trim()
+    .replace(/^(?:(?:请|麻烦|可以|能否)你?)?(?:帮我|帮忙)?(?:一下)?/u, '');
+  const han = withoutPolitePrefix.match(/\p{Script=Han}/gu)?.join('') ?? '';
+  if (han.length >= 4) return Array.from(han).slice(0, 8).join('');
+  return '日常交流';
+}
+
+function sessionTitleInputOf(content: MessageContent): string {
+  return content
+    .map((part) => {
+      switch (part.type) {
+        case 'text':
+          return part.value;
+        case 'file_reference':
+          return `文件：${part.value.fileName}`;
+        case 'folder_reference':
+          return `文件夹：${part.value.folderName}`;
+        case 'image_reference':
+          return `图片：${part.value.fileName}`;
+        case 'code_reference':
+          return `代码文件：${part.value.fileName}\n${part.value.code}`;
+        case 'text_file_content':
+          return `文件：${part.value.fileName}\n${part.value.content}`;
+        default:
+          return '';
+      }
+    })
+    .join('\n')
+    .trim()
+    .slice(0, SESSION_TITLE_INPUT_MAX_CHARS);
+}
+
 function publicAutoSkillCandidate(
   candidate: SkillCandidate,
 ): AutoSkillCandidateInfo {
@@ -316,6 +362,8 @@ export interface OttoServerOptions {
   productWorkspaceStore?: ProductWorkspaceStore;
   /** 聊天附件服务端缓存目录；测试可注入临时目录。 */
   chatFileCacheDir?: string;
+  /** 后台标题生成超时；测试可缩短，生产默认 15 秒。 */
+  sessionTitleTimeoutMs?: number;
 }
 
 /** 飞书凭证存取接口（可注入；默认实现走 feishu/vendor/credentials.ts）。 */
@@ -385,6 +433,12 @@ export class OttoServer {
   private readonly workspaceUpdates = new Map<string, Promise<void>>();
   /** 从接收消息到 runtime 接管前的窗口也禁止切目录。 */
   private readonly messageDispatches = new Map<string, number>();
+  /** 同一会话只允许一个后台标题生成请求。 */
+  private readonly pendingSessionTitles = new Set<string>();
+  /** 在附件缓存前按 WS 接收顺序认领首条可标题化消息。 */
+  private readonly claimedSessionTitles = new Set<string>();
+  /** 手动命名永远高于迟到的 AI 标题。 */
+  private readonly manuallyRenamedSessions = new Set<string>();
   private globalAuthorizationMode: 'manual' | 'auto';
   private readonly sessionAuthorizationModes = new Map<
     string,
@@ -405,12 +459,14 @@ export class OttoServer {
   private workflowUnsub?: () => void;
   /** Agent 通过 local_schedule 改动后，实时推送桌面日历。 */
   private scheduleUnsub?: () => void;
+  private sessionEvictUnsub?: Unsubscribe;
   /** SessionStore 全局外部入站观察者；与当前会话 subscribe 无关。 */
   private externalInboundUnsub?: () => void;
   /** 进程级自动 Skill 扫描器由当前 server 实例启动时，停机时负责释放。 */
   private autoSkillScannerStarted = false;
   private readonly productWorkspace: ProductWorkspaceStore;
   private readonly chatFileCacheDir?: string;
+  private readonly sessionTitleTimeoutMs: number;
 
   constructor(opts: OttoServerOptions = {}) {
     this.host = opts.host ?? DEFAULT_HOST;
@@ -424,6 +480,9 @@ export class OttoServer {
     this.store = opts.store ?? new InMemorySessionStore({
       defaultWorkspacePath: this.defaultWorkspacePath,
     });
+    this.sessionEvictUnsub = this.store.onEvict((sessionId) => {
+      this.cleanupSessionTitleState(sessionId);
+    });
     this.runtimeFactory = opts.runtimeFactory ?? defaultRuntimeFactory;
     // mock 决策：显式 opts.mock 优先，否则看 env；都没有则按「是否配了模型」自动判定。
     this.mock = opts.mock ?? process.env.OTTO_SERVER_MOCK === '1';
@@ -432,6 +491,8 @@ export class OttoServer {
     this.productWorkspace =
       opts.productWorkspaceStore ?? new ProductWorkspaceStore();
     this.chatFileCacheDir = opts.chatFileCacheDir;
+    this.sessionTitleTimeoutMs =
+      opts.sessionTitleTimeoutMs ?? DEFAULT_SESSION_TITLE_TIMEOUT_MS;
     this.globalAuthorizationMode =
       loadUserSettingsSubset().authorizationMode ?? 'manual';
   }
@@ -645,6 +706,11 @@ export class OttoServer {
 
   /** 停止服务（取消并释放所有活跃 runtime，再关 WS、HTTP、飞书）。 */
   async stop(): Promise<void> {
+    this.sessionEvictUnsub?.();
+    this.sessionEvictUnsub = undefined;
+    this.pendingSessionTitles.clear();
+    this.claimedSessionTitles.clear();
+    this.manuallyRenamedSessions.clear();
     this.externalInboundUnsub?.();
     this.externalInboundUnsub = undefined;
     if (this.enterpriseLeaseTimer) {
@@ -1037,6 +1103,7 @@ export class OttoServer {
       conn.subscriptions.delete(sessionId);
     }
     await this.store.deleteSession(sessionId);
+    this.cleanupSessionTitleState(sessionId);
   }
 
   /** 构建斜杠命令宿主（窄接口，注入给命令注册表使用）。 */
@@ -1340,6 +1407,7 @@ export class OttoServer {
     // 先取消当前轮：deleteSession 只 dispose，不 cancel；正在跑的轮次要显式止损。
     this.store.getRuntime(sessionId)?.cancel();
     await this.store.deleteSession(sessionId);
+    this.cleanupSessionTitleState(sessionId);
     // 广播权威快照，让所有客户端把这条会话从列表里剔除（sessions_list 现在是快照语义）。
     this.broadcastAll({
       type: 'sessions_list',
@@ -1366,6 +1434,7 @@ export class OttoServer {
         errorFrame(sessionId, 'no_session', '会话不存在'),
       );
     }
+    this.manuallyRenamedSessions.add(sessionId);
     // renameSession 已 publish 给该会话订阅者；再全局广播一帧，覆盖未订阅它的窗口列表。
     this.broadcastAll({
       type: 'session_upsert',
@@ -3419,14 +3488,28 @@ export class OttoServer {
           productEdition: this.productWorkspace.snapshot().context.edition,
         });
         this.broadcastAll({ type: 'session_upsert', payload: { session: newSummary } });
+        const titleInput = this.claimSessionTitleInput(
+          newSummary.sessionId,
+          content,
+        );
         const cached = await this.cacheMessageFilesOrReport(
           conn,
           newSummary.sessionId,
           content,
         );
-        if (!cached) return;
+        if (!cached) {
+          this.releaseSessionTitleClaim(newSummary.sessionId, titleInput);
+          return;
+        }
         return this.handleSendUserMessageRaw(
-          newSummary.sessionId, conn, cached, source, clientMessageId, authorizedContext);
+          newSummary.sessionId,
+          conn,
+          cached,
+          source,
+          clientMessageId,
+          authorizedContext,
+          titleInput,
+        );
       }
 
       const cached = await this.cacheMessageFilesOrReport(conn, sessionId, content);
@@ -3449,8 +3532,12 @@ export class OttoServer {
       });
     }
 
+    const titleInput = this.claimSessionTitleInput(sessionId, content);
     const cached = await this.cacheMessageFilesOrReport(conn, sessionId, content);
-    if (!cached) return;
+    if (!cached) {
+      this.releaseSessionTitleClaim(sessionId, titleInput);
+      return;
+    }
     content = cached;
 
     return this.handleSendUserMessageRaw(
@@ -3460,6 +3547,7 @@ export class OttoServer {
       source,
       clientMessageId,
       authorizedContext,
+      titleInput,
     );
   }
 
@@ -3498,9 +3586,11 @@ export class OttoServer {
     source: MessageSource,
     clientMessageId?: string,
     authorizedContext?: string,
+    firstUserMessage?: string,
   ): Promise<void> {
     const session = this.store.getSession(sessionId);
     if (!session) {
+      this.releaseSessionTitleClaim(sessionId, firstUserMessage);
       return this.send(
         conn.socket,
         errorFrame(sessionId, 'no_session', '会话不存在'),
@@ -3508,6 +3598,7 @@ export class OttoServer {
     }
     const denied = this.sessionAuthorizationError(session);
     if (denied) {
+      this.releaseSessionTitleClaim(sessionId, firstUserMessage);
       if (session.status === 'thinking' || session.status === 'streaming') {
         this.store.getRuntime(sessionId)?.cancel();
       }
@@ -3516,6 +3607,7 @@ export class OttoServer {
         errorFrame(sessionId, 'forbidden_agent_profile', denied),
       );
     }
+    const shouldGenerateTitle = firstUserMessage !== undefined;
 
     // ── OttoSessionManager ──
     try {
@@ -3565,6 +3657,12 @@ export class OttoServer {
 
     // 内部测试阶段所有身份都必须先绑定自己的 API。真实运行不允许回退 mock
     if (!this.shouldMock() && this.modelInfos().every((model) => !model.enabled)) {
+      if (shouldGenerateTitle) {
+        this.applySessionTitleIfUnchanged(
+          sessionId,
+          fallbackSessionTitle(firstUserMessage),
+        );
+      }
       this.store.publish(sessionId, {
         type: 'error',
         payload: {
@@ -3578,12 +3676,24 @@ export class OttoServer {
     }
 
     if (this.shouldMock()) {
+      if (shouldGenerateTitle) {
+        this.applySessionTitleIfUnchanged(
+          sessionId,
+          fallbackSessionTitle(firstUserMessage),
+        );
+      }
       await this.mockEcho(sessionId);
       return;
     }
 
     let runtime = await this.ensureRuntime(sessionId);
     if (!runtime) {
+      if (shouldGenerateTitle) {
+        this.applySessionTitleIfUnchanged(
+          sessionId,
+          fallbackSessionTitle(firstUserMessage),
+        );
+      }
       this.store.setStatus(sessionId, 'idle');
       return;
     }
@@ -3605,6 +3715,13 @@ export class OttoServer {
           'forbidden_session',
           latestDenied ?? '中心企业身份已变化，请重试。',
         ),
+      );
+    }
+    if (shouldGenerateTitle) {
+      this.generateSessionTitleInBackground(
+        sessionId,
+        firstUserMessage,
+        runtime,
       );
     }
     const ephemeral = this.store.isEphemeralSession(sessionId);
@@ -3637,6 +3754,94 @@ export class OttoServer {
     } finally {
       if (ephemeral) await this.cleanupEphemeralSession(sessionId);
     }
+  }
+
+  private generateSessionTitleInBackground(
+    sessionId: string,
+    firstUserMessage: string,
+    runtime: SessionRuntime,
+  ): void {
+    const fallbackTitle = fallbackSessionTitle(firstUserMessage);
+    if (!runtime.generateTitle) {
+      this.applySessionTitleIfUnchanged(sessionId, fallbackTitle);
+      return;
+    }
+    if (this.pendingSessionTitles.has(sessionId)) return;
+    this.pendingSessionTitles.add(sessionId);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(
+        () => reject(new Error('session title generation timed out')),
+        this.sessionTitleTimeoutMs,
+      );
+      timeout.unref?.();
+    });
+    const titlePromise = Promise.resolve().then(() =>
+      runtime.generateTitle!(firstUserMessage));
+    void Promise.race([titlePromise, timeoutPromise])
+      .then((rawTitle) => {
+        this.applySessionTitleIfUnchanged(
+          sessionId,
+          normalizeGeneratedSessionTitle(rawTitle) ?? fallbackTitle,
+        );
+      })
+      .catch(() => this.applySessionTitleIfUnchanged(sessionId, fallbackTitle))
+      .finally(() => {
+        if (timeout) clearTimeout(timeout);
+        this.pendingSessionTitles.delete(sessionId);
+      });
+  }
+
+  private applySessionTitleIfUnchanged(sessionId: string, title: string): void {
+    const latest = this.store.getSession(sessionId);
+    if (
+      !latest
+      || latest.title !== DEFAULT_SESSION_TITLE
+      || this.manuallyRenamedSessions.has(sessionId)
+      || this.sessionAuthorizationError(latest)
+    ) {
+      return;
+    }
+    const updated = this.store.renameSession(sessionId, title);
+    if (updated) {
+      this.broadcastAll({
+        type: 'session_upsert',
+        payload: { session: updated },
+      });
+    }
+  }
+
+  private claimSessionTitleInput(
+    sessionId: string,
+    content: MessageContent,
+  ): string | undefined {
+    const session = this.store.getSession(sessionId);
+    if (
+      !session
+      || session.title !== DEFAULT_SESSION_TITLE
+      || this.claimedSessionTitles.has(sessionId)
+      || this.manuallyRenamedSessions.has(sessionId)
+      || this.store.getHistory(sessionId).some((message) => message.role === 'user')
+    ) {
+      return undefined;
+    }
+    const input = sessionTitleInputOf(content);
+    if (!input) return undefined;
+    this.claimedSessionTitles.add(sessionId);
+    return input;
+  }
+
+  private releaseSessionTitleClaim(
+    sessionId: string,
+    claimedInput: string | undefined,
+  ): void {
+    if (claimedInput !== undefined) this.claimedSessionTitles.delete(sessionId);
+  }
+
+  private cleanupSessionTitleState(sessionId: string): void {
+    this.pendingSessionTitles.delete(sessionId);
+    this.claimedSessionTitles.delete(sessionId);
+    this.manuallyRenamedSessions.delete(sessionId);
   }
 
   /**

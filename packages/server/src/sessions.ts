@@ -44,6 +44,8 @@ export type Unsubscribe = () => void;
 export interface SessionRuntime {
   /** 跑一轮对话：消费用户消息，产出流式事件（实装时映射成 publish 广播）。 */
   run(input: MessageContent, source: MessageSource): Promise<void>;
+  /** 用独立的轻量模型请求根据首条用户消息生成会话标题。 */
+  generateTitle?(firstUserMessage: string): Promise<string>;
   /** 中止当前轮。 */
   cancel(): void;
   /** 设置模型。 */
