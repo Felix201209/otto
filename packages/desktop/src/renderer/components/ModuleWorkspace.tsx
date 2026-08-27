@@ -22,7 +22,6 @@ import {
   renameModuleGroup,
   reorderModuleGroups,
   reorderModulesInGroup,
-  updateModuleGroupRows,
   validateModuleGroupName,
   type ModuleWorkspaceLayout,
 } from '../moduleWorkspace.js';
@@ -492,14 +491,6 @@ export function ModuleWorkspace({
                         setOpenPopover(null);
                       }}
                     >重命名</button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        commitLayout(updateModuleGroupRows(layout, group.id, group.rows === 2 ? 3 : 2));
-                        setOpenPopover(null);
-                      }}
-                    >{group.rows === 2 ? '显示三行' : '显示两行'}</button>
                     <button
                       type="button"
                       role="menuitem"

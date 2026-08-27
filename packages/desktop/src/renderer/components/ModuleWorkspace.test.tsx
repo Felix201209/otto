@@ -276,7 +276,7 @@ describe('ModuleWorkspace', () => {
     expect(grid?.classList.contains('is-overflowing')).toBe(false);
   });
 
-  it('creates a group and supports rename validation and row changes', () => {
+  it('creates a group and supports rename validation', () => {
     renderControlledWorkspace();
     fireEvent.click(screen.getByRole('button', { name: '添加功能组' }));
     expect(screen.getByRole('heading', { name: '新功能组' })).toBeTruthy();
@@ -292,8 +292,7 @@ describe('ModuleWorkspace', () => {
     expect(screen.getByRole('heading', { name: '项目协作' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: '功能组菜单：项目协作' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: '显示三行' }));
-    expect(document.querySelector('[data-group-id="custom-group"] .otto-module-group__grid--rows-3')).toBeTruthy();
+    expect(screen.queryByRole('menuitem', { name: /显示[两三]行/ })).toBeNull();
   });
 
   it('removes a module in edit mode and can undo for five seconds', () => {
@@ -318,9 +317,13 @@ describe('ModuleWorkspace', () => {
     expect(screen.getByRole('button', { name: '撤销移除' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: '功能组菜单：园区服务' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: '显示三行' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '重命名' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '功能组名称' }), {
+      target: { value: '园区服务中心' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存名称' }));
     expect(screen.queryByRole('button', { name: '撤销移除' })).toBeNull();
-    expect(document.querySelector('[data-group-id="park-services"] .otto-module-group__grid--rows-3')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '园区服务中心' })).toBeTruthy();
   });
 
   it('clears transient editing and undo state when the storage scope changes', () => {
