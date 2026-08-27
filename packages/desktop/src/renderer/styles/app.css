@@ -9708,7 +9708,7 @@ h6.otto-prose__h {
   }
 }
 
-/* CEO management: bring the admin surface back into the same calm blue-gray system. */
+/* Enterprise management: keep the admin surface in the same calm neutral system. */
 .otto-account-page {
   --identity-night: var(--otto-text);
   --identity-lime: #a8d7ff;
@@ -9717,8 +9717,123 @@ h6.otto-prose__h {
 }
 
 .otto-account-page__content {
-  max-width: 1120px;
+  max-width: 1240px;
   margin: 0 auto;
+}
+
+.otto-account-workspace {
+  display: grid;
+  grid-template-columns: 184px minmax(0, 1fr);
+  align-items: start;
+  gap: 26px;
+}
+
+.otto-account-workspace__tabs {
+  position: sticky;
+  top: 18px;
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--otto-border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--otto-surface) 88%, transparent);
+  box-shadow: var(--otto-shadow-xs);
+}
+
+.otto-account-workspace__tabs button {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  min-height: 52px;
+  padding: 8px 12px 8px 15px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--otto-text-secondary);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--otto-dur-fast) var(--otto-ease),
+    color var(--otto-dur-fast) var(--otto-ease);
+}
+
+.otto-account-workspace__tabs button::before {
+  content: '';
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: 5px;
+  width: 2px;
+  border-radius: 999px;
+  background: transparent;
+}
+
+.otto-account-workspace__tabs button:hover {
+  background: var(--otto-sidebar-row-hover);
+  color: var(--otto-text);
+}
+
+.otto-account-workspace__tabs button.is-active {
+  background: var(--otto-sidebar-nav-selected);
+  color: var(--otto-text);
+}
+
+.otto-account-workspace__tabs button.is-active::before {
+  background: color-mix(in srgb, var(--otto-text) 62%, transparent);
+}
+
+.otto-account-workspace__tabs button:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--otto-text) 22%, transparent);
+}
+
+.otto-account-workspace__tabs span {
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 18px;
+}
+
+.otto-account-workspace__tabs small {
+  overflow: hidden;
+  color: var(--otto-text-tertiary);
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.otto-account-workspace__panel {
+  min-width: 0;
+}
+
+.otto-account-workspace__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 58px;
+  margin-bottom: 16px;
+  padding: 1px 2px 14px;
+  border-bottom: 1px solid var(--otto-border);
+}
+
+.otto-account-workspace__head h2 {
+  margin: 0;
+  color: var(--otto-text);
+  font-size: 21px;
+  letter-spacing: -.03em;
+}
+
+.otto-account-workspace__head p {
+  margin: 5px 0 0;
+  color: var(--otto-text-secondary);
+  font-size: 12px;
+}
+
+.otto-account-workspace [hidden],
+.otto-enterprise-config [hidden] {
+  display: none !important;
 }
 
 .otto-account-hero {
@@ -9851,7 +9966,19 @@ h6.otto-prose__h {
 
 .otto-enterprise-config {
   gap: 16px;
-  margin: 22px 0;
+  margin: 0 0 18px;
+}
+
+.otto-enterprise-config__toolbar {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 34px;
+}
+
+.otto-enterprise-config__empty {
+  min-height: 180px;
+  align-content: center;
+  text-align: center;
 }
 
 .otto-enterprise-config__hero,
@@ -9965,12 +10092,52 @@ h6.otto-prose__h {
 }
 
 @media (max-width: 820px) {
+  .otto-account-workspace {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .otto-account-workspace__tabs {
+    position: static;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .otto-account-workspace__tabs button {
+    min-width: 0;
+    padding: 8px 9px;
+    text-align: center;
+  }
+
+  .otto-account-workspace__tabs button::before {
+    top: auto;
+    right: 12px;
+    bottom: 4px;
+    left: 12px;
+    width: auto;
+    height: 2px;
+  }
+
   .otto-account-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .otto-account-hero {
     flex-direction: column;
+  }
+}
+
+@media (max-width: 520px) {
+  .otto-account-workspace__tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .otto-account-workspace__head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .otto-account-page__create {
+    align-self: flex-start;
   }
 }
 
