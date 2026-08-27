@@ -149,7 +149,7 @@ export function buildAppMenu(getWindow: () => BrowserWindow | undefined): Menu {
         {
           label: 'Otto on GitHub',
           click: () => {
-            void shell.openExternal('https://github.com/Felix201209/otto');
+            void shell.openExternal('https://github.com/NSIETeam/otto-new');
           },
         },
       ],

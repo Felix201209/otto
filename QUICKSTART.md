@@ -35,8 +35,8 @@
 ## 三步安装
 
 ```bash
-# 1. 拿到仓库（需要 Felix 给你 GitHub 访问权）
-git clone https://github.com/Felix201209/otto.git
+# 1. 拿到仓库
+git clone https://github.com/NSIETeam/otto-new.git
 cd otto
 
 # 2. 一键安装（装依赖 + 构建 + 链接 otto 命令，约 3-5 分钟）

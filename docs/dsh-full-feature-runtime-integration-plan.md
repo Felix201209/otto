@@ -2,7 +2,7 @@
 
 状态：规划草案
 
-目标仓库：`Felix201209/otto`
+目标仓库：`NSIETeam/otto-new`
 
 Otto 基线：`internal@30e2adab7bf9d647ff69965bbbbcf1044b3e3014`
 

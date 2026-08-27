@@ -60,9 +60,9 @@ const ROOT_PKG = JSON.parse(
   readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf-8'),
 );
 const VERSION = PKG.version;
-const SOURCE_REPO = 'Felix201209/otto';
+const SOURCE_REPO = 'NSIETeam/otto-new';
 const SOURCE_UPSTREAM = 'origin/internal';
-const RELEASES_REPO = process.env.OTTO_RELEASES_REPO || 'Felix201209/otto';
+const RELEASES_REPO = process.env.OTTO_RELEASES_REPO || 'NSIETeam/otto-new';
 const UPDATE_ASSET_BASE_URL = resolveUpdateAssetBaseUrl();
 const RELEASE_TAG = `v${VERSION}`;
 const BUILD_ASSET_NAMES = [

@@ -1001,6 +1001,7 @@ describe('受保护 vs 公开路由边界', () => {
       username: 'billing-e2e-member',
       password: 'billing-e2e-password',
       name: 'Billing E2E Member',
+      department: 'Operations',
     });
     const token = db.createAuthSession(member.id).token;
     const request = (idempotencyKey?: string) => fetch(`${base}/enterprise/knowledge`, {
@@ -1038,7 +1039,7 @@ describe('受保护 vs 公开路由边界', () => {
 
     availableCredits = true;
     const accepted = await request('knowledge:e2e:2');
-    expect(accepted.status).toBe(200);
+    expect(accepted.status, await accepted.clone().text()).toBe(200);
     expect(accepted.headers.get('x-otto-billing-admission')).toBe(
       'hold_servere2e123456',
     );
@@ -5786,13 +5787,6 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       name: 'Alpha 员工',
       department: '研发部',
     });
-    const admin = db.createAccount({
-      organizationId: organization.id,
-      username: 'knowledge.disabled.admin',
-      password: 'knowledge-disabled-admin-password',
-      name: '知识关闭管理员',
-      isAdmin: true,
-    });
     db.addKnowledge({
       organizationId: alpha.id,
       category: 'alpha',
@@ -6185,6 +6179,13 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       password: 'knowledge-disabled-password',
       name: '知识关闭成员',
       department: '研发部',
+    });
+    const admin = db.createAccount({
+      organizationId: organization.id,
+      username: 'knowledge.disabled.admin',
+      password: 'knowledge-disabled-admin-password',
+      name: '知识关闭管理员',
+      isAdmin: true,
     });
     db.addKnowledge({
       organizationId: organization.id,

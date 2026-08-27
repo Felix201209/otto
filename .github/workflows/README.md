@@ -1,6 +1,6 @@
 # GitHub Actions Workflows
 
-Otto 的发布链路分成三段：先检查异常，再构建 GitHub Release 草稿，最后在 Release 正式发布后同步企业服务器。
+Otto 的发布链路分成三段：先检查异常，再构建双仓 GitHub Release 草稿，最后在正式发布前同步企业服务器和桌面更新镜像。
 
 发布前必须先完成 `docs/release-preflight.md`；本文件只说明 Actions 如何执行，不替代发布门禁。
 
@@ -54,7 +54,8 @@ Otto 的发布链路分成三段：先检查异常，再构建 GitHub Release �
 
 - 根 `package.json` 与 `packages/desktop/package.json` 必须等于目标版本。
 - 桌面安装包必须存在，并随 `latest.json` 一起发布用于校验和更新。
-- Release 默认创建为 draft。人工确认后发布，发布事件会触发服务器部署 workflow。
+- `NSIETeam/otto-new` 是正式 Release；`Felix201209/otto-releases` 同步同一份资产，作为 V1.9.13 及更早客户端的兼容入口。
+- Release 默认创建为 draft；只有企业部署、Windows 验签和更新镜像全部通过后，工作流才依次公开兼容 Release 与正式 Release。
 
 ## Deploy Server
 
@@ -62,7 +63,6 @@ Otto 的发布链路分成三段：先检查异常，再构建 GitHub Release �
 
 触发：
 
-- 当前仓库 Release published
 - 手动 `workflow_dispatch`
 
 行为：
@@ -89,7 +89,7 @@ Otto 的发布链路分成三段：先检查异常，再构建 GitHub Release �
 - `APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID`
 - `OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY`、`OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY`
 - `OTTO_LICENSE_PUBLIC_KEYS`（JSON 数组或单个 Ed25519 SPKI 公钥；私钥不得进入仓库或客户服务器）
-- `OTTO_RELEASES_TOKEN`
+- `OTTO_LEGACY_RELEASES_TOKEN`（仅需对 `Felix201209/otto-releases` 的 Contents 写权限；用于迁移期兼容旧客户端）
 
 部署服务器：
 
@@ -97,13 +97,14 @@ Otto 的发布链路分成三段：先检查异常，再构建 GitHub Release �
 - `DEPLOY_USER`
 - `DEPLOY_SSH_KEY`
 - `DEPLOY_KNOWN_HOSTS`（目标服务器的固定 OpenSSH known_hosts 条目；不得使用运行时 ssh-keyscan）
+- `DEPLOY_SUDO_PASSWORD`（仅供发布工作流通过 `sudo -S` 完成远端部署；不得写入仓库或日志）
 
 可选：
 
 - `DEPLOY_PORT`，默认 `22`
 - `DEPLOY_CONFIG_PATH`，默认 `/etc/otto-enterprise/enterprise.env`
 
-Release 默认使用当前仓库的 `GITHUB_TOKEN`。如果未来要发布到独立 release 仓库，需要同时修改 workflow 的 `RELEASES_REPO` 和 token。
+正式 Release 使用 `NSIETeam/otto-new` 当前工作流的 `GITHUB_TOKEN`。旧客户端兼容副本使用权限最小化的 `OTTO_LEGACY_RELEASES_TOKEN`；在兼容期结束前不得删除该 Secret 或停止同步旧发布仓。
 
 ## Manual Release
 
@@ -113,7 +114,7 @@ git tag "v${VERSION}"
 git push origin "v${VERSION}"
 ```
 
-等待 `Release Build` 生成 draft release。检查资产和体积后，在 GitHub Release 页面点 Publish。发布后 `Deploy Enterprise Server` 会自动同步服务器。
+等待 `Release Build` 完成签名、部署和镜像核验，并自动公开新旧两个 Release。不要在工作流完成前手动公开草稿。
 
 ## Manual Server Dry Run
 

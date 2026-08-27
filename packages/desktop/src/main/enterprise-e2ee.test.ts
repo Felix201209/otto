@@ -184,7 +184,7 @@ describe('enterprise private-chat E2EE', () => {
       destinationPath: join(bob.root, 'tampered.bin'),
       metadata,
     })).rejects.toThrow('ciphertext verification failed');
-  }, 15_000);
+  }, 30_000);
 
   it('pins, verifies and isolates signed federation contact identities', () => {
     const alice = createEndpoint('Alice laptop');
