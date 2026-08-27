@@ -115,6 +115,8 @@ import { resolveCentralEnterpriseIdentity } from './state/centralEnterpriseIdent
 import {
   INTERNAL_TEST_ACCESS_ENABLED,
   INTERNAL_TEST_ACCOUNT,
+  INTERNAL_TEST_ADMIN_ACCOUNT,
+  INTERNAL_TEST_ADMIN_ENABLED,
   resolveEnterpriseAccessMode,
 } from './internal-test-access.js';
 import {
@@ -175,7 +177,13 @@ export function App(): React.JSX.Element {
   });
 
   if (accessMode === 'internal-workspace') {
-    return <OttoWorkspaceApp account={INTERNAL_TEST_ACCOUNT} serverUrl="internal://test" />;
+    return (
+      <OttoWorkspaceApp
+        account={INTERNAL_TEST_ADMIN_ENABLED ? INTERNAL_TEST_ADMIN_ACCOUNT : INTERNAL_TEST_ACCOUNT}
+        serverUrl={INTERNAL_TEST_ADMIN_ENABLED ? 'internal://admin-preview' : 'internal://test'}
+        internalAdminPreview={INTERNAL_TEST_ADMIN_ENABLED}
+      />
+    );
   }
   if (accessMode === 'booting') {
     return (
@@ -217,11 +225,13 @@ function OttoWorkspaceApp({
   serverUrl,
   onJoinEnterprise,
   onLogout,
+  internalAdminPreview = false,
 }: {
   account: EnterpriseAccount;
   serverUrl?: string;
   onJoinEnterprise?: (input: { inviteCode: string }) => Promise<void>;
   onLogout?: () => Promise<void>;
+  internalAdminPreview?: boolean;
 }): React.JSX.Element {
   const { state, actions } = useOttoStore({
     enterpriseOrganizationId: account.accountType === 'personal'
@@ -261,6 +271,7 @@ function OttoWorkspaceApp({
     organizationId: account.organizationId,
     accountId: account.id,
     accountIsAdmin: account.isAdmin,
+    internalAdminPreview,
     profiles: centralIdentity.profiles,
     customAgents,
   });
@@ -388,7 +399,7 @@ function OttoWorkspaceApp({
   );
 
   useEffect(() => {
-    if (account.accountType === 'personal') return undefined;
+    if (internalAdminPreview || account.accountType === 'personal') return undefined;
     let cancelled = false;
     let polling = false;
     let localUnreadCounts: EnterpriseUnreadCounts = {};
@@ -455,10 +466,10 @@ function OttoWorkspaceApp({
       federationMarkers.clear();
       void tracker.clear();
     };
-  }, [account.accountType, account.id, account.organizationId]);
+  }, [account.accountType, account.id, account.organizationId, internalAdminPreview]);
 
   useEffect(() => {
-    if (account.accountType === 'personal') return undefined;
+    if (internalAdminPreview || account.accountType === 'personal') return undefined;
     let cancelled = false;
     const beat = async (): Promise<void> => {
       try {
@@ -475,7 +486,7 @@ function OttoWorkspaceApp({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [account.accountType, account.id, account.organizationId]);
+  }, [account.accountType, account.id, account.organizationId, internalAdminPreview]);
 
   const markEnterpriseDirectMessageRead = useCallback((peerAccountId: string): void => {
     const sessionId = `enterprise:message:${peerAccountId}`;
@@ -500,7 +511,7 @@ function OttoWorkspaceApp({
   }, []);
 
   useEffect(() => {
-    if (account.accountType === 'personal') return undefined;
+    if (internalAdminPreview || account.accountType === 'personal') return undefined;
     const processing = new Set<string>();
     const abortController = new AbortController();
     let polling = false;
@@ -583,12 +594,13 @@ function OttoWorkspaceApp({
     account.accountType,
     account.id,
     account.name,
+    internalAdminPreview,
     product.state.schedules,
     requestAtoaPermission,
   ]);
 
   useEffect(() => {
-    if (account.accountType === 'personal') return undefined;
+    if (internalAdminPreview || account.accountType === 'personal') return undefined;
     const processing = new Set<string>();
     const abortController = new AbortController();
     const contextCache = federationAtoaContextCache.current;
@@ -780,6 +792,7 @@ function OttoWorkspaceApp({
     account.accountType,
     account.id,
     account.name,
+    internalAdminPreview,
     product.state.schedules,
     requestAtoaPermission,
   ]);
