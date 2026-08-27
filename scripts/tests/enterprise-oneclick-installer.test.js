@@ -1151,6 +1151,16 @@ describe('enterprise one-click runtime configuration contract', () => {
 });
 
 describe('enterprise one-click health contract', () => {
+  it('assigns every upgrade canary an isolated loopback port', () => {
+    const upgrader = readFileSync(UPGRADE_SH, 'utf8');
+
+    expect(upgrader).toContain('CANARY_PORT="${OTTO_UPGRADE_CANARY_PORT:-}"');
+    expect(upgrader).toContain('server.listen(0, "127.0.0.1"');
+    expect(upgrader).toContain('export OTTO_ENTERPRISE_PORT="$CANARY_PORT"');
+    expect(upgrader).toContain('"http://127.0.0.1:${CANARY_PORT}"');
+    expect(upgrader).not.toContain('OTTO_ENTERPRISE_PORT="17777"');
+  });
+
   it('requires upgrade, A2A and park repair capabilities in canary and acceptance docs', () => {
     const healthCheck = readFileSync(HEALTH_CHECK, 'utf8');
     const readme = readFileSync(README, 'utf8');
