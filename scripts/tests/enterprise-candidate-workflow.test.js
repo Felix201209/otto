@@ -12,7 +12,7 @@ const workflow = readFileSync(
 describe('V1.9.13 enterprise candidate source identity', () => {
   it('pins the reviewed V1.9.13 source instead of a moving development branch', () => {
     expect(workflow).toContain(
-      'REVIEWED_RELEASE_SOURCE: 2bca7a64e50cd9a2ab0e493ae16f9d6b29f6c279',
+      'REVIEWED_RELEASE_SOURCE: d54a7d8cf944c6ad36cd57a5fc18140244175116',
     );
     expect(workflow).not.toContain('origin/internal');
     expect(workflow).toContain(
@@ -40,7 +40,7 @@ describe('V1.9.13 enterprise candidate source identity', () => {
       'sha256sum scripts/enterprise-runtime-dependencies.mjs',
     );
     expect(workflow).toContain(
-      'ENTERPRISE_UPGRADER_SHA256: 561432a5504a3bc506ea94b9b32d468989fa4de4a50f3f0d022b9fb2e0ea0482',
+      'ENTERPRISE_UPGRADER_SHA256: d27b62b5e865003c0d59506d39bf1ba9201b7c64fa97ebf8fab58ff95a3cbb7b',
     );
     expect(workflow).toContain(
       'ENTERPRISE_RELEASE_VERIFIER_SHA256: 514c385c6b492a2e974f49e31b09ec2fd9c8fb7996f91431744cf3a9be7560dc',
