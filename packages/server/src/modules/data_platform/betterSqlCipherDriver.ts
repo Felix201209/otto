@@ -230,7 +230,6 @@ export function createBetterSqlCipherDriver(input: {
         timeout: input.timeoutMs ?? 5_000,
       });
       try {
-        source.pragma("key = ''");
         source.pragma('cipher_memory_security = ON');
         assertCipherRuntime(source);
         source

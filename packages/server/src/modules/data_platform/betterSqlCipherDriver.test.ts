@@ -5,6 +5,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
@@ -13,6 +15,17 @@ import {
 } from './betterSqlCipherDriver.js';
 
 const temporaryDirectories: string[] = [];
+const repositoryRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../../../..',
+);
+const realNativeBindingPath = path.join(
+  repositoryRoot,
+  'native',
+  'sqlcipher-node',
+  `${process.platform}-${process.arch}`,
+  'better_sqlite3.node',
+);
 
 interface Command {
   kind: 'exec' | 'pragma' | 'prepare';
@@ -160,7 +173,16 @@ describe('better SQLCipher driver', () => {
     });
 
     const commands = fake.instances[0]!.commands;
-    expect(commands[0]).toEqual({ kind: 'pragma', value: "key = ''" });
+    expect(commands[0]).toEqual({
+      kind: 'pragma',
+      value: 'cipher_memory_security = ON',
+    });
+    expect(
+      commands.some(
+        (command) =>
+          command.kind === 'pragma' && command.value.startsWith('key ='),
+      ),
+    ).toBe(false);
     expect(commands).toContainEqual({
       kind: 'prepare',
       value: "SELECT sqlcipher_export('encrypted')",
@@ -178,4 +200,57 @@ describe('better SQLCipher driver', () => {
       value: 'encrypted.user_version = 18',
     });
   });
+
+  it.runIf(fs.existsSync(realNativeBindingPath))(
+    'migrates a real plaintext database into authenticated SQLCipher',
+    () => {
+      const paths = createPaths();
+      const destinationPath = path.join(paths.root, 'encrypted.db');
+      const key = Buffer.alloc(32, 0x5a);
+      const plaintext = new DatabaseSync(paths.databasePath);
+      plaintext.exec(`
+        PRAGMA user_version = 18;
+        CREATE TABLE migration_probe (value TEXT NOT NULL);
+        INSERT INTO migration_probe (value) VALUES ('preserved');
+      `);
+      plaintext.close();
+
+      const driver = createBetterSqlCipherDriver({
+        nativeBindingPath: realNativeBindingPath,
+      });
+      driver.migratePlaintext({
+        sourcePath: paths.databasePath,
+        destinationPath,
+        key,
+      });
+
+      const encrypted = driver.open({
+        databasePath: destinationPath,
+        key,
+        create: false,
+      });
+      try {
+        driver.verify(encrypted);
+        expect(
+          encrypted.prepare('SELECT value FROM migration_probe').get(),
+        ).toEqual({ value: 'preserved' });
+        expect(encrypted.prepare('PRAGMA user_version').get()).toEqual({
+          user_version: 18,
+        });
+      } finally {
+        encrypted.close();
+      }
+
+      const ordinarySqlite = new DatabaseSync(destinationPath, {
+        readOnly: true,
+      });
+      try {
+        expect(() =>
+          ordinarySqlite.prepare('SELECT count(*) FROM sqlite_master').get(),
+        ).toThrow();
+      } finally {
+        ordinarySqlite.close();
+      }
+    },
+  );
 });
