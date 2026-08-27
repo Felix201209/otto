@@ -90,6 +90,26 @@ export function IconList({ size, className }: IconProps): React.JSX.Element {
   );
 }
 
+/** DSH `ic_ds_personalization_outline_16`：任务视图选项。 */
+export function IconPersonalization({ size = 16, className }: IconProps): React.JSX.Element {
+  return (
+    <svg
+      width={size}
+      height={size}
+      className={className}
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden
+    >
+      <path
+        transform="translate(1.292 1.3)"
+        d="M10.3232 9.18164C11.2868 9.18164 12.0985 9.82833 12.3506 10.7109H13.415V11.8711H12.3496C12.0971 12.7532 11.2864 13.3994 10.3232 13.3994C9.36031 13.3992 8.55012 12.7531 8.29785 11.8711H0V10.7109H8.29688C8.54876 9.82845 9.35988 9.18186 10.3232 9.18164ZM10.3232 10.3418C9.7999 10.3421 9.37534 10.7667 9.375 11.29C9.375 11.8137 9.79969 12.239 10.3232 12.2393C10.847 12.2393 11.2725 11.8138 11.2725 11.29C11.2721 10.7666 10.8468 10.3418 10.3232 10.3418ZM3.08301 4.59082C4.04605 4.59095 4.85696 5.23717 5.10938 6.11914H13.415V7.2793H5.11035C4.85833 8.16202 4.04648 8.80846 3.08301 8.80859C2.11972 8.80843 1.30963 8.16179 1.05762 7.2793H0V6.11914H1.05762C1.30994 5.23728 2.12006 4.59098 3.08301 4.59082ZM3.08301 5.75098C2.55962 5.75117 2.13512 6.17587 2.13477 6.69922C2.13477 7.22287 2.5594 7.64824 3.08301 7.64844C3.60665 7.64828 4.03223 7.2229 4.03223 6.69922C4.03187 6.17585 3.60643 5.75113 3.08301 5.75098ZM10.3232 0C11.2869 0 12.0986 0.646596 12.3506 1.5293H13.415V2.68945H12.3496C12.0971 3.5716 11.2864 4.21777 10.3232 4.21777C9.36037 4.21756 8.55018 3.57139 8.29785 2.68945H0V1.5293H8.29688C8.5487 0.646717 9.35981 0.00021854 10.3232 0ZM10.3232 1.16016C9.79984 1.16042 9.37524 1.58499 9.375 2.1084C9.375 2.63201 9.79969 3.05735 10.3232 3.05762C10.847 3.05762 11.2725 2.63217 11.2725 2.1084C11.2722 1.58483 10.8469 1.16016 10.3232 1.16016Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
 /** Lucide panel-right：聊天顶栏中的右侧栏显隐入口。 */
 export function IconPanelRight({ size, className }: IconProps): React.JSX.Element {
   return (
@@ -178,6 +198,38 @@ export function IconCheckCheck({ size, className }: IconProps): React.JSX.Elemen
     <svg {...base(size)} className={className}>
       <path d="m2 12 5 5L18 6" />
       <path d="m12 13 1.5 1.5L22 6" />
+    </svg>
+  );
+}
+
+/** Lucide Hand：手动确认、暂停并等待用户操作。 */
+export function IconHand({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M18 11V6a2 2 0 0 0-2-2 2 2 0 0 0-2 2" />
+      <path d="M14 10V4a2 2 0 0 0-2-2 2 2 0 0 0-2 2v2" />
+      <path d="M10 10.5V6a2 2 0 0 0-2-2 2 2 0 0 0-2 2v8" />
+      <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
+    </svg>
+  );
+}
+
+/** Lucide ShieldEllipsis：受保护范围内的临时自动授权。 */
+export function IconShieldEllipsis({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+      <path d="M8 12h.01M12 12h.01M16 12h.01" />
+    </svg>
+  );
+}
+
+/** Lucide ShieldCheck：持续生效且仍受安全边界保护的授权。 */
+export function IconShieldCheck({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+      <path d="m9 12 2 2 4-4" />
     </svg>
   );
 }

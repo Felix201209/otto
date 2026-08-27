@@ -293,9 +293,9 @@ describe('执行授权菜单', () => {
     localStorage.clear();
     renderComposer([], null);
     fireEvent.click(screen.getByRole('button', { name: '执行授权：所有会话自动' }));
-    expect(document.querySelector('.otto-authorization__option-icon--manual svg')).toBeTruthy();
-    expect(document.querySelector('.otto-authorization__option-icon--session svg')).toBeTruthy();
-    expect(document.querySelector('.otto-authorization__option-icon--global svg')).toBeTruthy();
+    expect(document.querySelector('.otto-authorization__option-icon--manual path[d^="M18 11V6"]')).toBeTruthy();
+    expect(document.querySelector('.otto-authorization__option-icon--session path[d="M8 12h.01M12 12h.01M16 12h.01"]')).toBeTruthy();
+    expect(document.querySelector('.otto-authorization__option-icon--global path[d="m9 12 2 2 4-4"]')).toBeTruthy();
     fireEvent.click(screen.getByRole('menuitemradio', { name: /自动授权（仅当前会话）/ }));
     expect(localStorage.getItem('otto.authorization.global-auto')).toBe('0');
     expect(send.mock.calls.slice(-2).map(([message]) => message)).toEqual([

@@ -40,8 +40,9 @@ import {
   IconPaperclip,
   IconArrowUp,
   IconCheck,
-  IconCheckCheck,
-  IconWarning,
+  IconHand,
+  IconShieldCheck,
+  IconShieldEllipsis,
   IconSettings,
   IconStop,
   IconClose,
@@ -1473,9 +1474,9 @@ function AuthorizationModeIcon({
   kind: 'manual' | 'session' | 'global';
   size: number;
 }): React.JSX.Element {
-  if (kind === 'manual') return <IconWarning size={size} />;
-  if (kind === 'session') return <IconCheck size={size} />;
-  return <IconCheckCheck size={size} />;
+  if (kind === 'manual') return <IconHand size={size} />;
+  if (kind === 'session') return <IconShieldEllipsis size={size} />;
+  return <IconShieldCheck size={size} />;
 }
 
 function ModelMenu({
