@@ -24,6 +24,8 @@ env:
   ELECTRON_VERSION: '43.2.0'
   SQLCIPHER_SOURCE_REVISION: e2a6040f2ae5cfff2b3e08eb3320007d93cdf3fc
   REVIEWED_RELEASE_SOURCE: 82b5e0c101a44358efbb900b0c2be62455c2412b
+  ENTERPRISE_PACKAGE_BUILDER_SHA256: 4f9ccab292a015879e9e9a65f587d7a54f3ca537de5cd58ad8bcc4a14b7f0e0c
+  ENTERPRISE_RUNTIME_DEPS_SHA256: 6218482a35cc049147020b0d7ef3933fac9a147c44aab0905b26629573d64569
 
 jobs:
   sqlcipher-native:
@@ -63,6 +65,10 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           git cat-file -e "${REVIEWED_RELEASE_SOURCE}^{commit}"
           git merge-base --is-ancestor "$REVIEWED_RELEASE_SOURCE" "$GITHUB_SHA"
+          test "$(sha256sum scripts/build-enterprise-oneclick.mjs | awk '{print $1}')" = \
+            "$ENTERPRISE_PACKAGE_BUILDER_SHA256"
+          test "$(sha256sum scripts/enterprise-runtime-dependencies.mjs | awk '{print $1}')" = \
+            "$ENTERPRISE_RUNTIME_DEPS_SHA256"
           git diff --quiet "$REVIEWED_RELEASE_SOURCE" "$GITHUB_SHA" -- \
             package.json package-lock.json tsconfig.json \
             packages/server \
@@ -73,18 +79,20 @@ jobs:
             native/sqlcipher-node \
             scripts/build_package.js \
             scripts/copy_files.js \
-            scripts/build-enterprise-oneclick.mjs \
             scripts/verify-enterprise-package-signature.mjs \
             scripts/verify-sqlcipher-native-assets.mjs
           while IFS= read -r changed; do
             case "$changed" in
               .github/workflows/release.yml | \
               .github/workflows/deploy-server.yml | \
+              scripts/build-enterprise-oneclick.mjs | \
+              scripts/enterprise-runtime-dependencies.mjs | \
               scripts/sign-enterprise-package.mjs | \
               scripts/validate-server-integration-baseline.mjs | \
               scripts/tests/sign-enterprise-package.test.js | \
               scripts/tests/enterprise-deploy-workflow.test.js | \
-              scripts/tests/enterprise-candidate-workflow.test.js) ;;
+              scripts/tests/enterprise-candidate-workflow.test.js | \
+              scripts/tests/enterprise-runtime-dependencies.test.js) ;;
               *) echo "unexpected change beyond reviewed V1.9.13 source: $changed" >&2; exit 4 ;;
             esac
           done < <(git diff --name-only "$REVIEWED_RELEASE_SOURCE" "$GITHUB_SHA")
@@ -161,7 +169,8 @@ jobs:
             scripts/tests/sqlcipher-native-assets.test.js \
             scripts/tests/verify-enterprise-package-signature.test.js \
             scripts/tests/sign-enterprise-package.test.js \
-            scripts/tests/enterprise-candidate-workflow.test.js
+            scripts/tests/enterprise-candidate-workflow.test.js \
+            scripts/tests/enterprise-runtime-dependencies.test.js
 
       - name: Build Linux enterprise package candidate
         run: npm run bundle:enterprise

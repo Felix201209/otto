@@ -20,13 +20,25 @@ describe('V1.9.13 enterprise candidate source identity', () => {
     );
   });
 
-  it('requires zero enterprise product-source differences from that release', () => {
+  it('keeps server product source pinned and content-pins the packaging hotfix', () => {
     expect(workflow).toContain(
       'git diff --quiet "$REVIEWED_RELEASE_SOURCE" "$GITHUB_SHA"',
     );
     expect(workflow).toContain('packages/server');
     expect(workflow).toContain('deployment/enterprise-oneclick');
     expect(workflow).toContain('scripts/build-enterprise-oneclick.mjs');
+    expect(workflow).toContain(
+      'ENTERPRISE_PACKAGE_BUILDER_SHA256: 4f9ccab292a015879e9e9a65f587d7a54f3ca537de5cd58ad8bcc4a14b7f0e0c',
+    );
+    expect(workflow).toContain(
+      'ENTERPRISE_RUNTIME_DEPS_SHA256: 6218482a35cc049147020b0d7ef3933fac9a147c44aab0905b26629573d64569',
+    );
+    expect(workflow).toContain(
+      'sha256sum scripts/build-enterprise-oneclick.mjs',
+    );
+    expect(workflow).toContain(
+      'sha256sum scripts/enterprise-runtime-dependencies.mjs',
+    );
     expect(workflow).toContain(
       'unexpected change beyond reviewed V1.9.13 source',
     );

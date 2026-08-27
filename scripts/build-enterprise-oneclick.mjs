@@ -23,6 +23,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { supportedEnterpriseSchemaVersions } from './enterprise-release-contract.mjs';
+import { copyEnterpriseRuntimeDependencies } from './enterprise-runtime-dependencies.mjs';
 import {
   REQUIRED_SQLCIPHER_NODE_TARGETS,
   verifySqlCipherMatrixManifest,
@@ -270,6 +271,7 @@ const sourceScope = [
   'deployment/enterprise-oneclick',
   'native/sqlcipher-node',
   'scripts/build-enterprise-oneclick.mjs',
+  'scripts/enterprise-runtime-dependencies.mjs',
   'scripts/verify-enterprise-package-signature.mjs',
   'scripts/verify-sqlcipher-native-assets.mjs',
 ];
@@ -294,6 +296,7 @@ const sourceInputFiles = [
   'packages/core/tsconfig.json',
   'packages/core/src/services/aliyunSmsSender.ts',
   'scripts/build-enterprise-oneclick.mjs',
+  'scripts/enterprise-runtime-dependencies.mjs',
   'scripts/verify-enterprise-package-signature.mjs',
   'scripts/verify-sqlcipher-native-assets.mjs',
   ...filesBelow(sqlCipherNodeRoot).map((relative) =>
@@ -498,6 +501,10 @@ export class FeatureFlagManager {
     path.join(betterSqliteSource, 'package.json'),
     path.join(betterSqliteTarget, 'package.json'),
   );
+  const runtimeDependencies = copyEnterpriseRuntimeDependencies({
+    repoRoot,
+    releaseRoot,
+  });
   writeFileSync(
     path.join(releaseRoot, 'package.json'),
     `${JSON.stringify(
@@ -507,10 +514,19 @@ export class FeatureFlagManager {
         private: true,
         type: 'module',
         engines: { node: '>=22.16.0 <23' },
+        dependencies: {
+          ...runtimeDependencies.directVersions,
+          'better-sqlite3': '12.11.1',
+          'otto-core': '1.1.0-enterprise-adapter',
+        },
       },
       null,
       2,
     )}\n`,
+  );
+  writeFileSync(
+    path.join(releaseRoot, 'runtime-dependencies.json'),
+    `${JSON.stringify(runtimeDependencies, null, 2)}\n`,
   );
   cpSync(
     path.join(sourceDir, 'runtime', 'run.mjs'),
