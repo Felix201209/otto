@@ -464,6 +464,8 @@ export class OttoServer {
   private externalInboundUnsub?: () => void;
   /** 进程级自动 Skill 扫描器由当前 server 实例启动时，停机时负责释放。 */
   private autoSkillScannerStarted = false;
+  /** 付费后台维护默认不创建定时器；仅在用户明确开启后存在。 */
+  private maintenanceTimer?: ReturnType<typeof setTimeout>;
   private readonly productWorkspace: ProductWorkspaceStore;
   private readonly chatFileCacheDir?: string;
   private readonly sessionTitleTimeoutMs: number;
@@ -562,33 +564,9 @@ export class OttoServer {
       console.warn('[Server] OttoSessionManager init failed (non-fatal):', e);
     }
 
-    // 启动后台自动维护（每 10 分钟运行一次）
-    //   - 记忆自动合并/压缩/清理 (AutoMemoryEngine)
-    //   - 上下文自动压缩 (idle 会话的 LLM 上下文摘要)
-    const maintenanceTimer = setInterval(() => {
-      // 记忆引擎维护
-      try {
-        const engine = getAutoMemoryEngine();
-        engine
-          .runMaintenanceCycle()
-          .catch((e: unknown) =>
-            console.warn('[Server] AutoMemory maintenance failed:', e),
-          );
-      } catch {
-        // engine 未初始化则跳过
-      }
-      // 上下文自动压缩
-      this.runAutoCompressionCycle().catch((e: unknown) =>
-        console.warn('[Server] Auto compression cycle failed:', e),
-      );
-    }, MAINTENANCE_INTERVAL_MS);
-
-    // 确保 stop() 时清理定时器
-    const origStop = this.stop.bind(this);
-    this.stop = async () => {
-      clearInterval(maintenanceTimer);
-      await origStop();
-    };
+    this.setBackgroundMaintenanceEnabled(
+      loadUserSettingsSubset().backgroundModelTasksEnabled === true,
+    );
 
     // 自动 Skill 只分析本地工作日志并暂存“待确认候选”，不会直接写 SKILL.md。
     // 延迟首扫 15 秒，避免与桌面首屏初始化争抢磁盘；定时器 unref，不阻塞进程退出。
@@ -716,6 +694,7 @@ export class OttoServer {
     this.manuallyRenamedSessions.clear();
     this.externalInboundUnsub?.();
     this.externalInboundUnsub = undefined;
+    this.setBackgroundMaintenanceEnabled(false);
     if (this.enterpriseLeaseTimer) {
       clearTimeout(this.enterpriseLeaseTimer);
       this.enterpriseLeaseTimer = undefined;
@@ -1526,6 +1505,7 @@ export class OttoServer {
         }
         patchUserSettings({ backgroundModelTasksEnabled: value });
         getHabitAnalyzer().setBackgroundModelCallsEnabled(value);
+        this.setBackgroundMaintenanceEnabled(value);
       } else if (key === 'preferredLanguage') {
         if (typeof value !== 'string') {
           throw new Error('preferredLanguage 的值必须是字符串');
@@ -2072,6 +2052,30 @@ export class OttoServer {
    *   - 每个会话在一次周期内最多压一次（isCompressionInProgress 防重入）
    *   - 静默失败：压缩异常不影响其他会话和主对话流
    */
+  private setBackgroundMaintenanceEnabled(enabled: boolean): void {
+    if (!enabled) {
+      if (this.maintenanceTimer) clearTimeout(this.maintenanceTimer);
+      this.maintenanceTimer = undefined;
+      return;
+    }
+    if (this.maintenanceTimer) return;
+    const schedule = () => {
+      this.maintenanceTimer = setTimeout(() => void tick(), MAINTENANCE_INTERVAL_MS);
+      this.maintenanceTimer.unref?.();
+    };
+    const tick = async () => {
+      try {
+        await getAutoMemoryEngine().runMaintenanceCycle();
+        await this.runAutoCompressionCycle();
+      } catch (error) {
+        console.warn('[Server] Background maintenance failed:', error);
+      } finally {
+        if (this.maintenanceTimer) schedule();
+      }
+    };
+    schedule();
+  }
+
   private async runAutoCompressionCycle(): Promise<void> {
     const sessions = this.store.listSessions();
     const candidates = sessions.filter(
@@ -4493,8 +4497,8 @@ function browserBridgeScript(clientToken: string): string {
     skillShareList: () => Promise.resolve({ text: '浏览器模式暂未接入部门共享 Skill。' }),
     skillMarketplace: () => Promise.resolve({ text: '浏览器模式暂未接入公司 Skill 市场。' }),
     setLocalTestUrl: () => Promise.resolve(),
-    appVersion: () => Promise.resolve('1.10.1'),
-    updateCheck: () => Promise.resolve({ status: 'up-to-date', currentVersion: '1.10.1', latestVersion: null }),
+    appVersion: () => Promise.resolve('1.9.14'),
+    updateCheck: () => Promise.resolve({ status: 'up-to-date', currentVersion: '1.9.14', latestVersion: null }),
     updateDownload: () => Promise.resolve({ ok: false, error: '浏览器模式不支持下载安装包。' }),
     updateCancel: () => Promise.resolve(),
     updateInstall: () => Promise.resolve({ ok: false, message: '浏览器模式不支持安装更新。' }),
