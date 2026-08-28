@@ -72,7 +72,11 @@ import {
   PARK_CORE_SCHEMA_CONTRIBUTOR,
   PARK_STATISTICS_SCHEMA_CONTRIBUTOR,
 } from '../modules/park_services/index.js';
-import { CUSTOMER_MODULE_SCHEMA_CONTRIBUTOR } from '../modules/tool_skill_platform/index.js';
+import {
+  createCustomerModuleMarketplaceFacade,
+  CUSTOMER_MODULE_SCHEMA_CONTRIBUTOR,
+  SqliteCustomerModuleMarketplaceStore,
+} from '../modules/tool_skill_platform/index.js';
 import path from 'path';
 import os from 'os';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -406,6 +410,11 @@ export function closeEnterpriseDatabase(): void {
 }
 
 export const getDB = dataPlatform.getDatabase;
+export function getCustomerModuleMarketplace() {
+  return createCustomerModuleMarketplaceFacade(
+    new SqliteCustomerModuleMarketplaceStore(getDB()),
+  );
+}
 
 /** Credential-free storage topology for diagnostics and readiness output. */
 export function getEnterpriseServiceTopology() {
