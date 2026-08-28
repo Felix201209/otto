@@ -39,7 +39,7 @@ describe('server integration baseline', () => {
     expect(
       validateServerIntegrationBaseline({ rootDir, ledger: changed }),
     ).toContain(
-      'release.clientVersion=99.0.0 does not match packages/desktop/package.json=1.15.3',
+      'release.clientVersion=99.0.0 does not match packages/desktop/package.json=1.9.14',
     );
   });
 

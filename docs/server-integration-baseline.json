@@ -105,8 +105,8 @@
     ]
   },
   "release": {
-    "clientVersion": "1.15.3",
-    "serverVersion": "1.15.3",
+    "clientVersion": "1.9.14",
+    "serverVersion": "1.9.14",
     "serverPackageVersion": "0.1.0",
     "apiVersion": 4,
     "enterpriseSchemaVersion": 23,
@@ -211,7 +211,7 @@
       "id": "version_schema_capability_mapping",
       "status": "verified",
       "evidence": [
-        "The validator binds product version 1.15.3, Enterprise API 4, schema 23, capabilities and product modules to source constants."
+        "The validator binds product version 1.9.14, Enterprise API 4, schema 23, capabilities and product modules to source constants."
       ]
     },
     {
