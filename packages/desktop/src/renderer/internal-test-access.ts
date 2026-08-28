@@ -11,8 +11,16 @@ import type { EnterpriseAccount } from '../preload/index.js';
 
 export { INTERNAL_TEST_ACCESS_ENABLED } from '../main/internal-test-access.js';
 
+declare const __OTTO_INTERNAL_TEST_ADMIN__: boolean | undefined;
+
+/** 仅供显式内部构建展示企业管理员前端；不能代表服务端授权。 */
+export const INTERNAL_TEST_ADMIN_ENABLED =
+  typeof __OTTO_INTERNAL_TEST_ADMIN__ !== 'undefined'
+  && __OTTO_INTERNAL_TEST_ADMIN__ === true;
+
 export const INTERNAL_TEST_ACCOUNT: EnterpriseAccount = Object.freeze({
   id: 'local_internal_test',
+  accountType: 'personal',
   organizationId: 'local-internal-test',
   organizationName: '本地',
   employeeId: null,
@@ -28,6 +36,17 @@ export const INTERNAL_TEST_ACCOUNT: EnterpriseAccount = Object.freeze({
   tags: ['本地身份'],
   createdAt: '2026-07-18T00:00:00.000Z',
   updatedAt: '2026-07-18T00:00:00.000Z',
+});
+
+export const INTERNAL_TEST_ADMIN_ACCOUNT: EnterpriseAccount = Object.freeze({
+  ...INTERNAL_TEST_ACCOUNT,
+  id: 'local_internal_admin_preview',
+  accountType: 'enterprise',
+  username: 'internal-admin-preview',
+  name: '本地管理员',
+  role: '企业管理员',
+  isAdmin: true,
+  tags: ['本地身份', '管理员 UI 预览'],
 });
 
 export type EnterpriseAccessMode =

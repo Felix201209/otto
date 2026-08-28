@@ -5,12 +5,12 @@
  */
 
 /**
- * applyFrame reducer + groupSessions selector 单测（renderer 状态心脏）。
+ * applyFrame reducer 单测（renderer 状态心脏）。
  *
  * applyFrame / reducer / mergeTextDelta 是文件私有（不改源码 export），故通过
  * renderHook(useOttoStore) + mock transport 打帧的方式间接覆盖每个帧分支：
  *   mock 的 transport.onFrame 捕获 hook 注册的 frame handler，用 act() 调它推帧，
- *   再断言 result.current.state。groupSessions 已 export，直接测。
+ *   再断言 result.current.state。
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -56,8 +56,7 @@ vi.mock('../transport.js', () => ({
   isConnected: () => true,
 }));
 
-import { useOttoStore, groupSessions } from './useOttoStore.js';
-import type { OttoState } from './useOttoStore.js';
+import { useOttoStore } from './useOttoStore.js';
 import { clearEnterpriseOrganizationFeaturesCache } from './enterpriseOrganizationFeatures.js';
 
 /** 渲染 hook 并返回推帧函数 + result。 */
@@ -1047,6 +1046,32 @@ describe('目录附件发送', () => {
   });
 });
 
+describe('真实工作目录切换', () => {
+  it('只为当前会话发送 set_session_workspace，由服务端回包更新摘要', () => {
+    const { view, push } = setup();
+    push({
+      type: 'session_upsert',
+      payload: { session: makeSession({ sessionId: 'workspace-session', workspacePath: '/Users/test' }) },
+    });
+    act(() => view.result.current.actions.selectSession('workspace-session'));
+    sendSpy.mockClear();
+
+    act(() => view.result.current.actions.setWorkspace('/Users/test/project'));
+    expect(sendSpy).toHaveBeenCalledWith({
+      type: 'set_session_workspace',
+      payload: { sessionId: 'workspace-session', workspacePath: '/Users/test/project' },
+    });
+    expect(view.result.current.state.sessions['workspace-session'].workspacePath).toBe('/Users/test');
+
+    push({
+      type: 'session_upsert',
+      payload: { session: makeSession({ sessionId: 'workspace-session', workspacePath: '/Users/test/project' }) },
+    });
+    expect(view.result.current.state.sessions['workspace-session'].workspacePath)
+      .toBe('/Users/test/project');
+  });
+});
+
 describe('Agent profile 启动动作', () => {
   it('A2A 本地协助会话在服务端确认后才发送一次任务提示', async () => {
     const { view, push } = setup();
@@ -1058,22 +1083,27 @@ describe('Agent profile 启动动作', () => {
         '请总结这段企业聊天。',
       );
     });
+    const createFrame = sendSpy.mock.calls.map(([frame]) => frame).find(
+      (frame) => (frame as { type?: string }).type === 'create_session',
+    ) as { payload: { clientRequestId: string } };
     expect(sendSpy).toHaveBeenCalledWith({
       type: 'create_session',
       payload: {
         title: 'Otto 协助：同事',
         agentProfileId: 'otto-enterprise-work',
+        clientRequestId: createFrame.payload.clientRequestId,
       },
     });
 
     push({
-      type: 'session_upsert',
+      type: 'session_created',
       payload: {
         session: makeSession({
           sessionId: 'a2a-session',
           title: 'Otto 协助：同事',
           agentProfileId: 'otto-enterprise-work',
         }),
+        clientRequestId: createFrame.payload.clientRequestId,
       },
     });
 
@@ -1092,70 +1122,160 @@ describe('Agent profile 启动动作', () => {
     );
     expect(sentPrompts).toHaveLength(1);
   });
-});
 
-describe('groupSessions selector', () => {
-  const DAY = 86_400_000;
+  it('用 clientRequestId 隔离并发启动，并按顺序继承工作目录、授权和附件', () => {
+    const { view, push } = setup();
 
-  function stateWith(sessions: SessionSummary[]): OttoState {
-    const map: Record<string, SessionSummary> = {};
-    const ids: string[] = [];
-    for (const s of sessions) {
-      map[s.sessionId] = s;
-      ids.push(s.sessionId);
-    }
-    return {
-      connection: 'connected',
-      sessions: map,
-      sessionIds: ids,
-      activeSessionId: null,
-      messages: {},
-      models: [],
-      modelsLoaded: true,
-      currentModel: null,
-      lastError: null,
-      queuedCounts: {},
-      pendingCreateRequestId: null,
-      unreadSessions: [],
-    };
-  }
+    act(() => {
+      view.result.current.actions.launchAgentProfileWithPrompt(
+        'PPT',
+        'ppt',
+        '制作发布会',
+        'local',
+        [{ fileName: 'brief.pdf', filePath: '/tmp/brief.pdf' }],
+        '企业上下文 A',
+        '/Users/test/project-a',
+        { mode: 'auto', scope: 'session' },
+      );
+      view.result.current.actions.launchAgentProfileWithPrompt(
+        '会议',
+        'meeting',
+        '整理纪要',
+        'local',
+        [],
+        '企业上下文 B',
+        '/Users/test/project-b',
+        { mode: 'manual', scope: 'session' },
+      );
+    });
 
-  beforeEach(() => {
-    // 固定系统时间，避免时区/边界 flaky。
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-06-27T12:00:00'));
+    const creates = sendSpy.mock.calls
+      .map(([frame]) => frame as { type: string; payload: { clientRequestId?: string } })
+      .filter((frame) => frame.type === 'create_session');
+    expect(creates).toHaveLength(2);
+    const firstId = creates[0].payload.clientRequestId!;
+    const secondId = creates[1].payload.clientRequestId!;
+
+    push({
+      type: 'session_created',
+      payload: { session: makeSession({ sessionId: 'second', agentProfileId: 'meeting' }), clientRequestId: secondId },
+    });
+    push({
+      type: 'session_created',
+      payload: { session: makeSession({ sessionId: 'first', agentProfileId: 'ppt' }), clientRequestId: firstId },
+    });
+
+    const relevant = sendSpy.mock.calls
+      .map(([frame]) => frame as { type: string; payload: Record<string, unknown> })
+      .filter((frame) => ['set_session_workspace', 'set_authorization_mode', 'send_user_message'].includes(frame.type));
+    expect(relevant).toEqual([
+      { type: 'set_session_workspace', payload: { sessionId: 'second', workspacePath: '/Users/test/project-b' } },
+      { type: 'set_authorization_mode', payload: { sessionId: 'second', mode: 'manual', scope: 'session' } },
+      { type: 'send_user_message', payload: expect.objectContaining({ sessionId: 'second', authorizedContext: '企业上下文 B', content: [{ type: 'text', value: '整理纪要' }] }) },
+      { type: 'set_session_workspace', payload: { sessionId: 'first', workspacePath: '/Users/test/project-a' } },
+      { type: 'set_authorization_mode', payload: { sessionId: 'first', mode: 'auto', scope: 'session' } },
+      { type: 'send_user_message', payload: expect.objectContaining({
+        sessionId: 'first',
+        authorizedContext: '企业上下文 A',
+        content: [
+          { type: 'text', value: '制作发布会' },
+          { type: 'file_reference', value: { fileName: 'brief.pdf', filePath: '/tmp/brief.pdf' } },
+        ],
+      }) },
+    ]);
   });
-  afterEach(() => {
-    vi.useRealTimers();
+
+  it('断线会清除尚未确认的 Agent 启动，迟到回包不会误发任务', () => {
+    const { view, push } = setup();
+    act(() => {
+      view.result.current.actions.launchAgentProfileWithPrompt('PPT', 'ppt', '不要串到后续会话');
+    });
+    const create = sendSpy.mock.calls
+      .map(([frame]) => frame as { type: string; payload: { clientRequestId?: string } })
+      .find((frame) => frame.type === 'create_session')!;
+    act(() => _capturedConnHandler?.(false));
+    push({
+      type: 'session_created',
+      payload: { session: makeSession({ sessionId: 'late' }), clientRequestId: create.payload.clientRequestId! },
+    });
+    expect(sendSpy.mock.calls.some(([frame]) => (
+      (frame as { type?: string; payload?: { sessionId?: string } }).type === 'send_user_message'
+      && (frame as { payload?: { sessionId?: string } }).payload?.sessionId === 'late'
+    ))).toBe(false);
+    expect(view.result.current.state.lastError).toContain('Agent 任务未发送');
   });
 
-  it('按 updatedAt 倒序 + 今天/昨天/更早分组', () => {
-    const now = Date.now();
-    const startOfToday = new Date(2026, 5, 27).getTime();
-    const groups = groupSessions(
-      stateWith([
-        makeSession({ sessionId: 'today1', updatedAt: startOfToday + 3600_000 }),
-        makeSession({ sessionId: 'today2', updatedAt: now }),
-        makeSession({ sessionId: 'yest', updatedAt: startOfToday - 3600_000 }),
-        makeSession({ sessionId: 'old', updatedAt: startOfToday - 3 * DAY }),
-      ]),
-    );
-    const labels = groups.map((g) => g.label);
-    expect(labels).toEqual(['今天', '昨天', '更早']);
+  it('服务端拒绝一个 Agent 会话时只清除最早的待启动事务', () => {
+    const { view, push } = setup();
+    act(() => {
+      view.result.current.actions.launchAgentProfileWithPrompt('PPT', 'ppt', '不应发送的 PPT 任务');
+      view.result.current.actions.launchAgentProfileWithPrompt('会议', 'meeting', '应继续发送的会议任务');
+    });
+    const creates = sendSpy.mock.calls
+      .map(([frame]) => frame as { type: string; payload: { clientRequestId?: string } })
+      .filter((frame) => frame.type === 'create_session');
 
-    const today = groups.find((g) => g.label === '今天')!;
-    // 倒序：today2(now) 在 today1 之前
-    expect(today.sessions.map((s) => s.sessionId)).toEqual(['today2', 'today1']);
+    push({
+      type: 'error',
+      payload: { code: 'forbidden_agent_profile', message: '当前账号无权启动该 Agent' },
+    });
+    push({
+      type: 'session_created',
+      payload: {
+        session: makeSession({ sessionId: 'late-rejected' }),
+        clientRequestId: creates[0].payload.clientRequestId!,
+      },
+    });
+    push({
+      type: 'session_created',
+      payload: {
+        session: makeSession({ sessionId: 'accepted-meeting' }),
+        clientRequestId: creates[1].payload.clientRequestId!,
+      },
+    });
 
-    expect(groups.find((g) => g.label === '昨天')!.sessions[0].sessionId).toBe('yest');
-    expect(groups.find((g) => g.label === '更早')!.sessions[0].sessionId).toBe('old');
+    const sentMessages = sendSpy.mock.calls
+      .map(([frame]) => frame as { type?: string; payload?: { sessionId?: string; content?: unknown } })
+      .filter((frame) => frame.type === 'send_user_message');
+    expect(sentMessages).toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          sessionId: 'accepted-meeting',
+          content: [{ type: 'text', value: '应继续发送的会议任务' }],
+        }),
+      }),
+    ]);
+    expect(view.result.current.state.lastError).toContain('当前账号无权启动该 Agent');
   });
 
-  it('空分组不出现在结果里', () => {
-    const startOfToday = new Date(2026, 5, 27).getTime();
-    const groups = groupSessions(
-      stateWith([makeSession({ sessionId: 'only', updatedAt: startOfToday + 1000 })]),
-    );
-    expect(groups.map((g) => g.label)).toEqual(['今天']);
+  it('已有会话的 Agent 权限错误不会取消无关的新 Agent 启动', () => {
+    const { view, push } = setup();
+    act(() => {
+      view.result.current.actions.launchAgentProfileWithPrompt('PPT', 'ppt', '继续创建');
+    });
+    const create = sendSpy.mock.calls
+      .map(([frame]) => frame as { type: string; payload: { clientRequestId?: string } })
+      .find((frame) => frame.type === 'create_session')!;
+
+    push({
+      type: 'error',
+      payload: {
+        sessionId: 'existing-session',
+        code: 'forbidden_agent_profile',
+        message: '现有会话权限已变化',
+      },
+    });
+    push({
+      type: 'session_created',
+      payload: {
+        session: makeSession({ sessionId: 'new-ppt' }),
+        clientRequestId: create.payload.clientRequestId!,
+      },
+    });
+
+    expect(sendSpy.mock.calls.some(([frame]) => (
+      (frame as { type?: string; payload?: { sessionId?: string } }).type === 'send_user_message'
+      && (frame as { payload?: { sessionId?: string } }).payload?.sessionId === 'new-ppt'
+    ))).toBe(true);
   });
 });

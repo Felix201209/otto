@@ -761,7 +761,13 @@ export interface OttoActions {
     agentProfileId: string,
     prompt: string,
     source?: MessageSource,
-  ): void;
+    attachments?: Attachment[],
+    authorizedContext?: string,
+    workspacePath?: string,
+    authorization?: { mode: 'manual' | 'auto'; scope: 'session' | 'all' },
+  ): { accepted: boolean; clientRequestId?: string };
+  /** Cancel unresolved profile launches, for identity/server scope changes and sign-out. */
+  cancelPendingAgentLaunches(): void;
   sendMessage(
     text: string,
     source?: MessageSource,
@@ -770,6 +776,8 @@ export interface OttoActions {
     authorizedContext?: string,
   ): void;
   setModel(model: string): void;
+  /** 切换当前会话的真实工作目录。 */
+  setWorkspace(workspacePath: string): void;
   cancel(): void;
   respondToolConfirmation(
     callId: string,
@@ -802,6 +810,21 @@ export interface UseOttoStoreOptions {
 
 let clientMsgSeq = 0;
 
+function buildUserMessageContent(
+  text: string,
+  attachments: Attachment[] = [],
+): OttoMessage['content'] {
+  const content: OttoMessage['content'] = [];
+  const trimmed = text.trim();
+  if (trimmed) content.push({ type: 'text', value: trimmed });
+  for (const value of attachments) {
+    if ('data' in value) content.push({ type: 'image_reference', value: value as ImageAttachment });
+    else if ('folderPath' in value) content.push({ type: 'folder_reference', value: value as FolderAttachment });
+    else content.push({ type: 'file_reference', value: value as FileAttachment });
+  }
+  return content;
+}
+
 export function useOttoStore(
   options: UseOttoStoreOptions = {},
 ): UseOttoStore {
@@ -832,18 +855,38 @@ export function useOttoStore(
     kickoff: string;
     source: MessageSource;
   } | null>(null);
-  const profileLaunchRef = useRef<{
+  const profileLaunchRef = useRef(new Map<string, {
     agentProfileId: string;
-    kickoff?: string;
+    content: OttoMessage['content'];
     source: MessageSource;
-  } | null>(null);
+    authorizedContext?: string;
+    workspacePath?: string;
+    authorization?: { mode: 'manual' | 'auto'; scope: 'session' | 'all' };
+    timeout: ReturnType<typeof setTimeout>;
+  }>());
 
   useEffect(() => {
     let cancelled = false;
+    const pendingProfileLaunches = profileLaunchRef.current;
 
     const unsubFrame = transport.onFrame((frame) => {
       maybeShowChatNotification(frame, activeRef.current, sessionsRef.current);
       dispatch({ kind: 'frame', frame });
+      if (frame.type === 'error'
+        && !frame.payload.sessionId
+        && (frame.payload.code === 'unknown_agent_profile'
+          || frame.payload.code === 'forbidden_agent_profile')) {
+        // create_session 错误帧没有 clientRequestId；同一 WebSocket 上请求与回包保持顺序，
+        // 因此只取消最早尚未确认的启动。不能清空整个 Map，否则一个被拒绝的 Agent
+        // 会连带取消其他合法的并发启动。
+        const oldestPending = profileLaunchRef.current.entries().next().value as
+          | [string, { timeout: ReturnType<typeof setTimeout> }]
+          | undefined;
+        if (oldestPending) {
+          clearTimeout(oldestPending[1].timeout);
+          profileLaunchRef.current.delete(oldestPending[0]);
+        }
+      }
       if (frame.type === 'chat_complete' && frame.payload.tokenUsage) {
         const { sessionId, messageId, tokenUsage } = frame.payload;
         try {
@@ -861,6 +904,38 @@ export function useOttoStore(
           }).catch(() => undefined);
         } catch {
           // preload 桥在异常启动阶段不可用时同样保持聊天主链路可用。
+        }
+      }
+      if (frame.type === 'session_created') {
+        const pending = profileLaunchRef.current.get(frame.payload.clientRequestId);
+        if (pending) {
+          profileLaunchRef.current.delete(frame.payload.clientRequestId);
+          clearTimeout(pending.timeout);
+          const sessionId = frame.payload.session.sessionId;
+          if (pending.workspacePath?.trim()) {
+            transport.send({ type: 'set_session_workspace', payload: { sessionId, workspacePath: pending.workspacePath.trim() } });
+          }
+          if (pending.authorization) {
+            transport.send({
+              type: 'set_authorization_mode',
+              payload: {
+                sessionId,
+                mode: pending.authorization.mode,
+                scope: pending.authorization.scope,
+              },
+            });
+          }
+          transport.send({
+            type: 'send_user_message',
+            payload: {
+              sessionId,
+              content: pending.content,
+              source: pending.source,
+              clientMessageId: `c-${Date.now()}-${clientMsgSeq++}`,
+              ...(pending.authorizedContext?.trim() ? { authorizedContext: pending.authorizedContext.trim().slice(0, 12_000) } : {}),
+            },
+          });
+          dispatch({ kind: 'select', sessionId });
         }
       }
       if (frame.type === 'knowledge_activity' && frame.payload.action === 'auto_capture') {
@@ -923,23 +998,6 @@ export function useOttoStore(
           source: spec.source,
         };
         dispatch({ kind: 'select', sessionId: sid });
-      } else if (
-        profileLaunchRef.current &&
-        frame.type === 'session_upsert' &&
-        frame.payload.session.agentProfileId === profileLaunchRef.current.agentProfileId &&
-        !sessionIdsRef.current.includes(frame.payload.session.sessionId)
-      ) {
-        const sid = frame.payload.session.sessionId;
-        const spec = profileLaunchRef.current;
-        profileLaunchRef.current = null;
-        if (spec.kickoff?.trim()) {
-          kickoffRef.current = {
-            sessionId: sid,
-            kickoff: spec.kickoff.trim(),
-            source: spec.source,
-          };
-        }
-        dispatch({ kind: 'select', sessionId: sid });
       }
     });
 
@@ -949,6 +1007,13 @@ export function useOttoStore(
     let wasConnected = false;
     const unsubConn = transport.onConnectionChange((connected) => {
       if (cancelled) return;
+      if (!connected) {
+        for (const pending of profileLaunchRef.current.values()) clearTimeout(pending.timeout);
+        if (profileLaunchRef.current.size > 0) {
+          dispatch({ kind: 'local_error', message: '连接已断开，Agent 任务未发送；请重连后重试。' });
+        }
+        profileLaunchRef.current.clear();
+      }
       dispatch({
         kind: 'connection',
         value: connected ? 'connected' : 'disconnected',
@@ -968,6 +1033,8 @@ export function useOttoStore(
 
     return () => {
       cancelled = true;
+      for (const pending of pendingProfileLaunches.values()) clearTimeout(pending.timeout);
+      pendingProfileLaunches.clear();
       unsubFrame();
       unsubConn();
     };
@@ -1122,10 +1189,6 @@ export function useOttoStore(
       dispatch({ kind: 'local_error', message: '未连接，无法启动 Agent' });
       return;
     }
-    profileLaunchRef.current = {
-      agentProfileId: cleanAgentProfileId,
-      source: 'local',
-    };
     transport.send({
       type: 'create_session',
       payload: { title, agentProfileId: cleanAgentProfileId },
@@ -1137,23 +1200,44 @@ export function useOttoStore(
     agentProfileId: string,
     prompt: string,
     source: MessageSource = 'local',
+    attachments: Attachment[] = [],
+    authorizedContext?: string,
+    workspacePath?: string,
+    authorization?: { mode: 'manual' | 'auto'; scope: 'session' | 'all' },
   ) => {
     const cleanAgentProfileId = agentProfileId.trim();
     const cleanPrompt = prompt.trim();
-    if (!cleanAgentProfileId || !cleanPrompt) return;
+    const content = buildUserMessageContent(cleanPrompt, attachments);
+    if (!cleanAgentProfileId || content.length === 0) return { accepted: false };
     if (connectionRef.current !== 'connected') {
       dispatch({ kind: 'local_error', message: '未连接，无法调用 Otto' });
-      return;
+      return { accepted: false };
     }
-    profileLaunchRef.current = {
+    const clientRequestId = crypto.randomUUID();
+    const timeout = setTimeout(() => {
+      if (!profileLaunchRef.current.delete(clientRequestId)) return;
+      dispatch({ kind: 'local_error', message: 'Agent 会话创建超时，任务未发送；你可以直接重试。' });
+    }, 30_000);
+    profileLaunchRef.current.set(clientRequestId, {
       agentProfileId: cleanAgentProfileId,
-      kickoff: cleanPrompt,
+      content,
       source,
-    };
+      authorizedContext,
+      workspacePath,
+      authorization,
+      timeout,
+    });
+    dispatch({ kind: 'pending_create', clientRequestId });
     transport.send({
       type: 'create_session',
-      payload: { title, agentProfileId: cleanAgentProfileId },
+      payload: { title, agentProfileId: cleanAgentProfileId, clientRequestId },
     });
+    return { accepted: true, clientRequestId };
+  }, []);
+
+  const cancelPendingAgentLaunches = useCallback((): void => {
+    for (const pending of profileLaunchRef.current.values()) clearTimeout(pending.timeout);
+    profileLaunchRef.current.clear();
   }, []);
 
   const sendMessage = useCallback(
@@ -1172,17 +1256,7 @@ export function useOttoStore(
         return;
       }
       const clientMessageId = `c-${Date.now()}-${clientMsgSeq++}`;
-      const content: OttoMessage['content'] = [];
-      if (trimmed) content.push({ type: 'text', value: trimmed });
-      for (const value of attachments) {
-        if ('data' in value) {
-          content.push({ type: 'image_reference', value: value as ImageAttachment });
-        } else if ('folderPath' in value) {
-          content.push({ type: 'folder_reference', value: value as FolderAttachment });
-        } else {
-          content.push({ type: 'file_reference', value: value as FileAttachment });
-        }
-      }
+      const content = buildUserMessageContent(trimmed, attachments);
       dispatch({
         kind: 'optimistic_user',
         message: {
@@ -1223,6 +1297,20 @@ export function useOttoStore(
     // 乐观更新：不等服务器确认，立即更新 UI
     dispatch({ kind: 'set_optimistic_model', model, sessionId });
     transport.send({ type: 'set_model', payload: { sessionId, model } });
+  }, []);
+
+  const setWorkspace = useCallback((workspacePath: string) => {
+    const sessionId = activeRef.current;
+    if (!sessionId || !workspacePath.trim()) return;
+    if (connectionRef.current !== 'connected') {
+      dispatch({ kind: 'local_error', message: '未连接，工作目录未切换' });
+      return;
+    }
+    if (sessionsRef.current[sessionId]?.workspacePath === workspacePath) return;
+    transport.send({
+      type: 'set_session_workspace',
+      payload: { sessionId, workspacePath },
+    });
   }, []);
 
   const cancel = useCallback(() => {
@@ -1280,8 +1368,10 @@ export function useOttoStore(
       launchExpert,
       launchAgentProfile,
       launchAgentProfileWithPrompt,
+      cancelPendingAgentLaunches,
       sendMessage,
       setModel,
+      setWorkspace,
       cancel,
       respondToolConfirmation,
       runSlashCommand,
@@ -1293,44 +1383,7 @@ export function useOttoStore(
 
 // ── selectors ─────────────────────────────────────────────────────────────
 
-/** 列表按 updatedAt 倒序，并按今天/昨天/更早分组。 */
-export interface SessionGroup {
-  label: string;
-  sessions: SessionSummary[];
-}
-
-export function groupSessions(state: OttoState): SessionGroup[] {
-  const all = state.sessionIds
-    .map((id) => state.sessions[id])
-    .filter((s): s is SessionSummary => Boolean(s))
-    .sort((a, b) => b.updatedAt - a.updatedAt);
-
-  const now = new Date();
-  const startOfToday = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-  ).getTime();
-  const startOfYesterday = startOfToday - 86_400_000;
-
-  const today: SessionSummary[] = [];
-  const yesterday: SessionSummary[] = [];
-  const earlier: SessionSummary[] = [];
-
-  for (const s of all) {
-    if (s.updatedAt >= startOfToday) today.push(s);
-    else if (s.updatedAt >= startOfYesterday) yesterday.push(s);
-    else earlier.push(s);
-  }
-
-  const groups: SessionGroup[] = [];
-  if (today.length) groups.push({ label: '今天', sessions: today });
-  if (yesterday.length) groups.push({ label: '昨天', sessions: yesterday });
-  if (earlier.length) groups.push({ label: '更早', sessions: earlier });
-  return groups;
-}
-
-/** 全量会话按 updatedAt 倒序（「查看全部对话」检索面板用）。 */
+/** 全量会话按 updatedAt 倒序（侧栏任务列表与「查看全部对话」检索面板共用）。 */
 export function selectSortedSessions(state: OttoState): SessionSummary[] {
   return state.sessionIds
     .map((id) => state.sessions[id])

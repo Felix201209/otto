@@ -188,8 +188,9 @@ export const mcpCommand: ServerSlashCommand = {
 export const extensionsCommand: ServerSlashCommand = {
   name: 'extensions',
   description: '列出已安装的扩展',
-  action: async ({ host }) => {
-    const extensions = await host.extensionSummaries();
+  action: async (ctx) => {
+    const { host } = ctx;
+    const extensions = await host.extensionSummaries(ctx.sessionId);
     if (extensions.length === 0) {
       return md(
         '未安装扩展（项目级 .otto-user/extensions 与全局 ~/.otto-user/extensions 均为空）。',

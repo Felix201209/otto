@@ -33,6 +33,8 @@ const ROLE_LABEL: Record<EnterprisePositionRoleMapping, string> = {
   enterprise_admin: '企业管理员',
 };
 
+export type EnterpriseAdministrationSection = 'organization' | 'park' | 'capabilities';
+
 function cleanError(error: unknown): string {
   return (error instanceof Error ? error.message : String(error))
     .replace(/^Error invoking remote method '[^']+':\s*/, '')
@@ -41,10 +43,13 @@ function cleanError(error: unknown): string {
 
 export function EnterpriseAdministrationPanel({
   accounts,
+  activeSection,
   onChanged,
   onFeaturesLoaded,
 }: {
   accounts: EnterpriseAccount[];
+  /** undefined 保持旧的完整展示；null 仅保留状态、不显示配置区。 */
+  activeSection?: EnterpriseAdministrationSection | null;
   onChanged?: () => void;
   onFeaturesLoaded?: (features: EnterpriseOrganizationFeatures) => void;
 }): React.JSX.Element {
@@ -126,24 +131,32 @@ export function EnterpriseAdministrationPanel({
     () => accounts.filter((account) => account.status === 'active'),
     [accounts],
   );
+  const sectionHidden = (section: EnterpriseAdministrationSection): boolean => (
+    activeSection === null || (activeSection !== undefined && activeSection !== section)
+  );
 
   return (
-    <section className="otto-enterprise-config" aria-label="企业组织与园区配置">
-      <header className="otto-enterprise-config__hero">
-        <div>
-          <span>ENTERPRISE CONTROL</span>
-          <h2>企业配置中心</h2>
-          <p>组织结构、权限开关和产业园端分区管理。这里的修改直接写入中心企业服务器，并同步到所有成员。</p>
-        </div>
+    <section
+      className="otto-enterprise-config"
+      aria-label="企业组织与园区配置"
+      hidden={activeSection === null}
+    >
+      <div className="otto-enterprise-config__toolbar">
         <button type="button" className="otto-enterprise-config__refresh" disabled={busy} onClick={() => void refresh()}>刷新</button>
-      </header>
+      </div>
 
       {error ? <div className="otto-account-invite__error" role="alert">{error}</div> : null}
       {message ? <div className="otto-account-invite__success" role="status">{message}</div> : null}
+      {!features ? (
+        <div className="otto-enterprise-config__card otto-enterprise-config__empty" role="status">
+          <h3>正在读取企业配置</h3>
+          <p>正在同步企业能力、组织结构和产业园状态…</p>
+        </div>
+      ) : null}
 
       {features ? (
-        <div className="otto-enterprise-config__card">
-          <h3>功能开关</h3><p>开关决定客户端是否展示对应能力；关闭后服务端接口同时 fail closed。</p>
+        <div className="otto-enterprise-config__card" hidden={sectionHidden('capabilities')}>
+          <h3>企业能力开关</h3><p>开关决定客户端是否展示对应能力；关闭后服务端接口同时 fail closed。</p>
           <div className="otto-enterprise-config__switches">
             {FEATURE_LABELS.map(([key, label]) => (
               <label key={key} className="otto-enterprise-config__switch">
@@ -167,8 +180,8 @@ export function EnterpriseAdministrationPanel({
       ) : null}
 
       {features?.enterprise_tree ? (
-        <div className="otto-enterprise-config__card">
-          <h3>组织结构</h3><p>用职位映射权限，避免单独给人手动加权导致权限漂移。</p>
+        <div className="otto-enterprise-config__card" hidden={sectionHidden('organization')}>
+          <h3>部门与职位</h3><p>用职位映射权限，避免单独给人手动加权导致权限漂移。</p>
           <div className="otto-enterprise-config__department-create">
             <label>
               <span>新部门</span>
@@ -306,9 +319,16 @@ export function EnterpriseAdministrationPanel({
         </div>
       ) : null}
 
+      {features && !features.enterprise_tree ? (
+        <div className="otto-enterprise-config__card otto-enterprise-config__empty" hidden={sectionHidden('organization')}>
+          <h3>组织结构尚未开启</h3>
+          <p>请前往“企业能力”开启企业组织树，然后再创建部门、职位和权限映射。</p>
+        </div>
+      ) : null}
+
       {features?.park_service ? (
-        <div className="otto-enterprise-config__card">
-          <h3>产业园端</h3><p>产业园管理方可以签发邀请码邀请其他企业入驻；普通企业只能凭有效邀请码加入。</p>
+        <div className="otto-enterprise-config__card" hidden={sectionHidden('park')}>
+          <h3>产业园配置</h3><p>产业园管理方可以签发邀请码邀请其他企业入驻；普通企业只能凭有效邀请码加入。</p>
           {park ? (
             <>
               <div className="otto-enterprise-config__park-state"><div><strong>{park.brandName}</strong><span>{park.name}</span></div><b>{park.isAdminOrganization ? '产业园管理方' : '入驻企业'}</b></div>
@@ -420,9 +440,16 @@ export function EnterpriseAdministrationPanel({
                   }), '整个企业已加入产业园');
                 }}>作为入驻企业加入</button>
               </div>
-              <p className="otto-enterprise-config__hint">创建产业园端需要平台管理员在多企业管理页面完成认证。普通企业 CEO 填写邀请码、企业地址和门牌号后，整个企业加入已有产业园。</p>
+              <p className="otto-enterprise-config__hint">创建产业园端需要平台管理员在多企业管理页面完成认证。普通企业管理员填写邀请码、企业地址和门牌号后，整个企业加入已有产业园。</p>
             </>
           )}
+        </div>
+      ) : null}
+
+      {features && !features.park_service ? (
+        <div className="otto-enterprise-config__card otto-enterprise-config__empty" hidden={sectionHidden('park')}>
+          <h3>产业园端尚未开启</h3>
+          <p>请前往“企业能力”开启园区服务，再配置入驻信息、服务专员和园区内容。</p>
         </div>
       ) : null}
     </section>

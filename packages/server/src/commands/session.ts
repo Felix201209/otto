@@ -46,8 +46,9 @@ export const compressCommand: ServerSlashCommand = {
 export const initCommand: ServerSlashCommand = {
   name: 'init',
   description: '分析当前目录并生成 OTTO.md 项目记忆',
-  action: async ({ host }) => {
-    const memoryPath = path.join(host.cwd(), 'OTTO.md');
+  action: async (ctx) => {
+    const { host } = ctx;
+    const memoryPath = path.join(host.cwd(ctx.sessionId), 'OTTO.md');
     const exists = await fs
       .access(memoryPath)
       .then(() => true)
@@ -61,7 +62,7 @@ export const initCommand: ServerSlashCommand = {
       return {
         kind: 'submit_prompt',
         content: result.content,
-        note: `已提交项目分析任务：Otto 正在分析 \`${host.cwd()}\` 并生成 OTTO.md……`,
+        note: `已提交项目分析任务：Otto 正在分析 \`${host.cwd(ctx.sessionId)}\` 并生成 OTTO.md……`,
       };
     }
     // core 目前只会返回 message / submit_prompt；tool 形态在 server 侧无工具管线可挂。

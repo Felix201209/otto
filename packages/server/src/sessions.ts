@@ -19,6 +19,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
 import {
   SESSION_TITLE_MAX_LEN,
   type MessageContent,
@@ -43,6 +44,8 @@ export type Unsubscribe = () => void;
 export interface SessionRuntime {
   /** 跑一轮对话：消费用户消息，产出流式事件（实装时映射成 publish 广播）。 */
   run(input: MessageContent, source: MessageSource): Promise<void>;
+  /** 用独立的轻量模型请求根据首条用户消息生成会话标题。 */
+  generateTitle?(firstUserMessage: string): Promise<string>;
   /** 中止当前轮。 */
   cancel(): void;
   /** 设置模型。 */
@@ -106,6 +109,8 @@ export interface SessionStore {
   setStatus(sessionId: string, status: SessionStatus): void;
   /** 更新会话选定模型（懒构建 runtime 时按此取模型）。 */
   patchSessionModel(sessionId: string, model: string): void;
+  /** 更新会话真实工作目录；调用方须先完成路径授权和目录校验。 */
+  patchSessionWorkspace(sessionId: string, workspacePath: string): void;
   /**
    * 重命名会话：改 title、刷新 updatedAt，并广播 session_upsert。
    * 返回更新后的摘要；会话不存在返回 undefined。
@@ -142,6 +147,8 @@ export interface InMemorySessionStoreLimits {
   maxSessions?: number;
   /** 每个会话最多保留的消息条数（超限丢最旧）。<=0 表示不限。 */
   maxMessagesPerSession?: number;
+  /** 新会话默认工作目录；桌面端注入用户主目录，通用 server 保留启动目录。 */
+  defaultWorkspacePath?: string;
 }
 
 /** 默认容量上限：对内嵌常驻桌面进程足够宽松，又能兜住无界增长。 */
@@ -162,11 +169,15 @@ export class InMemorySessionStore implements SessionStore {
   private readonly globalSubscribers = new Set<Subscriber>();
   private readonly maxSessions: number;
   private readonly maxMessagesPerSession: number;
+  private readonly defaultWorkspacePath: string;
 
   constructor(limits: InMemorySessionStoreLimits = {}) {
     this.maxSessions = limits.maxSessions ?? DEFAULT_MAX_SESSIONS;
     this.maxMessagesPerSession =
       limits.maxMessagesPerSession ?? DEFAULT_MAX_MESSAGES_PER_SESSION;
+    const cwd = process.cwd();
+    this.defaultWorkspacePath = limits.defaultWorkspacePath
+      ?? (!cwd || cwd === '/' || cwd === '\\' ? homedir() : cwd);
   }
 
   onEvict(cb: (sessionId: string) => void): Unsubscribe {
@@ -251,6 +262,7 @@ export class InMemorySessionStore implements SessionStore {
       feishuChatId: init.feishuChatId,
       status: 'idle',
       model: init.model,
+      workspacePath: init.workspacePath ?? this.defaultWorkspacePath,
       agentProfileId: init.agentProfileId,
       agentProfileName: init.agentProfileName,
       productEdition: init.productEdition,
@@ -385,6 +397,16 @@ export class InMemorySessionStore implements SessionStore {
     });
   }
 
+  patchSessionWorkspace(sessionId: string, workspacePath: string): void {
+    const s = this.sessions.get(sessionId);
+    if (!s) return;
+    s.summary = { ...s.summary, workspacePath, updatedAt: Date.now() };
+    this.publish(sessionId, {
+      type: 'session_upsert',
+      payload: { session: s.summary },
+    });
+  }
+
   renameSession(sessionId: string, title: string): SessionSummary | undefined {
     const s = this.sessions.get(sessionId);
     if (!s) return undefined;
@@ -479,6 +501,7 @@ export class InMemorySessionStore implements SessionStore {
    * 不广播、不再触发持久化——纯粹重建内部状态。status 由调用方归一为 idle。
    */
   protected hydrate(summary: SessionSummary, messages: OttoMessage[]): void {
+    summary.workspacePath ??= this.defaultWorkspacePath;
     this.sessions.set(summary.sessionId, {
       summary,
       messages,

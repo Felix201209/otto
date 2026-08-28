@@ -178,6 +178,52 @@ const AUTO_COMPRESS_MIN_MESSAGES = 30;
 /** 后台维护周期（ms）：记忆合并/压缩 + 上下文自动压缩。 */
 const MAINTENANCE_INTERVAL_MS = 10 * 60 * 1000;
 
+const DEFAULT_SESSION_TITLE = '新会话';
+const SESSION_TITLE_INPUT_MAX_CHARS = 4_000;
+const DEFAULT_SESSION_TITLE_TIMEOUT_MS = 15_000;
+
+function normalizeGeneratedSessionTitle(raw: string): string | undefined {
+  const title = raw
+    .split(/\r?\n/, 1)[0]
+    ?.trim()
+    .replace(/^[“”"'《》【】]+|[“”"'《》【】]+$/g, '');
+  return title && /^[\p{Script=Han}]{4,8}$/u.test(title) ? title : undefined;
+}
+
+function fallbackSessionTitle(firstUserMessage: string): string {
+  const withoutPolitePrefix = firstUserMessage
+    .trim()
+    .replace(/^(?:(?:请|麻烦|可以|能否)你?)?(?:帮我|帮忙)?(?:一下)?/u, '');
+  const han = withoutPolitePrefix.match(/\p{Script=Han}/gu)?.join('') ?? '';
+  if (han.length >= 4) return Array.from(han).slice(0, 8).join('');
+  return '日常交流';
+}
+
+function sessionTitleInputOf(content: MessageContent): string {
+  return content
+    .map((part) => {
+      switch (part.type) {
+        case 'text':
+          return part.value;
+        case 'file_reference':
+          return `文件：${part.value.fileName}`;
+        case 'folder_reference':
+          return `文件夹：${part.value.folderName}`;
+        case 'image_reference':
+          return `图片：${part.value.fileName}`;
+        case 'code_reference':
+          return `代码文件：${part.value.fileName}\n${part.value.code}`;
+        case 'text_file_content':
+          return `文件：${part.value.fileName}\n${part.value.content}`;
+        default:
+          return '';
+      }
+    })
+    .join('\n')
+    .trim()
+    .slice(0, SESSION_TITLE_INPUT_MAX_CHARS);
+}
+
 function publicAutoSkillCandidate(
   candidate: SkillCandidate,
 ): AutoSkillCandidateInfo {
@@ -208,6 +254,7 @@ export type RuntimeFactory = (
   model: string | undefined,
   workspaceContext?: string,
   documentIdentity?: DocumentIdentity,
+  workspacePath?: string,
 ) => Promise<SessionRuntime>;
 
 /**
@@ -229,6 +276,7 @@ const defaultRuntimeFactory: RuntimeFactory = async (
   model,
   workspaceContext,
   documentIdentity,
+  workspacePath,
 ) => {
   const summary = store.getSession(sessionId);
   const profile = resolveAgentProfile(summary?.agentProfileId);
@@ -248,6 +296,7 @@ const defaultRuntimeFactory: RuntimeFactory = async (
     // 回退到 preferred/首个个人模型，不能再进入尚未上线的中转站路径。
     model: resolveSessionRuntimeModel(summary?.productEdition, model),
     feishuMode: Boolean(summary?.feishuChatId),
+    cwd: workspacePath ?? summary?.workspacePath ?? resolveDefaultCwd(),
     ...(userRules ? { userRules } : {}),
     documentIdentity,
     searchTenantId:
@@ -282,6 +331,8 @@ export interface OttoServerOptions {
   /** 是否启用飞书网关（缺省读 env / credentials 探测）。 */
   enableFeishu?: boolean;
   store?: SessionStore;
+  /** 新会话默认工作目录；Electron 传用户主目录，独立 server 默认保留启动目录。 */
+  defaultWorkspacePath?: string;
   /**
    * 会话运行时工厂。缺省 = 包 otto-core 的真实运行时。
    * 注入自定义工厂用于测试或 mock 模式。
@@ -311,6 +362,8 @@ export interface OttoServerOptions {
   productWorkspaceStore?: ProductWorkspaceStore;
   /** 聊天附件服务端缓存目录；测试可注入临时目录。 */
   chatFileCacheDir?: string;
+  /** 后台标题生成超时；测试可缩短，生产默认 15 秒。 */
+  sessionTitleTimeoutMs?: number;
 }
 
 /** 飞书凭证存取接口（可注入；默认实现走 feishu/vendor/credentials.ts）。 */
@@ -369,12 +422,23 @@ export class OttoServer {
   >();
   private expiredIdentityFingerprint?: string;
   private readonly runtimeFactory: RuntimeFactory;
+  private readonly defaultWorkspacePath: string;
   private readonly mock: boolean;
   /** 同一会话首次 send 时懒构建 runtime，用此 map 去重并发初始化。 */
   private readonly runtimeInit = new Map<
     string,
     Promise<SessionRuntime | undefined>
   >();
+  /** 目录校验/切换中的会话；发送入口等待它，避免两种操作交叉。 */
+  private readonly workspaceUpdates = new Map<string, Promise<void>>();
+  /** 从接收消息到 runtime 接管前的窗口也禁止切目录。 */
+  private readonly messageDispatches = new Map<string, number>();
+  /** 同一会话只允许一个后台标题生成请求。 */
+  private readonly pendingSessionTitles = new Set<string>();
+  /** 在附件缓存前按 WS 接收顺序认领首条可标题化消息。 */
+  private readonly claimedSessionTitles = new Set<string>();
+  /** 手动命名永远高于迟到的 AI 标题。 */
+  private readonly manuallyRenamedSessions = new Set<string>();
   private globalAuthorizationMode: 'manual' | 'auto';
   private readonly sessionAuthorizationModes = new Map<
     string,
@@ -395,12 +459,14 @@ export class OttoServer {
   private workflowUnsub?: () => void;
   /** Agent 通过 local_schedule 改动后，实时推送桌面日历。 */
   private scheduleUnsub?: () => void;
+  private sessionEvictUnsub?: Unsubscribe;
   /** SessionStore 全局外部入站观察者；与当前会话 subscribe 无关。 */
   private externalInboundUnsub?: () => void;
   /** 进程级自动 Skill 扫描器由当前 server 实例启动时，停机时负责释放。 */
   private autoSkillScannerStarted = false;
   private readonly productWorkspace: ProductWorkspaceStore;
   private readonly chatFileCacheDir?: string;
+  private readonly sessionTitleTimeoutMs: number;
 
   constructor(opts: OttoServerOptions = {}) {
     this.host = opts.host ?? DEFAULT_HOST;
@@ -408,7 +474,15 @@ export class OttoServer {
       opts.port ?? Number(process.env.OTTO_SERVER_PORT ?? DEFAULT_PORT);
     this.enableFeishu =
       opts.enableFeishu ?? process.env.OTTO_FEISHU_ENABLED === '1';
-    this.store = opts.store ?? new InMemorySessionStore();
+    this.defaultWorkspacePath = opts.defaultWorkspacePath
+      ?? process.env.OTTO_DEFAULT_WORKSPACE_PATH
+      ?? resolveDefaultCwd();
+    this.store = opts.store ?? new InMemorySessionStore({
+      defaultWorkspacePath: this.defaultWorkspacePath,
+    });
+    this.sessionEvictUnsub = this.store.onEvict((sessionId) => {
+      this.cleanupSessionTitleState(sessionId);
+    });
     this.runtimeFactory = opts.runtimeFactory ?? defaultRuntimeFactory;
     // mock 决策：显式 opts.mock 优先，否则看 env；都没有则按「是否配了模型」自动判定。
     this.mock = opts.mock ?? process.env.OTTO_SERVER_MOCK === '1';
@@ -417,6 +491,8 @@ export class OttoServer {
     this.productWorkspace =
       opts.productWorkspaceStore ?? new ProductWorkspaceStore();
     this.chatFileCacheDir = opts.chatFileCacheDir;
+    this.sessionTitleTimeoutMs =
+      opts.sessionTitleTimeoutMs ?? DEFAULT_SESSION_TITLE_TIMEOUT_MS;
     this.globalAuthorizationMode =
       loadUserSettingsSubset().authorizationMode ?? 'manual';
   }
@@ -630,6 +706,11 @@ export class OttoServer {
 
   /** 停止服务（取消并释放所有活跃 runtime，再关 WS、HTTP、飞书）。 */
   async stop(): Promise<void> {
+    this.sessionEvictUnsub?.();
+    this.sessionEvictUnsub = undefined;
+    this.pendingSessionTitles.clear();
+    this.claimedSessionTitles.clear();
+    this.manuallyRenamedSessions.clear();
     this.externalInboundUnsub?.();
     this.externalInboundUnsub = undefined;
     if (this.enterpriseLeaseTimer) {
@@ -1022,6 +1103,7 @@ export class OttoServer {
       conn.subscriptions.delete(sessionId);
     }
     await this.store.deleteSession(sessionId);
+    this.cleanupSessionTitleState(sessionId);
   }
 
   /** 构建斜杠命令宿主（窄接口，注入给命令注册表使用）。 */
@@ -1031,13 +1113,16 @@ export class OttoServer {
       serverVersion: SERVER_VERSION,
       protocolVersion: PROTOCOL_VERSION,
       uptimeMs: () => Date.now() - this.startedAt,
-      cwd: () => resolveDefaultCwd(),
+      cwd: (sessionId) => this.store.getSession(sessionId)?.workspacePath
+        ?? this.defaultWorkspacePath,
       getConfig: (sid) =>
         this.store.getRuntime(sid)?.getConfig?.() as CoreConfig | undefined,
       currentModel: () => this.currentModel(),
       modelInfos: () => this.modelInfos(),
       mcpServerInfos: () => this.mcpServerInfos(),
-      extensionSummaries: () => discoverExtensionSummaries(resolveDefaultCwd()),
+      extensionSummaries: (sessionId) => discoverExtensionSummaries(
+        this.store.getSession(sessionId)?.workspacePath ?? this.defaultWorkspacePath,
+      ),
     };
   }
 
@@ -1224,6 +1309,83 @@ export class OttoServer {
     });
   }
 
+  /** 切换会话工作目录。只允许空闲会话，确保正在执行的工具不会被中途换根目录。 */
+  private handleSetSessionWorkspace(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'set_session_workspace' }>,
+  ): Promise<void> {
+    const { sessionId } = msg.payload;
+    const session = this.store.getSession(sessionId);
+    if (!session) {
+      this.send(conn.socket, errorFrame(sessionId, 'no_session', '会话不存在'));
+      return Promise.resolve();
+    }
+    if (
+      (session.status !== 'idle' && session.status !== 'error')
+      || this.runtimeInit.has(sessionId)
+      || this.messageDispatches.has(sessionId)
+      || this.workspaceUpdates.has(sessionId)
+    ) {
+      this.send(
+        conn.socket,
+        errorFrame(sessionId, 'session_busy', '当前任务执行中，完成或停止后再切换工作目录'),
+      );
+      return Promise.resolve();
+    }
+    const update = this.applySessionWorkspace(conn, msg);
+    this.workspaceUpdates.set(sessionId, update);
+    return update.finally(() => {
+      if (this.workspaceUpdates.get(sessionId) === update) {
+        this.workspaceUpdates.delete(sessionId);
+      }
+    });
+  }
+
+  private async applySessionWorkspace(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'set_session_workspace' }>,
+  ): Promise<void> {
+    const { sessionId } = msg.payload;
+    try {
+      const requested = path.resolve(msg.payload.workspacePath.trim());
+      const canonical = await fs.realpath(requested);
+      const stat = await fs.stat(canonical);
+      if (!stat.isDirectory()) throw new Error('所选路径不是目录');
+      const session = this.store.getSession(sessionId);
+      if (!session) {
+        this.send(conn.socket, errorFrame(sessionId, 'no_session', '会话不存在'));
+        return;
+      }
+      if (
+        (session.status !== 'idle' && session.status !== 'error')
+        || this.runtimeInit.has(sessionId)
+        || this.messageDispatches.has(sessionId)
+      ) {
+        this.send(
+          conn.socket,
+          errorFrame(sessionId, 'session_busy', '当前任务执行中，完成或停止后再切换工作目录'),
+        );
+        return;
+      }
+      if (canonical === session.workspacePath) return;
+
+      // Config.cwd 在 runtime 生命周期内不可变；切换后摘除旧 runtime，下次发送按新目录懒建。
+      const runtime = this.store.detachRuntime(sessionId);
+      runtime?.cancel();
+      await runtime?.dispose().catch(() => undefined);
+      this.store.patchSessionWorkspace(sessionId, canonical);
+    } catch (error) {
+      this.send(
+        conn.socket,
+        errorFrame(
+          sessionId,
+          'invalid_workspace',
+          `无法使用该工作目录：${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
+    }
+  }
+
   /**
    * 删除会话（delete_session 帧，不可逆）：
    *   校验会话存在 → 取消该会话正在跑的轮次（止损，别让删掉的会话继续烧 token）
@@ -1245,6 +1407,7 @@ export class OttoServer {
     // 先取消当前轮：deleteSession 只 dispose，不 cancel；正在跑的轮次要显式止损。
     this.store.getRuntime(sessionId)?.cancel();
     await this.store.deleteSession(sessionId);
+    this.cleanupSessionTitleState(sessionId);
     // 广播权威快照，让所有客户端把这条会话从列表里剔除（sessions_list 现在是快照语义）。
     this.broadcastAll({
       type: 'sessions_list',
@@ -1271,6 +1434,7 @@ export class OttoServer {
         errorFrame(sessionId, 'no_session', '会话不存在'),
       );
     }
+    this.manuallyRenamedSessions.add(sessionId);
     // renameSession 已 publish 给该会话订阅者；再全局广播一帧，覆盖未订阅它的窗口列表。
     this.broadcastAll({
       type: 'session_upsert',
@@ -1667,10 +1831,18 @@ export class OttoServer {
   // GUI 设置面板 handler（P1：记忆文件 / 技能库 / 工具清单 / 压缩上下文 / 导出会话）
   // ──────────────────────────────────────────────────────────────────────
 
+  private workspaceForSession(sessionId?: string): string {
+    return (sessionId ? this.store.getSession(sessionId)?.workspacePath : undefined)
+      ?? this.defaultWorkspacePath;
+  }
+
   /** 拉取层级记忆文件（项目 OTTO.md + 全局 ~/.otto-user/memory/OTTO.md）内容。 */
-  private async handleGetMemory(conn: ClientConn): Promise<void> {
+  private async handleGetMemory(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'get_memory' }>,
+  ): Promise<void> {
     try {
-      const cwd = resolveDefaultCwd();
+      const cwd = this.workspaceForSession(msg.payload.sessionId);
       const projectPath = path.join(cwd, 'OTTO.md');
       const globalPath = path.join(
         homedir(),
@@ -1711,13 +1883,19 @@ export class OttoServer {
   ): Promise<void> {
     const { fact } = msg.payload;
     try {
-      const memoryFilePath = path.join(resolveDefaultCwd(), 'OTTO.md');
+      const memoryFilePath = path.join(
+        this.workspaceForSession(msg.payload.sessionId),
+        'OTTO.md',
+      );
       await MemoryTool.performAddMemoryEntry(fact, memoryFilePath, {
         readFile: fs.readFile,
         writeFile: fs.writeFile,
         mkdir: fs.mkdir,
       });
-      await this.handleGetMemory(conn);
+      await this.handleGetMemory(conn, {
+        type: 'get_memory',
+        payload: { sessionId: msg.payload.sessionId },
+      });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       this.send(conn.socket, {
@@ -1730,10 +1908,20 @@ export class OttoServer {
     }
   }
 
-  /** 拉取已装技能列表（对齐 CLI /skill list，进程级、与会话无关）。 */
-  private async handleGetSkills(conn: ClientConn): Promise<void> {
+  /** 拉取已装技能列表（项目级 + 用户级，项目根随会话工作目录）。 */
+  private async handleGetSkills(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'get_skills' }>,
+  ): Promise<void> {
+    return this.sendSkillsList(
+      conn,
+      this.workspaceForSession(msg.payload.sessionId),
+    );
+  }
+
+  private async sendSkillsList(conn: ClientConn, workspacePath: string): Promise<void> {
     try {
-      const adapter = new SkillsCompatAdapter(resolveDefaultCwd());
+      const adapter = new SkillsCompatAdapter(workspacePath);
       const skills = await adapter.listSkills();
       const payload: SkillSummary[] = skills.map((s) => ({
         id: s.id,
@@ -2019,9 +2207,14 @@ export class OttoServer {
   }
 
   /** 拉取已安装扩展列表（项目级 + 全局 ~/.otto-user/extensions，去重）。 */
-  private async handleGetExtensions(conn: ClientConn): Promise<void> {
+  private async handleGetExtensions(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'get_extensions' }>,
+  ): Promise<void> {
     try {
-      const extensions = await discoverExtensionSummaries(resolveDefaultCwd());
+      const extensions = await discoverExtensionSummaries(
+        this.workspaceForSession(msg.payload.sessionId),
+      );
       this.send(conn.socket, {
         type: 'extensions_list',
         payload: { extensions },
@@ -2709,6 +2902,8 @@ export class OttoServer {
         return this.handleSendUserMessage(conn, msg);
       case 'set_model':
         return this.handleSetModel(conn, msg);
+      case 'set_session_workspace':
+        return this.handleSetSessionWorkspace(conn, msg);
       case 'set_authorization_mode': {
         const { sessionId, mode, scope } = msg.payload;
         if (scope === 'all') {
@@ -2920,7 +3115,10 @@ export class OttoServer {
               },
             },
           });
-          await this.handleGetSkills(conn);
+          await this.sendSkillsList(
+            conn,
+            this.workspaceForSession(msg.payload.sessionId),
+          );
           return;
         } catch (error) {
           return this.send(conn.socket, {
@@ -3110,11 +3308,11 @@ export class OttoServer {
           payload: { todos: todoStore.getTodos() as TodoItemInfo[] },
         });
       case 'get_memory':
-        return this.handleGetMemory(conn);
+        return this.handleGetMemory(conn, msg);
       case 'add_memory':
         return this.handleAddMemory(conn, msg);
       case 'get_skills':
-        return this.handleGetSkills(conn);
+        return this.handleGetSkills(conn, msg);
       case 'get_tools':
         return this.handleGetTools(conn, msg);
       case 'compress_context':
@@ -3124,7 +3322,7 @@ export class OttoServer {
       case 'get_workflows':
         return this.handleGetWorkflows(conn);
       case 'get_extensions':
-        return this.handleGetExtensions(conn);
+        return this.handleGetExtensions(conn, msg);
       case 'get_ide_status':
         return this.handleGetIdeStatus(conn);
       case 'get_knowledge':
@@ -3231,6 +3429,34 @@ export class OttoServer {
     conn: ClientConn,
     msg: Extract<ClientToServer, { type: 'send_user_message' }>,
   ): Promise<void> {
+    const { sessionId } = msg.payload;
+    const workspaceUpdate = this.workspaceUpdates.get(sessionId);
+    if (workspaceUpdate) await workspaceUpdate;
+    this.beginMessageDispatch(sessionId);
+    try {
+      await this.handleSendUserMessageAfterWorkspace(conn, msg);
+    } finally {
+      this.endMessageDispatch(sessionId);
+    }
+  }
+
+  private beginMessageDispatch(sessionId: string): void {
+    this.messageDispatches.set(
+      sessionId,
+      (this.messageDispatches.get(sessionId) ?? 0) + 1,
+    );
+  }
+
+  private endMessageDispatch(sessionId: string): void {
+    const remaining = (this.messageDispatches.get(sessionId) ?? 1) - 1;
+    if (remaining > 0) this.messageDispatches.set(sessionId, remaining);
+    else this.messageDispatches.delete(sessionId);
+  }
+
+  private async handleSendUserMessageAfterWorkspace(
+    conn: ClientConn,
+    msg: Extract<ClientToServer, { type: 'send_user_message' }>,
+  ): Promise<void> {
     const { sessionId, source, clientMessageId, authorizedContext } = msg.payload;
     let { content } = msg.payload;
     const session = this.store.getSession(sessionId);
@@ -3262,14 +3488,28 @@ export class OttoServer {
           productEdition: this.productWorkspace.snapshot().context.edition,
         });
         this.broadcastAll({ type: 'session_upsert', payload: { session: newSummary } });
+        const titleInput = this.claimSessionTitleInput(
+          newSummary.sessionId,
+          content,
+        );
         const cached = await this.cacheMessageFilesOrReport(
           conn,
           newSummary.sessionId,
           content,
         );
-        if (!cached) return;
+        if (!cached) {
+          this.releaseSessionTitleClaim(newSummary.sessionId, titleInput);
+          return;
+        }
         return this.handleSendUserMessageRaw(
-          newSummary.sessionId, conn, cached, source, clientMessageId, authorizedContext);
+          newSummary.sessionId,
+          conn,
+          cached,
+          source,
+          clientMessageId,
+          authorizedContext,
+          titleInput,
+        );
       }
 
       const cached = await this.cacheMessageFilesOrReport(conn, sessionId, content);
@@ -3292,8 +3532,12 @@ export class OttoServer {
       });
     }
 
+    const titleInput = this.claimSessionTitleInput(sessionId, content);
     const cached = await this.cacheMessageFilesOrReport(conn, sessionId, content);
-    if (!cached) return;
+    if (!cached) {
+      this.releaseSessionTitleClaim(sessionId, titleInput);
+      return;
+    }
     content = cached;
 
     return this.handleSendUserMessageRaw(
@@ -3303,6 +3547,7 @@ export class OttoServer {
       source,
       clientMessageId,
       authorizedContext,
+      titleInput,
     );
   }
 
@@ -3341,9 +3586,11 @@ export class OttoServer {
     source: MessageSource,
     clientMessageId?: string,
     authorizedContext?: string,
+    firstUserMessage?: string,
   ): Promise<void> {
     const session = this.store.getSession(sessionId);
     if (!session) {
+      this.releaseSessionTitleClaim(sessionId, firstUserMessage);
       return this.send(
         conn.socket,
         errorFrame(sessionId, 'no_session', '会话不存在'),
@@ -3351,6 +3598,7 @@ export class OttoServer {
     }
     const denied = this.sessionAuthorizationError(session);
     if (denied) {
+      this.releaseSessionTitleClaim(sessionId, firstUserMessage);
       if (session.status === 'thinking' || session.status === 'streaming') {
         this.store.getRuntime(sessionId)?.cancel();
       }
@@ -3359,6 +3607,7 @@ export class OttoServer {
         errorFrame(sessionId, 'forbidden_agent_profile', denied),
       );
     }
+    const shouldGenerateTitle = firstUserMessage !== undefined;
 
     // ── OttoSessionManager ──
     try {
@@ -3408,6 +3657,12 @@ export class OttoServer {
 
     // 内部测试阶段所有身份都必须先绑定自己的 API。真实运行不允许回退 mock
     if (!this.shouldMock() && this.modelInfos().every((model) => !model.enabled)) {
+      if (shouldGenerateTitle) {
+        this.applySessionTitleIfUnchanged(
+          sessionId,
+          fallbackSessionTitle(firstUserMessage),
+        );
+      }
       this.store.publish(sessionId, {
         type: 'error',
         payload: {
@@ -3421,12 +3676,24 @@ export class OttoServer {
     }
 
     if (this.shouldMock()) {
+      if (shouldGenerateTitle) {
+        this.applySessionTitleIfUnchanged(
+          sessionId,
+          fallbackSessionTitle(firstUserMessage),
+        );
+      }
       await this.mockEcho(sessionId);
       return;
     }
 
     let runtime = await this.ensureRuntime(sessionId);
     if (!runtime) {
+      if (shouldGenerateTitle) {
+        this.applySessionTitleIfUnchanged(
+          sessionId,
+          fallbackSessionTitle(firstUserMessage),
+        );
+      }
       this.store.setStatus(sessionId, 'idle');
       return;
     }
@@ -3448,6 +3715,13 @@ export class OttoServer {
           'forbidden_session',
           latestDenied ?? '中心企业身份已变化，请重试。',
         ),
+      );
+    }
+    if (shouldGenerateTitle) {
+      this.generateSessionTitleInBackground(
+        sessionId,
+        firstUserMessage,
+        runtime,
       );
     }
     const ephemeral = this.store.isEphemeralSession(sessionId);
@@ -3480,6 +3754,94 @@ export class OttoServer {
     } finally {
       if (ephemeral) await this.cleanupEphemeralSession(sessionId);
     }
+  }
+
+  private generateSessionTitleInBackground(
+    sessionId: string,
+    firstUserMessage: string,
+    runtime: SessionRuntime,
+  ): void {
+    const fallbackTitle = fallbackSessionTitle(firstUserMessage);
+    if (!runtime.generateTitle) {
+      this.applySessionTitleIfUnchanged(sessionId, fallbackTitle);
+      return;
+    }
+    if (this.pendingSessionTitles.has(sessionId)) return;
+    this.pendingSessionTitles.add(sessionId);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(
+        () => reject(new Error('session title generation timed out')),
+        this.sessionTitleTimeoutMs,
+      );
+      timeout.unref?.();
+    });
+    const titlePromise = Promise.resolve().then(() =>
+      runtime.generateTitle!(firstUserMessage));
+    void Promise.race([titlePromise, timeoutPromise])
+      .then((rawTitle) => {
+        this.applySessionTitleIfUnchanged(
+          sessionId,
+          normalizeGeneratedSessionTitle(rawTitle) ?? fallbackTitle,
+        );
+      })
+      .catch(() => this.applySessionTitleIfUnchanged(sessionId, fallbackTitle))
+      .finally(() => {
+        if (timeout) clearTimeout(timeout);
+        this.pendingSessionTitles.delete(sessionId);
+      });
+  }
+
+  private applySessionTitleIfUnchanged(sessionId: string, title: string): void {
+    const latest = this.store.getSession(sessionId);
+    if (
+      !latest
+      || latest.title !== DEFAULT_SESSION_TITLE
+      || this.manuallyRenamedSessions.has(sessionId)
+      || this.sessionAuthorizationError(latest)
+    ) {
+      return;
+    }
+    const updated = this.store.renameSession(sessionId, title);
+    if (updated) {
+      this.broadcastAll({
+        type: 'session_upsert',
+        payload: { session: updated },
+      });
+    }
+  }
+
+  private claimSessionTitleInput(
+    sessionId: string,
+    content: MessageContent,
+  ): string | undefined {
+    const session = this.store.getSession(sessionId);
+    if (
+      !session
+      || session.title !== DEFAULT_SESSION_TITLE
+      || this.claimedSessionTitles.has(sessionId)
+      || this.manuallyRenamedSessions.has(sessionId)
+      || this.store.getHistory(sessionId).some((message) => message.role === 'user')
+    ) {
+      return undefined;
+    }
+    const input = sessionTitleInputOf(content);
+    if (!input) return undefined;
+    this.claimedSessionTitles.add(sessionId);
+    return input;
+  }
+
+  private releaseSessionTitleClaim(
+    sessionId: string,
+    claimedInput: string | undefined,
+  ): void {
+    if (claimedInput !== undefined) this.claimedSessionTitles.delete(sessionId);
+  }
+
+  private cleanupSessionTitleState(sessionId: string): void {
+    this.pendingSessionTitles.delete(sessionId);
+    this.claimedSessionTitles.delete(sessionId);
+    this.manuallyRenamedSessions.delete(sessionId);
   }
 
   /**
@@ -3570,6 +3932,7 @@ export class OttoServer {
       ? resolveEnterpriseDocumentIdentity(enterpriseWorkspace)
       : undefined;
     const identityGeneration = this.enterpriseIdentityGeneration;
+    const workspacePath = summary?.workspacePath ?? this.defaultWorkspacePath;
     const task = (async (): Promise<SessionRuntime | undefined> => {
       try {
         const runtime = await this.runtimeFactory(
@@ -3578,6 +3941,7 @@ export class OttoServer {
           model,
           workspaceContext,
           documentIdentity,
+          workspacePath,
         );
         const latestSummary = this.store.getSession(sessionId);
         const denied = latestSummary
@@ -3585,6 +3949,7 @@ export class OttoServer {
           : '会话已不存在';
         if (
           identityGeneration !== this.enterpriseIdentityGeneration ||
+          (latestSummary?.workspacePath ?? this.defaultWorkspacePath) !== workspacePath ||
           denied
         ) {
           runtime.cancel();
@@ -3895,9 +4260,25 @@ export class OttoServer {
     if (!queue || queue.length === 0) return;
     const next = queue.shift()!;
     if (queue.length === 0) this.messageQueues.delete(sessionId);
+    // 在让出当前事件循环前先占住目录锁，避免 idle→下一轮接管之间切根目录。
+    this.beginMessageDispatch(sessionId);
     // fire-and-forget: 下一轮不阻塞当前返回
     setImmediate(() => {
-      this.handleSendUserMessageRaw(
+      void this.handleQueuedMessage(
+        sessionId,
+        conn,
+        next,
+      );
+    });
+  }
+
+  private async handleQueuedMessage(
+    sessionId: string,
+    conn: ClientConn,
+    next: QueuedMessage,
+  ): Promise<void> {
+    try {
+      await this.handleSendUserMessageRaw(
         sessionId,
         conn,
         next.content,
@@ -3905,7 +4286,11 @@ export class OttoServer {
         next.clientMessageId,
         next.authorizedContext,
       );
-    });
+    } catch (error) {
+      console.error('[Server] queued message failed:', error);
+    } finally {
+      this.endMessageDispatch(sessionId);
+    }
   }
 
 }

@@ -209,6 +209,7 @@ export class OttoClient {
         this.config.getPreferredLanguage(),
         this.getCustomModelInfo(model),
         this.config.getFeishuMode(),
+        this.config.getWorkingDir(),
       ),
     });
     const memoryRecall = await this.buildMemoryRecallSection();

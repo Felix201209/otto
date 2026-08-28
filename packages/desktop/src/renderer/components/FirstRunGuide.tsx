@@ -70,14 +70,6 @@ const STEPS: Record<UiMode, readonly GuideStep[]> = {
       icon: IconPaperclip,
     },
     {
-      title: '需要专门能力时选择专家',
-      description: 'PPT、Word、会议、数据分析等专家会在独立页面中完成对应工作。',
-      tip: '点击顶栏“专家”，选择最接近当前任务的专家即可开始。',
-      selector: '.otto-topbar__actions',
-      placement: 'bottom',
-      icon: IconAgent,
-    },
-    {
       title: '历史与企业入口都在左侧',
       description: '新建对话、查找历史、查看消息、进入组织架构和设置都集中在这里。',
       tip: '未读消息会保留红点，点击对应入口即可直达。',
@@ -89,7 +81,7 @@ const STEPS: Record<UiMode, readonly GuideStep[]> = {
   work: [
     {
       title: '对话与工作区并排协作',
-      description: '中间处理当前任务，右侧持续展示专家、文档、记忆和日志，不必来回切页。',
+      description: '中间处理当前任务，右侧持续展示专家和企业记忆，不必来回切页。',
       tip: '适合需要边沟通、边查看资料和工作状态的连续任务。',
       selector: '.otto-content-layout',
       placement: 'center',
@@ -97,8 +89,8 @@ const STEPS: Record<UiMode, readonly GuideStep[]> = {
     },
     {
       title: '右侧工作区会一直陪着你',
-      description: '切换专家、查看文档、企业记忆和工作日志时，当前对话仍保留在中间。',
-      tip: '点击右侧标签即可切换内容，面板也可以随时收起。',
+      description: '切换专家或查看企业记忆时，当前对话仍保留在中间。',
+      tip: '点击右侧标签即可切换内容，工作区会保持展开。',
       selector: '.otto-right-panel',
       placement: 'left',
       icon: IconAgent,

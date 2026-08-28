@@ -6,9 +6,11 @@ import { describe, expect, it } from 'vitest';
 import {
   INTERNAL_TEST_ACCESS_ENABLED,
   INTERNAL_TEST_ACCOUNT,
+  INTERNAL_TEST_ADMIN_ACCOUNT,
   isAuthenticatedEnterpriseAccount,
   resolveEnterpriseAccessMode,
 } from './internal-test-access.js';
+import { resolveCentralEnterpriseIdentity } from './state/centralEnterpriseIdentity.js';
 
 describe('v1.9.2 企业认证访问模式', () => {
   it('交付版默认恢复真实登录，同时保留可逆的本地测试身份', () => {
@@ -25,6 +27,17 @@ describe('v1.9.2 企业认证访问模式', () => {
     expect(INTERNAL_TEST_ACCOUNT.isAdmin).toBe(false);
     expect(INTERNAL_TEST_ACCOUNT.organizationId).toBe('local-internal-test');
     expect(INTERNAL_TEST_ACCOUNT.phone).toBeNull();
+  });
+
+  it('独立的管理员预览身份只用于展示企业版前端入口', () => {
+    expect(INTERNAL_TEST_ADMIN_ACCOUNT).toMatchObject({
+      id: 'local_internal_admin_preview',
+      accountType: 'enterprise',
+      name: '本地管理员',
+      role: '企业管理员',
+      isAdmin: true,
+    });
+    expect(isAuthenticatedEnterpriseAccount(INTERNAL_TEST_ADMIN_ACCOUNT)).toBe(false);
   });
 
   it('关闭内测开关后按加载、登录、邀请注册和真实会话完整分流', () => {
@@ -65,5 +78,6 @@ describe('v1.9.2 企业认证访问模式', () => {
 
   it('合成本地身份永远不能冒充真实企业账号', () => {
     expect(isAuthenticatedEnterpriseAccount(INTERNAL_TEST_ACCOUNT)).toBe(false);
+    expect(resolveCentralEnterpriseIdentity(INTERNAL_TEST_ACCOUNT).edition).toBe('personal');
   });
 });

@@ -944,7 +944,10 @@ Your core function is efficient and safe assistance. Balance extreme conciseness
 /**
  * 获取动态系统提示词（可能不同的部分）
  */
-export function getDynamicSystemPrompt(userMemory?: string): string {
+export function getDynamicSystemPrompt(
+  userMemory?: string,
+  workingDirectory = process.cwd(),
+): string {
   const sandboxContent = (function () {
     const isSandboxExec = process.env.SANDBOX === 'sandbox-exec';
     const isGenericSandbox = !!process.env.SANDBOX;
@@ -968,7 +971,7 @@ You are running outside of a sandbox container, directly on the user's system. F
   })();
 
   const gitContent = (function () {
-    if (isGitRepository(process.cwd())) {
+    if (isGitRepository(workingDirectory)) {
       return `
 # Git Repository
 - The current working (project) directory is being managed by a git repository.
@@ -996,7 +999,7 @@ You are running outside of a sandbox container, directly on the user's system. F
   // LLM Wiki awareness: if the wiki has been initialized, inject a short context
   // so the model knows how to operate on it during normal conversation.
   const wikiContext = (function () {
-    const wikiIndex = path.join(process.cwd(), '.llm-wiki', 'index.md');
+    const wikiIndex = path.join(workingDirectory, '.llm-wiki', 'index.md');
     if (fs.existsSync(wikiIndex)) {
       return `
 # LLM Wiki
@@ -1090,6 +1093,7 @@ export function getCoreSystemPrompt(
   preferredLanguage?: string,
   customModelInfo?: CustomModelInfo,
   isFeishu?: boolean,
+  workingDirectory?: string,
 ): string {
   // Handle backward compatibility: promptRegistryOrUserRules can be PromptRegistry or userRules string
   let promptRegistry: PromptRegistry | undefined;
@@ -1163,7 +1167,7 @@ export function getCoreSystemPrompt(
     );
   }
 
-  const dynamicPrompt = getDynamicSystemPrompt(userMemory);
+  const dynamicPrompt = getDynamicSystemPrompt(userMemory, workingDirectory);
 
   // if OTTO_WRITE_SYSTEM_MD is set (and not 0|false), write base system prompt to
   // file. Legacy name GEMINI_WRITE_SYSTEM_MD is kept as a fallback.

@@ -9,8 +9,8 @@
  * 数据与动作全部来自 useSettingsData，本文件只负责排版。
  */
 
-import React, { useEffect, useState } from 'react';
-import type { UiMode } from '../../uiModePreference.js';
+import React, { useEffect, useRef, useState } from 'react';
+import { DEFAULT_UI_MODE, type UiMode } from '../../uiModePreference.js';
 import { UiModePreview } from '../UiModeGuide.js';
 import type { UseSettingsData } from '../../state/useSettingsData.js';
 import { GeneratedIcon, type GeneratedIconName } from '../GeneratedIcon.js';
@@ -58,6 +58,9 @@ export function PrefsPanel({
   // 外观主题：独立于 server settings（走 main 的 nativeTheme IPC，本机持久化）。
   const [theme, setTheme] = useState<'system' | 'light' | 'dark'>('system');
   const [petWidgetEnabled, setPetWidgetEnabled] = useState(readPetWidgetEnabled);
+  const [resetStatus, setResetStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
+  const [themeResetSettled, setThemeResetSettled] = useState(true);
+  const resetErrorBaseline = useRef<string | null>(null);
 
   useEffect(() => {
     setLangDraft(s?.preferredLanguage ?? '');
@@ -78,17 +81,129 @@ export function PrefsPanel({
     void window.otto?.themeSet?.(v);
   };
 
+  useEffect(() => {
+    if (resetStatus !== 'success') return;
+    const timer = window.setTimeout(() => setResetStatus('idle'), 1800);
+    return () => window.clearTimeout(timer);
+  }, [resetStatus]);
+
+  useEffect(() => {
+    if (resetStatus !== 'pending') return;
+    const timer = window.setTimeout(() => setResetStatus('error'), 8000);
+    return () => window.clearTimeout(timer);
+  }, [resetStatus]);
+
+  useEffect(() => {
+    if (
+      resetStatus === 'pending' &&
+      state.lastError &&
+      state.lastError !== resetErrorBaseline.current
+    ) {
+      setResetStatus('error');
+    }
+  }, [resetStatus, state.lastError]);
+
+  const preferencesAreDefault = Boolean(
+    s &&
+      uiMode === DEFAULT_UI_MODE &&
+      theme === 'system' &&
+      s.agentStyle === 'default' &&
+      !petWidgetEnabled &&
+      s.healthyUse === true &&
+      (s.preferredLanguage ?? '') === '' &&
+      langDraft === ''
+  );
+  const hasNonDefaultPreference = Boolean(s && !preferencesAreDefault);
+
+  useEffect(() => {
+    if (
+      (resetStatus === 'pending' || resetStatus === 'error') &&
+      themeResetSettled &&
+      preferencesAreDefault
+    ) {
+      setResetStatus('success');
+    }
+  }, [preferencesAreDefault, resetStatus, themeResetSettled]);
+
+  const resetPreferences = async (): Promise<void> => {
+    if (
+      !s ||
+      resetStatus === 'pending' ||
+      resetStatus === 'success' ||
+      !hasNonDefaultPreference
+    ) {
+      return;
+    }
+    if (!window.confirm(
+      '恢复外观与回复的默认设置？\n\n这会重置本页面的界面、主题和回复偏好，不会影响账号、工作目录或其他设置。',
+    )) return;
+
+    resetErrorBaseline.current = state.lastError;
+    setResetStatus('pending');
+    const previousTheme = theme;
+    const needsThemeReset = theme !== 'system';
+    setThemeResetSettled(!needsThemeReset);
+    try {
+      if (uiMode !== DEFAULT_UI_MODE) onUiModeChange(DEFAULT_UI_MODE);
+      let themeReset: Promise<unknown> | undefined;
+      if (needsThemeReset) {
+        setTheme('system');
+        themeReset = window.otto?.themeSet?.('system');
+      }
+      if (s.agentStyle !== 'default') actions.setSetting('agentStyle', 'default');
+      if (s.healthyUse !== true) actions.setSetting('healthyUse', true);
+      if ((s.preferredLanguage ?? '') !== '') {
+        actions.setSetting('preferredLanguage', '');
+      }
+      if (petWidgetEnabled) {
+        setPetWidgetEnabled(false);
+        writePetWidgetEnabled(false);
+      }
+      setLangDraft('');
+      await themeReset;
+      setThemeResetSettled(true);
+    } catch {
+      // 主题 IPC 失败时恢复原来的视觉状态，并保留可重试入口。
+      setTheme(previousTheme);
+      setThemeResetSettled(false);
+      setResetStatus('error');
+    }
+  };
+
+  const resetButtonLabel =
+    resetStatus === 'pending'
+      ? '正在恢复…'
+      : resetStatus === 'success'
+        ? '已恢复'
+        : resetStatus === 'error'
+          ? '恢复失败，重试'
+          : '恢复默认设置';
+
   return (
-    <Panel title="外观与回复" desc="只保留日常真正需要的选择；默认设置已经适合大多数人。">
+    <Panel
+      title="外观与回复"
+      desc="只保留日常真正需要的选择；默认设置已经适合大多数人。"
+      actions={(
+        <button
+          type="button"
+          className="otto-hub__btn"
+          disabled={
+            !s ||
+            resetStatus === 'pending' ||
+            resetStatus === 'success' ||
+            !hasNonDefaultPreference
+          }
+          onClick={() => { void resetPreferences(); }}
+        >
+          {resetButtonLabel}
+        </button>
+      )}
+    >
       {!s ? (
         <Empty>正在加载偏好设置…</Empty>
       ) : (
         <>
         <Card className="otto-prefs-simple">
-          <div className="otto-prefs-simple__intro">
-            <span className="otto-prefs-simple__check" aria-hidden>✓</span>
-            <div><strong>推荐设置已生效</strong><span>不知道怎么选时保持默认就好，所有选项都会立即生效。</span></div>
-          </div>
           <div className="otto-hub__setting otto-hub__setting--stack">
             <div className="otto-hub__setting-text">
               <div className="otto-hub__field-label">界面模式</div>

@@ -6,7 +6,7 @@
 
 /**
  * 左侧栏。以会话列表为主体：
- *   品牌 otto✦ / + 新建对话 / 今天·昨天分组会话列表（flex:1 主体）/
+ *   品牌 Otto / 带图标的主导航 / 可按时间或工作目录分组的会话列表（flex:1 主体）/
  *   底部账号区（辅助入口与当前账号）。
  *   常用工具（企业专家入口、全部智能体）已迁往右侧 RightPanel。
  *
@@ -16,20 +16,53 @@
  * 会话项因此从 <button> 改为 role=button 的 <div>：按钮不能嵌按钮/输入框（无效 HTML）。
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { SessionSummary } from 'otto-server';
-import { type SessionGroup } from '../state/useOttoStore.js';
 import { computeNavBadgeCounts } from '../attentionCenter.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import {
-  IconPlus,
   IconChevronDown,
   IconUserAvatar,
+  IconSettings,
+  IconLogOut,
+  IconFolderOpen,
+  IconCheck,
+  IconPersonalization,
+  IconSquarePen,
+  IconLayoutDashboard,
+  IconNetwork,
+  IconMessageCircle,
+  IconBriefcaseBusiness,
+  IconBuilding2,
 } from './icons.js';
 import { LogoutConfirmDialog } from './LogoutConfirmDialog.js';
 import { JoinEnterpriseDialog } from './JoinEnterpriseDialog.js';
 import type { EnterpriseAccount } from '../../preload/index.js';
 import type { EnterpriseUnreadCounts } from '../enterpriseUnreadNotifications.js';
+import type { UiModePreferenceScope } from '../uiModePreference.js';
+import {
+  groupSessionsForSidebar,
+  readSessionListPreference,
+  sessionListPreferenceStorageKey,
+  writeSessionListPreference,
+  type SessionListPreference,
+} from '../sessionListView.js';
+
+const GROUPING_MENU_WIDTH = 218;
+const GROUPING_MENU_VIEWPORT_MARGIN = 12;
+const GROUPING_MENU_TRIGGER_GAP = 4;
+
+function getGroupingMenuPosition(rect: DOMRect): { top: number; left: number } {
+  const maxLeft = Math.max(
+    GROUPING_MENU_VIEWPORT_MARGIN,
+    window.innerWidth - GROUPING_MENU_WIDTH - GROUPING_MENU_VIEWPORT_MARGIN,
+  );
+  return {
+    top: rect.bottom + GROUPING_MENU_TRIGGER_GAP,
+    left: Math.min(Math.max(GROUPING_MENU_VIEWPORT_MARGIN, rect.left), maxLeft),
+  };
+}
 
 function formatTime(ts: number): string {
   const d = new Date(ts);
@@ -38,41 +71,9 @@ function formatTime(ts: number): string {
   return `${hh}:${mm}`;
 }
 
-/** 按用户本地自然日计算相对日期，避免跨时区或夏令时把“昨天”算成同一天。 */
-function formatRelativeDay(ts: number, now = Date.now()): string {
-  const current = new Date(now);
-  const target = new Date(ts);
-  const currentDay = Date.UTC(current.getFullYear(), current.getMonth(), current.getDate());
-  const targetDay = Date.UTC(target.getFullYear(), target.getMonth(), target.getDate());
-  const days = Math.max(0, Math.round((currentDay - targetDay) / 86_400_000));
-  if (days === 0) return '今天';
-  if (days === 1) return '昨天';
-  return `${days}天前`;
-}
-
-function relativeSessionGroups(groups: SessionGroup[]): SessionGroup[] {
-  const result: SessionGroup[] = [];
-  const byLabel = new Map<string, SessionSummary[]>();
-  const now = Date.now();
-  const sessions = groups
-    .flatMap((group) => group.sessions)
-    .sort((a, b) => b.updatedAt - a.updatedAt);
-
-  for (const session of sessions) {
-    const label = formatRelativeDay(session.updatedAt, now);
-    const bucket = byLabel.get(label);
-    if (bucket) bucket.push(session);
-    else {
-      const first = [session];
-      byLabel.set(label, first);
-      result.push({ label, sessions: first });
-    }
-  }
-  return result;
-}
-
 interface SidebarProps {
-  groups: SessionGroup[];
+  sessions: SessionSummary[];
+  preferenceScope: UiModePreferenceScope;
   activeSessionId: string | null;
   /** 当前是否停在「设置」页（高亮该入口）。 */
   hubActive?: boolean;
@@ -100,8 +101,11 @@ interface SidebarProps {
 }
 
 export function Sidebar({
-  groups,
+  sessions,
+  preferenceScope,
   activeSessionId,
+  hubActive = false,
+  updateBadge = false,
   activeView = 'chat',
   accountManagementActive = false,
   enterpriseAccount,
@@ -109,6 +113,7 @@ export function Sidebar({
   parkTicketUnreadCount = 0,
   onSelect,
   onNewChat,
+  onOpenHub,
   onOpenAccounts,
   onNavigate,
   onJoinEnterprise,
@@ -118,11 +123,46 @@ export function Sidebar({
   unreadSessions,
 }: SidebarProps): React.JSX.Element {
   const [sessionsOpen, setSessionsOpen] = useState(true);
+  const [workspaceScrollbarActive, setWorkspaceScrollbarActive] = useState(false);
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [joinEnterpriseOpen, setJoinEnterpriseOpen] = useState(false);
   const [logoutBusy, setLogoutBusy] = useState(false);
-  const sessionGroups = relativeSessionGroups(groups);
-  const sessionCount = sessionGroups.reduce((total, group) => total + group.sessions.length, 0);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [groupingMenuOpen, setGroupingMenuOpen] = useState(false);
+  const [groupingMenuPosition, setGroupingMenuPosition] = useState({ top: 0, left: 0 });
+  const accountMenuRef = useRef<HTMLDivElement>(null);
+  const accountMenuTriggerRef = useRef<HTMLButtonElement>(null);
+  const accountMenuItemRef = useRef<HTMLButtonElement>(null);
+  const groupingMenuRef = useRef<HTMLDivElement>(null);
+  const groupingMenuSurfaceRef = useRef<HTMLDivElement>(null);
+  const groupingMenuTriggerRef = useRef<HTMLButtonElement>(null);
+  const groupingMenuItemRef = useRef<HTMLButtonElement>(null);
+  const workspaceScrollbarHideTimerRef = useRef<number | null>(null);
+  const preferenceKey = sessionListPreferenceStorageKey(preferenceScope);
+  const [preferenceState, setPreferenceState] = useState<{
+    key: string;
+    preference: SessionListPreference;
+  }>(() => ({
+    key: preferenceKey,
+    preference: readSessionListPreference(preferenceScope),
+  }));
+  const preference = preferenceState.key === preferenceKey
+    ? preferenceState.preference
+    : readSessionListPreference(preferenceScope);
+  const sessionGroups = useMemo(
+    () => groupSessionsForSidebar(sessions, preference.mode),
+    [preference.mode, sessions],
+  );
+  const sessionCount = sessions.length;
+  const collapsedWorkspaceKeys = useMemo(
+    () => new Set(preference.collapsedWorkspaceKeys),
+    [preference.collapsedWorkspaceKeys],
+  );
+  const activeWorkspaceGroupKey = preference.mode === 'workspace'
+    ? sessionGroups.find((group) => group.sessions.some(
+      (session) => session.sessionId === activeSessionId,
+    ))?.key
+    : undefined;
   const enterpriseUnreadTotal = Object.values(enterpriseUnreadCounts)
     .reduce((total, count) => total + count, 0);
   const countedEnterpriseSessions = new Set(
@@ -133,6 +173,118 @@ export function Sidebar({
   const unreadSessionRemainder = unreadSessions
     ?.filter((sessionId) => !countedEnterpriseSessions.has(sessionId)).length ?? 0;
   const unreadCount = enterpriseUnreadTotal + unreadSessionRemainder;
+
+  const revealWorkspaceScrollbar = (): void => {
+    setWorkspaceScrollbarActive(true);
+    if (workspaceScrollbarHideTimerRef.current !== null) {
+      window.clearTimeout(workspaceScrollbarHideTimerRef.current);
+    }
+    workspaceScrollbarHideTimerRef.current = window.setTimeout(() => {
+      setWorkspaceScrollbarActive(false);
+      workspaceScrollbarHideTimerRef.current = null;
+    }, 900);
+  };
+
+  const commitPreference = (next: SessionListPreference): void => {
+    setPreferenceState({ key: preferenceKey, preference: next });
+    writeSessionListPreference(preferenceScope, next);
+  };
+
+  useEffect(() => {
+    if (preferenceState.key === preferenceKey) return;
+    setPreferenceState({
+      key: preferenceKey,
+      preference: readSessionListPreference(preferenceScope),
+    });
+  }, [preferenceKey, preferenceScope, preferenceState.key]);
+
+  useEffect(() => () => {
+    if (workspaceScrollbarHideTimerRef.current !== null) {
+      window.clearTimeout(workspaceScrollbarHideTimerRef.current);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!activeWorkspaceGroupKey
+      || !preference.collapsedWorkspaceKeys.includes(activeWorkspaceGroupKey)) return;
+    commitPreference({
+      ...preference,
+      collapsedWorkspaceKeys: preference.collapsedWorkspaceKeys.filter(
+        (key) => key !== activeWorkspaceGroupKey,
+      ),
+    });
+    // 只在当前会话、工作目录组或模式变化时自动展开；用户之后仍可手动折叠。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSessionId, activeWorkspaceGroupKey, preference.mode, preferenceKey]);
+
+  useEffect(() => {
+    if (!accountMenuOpen) return;
+    accountMenuItemRef.current?.focus();
+
+    const onDocumentMouseDown = (event: MouseEvent): void => {
+      if (!accountMenuRef.current?.contains(event.target as Node)) {
+        setAccountMenuOpen(false);
+      }
+    };
+    const onDocumentKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return;
+      setAccountMenuOpen(false);
+      accountMenuTriggerRef.current?.focus();
+    };
+
+    document.addEventListener('mousedown', onDocumentMouseDown);
+    document.addEventListener('keydown', onDocumentKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onDocumentMouseDown);
+      document.removeEventListener('keydown', onDocumentKeyDown);
+    };
+  }, [accountMenuOpen]);
+
+  useEffect(() => {
+    if (!groupingMenuOpen) return;
+    groupingMenuItemRef.current?.focus();
+
+    const onDocumentMouseDown = (event: MouseEvent): void => {
+      const target = event.target as Node;
+      if (!groupingMenuRef.current?.contains(target)
+        && !groupingMenuSurfaceRef.current?.contains(target)) {
+        setGroupingMenuOpen(false);
+      }
+    };
+    const onDocumentKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return;
+      setGroupingMenuOpen(false);
+      groupingMenuTriggerRef.current?.focus();
+    };
+
+    document.addEventListener('mousedown', onDocumentMouseDown);
+    document.addEventListener('keydown', onDocumentKeyDown);
+    const repositionMenu = (): void => {
+      const rect = groupingMenuTriggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setGroupingMenuPosition(getGroupingMenuPosition(rect));
+    };
+    window.addEventListener('resize', repositionMenu);
+    window.addEventListener('scroll', repositionMenu, true);
+    return () => {
+      document.removeEventListener('mousedown', onDocumentMouseDown);
+      document.removeEventListener('keydown', onDocumentKeyDown);
+      window.removeEventListener('resize', repositionMenu);
+      window.removeEventListener('scroll', repositionMenu, true);
+    };
+  }, [groupingMenuOpen]);
+
+  const toggleGroupingMenu = (): void => {
+    if (groupingMenuOpen) {
+      setGroupingMenuOpen(false);
+      return;
+    }
+    const rect = groupingMenuTriggerRef.current?.getBoundingClientRect();
+    if (rect) {
+      setGroupingMenuPosition(getGroupingMenuPosition(rect));
+    }
+    setGroupingMenuOpen(true);
+  };
 
   return (
     <aside className="otto-sidebar">
@@ -152,59 +304,167 @@ export function Sidebar({
         ) : null}
       </div>
 
-      <button type="button" className="otto-newchat" onClick={onNewChat}>
-        <IconPlus size={15} />
-        新建对话
-      </button>
+      {/* 主导航：企业管理员额外显示企业管理；设置仍位于底部账户区。 */}
+      <NavItems
+        activeView={activeView}
+        accountManagementActive={accountManagementActive}
+        enterpriseUnreadCounts={enterpriseUnreadCounts}
+        parkTicketUnreadCount={parkTicketUnreadCount}
+        unreadSessions={unreadSessions}
+        onNewChat={onNewChat}
+        onNavigate={onNavigate}
+        onOpenAccounts={
+          enterpriseAccount?.accountType !== 'personal' && enterpriseAccount?.isAdmin
+            ? onOpenAccounts
+            : undefined
+        }
+      />
 
-      {/* 主导航：五个一级入口，各自映射到主内容区的完整页面。 */}
-      {onNavigate ? (
-        <NavItems
-          activeView={activeView}
-          enterpriseUnreadCounts={enterpriseUnreadCounts}
-          parkTicketUnreadCount={parkTicketUnreadCount}
-          unreadSessions={unreadSessions}
-          onNavigate={onNavigate}
-        />
-      ) : null}
-
-      <div className="otto-sidebar__workspace">
+      <div
+        className={`otto-sidebar__workspace${workspaceScrollbarActive ? ' is-scrollbar-active' : ''}`}
+        onPointerMove={revealWorkspaceScrollbar}
+        onScroll={revealWorkspaceScrollbar}
+        onWheel={revealWorkspaceScrollbar}
+        onKeyDown={revealWorkspaceScrollbar}
+      >
         <section className="otto-conversations" aria-label="任务">
-          <button
-            type="button"
-            className="otto-conversations__toggle"
-            onClick={() => setSessionsOpen((value) => !value)}
-            aria-expanded={sessionsOpen}
-            aria-label={`任务（${sessionCount}）`}
-          >
-            <span>任务（{sessionCount}）</span>
-            <IconChevronDown
-              size={13}
-              className={'otto-conversations__chevron' + (sessionsOpen ? '' : ' is-collapsed')}
-            />
-          </button>
+          <div className="otto-conversations__header">
+            <button
+              type="button"
+              className="otto-conversations__toggle"
+              onClick={() => setSessionsOpen((value) => !value)}
+              aria-expanded={sessionsOpen}
+              aria-label={`任务（${sessionCount}）`}
+            >
+              <span className="otto-conversations__title">
+                <span>任务</span>
+                <span className="otto-conversations__count" aria-hidden="true">
+                  {sessionCount}
+                </span>
+              </span>
+              <IconChevronDown
+                size={13}
+                className={'otto-conversations__chevron' + (sessionsOpen ? '' : ' is-collapsed')}
+              />
+            </button>
+            <div className="otto-session-grouping" ref={groupingMenuRef}>
+              <button
+                ref={groupingMenuTriggerRef}
+                type="button"
+                className="otto-session-grouping__trigger"
+                aria-label="视图选项"
+                aria-haspopup="menu"
+                aria-expanded={groupingMenuOpen}
+                onClick={toggleGroupingMenu}
+              >
+                <IconPersonalization size={16} />
+              </button>
+              {groupingMenuOpen ? createPortal(
+                <div
+                  ref={groupingMenuSurfaceRef}
+                  className="otto-session-grouping__menu"
+                  role="menu"
+                  aria-label="视图选项"
+                  style={groupingMenuPosition}
+                >
+                  <div className="otto-session-grouping__menulabel" role="presentation">
+                    分组方式
+                  </div>
+                  {([
+                    ['time', '按时间'],
+                    ['workspace', '按工作目录'],
+                  ] as const).map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      ref={mode === preference.mode ? groupingMenuItemRef : undefined}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={preference.mode === mode}
+                      className="otto-session-grouping__menuitem"
+                      onClick={() => {
+                        commitPreference({ ...preference, mode });
+                        setGroupingMenuOpen(false);
+                        groupingMenuTriggerRef.current?.focus();
+                      }}
+                    >
+                      <span>{label}</span>
+                      {preference.mode === mode ? <IconCheck size={16} /> : null}
+                    </button>
+                  ))}
+                </div>,
+                document.body,
+              ) : null}
+            </div>
+          </div>
 
           {sessionsOpen ? (
             <div className="otto-sessions">
               {sessionGroups.length === 0 ? (
                 <div className="otto-group__label">暂无对话</div>
               ) : (
-                sessionGroups.map((g) => (
-                  <div key={g.label}>
-                    <div className="otto-group__label">{g.label}</div>
-                    {g.sessions.map((s) => (
-                      <SessionItem
-                        key={s.sessionId}
-                        session={s}
-                        active={s.sessionId === activeSessionId}
-                        unread={unreadSessions?.includes(s.sessionId) ?? false}
-                        onSelect={onSelect}
-                        onRename={onRename}
-                        onDelete={onDelete}
-                      />
-                    ))}
-                  </div>
-                ))
+                sessionGroups.map((group) => {
+                  const collapsed = group.collapsible && collapsedWorkspaceKeys.has(group.key);
+                  const groupUnreadCount = group.sessions.filter(
+                    (session) => unreadSessions?.includes(session.sessionId),
+                  ).length;
+                  return (
+                    <div
+                      key={group.key}
+                      className={`otto-session-group${group.collapsible ? ' otto-session-group--workspace' : ''}`}
+                    >
+                      {group.collapsible ? (
+                        <button
+                          type="button"
+                          className="otto-workspace-group__toggle"
+                          aria-expanded={!collapsed}
+                          aria-label={
+                            `${group.label}，${group.sessions.length} 个任务`
+                            + (groupUnreadCount > 0 ? `，${groupUnreadCount} 个未读任务` : '')
+                          }
+                          title={group.fullPath}
+                          onClick={() => {
+                            const nextCollapsed = collapsed
+                              ? preference.collapsedWorkspaceKeys.filter((key) => key !== group.key)
+                              : [...preference.collapsedWorkspaceKeys, group.key];
+                            commitPreference({
+                              ...preference,
+                              collapsedWorkspaceKeys: nextCollapsed,
+                            });
+                          }}
+                        >
+                          <IconChevronDown
+                            size={12}
+                            className={'otto-conversations__chevron' + (collapsed ? ' is-collapsed' : '')}
+                          />
+                          <IconFolderOpen size={16} className="otto-workspace-group__icon" />
+                          <span className="otto-workspace-group__label">{group.label}</span>
+                          <span className="otto-workspace-group__count">{group.sessions.length}</span>
+                          {groupUnreadCount > 0 ? (
+                            <span
+                              className="otto-workspace-group__unread"
+                              aria-hidden="true"
+                            >
+                              {groupUnreadCount > 99 ? '99+' : groupUnreadCount}
+                            </span>
+                          ) : null}
+                        </button>
+                      ) : (
+                        <div className="otto-group__label">{group.label}</div>
+                      )}
+                      {!collapsed ? group.sessions.map((session) => (
+                        <SessionItem
+                          key={session.sessionId}
+                          session={session}
+                          active={session.sessionId === activeSessionId}
+                          unread={unreadSessions?.includes(session.sessionId) ?? false}
+                          onSelect={onSelect}
+                          onRename={onRename}
+                          onDelete={onDelete}
+                        />
+                      )) : null}
+                    </div>
+                  );
+                })
               )}
             </div>
           ) : null}
@@ -212,20 +472,6 @@ export function Sidebar({
       </div>
 
       <div className="otto-sidebar__footer">
-        {enterpriseAccount?.accountType !== 'personal'
-          && enterpriseAccount?.isAdmin
-          && onOpenAccounts ? (
-          <button
-            type="button"
-            className={'otto-viewall otto-viewall--accounts' + (accountManagementActive ? ' is-active' : '')}
-            onClick={onOpenAccounts}
-            aria-current={accountManagementActive ? 'page' : undefined}
-            title="CEO 企业管理中心"
-          >
-            <span className="otto-viewall__accounticon" aria-hidden>◎</span>
-            CEO 管理
-          </button>
-        ) : null}
         {enterpriseAccount?.accountType === 'personal' && onJoinEnterprise ? (
           <button
             type="button"
@@ -238,24 +484,56 @@ export function Sidebar({
           </button>
         ) : null}
         {enterpriseAccount ? (
-          <div className="otto-sidebar-account">
-            <span className="otto-sidebar-account__avatar" aria-hidden>
-              <IconUserAvatar size={34} />
-            </span>
-            <span className="otto-sidebar-account__copy">
-              <strong>{enterpriseAccount.name}</strong>
-              <small>{enterpriseAccount.department || '个人空间'}</small>
-            </span>
-            {onLogout ? (
-              <button
-                type="button"
-                className="otto-sidebar-account__logout"
-                onClick={() => setLogoutConfirmOpen(true)}
-                aria-label="退出登录"
-                title="退出登录"
-              >
-                退出
-              </button>
+          <div className="otto-sidebar-account" ref={accountMenuRef}>
+            <button
+              ref={accountMenuTriggerRef}
+              type="button"
+              className="otto-sidebar-account__identity"
+              aria-label={`${enterpriseAccount.name}，${enterpriseAccount.department || '个人空间'}`}
+              aria-haspopup="menu"
+              aria-expanded={accountMenuOpen}
+              onClick={() => setAccountMenuOpen((open) => !open)}
+            >
+              <span className="otto-sidebar-account__avatar" aria-hidden>
+                <IconUserAvatar size={34} />
+              </span>
+              <span className="otto-sidebar-account__copy">
+                <strong>{enterpriseAccount.name}</strong>
+                <small>{enterpriseAccount.department || '个人空间'}</small>
+              </span>
+            </button>
+            <button
+              type="button"
+              className={'otto-sidebar-account__settings' + (hubActive || activeView === 'hub' ? ' is-active' : '')}
+              onClick={() => {
+                setAccountMenuOpen(false);
+                onOpenHub();
+              }}
+              aria-label="设置"
+              aria-current={hubActive || activeView === 'hub' ? 'page' : undefined}
+              title="设置"
+            >
+              <IconSettings size={17} />
+              {updateBadge ? <span className="otto-sidebar-account__update" aria-label="有可用更新" /> : null}
+            </button>
+            {accountMenuOpen ? (
+              <div className="otto-sidebar-account__menu" role="menu" aria-label="账户菜单">
+                <button
+                  ref={accountMenuItemRef}
+                  type="button"
+                  role="menuitem"
+                  className="otto-sidebar-account__menuitem otto-sidebar-account__menuitem--danger"
+                  disabled={!onLogout}
+                  onClick={() => {
+                    if (!onLogout) return;
+                    setAccountMenuOpen(false);
+                    setLogoutConfirmOpen(true);
+                  }}
+                >
+                  <IconLogOut size={16} />
+                  <span>退出登录</span>
+                </button>
+              </div>
             ) : null}
           </div>
         ) : null}
@@ -295,16 +573,22 @@ export function Sidebar({
 
 function NavItems({
   activeView,
+  accountManagementActive,
   enterpriseUnreadCounts,
   parkTicketUnreadCount,
   unreadSessions,
+  onNewChat,
   onNavigate,
+  onOpenAccounts,
 }: {
   activeView: string;
+  accountManagementActive: boolean;
   enterpriseUnreadCounts: EnterpriseUnreadCounts;
   parkTicketUnreadCount: number;
   unreadSessions?: string[];
-  onNavigate: (view: 'chat' | 'organization' | 'inbox' | 'work' | 'hub') => void;
+  onNewChat: () => void;
+  onNavigate?: (view: 'chat' | 'organization' | 'inbox' | 'work' | 'hub') => void;
+  onOpenAccounts?: () => void;
 }): React.JSX.Element {
   const { inboxUnread, workUnread } = computeNavBadgeCounts(
     enterpriseUnreadCounts,
@@ -331,18 +615,22 @@ function NavItems({
   }, [inboxUnread, workUnread]);
 
   const navItems = [
-    { key: 'chat', label: '工作台', view: 'chat', unread: 0 },
-    { key: 'organization', label: '组织架构', view: 'organization', unread: 0 },
-    { key: 'inbox', label: '我的消息', view: 'inbox', unread: inboxUnread },
-    { key: 'work', label: '我的工作', view: 'work', unread: workUnread },
-    { key: 'hub', label: '设置', view: 'hub', unread: 0 },
+    { key: 'chat', label: '工作台', view: 'chat', unread: 0, icon: IconLayoutDashboard },
+    { key: 'organization', label: '组织架构', view: 'organization', unread: 0, icon: IconNetwork },
+    { key: 'inbox', label: '我的消息', view: 'inbox', unread: inboxUnread, icon: IconMessageCircle },
+    { key: 'work', label: '我的工作', view: 'work', unread: workUnread, icon: IconBriefcaseBusiness },
   ] as const;
 
   return (
     <nav className="otto-sidebar__nav" aria-label="主导航">
-      {navItems.map((item) => {
+      <button type="button" className="otto-sidebar__navitem" onClick={onNewChat}>
+        <IconSquarePen size={18} className="otto-sidebar__navicon" />
+        <span>新建对话</span>
+      </button>
+      {onNavigate ? navItems.map((item) => {
         const isActive = activeView === item.view;
         const hasAttention = attentionKeys.has(item.key) && !isActive;
+        const ItemIcon = item.icon;
         return (
           <button
             key={item.key}
@@ -355,6 +643,7 @@ function NavItems({
             aria-current={isActive ? 'page' : undefined}
             onClick={() => onNavigate(item.view)}
           >
+            <ItemIcon size={18} className="otto-sidebar__navicon" />
             <span>{item.label}</span>
             {item.unread > 0 ? (
               <b
@@ -367,7 +656,18 @@ function NavItems({
             ) : null}
           </button>
         );
-      })}
+      }) : null}
+      {onOpenAccounts ? (
+        <button
+          type="button"
+          className={'otto-sidebar__navitem' + (accountManagementActive ? ' is-active' : '')}
+          aria-current={accountManagementActive ? 'page' : undefined}
+          onClick={onOpenAccounts}
+        >
+          <IconBuilding2 size={18} className="otto-sidebar__navicon" />
+          <span>企业管理</span>
+        </button>
+      ) : null}
     </nav>
   );
 }

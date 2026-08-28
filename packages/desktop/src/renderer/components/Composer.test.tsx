@@ -45,6 +45,146 @@ function openMenu() {
   return screen.getByRole('listbox', { name: '选择模型' });
 }
 
+describe('输入区工具布局与弹层', () => {
+  it('工作目录和授权位于输入面板上方，模型位于发送按钮左侧，且无独立文件夹按钮', () => {
+    const { container } = render(
+      <Composer
+        models={makeModels(2)}
+        currentModel="m0"
+        sessionId="s1"
+        workspacePath="/Users/yang/project"
+        recentWorkspacePaths={['/Users/yang/project']}
+        onSetWorkspace={vi.fn()}
+        onSend={vi.fn()}
+        onSetModel={vi.fn()}
+      />,
+    );
+    const contextBar = container.querySelector('.otto-composer__contextbar');
+    expect(contextBar?.querySelector('.otto-workspace')).not.toBeNull();
+    expect(contextBar?.querySelector('.otto-authorization')).not.toBeNull();
+    expect(container.querySelector('[aria-label="添加文件夹"]')).toBeNull();
+    const bar = container.querySelector('.otto-composer__bar')!;
+    const model = bar.querySelector('.otto-modelpill')!;
+    const send = bar.querySelector('.otto-send')!;
+    expect(model.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('同一时间只打开一个列表，点击列表外或按 Esc 会关闭', () => {
+    render(
+      <Composer
+        models={makeModels(2)}
+        currentModel="m0"
+        sessionId="s1"
+        workspacePath="/Users/yang/project"
+        recentWorkspacePaths={['/Users/yang/project']}
+        onSetWorkspace={vi.fn()}
+        onSend={vi.fn()}
+        onSetModel={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /^工作目录：/ }));
+    expect(screen.getByRole('menu', { name: '选择工作目录' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /执行授权/ }));
+    expect(screen.queryByRole('menu', { name: '选择工作目录' })).toBeNull();
+    expect(screen.getByRole('menu', { name: '选择执行授权方式' })).toBeTruthy();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole('menu', { name: '选择执行授权方式' })).toBeNull();
+    fireEvent.click(document.querySelector('.otto-modelpill') as Element);
+    expect(screen.getByRole('listbox', { name: '选择模型' })).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('listbox', { name: '选择模型' })).toBeNull();
+  });
+
+  it('模型列表通过全局浮层渲染，不受输入面板层级限制', () => {
+    const { container } = render(
+      <Composer
+        models={makeModels(2)}
+        currentModel="m0"
+        sessionId="s1"
+        workspacePath="/Users/yang/project"
+        onSend={vi.fn()}
+        onSetModel={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(container.querySelector('.otto-modelpill') as Element);
+    const menu = screen.getByRole('listbox', { name: '选择模型' });
+    const portal = menu.parentElement;
+
+    expect(menu.closest('.otto-composer__inner')).toBeNull();
+    expect(portal?.classList.contains('otto-modelmenu-portal')).toBe(true);
+    expect(portal?.classList.contains('otto-popover-anchor')).toBe(true);
+    expect(portal?.parentElement).toBe(document.body);
+  });
+
+  it('回形针菜单同时保留添加文件与目录附件能力', () => {
+    render(
+      <Composer models={[]} currentModel={null} sessionId="s1" onSend={vi.fn()} onSetModel={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '添加附件' }));
+    expect(screen.getByRole('menuitem', { name: '添加文件或图片' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: '添加文件夹作为附件' })).toBeTruthy();
+  });
+
+  it('发送按钮仅在有非空白内容时启用，并保持同一按钮语义', () => {
+    render(
+      <Composer models={[]} currentModel={null} sessionId="s1" onSend={vi.fn()} onSetModel={vi.fn()} />,
+    );
+    const textarea = document.querySelector('.otto-composer__textarea') as HTMLTextAreaElement;
+    const send = screen.getByRole('button', { name: '发送' }) as HTMLButtonElement;
+
+    expect(send.disabled).toBe(true);
+    expect(send.classList.contains('otto-send')).toBe(true);
+    fireEvent.change(textarea, { target: { value: '   ' } });
+    expect(send.disabled).toBe(true);
+    fireEvent.change(textarea, { target: { value: '开始执行' } });
+    expect(send.disabled).toBe(false);
+  });
+
+  it('原生工作目录选择失败时给出非阻断错误，用户取消保持静默', async () => {
+    const selectWorkspaceDirectory = vi.fn()
+      .mockRejectedValueOnce(new Error('无法读取该目录'))
+      .mockResolvedValueOnce(null);
+    const getWorkspaceDirectories = vi.fn(async () => ({
+      defaultPath: '/Users/yang',
+      recentPaths: ['/Users/yang'],
+    }));
+    Object.assign(window.otto, { selectWorkspaceDirectory, getWorkspaceDirectories });
+    const { rerender } = render(
+      <Composer
+        models={[]}
+        currentModel={null}
+        sessionId="s1"
+        workspacePath="/Users/yang"
+        onSetWorkspace={vi.fn()}
+        onSend={vi.fn()}
+        onSetModel={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /^工作目录：/ }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /添加工作目录/ }));
+    expect((await screen.findByRole('alert')).textContent).toContain('无法读取该目录');
+
+    fireEvent.click(screen.getByRole('menuitem', { name: /添加工作目录/ }));
+    await waitFor(() => expect(selectWorkspaceDirectory).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole('alert').textContent).toContain('无法读取该目录');
+
+    rerender(
+      <Composer
+        models={[]}
+        currentModel={null}
+        sessionId="s2"
+        workspacePath="/Users/yang/next"
+        onSetWorkspace={vi.fn()}
+        onSend={vi.fn()}
+        onSetModel={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  });
+});
+
 describe('专家提示词草稿', () => {
   it('填入后不自动发送，用户可修改再发送', () => {
     const onSend = vi.fn();
@@ -65,7 +205,44 @@ describe('专家提示词草稿', () => {
 
     fireEvent.change(textarea, { target: { value: '帮我做一份产品发布会 PPT' } });
     fireEvent.keyDown(textarea, { key: 'Enter' });
-    expect(onSend).toHaveBeenCalledWith('帮我做一份产品发布会 PPT', []);
+    expect(onSend).toHaveBeenCalledWith(
+      '帮我做一份产品发布会 PPT',
+      [],
+      { mode: 'auto', scope: 'all' },
+    );
+  });
+});
+
+describe('右侧模块 Agent 标签', () => {
+  it('显示选中 Agent，允许移除，拒绝创建时保留草稿并阻止双击重复提交', async () => {
+    let resolveSend!: (accepted: boolean) => void;
+    const onSend = vi.fn(() => new Promise<boolean>((resolve) => { resolveSend = resolve; }));
+    const onClearPendingAgent = vi.fn();
+    render(
+      <Composer
+        models={[]}
+        currentModel={null}
+        sessionId="agent-session"
+        pendingAgent={{ moduleId: 'agent-ppt', title: 'PPT 创作专家', profileId: 'ppt', icon: 'agent' }}
+        onClearPendingAgent={onClearPendingAgent}
+        onSend={onSend}
+        onSetModel={vi.fn()}
+      />,
+    );
+    const agentStatus = screen.getByRole('status');
+    const composerInner = document.querySelector('.otto-composer__inner');
+    expect(screen.getByText('PPT 创作专家')).toBeTruthy();
+    expect(composerInner?.contains(agentStatus)).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: '移除 PPT 创作专家' }));
+    expect(onClearPendingAgent).toHaveBeenCalledTimes(1);
+
+    const textarea = document.querySelector('.otto-composer__textarea') as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: '制作发布会' } });
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+    expect(onSend).toHaveBeenCalledTimes(1);
+    await act(async () => resolveSend(false));
+    expect(textarea.value).toBe('制作发布会');
   });
 });
 
@@ -190,9 +367,9 @@ describe('执行授权菜单', () => {
     localStorage.clear();
     renderComposer([], null);
     fireEvent.click(screen.getByRole('button', { name: '执行授权：所有会话自动' }));
-    expect(document.querySelector('.otto-authorization__option-icon--manual svg')).toBeTruthy();
-    expect(document.querySelector('.otto-authorization__option-icon--session svg')).toBeTruthy();
-    expect(document.querySelector('.otto-authorization__option-icon--global svg')).toBeTruthy();
+    expect(document.querySelector('.otto-authorization__option-icon--manual path[d^="M18 11V6"]')).toBeTruthy();
+    expect(document.querySelector('.otto-authorization__option-icon--session path[d="M8 12h.01M12 12h.01M16 12h.01"]')).toBeTruthy();
+    expect(document.querySelector('.otto-authorization__option-icon--global path[d="m9 12 2 2 4-4"]')).toBeTruthy();
     fireEvent.click(screen.getByRole('menuitemradio', { name: /自动授权（仅当前会话）/ }));
     expect(localStorage.getItem('otto.authorization.global-auto')).toBe('0');
     expect(send.mock.calls.slice(-2).map(([message]) => message)).toEqual([
@@ -336,7 +513,7 @@ describe('每会话草稿隔离', () => {
     expect(ta().value).toBe('draft-for-s2');
   });
 
-  it('发送后清空，切走再切回不残留已发送内容', () => {
+  it('发送后清空，切走再切回不残留已发送内容', async () => {
     const onSend = vi.fn();
     const { rerender } = render(
       <Composer
@@ -350,8 +527,12 @@ describe('每会话草稿隔离', () => {
 
     fireEvent.change(ta(), { target: { value: 'hello' } });
     fireEvent.keyDown(ta(), { key: 'Enter' });
-    expect(onSend).toHaveBeenCalledWith('hello', []);
-    expect(ta().value).toBe('');
+    expect(onSend).toHaveBeenCalledWith(
+      'hello',
+      [],
+      { mode: 'manual', scope: 'session' },
+    );
+    await waitFor(() => expect(ta().value).toBe(''));
 
     // 切走再切回 s1：草稿表里不该残留已发送的 'hello'。
     rerender(
@@ -488,7 +669,8 @@ describe('附件预览卡片', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    fireEvent.click(screen.getByRole('button', { name: '添加附件' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '添加文件夹作为附件' }));
     const folderName = await screen.findByText('客户资料');
     const card = folderName.closest('.otto-attachment');
     expect(selectFolders).toHaveBeenCalledTimes(1);
@@ -497,9 +679,11 @@ describe('附件预览卡片', () => {
     expect(await screen.findByTitle(folderPath)).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
-    expect(onSend).toHaveBeenCalledWith('', [
-      { folderName: '客户资料', folderPath },
-    ]);
+    expect(onSend).toHaveBeenCalledWith(
+      '',
+      [{ folderName: '客户资料', folderPath }],
+      { mode: 'manual', scope: 'session' },
+    );
   });
 
   it('拖入外部卷文件时通过 webUtils 保留真实路径并随消息发送', async () => {
@@ -527,9 +711,11 @@ describe('附件预览卡片', () => {
 
     expect(await screen.findByTitle(externalPath)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
-    expect(onSend).toHaveBeenCalledWith('', [
-      { fileName: '园区方案.pdf', filePath: externalPath },
-    ]);
+    expect(onSend).toHaveBeenCalledWith(
+      '',
+      [{ fileName: '园区方案.pdf', filePath: externalPath }],
+      { mode: 'manual', scope: 'session' },
+    );
   });
 
   it('拖入文件若无法由 preload/main 授权，不会附加或发送裸路径', async () => {

@@ -10,11 +10,13 @@
  */
 
 import type React from 'react';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
-import { render, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, render, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { SessionSummary } from 'otto-server';
 import { Sidebar } from './Sidebar.js';
-import type { SessionGroup } from '../state/useOttoStore.js';
+import { sessionListPreferenceStorageKey } from '../sessionListView.js';
 
 const PERSONAL_ACCOUNT = {
   id: 'acc_personal',
@@ -44,6 +46,11 @@ const ENTERPRISE_ACCOUNT = {
   department: '产品部',
 };
 
+const ENTERPRISE_ADMIN_ACCOUNT = {
+  ...ENTERPRISE_ACCOUNT,
+  isAdmin: true,
+};
+
 function makeSession(over: Partial<SessionSummary> = {}): SessionSummary {
   return {
     sessionId: 's1',
@@ -61,13 +68,15 @@ function renderSidebar(over: Partial<React.ComponentProps<typeof Sidebar>> = {})
   const onSelect = vi.fn();
   const onRename = vi.fn();
   const onDelete = vi.fn();
-  const groups: SessionGroup[] = [
-    { label: '今天', sessions: [makeSession()] },
-  ];
   render(
     <Sidebar
-      groups={groups}
+      sessions={[makeSession()]}
       activeSessionId="s1"
+      preferenceScope={{
+        serverUrl: 'https://example.com',
+        organizationId: 'personal_acc_personal',
+        accountId: 'acc_personal',
+      }}
       onSelect={onSelect}
       onNewChat={vi.fn()}
       onOpenHub={vi.fn()}
@@ -79,6 +88,10 @@ function renderSidebar(over: Partial<React.ComponentProps<typeof Sidebar>> = {})
   );
   return { onSelect, onRename, onDelete };
 }
+
+beforeEach(() => {
+  window.localStorage.clear();
+});
 
 describe('Sidebar：布局（工具区已迁右侧面板）', () => {
   it('首页品牌使用正式名称 Otto', () => {
@@ -106,13 +119,10 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
 
   it('任务标题只用一个数字表示总数，并支持整体展开收起', () => {
     renderSidebar({
-      groups: [{
-        label: '今天',
-        sessions: [
-          makeSession({ sessionId: 's1' }),
-          makeSession({ sessionId: 's2', title: '第二个任务' }),
-        ],
-      }],
+      sessions: [
+        makeSession({ sessionId: 's1' }),
+        makeSession({ sessionId: 's2', title: '第二个任务' }),
+      ],
     });
 
     const toggle = screen.getByRole('button', { name: '任务（2）' });
@@ -122,6 +132,33 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
     fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByText('第二个任务')).toBeNull();
+  });
+
+  it('用户操作任务区时显示滚动条，静止后自动隐藏', () => {
+    vi.useFakeTimers();
+    try {
+      renderSidebar();
+      const workspace = screen.getByRole('button', { name: '任务（1）' })
+        .closest('.otto-sidebar__workspace');
+      expect(workspace).toBeTruthy();
+      expect(workspace?.classList.contains('is-scrollbar-active')).toBe(false);
+
+      fireEvent.pointerMove(workspace!);
+      expect(workspace?.classList.contains('is-scrollbar-active')).toBe(true);
+
+      act(() => vi.advanceTimersByTime(899));
+      expect(workspace?.classList.contains('is-scrollbar-active')).toBe(true);
+
+      act(() => vi.advanceTimersByTime(1));
+      expect(workspace?.classList.contains('is-scrollbar-active')).toBe(false);
+
+      fireEvent.scroll(workspace!);
+      expect(workspace?.classList.contains('is-scrollbar-active')).toBe(true);
+      act(() => vi.advanceTimersByTime(900));
+      expect(workspace?.classList.contains('is-scrollbar-active')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('企业合成会话未读也在 Otto 品牌区保留闪烁点', () => {
@@ -142,7 +179,157 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
     expect(screen.getByRole('status', { name: '4 条未读消息' }).textContent).toBe('4');
   });
 
-  it('个人版账号也始终显示账户区和退出登录入口', async () => {
+  it('设置从主导航迁移到账户区右侧，并保留原设置入口行为', () => {
+    const onOpenHub = vi.fn();
+    renderSidebar({
+      enterpriseAccount: PERSONAL_ACCOUNT,
+      onNavigate: vi.fn(),
+      onOpenHub,
+      hubActive: true,
+    });
+
+    const primaryNav = screen.getByRole('navigation', { name: '主导航' });
+    expect(within(primaryNav).queryByRole('button', { name: '设置' })).toBeNull();
+
+    const settings = screen.getByRole('button', { name: '设置' });
+    expect(settings.getAttribute('aria-current')).toBe('page');
+    fireEvent.click(settings);
+    expect(onOpenHub).toHaveBeenCalledOnce();
+  });
+
+  it('企业管理员在我的工作下方看到企业管理，并可打开和高亮该页面', () => {
+    const onOpenAccounts = vi.fn();
+    renderSidebar({
+      enterpriseAccount: ENTERPRISE_ADMIN_ACCOUNT,
+      onNavigate: vi.fn(),
+      onOpenAccounts,
+      accountManagementActive: true,
+    });
+
+    const primaryNav = screen.getByRole('navigation', { name: '主导航' });
+    expect(within(primaryNav).getAllByRole('button').map((button) => button.textContent)).toEqual([
+      '新建对话',
+      '工作台',
+      '组织架构',
+      '我的消息',
+      '我的工作',
+      '企业管理',
+    ]);
+    const enterpriseManagement = within(primaryNav).getByRole('button', { name: '企业管理' });
+    expect(enterpriseManagement.getAttribute('aria-current')).toBe('page');
+    expect(screen.queryByText('CEO 管理')).toBeNull();
+    fireEvent.click(enterpriseManagement);
+    expect(onOpenAccounts).toHaveBeenCalledOnce();
+  });
+
+  it('主导航每个入口都有语义对应的图标，且新建对话与其他入口同级', () => {
+    renderSidebar({
+      enterpriseAccount: ENTERPRISE_ADMIN_ACCOUNT,
+      onNavigate: vi.fn(),
+      onOpenAccounts: vi.fn(),
+    });
+
+    const primaryNav = screen.getByRole('navigation', { name: '主导航' });
+    const buttons = within(primaryNav).getAllByRole('button');
+    expect(buttons.map((button) => button.textContent)).toEqual([
+      '新建对话',
+      '工作台',
+      '组织架构',
+      '我的消息',
+      '我的工作',
+      '企业管理',
+    ]);
+    expect(buttons.every((button) => button.querySelector('.otto-sidebar__navicon'))).toBe(true);
+  });
+
+  it('新建对话与其他主导航入口使用一致的纵向间距', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/renderer/styles/app.css'), 'utf8');
+    expect(css).not.toMatch(
+      /\.otto-sidebar__navitem:first-child\s*\{[^}]*margin-bottom\s*:/,
+    );
+  });
+
+  it('个人账号和非管理员企业账号不显示企业管理', () => {
+    const onOpenAccounts = vi.fn();
+    const { rerender } = render(
+      <Sidebar
+        sessions={[makeSession()]}
+        activeSessionId="s1"
+        preferenceScope={{
+          serverUrl: 'https://example.com',
+          organizationId: PERSONAL_ACCOUNT.organizationId,
+          accountId: PERSONAL_ACCOUNT.id,
+        }}
+        enterpriseAccount={PERSONAL_ACCOUNT}
+        onSelect={vi.fn()}
+        onNewChat={vi.fn()}
+        onOpenHub={vi.fn()}
+        onOpenAccounts={onOpenAccounts}
+        onNavigate={vi.fn()}
+        onViewAll={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: '企业管理' })).toBeNull();
+
+    rerender(
+      <Sidebar
+        sessions={[makeSession()]}
+        activeSessionId="s1"
+        preferenceScope={{
+          serverUrl: 'https://example.com',
+          organizationId: ENTERPRISE_ACCOUNT.organizationId,
+          accountId: ENTERPRISE_ACCOUNT.id,
+        }}
+        enterpriseAccount={ENTERPRISE_ACCOUNT}
+        onSelect={vi.fn()}
+        onNewChat={vi.fn()}
+        onOpenHub={vi.fn()}
+        onOpenAccounts={onOpenAccounts}
+        onNavigate={vi.fn()}
+        onViewAll={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: '企业管理' })).toBeNull();
+  });
+
+  it('点击账户区打开账户菜单，点击外部或按 Escape 均会收起', () => {
+    renderSidebar({
+      enterpriseAccount: PERSONAL_ACCOUNT,
+      onLogout: vi.fn(),
+    });
+
+    const accountTrigger = screen.getByRole('button', { name: 'Felix，个人空间' });
+    expect(screen.queryByRole('menu', { name: '账户菜单' })).toBeNull();
+
+    fireEvent.click(accountTrigger);
+    expect(screen.getByRole('menu', { name: '账户菜单' })).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: '退出登录' }));
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole('menu', { name: '账户菜单' })).toBeNull();
+
+    fireEvent.click(accountTrigger);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('menu', { name: '账户菜单' })).toBeNull();
+    expect(document.activeElement).toBe(accountTrigger);
+  });
+
+  it('没有退出能力时仍可打开完整账户菜单，但退出动作明确禁用', () => {
+    renderSidebar({
+      enterpriseAccount: PERSONAL_ACCOUNT,
+    });
+
+    expect(screen.getByText('Felix')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Felix，个人空间' }));
+    const accountMenu = screen.getByRole('menu', { name: '账户菜单' });
+    expect(within(accountMenu).getByRole('menuitem', { name: '退出登录' })
+      .hasAttribute('disabled')).toBe(true);
+  });
+
+  it('个人版账号的退出登录入口位于账户菜单内，且仍需二次确认', async () => {
     const onLogout = vi.fn(async () => undefined);
     renderSidebar({
       enterpriseAccount: PERSONAL_ACCOUNT,
@@ -150,7 +337,13 @@ describe('Sidebar：布局（工具区已迁右侧面板）', () => {
     });
 
     expect(screen.getByText('Felix')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '退出登录' }));
+    expect(screen.queryByRole('button', { name: '退出登录' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Felix，个人空间' }));
+    const accountMenu = screen.getByRole('menu', { name: '账户菜单' });
+    const logout = within(accountMenu).getByRole('menuitem', { name: '退出登录' });
+    expect(logout.querySelector('svg')).toBeTruthy();
+    fireEvent.click(logout);
+    expect(screen.queryByRole('menu', { name: '账户菜单' })).toBeNull();
     expect(screen.getByRole('dialog', { name: '确认退出登录' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '确认退出' }));
     await waitFor(() => expect(onLogout).toHaveBeenCalledOnce());
@@ -232,19 +425,156 @@ describe('Sidebar：对话任务日期', () => {
     const day = 86_400_000;
     const today = new Date(2026, 6, 12).getTime();
     renderSidebar({
-      groups: [{
-        label: '任意旧分组名',
-        sessions: [
-          makeSession({ sessionId: 'today', title: '今天任务', updatedAt: today + 1_000 }),
-          makeSession({ sessionId: 'yesterday', title: '昨天任务', updatedAt: today - day + 1_000 }),
-          makeSession({ sessionId: 'old', title: '旧任务', updatedAt: today - 4 * day + 1_000 }),
-        ],
-      }],
+      sessions: [
+        makeSession({ sessionId: 'today', title: '今天任务', updatedAt: today + 1_000 }),
+        makeSession({ sessionId: 'yesterday', title: '昨天任务', updatedAt: today - day + 1_000 }),
+        makeSession({ sessionId: 'old', title: '旧任务', updatedAt: today - 4 * day + 1_000 }),
+      ],
     });
 
     expect(screen.getByText('今天')).toBeTruthy();
     expect(screen.getByText('昨天')).toBeTruthy();
     expect(screen.getByText('4天前')).toBeTruthy();
+  });
+});
+
+describe('Sidebar：任务分组方式', () => {
+  const preferenceScope = {
+    serverUrl: 'https://example.com',
+    organizationId: 'personal_acc_personal',
+    accountId: 'acc_personal',
+  };
+
+  const workspaceSessions = [
+    makeSession({
+      sessionId: 'project-new',
+      title: '项目新任务',
+      workspacePath: '/Users/yang/project',
+      updatedAt: 30,
+    }),
+    makeSession({
+      sessionId: 'project-old',
+      title: '项目旧任务',
+      workspacePath: '/Users/yang/project',
+      updatedAt: 20,
+    }),
+    makeSession({
+      sessionId: 'desktop',
+      title: '桌面任务',
+      workspacePath: '/Users/yang/Desktop',
+      updatedAt: 10,
+    }),
+  ];
+
+  it('分组菜单从按钮右下方展开，并在窗口右侧保留安全边距', () => {
+    const originalInnerWidth = window.innerWidth;
+    try {
+      renderSidebar({ sessions: workspaceSessions, preferenceScope });
+      const trigger = screen.getByRole('button', { name: '视图选项' });
+      vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
+        x: 220,
+        y: 72,
+        width: 28,
+        height: 28,
+        top: 72,
+        right: 248,
+        bottom: 100,
+        left: 220,
+        toJSON: () => ({}),
+      });
+
+      fireEvent.click(trigger);
+      const menu = screen.getByRole('menu', { name: '视图选项' });
+      expect(menu.style.left).toBe('220px');
+      expect(menu.style.top).toBe('104px');
+
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 400 });
+      fireEvent.resize(window);
+      expect(menu.style.left).toBe('170px');
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: originalInnerWidth,
+      });
+    }
+  });
+
+  it('默认保持按时间，并可从菜单切换到按工作目录', () => {
+    renderSidebar({ sessions: workspaceSessions, preferenceScope });
+
+    expect(screen.getByText('项目新任务').closest('.otto-session-group')
+      ?.classList.contains('otto-session-group--workspace')).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: '视图选项' }));
+    const menu = screen.getByRole('menu', { name: '视图选项' });
+    expect(menu.parentElement).toBe(document.body);
+    expect(within(menu).getByText('分组方式')).toBeTruthy();
+    expect(within(menu).getByRole('menuitemradio', { name: '按时间' })
+      .getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(within(menu).getByRole('menuitemradio', { name: '按工作目录' }));
+
+    const project = screen.getByRole('button', { name: 'project，2 个任务' });
+    const projectIcon = project.querySelector('.otto-workspace-group__icon');
+    expect(projectIcon?.getAttribute('width')).toBe('16');
+    expect(projectIcon?.getAttribute('height')).toBe('16');
+    expect(screen.getByRole('button', { name: 'Desktop，1 个任务' })).toBeTruthy();
+    expect(screen.getByText('项目新任务').closest('.otto-session-group')
+      ?.classList.contains('otto-session-group--workspace')).toBe(true);
+    expect(JSON.parse(localStorage.getItem(sessionListPreferenceStorageKey(preferenceScope)) ?? '{}'))
+      .toMatchObject({ mode: 'workspace' });
+  });
+
+  it('分组菜单点击外部或按 Escape 都会关闭，并把焦点还给触发按钮', () => {
+    renderSidebar({ sessions: workspaceSessions, preferenceScope });
+    const trigger = screen.getByRole('button', { name: '视图选项' });
+
+    fireEvent.click(trigger);
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole('menu', { name: '视图选项' })).toBeNull();
+
+    fireEvent.click(trigger);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('menu', { name: '视图选项' })).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('工作目录可以独立折叠，折叠后仍显示未读数量', () => {
+    localStorage.setItem(sessionListPreferenceStorageKey(preferenceScope), JSON.stringify({
+      version: 1,
+      mode: 'workspace',
+      collapsedWorkspaceKeys: [],
+    }));
+    renderSidebar({
+      sessions: workspaceSessions,
+      preferenceScope,
+      unreadSessions: ['project-old'],
+    });
+
+    const project = screen.getByRole('button', { name: 'project，2 个任务，1 个未读任务' });
+    expect(project.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(project);
+    expect(project.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('项目新任务')).toBeNull();
+    expect(within(project).getByText('1')).toBeTruthy();
+    expect(screen.getByText('桌面任务')).toBeTruthy();
+  });
+
+  it('进入目录模式时自动展开当前会话所在目录，但之后允许用户手动折叠', () => {
+    localStorage.setItem(sessionListPreferenceStorageKey(preferenceScope), JSON.stringify({
+      version: 1,
+      mode: 'workspace',
+      collapsedWorkspaceKeys: ['workspace:/Users/yang/project'],
+    }));
+    renderSidebar({
+      sessions: workspaceSessions,
+      activeSessionId: 'project-new',
+      preferenceScope,
+    });
+
+    const project = screen.getByRole('button', { name: 'project，2 个任务' });
+    expect(project.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(project);
+    expect(project.getAttribute('aria-expanded')).toBe('false');
   });
 });
 
@@ -337,9 +667,7 @@ describe('Sidebar 会话项：删除二次确认（弹窗）', () => {
 
   it('标题为空 → 弹窗回退「未命名对话」', () => {
     renderSidebar({
-      groups: [
-        { label: '今天', sessions: [makeSession({ title: '' })] },
-      ],
+      sessions: [makeSession({ title: '' })],
     });
     fireEvent.click(screen.getByLabelText('更多操作'));
     fireEvent.click(screen.getByText('删除'));

@@ -38,6 +38,7 @@ import {
 import {
   authorizeOutboundFileReferences,
   hasOutboundPathReference,
+  sendAuthorizedWorkspaceFrame,
   sendAuthorizedFileFrame,
 } from './outbound-file-authorization.js';
 
@@ -1073,6 +1074,9 @@ const IPC = {
   activateLocalPath: 'otto:activate-local-path',
   selectFiles: 'otto:select-files',
   selectFolders: 'otto:select-folders',
+  selectWorkspaceDirectory: 'otto:select-workspace-directory',
+  getWorkspaceDirectories: 'otto:get-workspace-directories',
+  authorizeWorkspaceDirectory: 'otto:authorize-workspace-directory',
   grantBrowserFile: 'otto:grant-browser-file',
   authorizeMessageFiles: 'otto:authorize-message-files',
   readFilePath: 'otto:read-file-path',
@@ -1287,6 +1291,10 @@ export interface OttoBridge {
   selectFiles(): Promise<string[]>;
   /** 原生目录选择器：仅返回本次由用户明确选择并登记到授权账本的真实目录。 */
   selectFolders(): Promise<string[]>;
+  /** 读取用户主目录与最近明确选择过的工作目录。 */
+  getWorkspaceDirectories(): Promise<{ defaultPath: string; recentPaths: string[] }>;
+  /** 用原生目录选择器添加一个真实工作目录。 */
+  selectWorkspaceDirectory(): Promise<string | null>;
   /**
    * Electron 32+ 不再提供 File.path；通过 webUtils 恢复用户拖入/浏览器选择文件的
    * 真实本地路径。只接受浏览器 File 对象，不能用任意字符串伪造路径。
@@ -2006,6 +2014,25 @@ const bridge: OttoBridge = {
         sendQueue.push(authorized);
       }
     };
+    if (frame.type === 'set_session_workspace') {
+      void sendAuthorizedWorkspaceFrame(
+        frame,
+        (workspacePath) => ipcRenderer.invoke(
+          IPC.authorizeWorkspaceDirectory,
+          workspacePath,
+        ) as Promise<string>,
+        sendOrQueue,
+        (error) => dispatchFrame({
+          type: 'error',
+          payload: {
+            sessionId: frame.payload.sessionId,
+            code: 'workspace_access_denied',
+            message: error instanceof Error ? error.message : '工作目录未获得授权',
+          },
+        }),
+      );
+      return;
+    }
     if (frame.type !== 'send_user_message') {
       sendOrQueue(frame);
       return;
@@ -2109,6 +2136,17 @@ const bridge: OttoBridge = {
 
   selectFolders(): Promise<string[]> {
     return ipcRenderer.invoke(IPC.selectFolders) as Promise<string[]>;
+  },
+
+  getWorkspaceDirectories(): Promise<{ defaultPath: string; recentPaths: string[] }> {
+    return ipcRenderer.invoke(IPC.getWorkspaceDirectories) as Promise<{
+      defaultPath: string;
+      recentPaths: string[];
+    }>;
+  },
+
+  selectWorkspaceDirectory(): Promise<string | null> {
+    return ipcRenderer.invoke(IPC.selectWorkspaceDirectory) as Promise<string | null>;
   },
 
   getPathForFile(file: File): string {

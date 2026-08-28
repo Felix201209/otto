@@ -1,0 +1,409 @@
+import { fireEvent, render, screen } from '@testing-library/react';
+import { act } from 'react';
+import React from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { ModuleDefinition } from '../moduleCatalog.js';
+import type { ModuleWorkspaceLayout } from '../moduleWorkspace.js';
+import { ModuleWorkspace } from './ModuleWorkspace.js';
+
+const modules: readonly ModuleDefinition[] = [
+  {
+    id: 'park-announcement',
+    label: '园区公告',
+    category: 'park',
+    icon: 'park-announcement',
+    activation: { kind: 'dialog', dialog: 'park', target: 'announcement' },
+    availability: 'available',
+  },
+  {
+    id: 'park-satisfaction',
+    label: '满意度调查',
+    category: 'park',
+    icon: 'park-satisfaction',
+    activation: { kind: 'dialog', dialog: 'park', target: 'satisfaction' },
+    availability: 'available',
+  },
+  {
+    id: 'agent-ppt',
+    label: 'PPT 创作专家',
+    category: 'common',
+    icon: 'generated:expert-presentation',
+    activation: { kind: 'agent', profileId: 'ppt' },
+    availability: 'available',
+  },
+  {
+    id: 'enterprise-memory',
+    label: '企业记忆',
+    category: 'capability',
+    icon: 'enterprise-memory',
+    activation: { kind: 'dialog', dialog: 'enterprise-memory' },
+    availability: 'available',
+  },
+];
+
+const enterpriseLayout: ModuleWorkspaceLayout = {
+  version: 1,
+  groups: [
+    {
+      id: 'park-services',
+      name: '园区服务',
+      rows: 2,
+      moduleIds: ['park-announcement', 'park-satisfaction'],
+    },
+    {
+      id: 'daily-office',
+      name: '日常办公',
+      rows: 3,
+      moduleIds: ['agent-ppt', 'enterprise-memory'],
+    },
+  ],
+};
+
+function renderWorkspace(
+  presentation: 'panel' | 'page' = 'panel',
+  layout: ModuleWorkspaceLayout = enterpriseLayout,
+) {
+  const onActivate = vi.fn();
+  const onOpenMarketplace = vi.fn();
+  const onLayoutChange = vi.fn();
+  const view = render(
+    <ModuleWorkspace
+      presentation={presentation}
+      layout={layout}
+      modules={modules}
+      onActivate={onActivate}
+      onOpenMarketplace={onOpenMarketplace}
+      onLayoutChange={onLayoutChange}
+    />,
+  );
+  return { ...view, onActivate, onOpenMarketplace, onLayoutChange };
+}
+
+function ControlledWorkspace({ scopeKey = 'scope-a' }: { scopeKey?: string }) {
+  const [layout, setLayout] = React.useState(enterpriseLayout);
+  return (
+    <ModuleWorkspace
+      presentation="panel"
+      scopeKey={scopeKey}
+      layout={layout}
+      modules={modules}
+      onActivate={vi.fn()}
+      onOpenMarketplace={vi.fn()}
+      onLayoutChange={setLayout}
+    />
+  );
+}
+
+function renderControlledWorkspace(scopeKey = 'scope-a') {
+  return render(<ControlledWorkspace scopeKey={scopeKey} />);
+}
+
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe('ModuleWorkspace', () => {
+  it('renders injected enterprise groups in a three-column module grid', () => {
+    const { container } = renderWorkspace();
+
+    expect(screen.getByRole('heading', { name: '园区服务' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '日常办公' })).toBeTruthy();
+    expect(container.querySelectorAll('.otto-module-group__grid')).toHaveLength(2);
+    expect(container.querySelector('.otto-module-group__grid--rows-2')).toBeTruthy();
+    expect(container.querySelector('.otto-module-group__grid--rows-3')).toBeTruthy();
+  });
+
+  it('activates modules through accessible buttons and opens the matching group marketplace', () => {
+    const { onActivate, onOpenMarketplace } = renderWorkspace();
+
+    fireEvent.click(screen.getByRole('button', { name: '打开 PPT 创作专家' }));
+    expect(onActivate).toHaveBeenCalledWith(expect.objectContaining({ id: 'agent-ppt' }));
+
+    fireEvent.click(screen.getByRole('button', { name: '向园区服务添加模块' }));
+    expect(onOpenMarketplace).toHaveBeenCalledWith('park-services');
+  });
+
+  it('renders module addition as the next grid tile and group addition after all groups', () => {
+    const { container } = renderWorkspace();
+    const parkGrid = container.querySelector('[data-group-id="park-services"] .otto-module-group__grid');
+    const parkChildren = parkGrid?.children ?? [];
+    const addModule = screen.getByRole('button', { name: '向园区服务添加模块' });
+    const workspace = container.querySelector('.otto-module-workspace');
+    const addGroup = screen.getByRole('button', { name: '添加功能组' });
+
+    expect(parkChildren).toHaveLength(3);
+    expect(parkChildren[2]).toBe(addModule);
+    expect(addModule.classList.contains('otto-module-group__add')).toBe(true);
+    expect(
+      (workspace?.compareDocumentPosition(addGroup) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '恢复默认布局' })).toBeNull();
+  });
+
+  it('renders personal capability fixtures without synthesizing enterprise groups', () => {
+    renderWorkspace('panel', {
+      version: 1,
+      groups: [{
+        id: 'daily-office',
+        name: '日常办公',
+        rows: 2,
+        moduleIds: ['agent-ppt'],
+      }],
+    });
+
+    expect(screen.getByRole('heading', { name: '日常办公' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: '园区服务' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '打开 企业记忆' })).toBeNull();
+  });
+
+  it.each(['panel', 'page'] as const)(
+    'keeps activation semantics in the %s presentation',
+    (presentation) => {
+      const { container, onActivate } = renderWorkspace(presentation);
+      const workspace = container.querySelector('.otto-module-workspace');
+      const parkIcon = container.querySelector('[data-module-icon="park-announcement"] svg');
+
+      expect(workspace?.getAttribute('data-presentation')).toBe(presentation);
+      expect(parkIcon?.getAttribute('width')).toBe(presentation === 'panel' ? '26' : '28');
+      fireEvent.click(screen.getByRole('button', { name: '打开 园区公告' }));
+      expect(onActivate).toHaveBeenCalledWith(expect.objectContaining({ id: 'park-announcement' }));
+    },
+  );
+
+  it('shows a non-layout floating scrollbar only while the panel scroll area is active', () => {
+    const { container } = renderWorkspace('panel');
+    const viewport = container.querySelector<HTMLElement>('.otto-module-workspace-scroll-viewport');
+
+    expect(viewport?.classList.contains('otto-module-workspace-scroll-viewport--panel')).toBe(true);
+    expect(container.querySelector('.otto-module-workspace__floating-scrollbar')).toBeNull();
+    if (!viewport) throw new Error('missing module workspace scroll viewport');
+
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 300 },
+      scrollHeight: { configurable: true, value: 900 },
+      scrollTop: { configurable: true, writable: true, value: 150 },
+    });
+    fireEvent.scroll(viewport);
+
+    const scrollbar = container.querySelector<HTMLElement>('.otto-module-workspace__floating-scrollbar');
+    const thumb = scrollbar?.querySelector<HTMLElement>('.otto-module-workspace__floating-scrollbar-thumb');
+    expect(scrollbar?.classList.contains('is-visible')).toBe(true);
+    expect(thumb?.style.height).toBe('97px');
+    expect(thumb?.style.transform).toBe('translateY(49px)');
+
+    act(() => vi.advanceTimersByTime(900));
+    expect(scrollbar?.classList.contains('is-visible')).toBe(false);
+  });
+
+  it('keeps the full-page workspace on its native scroll presentation', () => {
+    const { container } = renderWorkspace('page');
+    const viewport = container.querySelector('.otto-module-workspace-scroll-viewport');
+
+    expect(viewport?.classList.contains('otto-module-workspace-scroll-viewport--page')).toBe(true);
+    expect(container.querySelector('.otto-module-workspace__floating-scrollbar')).toBeNull();
+  });
+
+  it('uses a focusable internal scroller for overflowing groups', () => {
+    const overflowModules = Array.from({ length: 9 }, (_, index): ModuleDefinition => ({
+      id: `module-${index}`,
+      label: `模块 ${index + 1}`,
+      category: 'common',
+      icon: 'agent',
+      activation: { kind: 'agent', profileId: `profile-${index}` },
+      availability: 'available',
+    }));
+    const { container } = render(
+      <ModuleWorkspace
+        presentation="panel"
+        layout={{
+          version: 1,
+          groups: [{
+            id: 'overflow',
+            name: '超出容量',
+            rows: 2,
+            moduleIds: overflowModules.map((module) => module.id),
+          }],
+        }}
+        modules={overflowModules}
+        onActivate={vi.fn()}
+        onOpenMarketplace={vi.fn()}
+        onLayoutChange={vi.fn()}
+      />,
+    );
+
+    const grid = container.querySelector('.otto-module-group__grid');
+    expect(grid?.classList.contains('is-overflowing')).toBe(true);
+    expect(grid?.getAttribute('tabindex')).toBe('0');
+  });
+
+  it('places add module in the seventh slot and expands a full two-row group to three rows', () => {
+    const sixModules = Array.from({ length: 6 }, (_, index): ModuleDefinition => ({
+      id: `six-${index}`,
+      label: `模块 ${index + 1}`,
+      category: 'common',
+      icon: 'agent',
+      activation: { kind: 'agent', profileId: `six-${index}` },
+      availability: 'available',
+    }));
+    const { container } = render(
+      <ModuleWorkspace
+        presentation="panel"
+        layout={{
+          version: 1,
+          groups: [{
+            id: 'six-modules',
+            name: '六个模块',
+            rows: 2,
+            moduleIds: sixModules.map((module) => module.id),
+          }],
+        }}
+        modules={sixModules}
+        onActivate={vi.fn()}
+        onOpenMarketplace={vi.fn()}
+        onLayoutChange={vi.fn()}
+      />,
+    );
+
+    const grid = container.querySelector('.otto-module-group__grid');
+    expect(grid?.children).toHaveLength(7);
+    expect(grid?.children[6]).toBe(screen.getByRole('button', { name: '向六个模块添加模块' }));
+    expect(grid?.classList.contains('otto-module-group__grid--rows-3')).toBe(true);
+    expect(grid?.classList.contains('is-overflowing')).toBe(false);
+  });
+
+  it('creates a group and supports rename validation', () => {
+    renderControlledWorkspace();
+    fireEvent.click(screen.getByRole('button', { name: '添加功能组' }));
+    expect(screen.getByRole('heading', { name: '新功能组' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '功能组菜单：新功能组' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '重命名' }));
+    const input = screen.getByRole('textbox', { name: '功能组名称' });
+    fireEvent.change(input, { target: { value: '日常办公' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存名称' }));
+    expect(screen.getByRole('alert').textContent).toContain('不能重复');
+    fireEvent.change(input, { target: { value: '项目协作' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存名称' }));
+    expect(screen.getByRole('heading', { name: '项目协作' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '功能组菜单：项目协作' }));
+    expect(screen.queryByRole('menuitem', { name: /显示[两三]行/ })).toBeNull();
+  });
+
+  it('removes a module in edit mode and can undo for five seconds', () => {
+    renderControlledWorkspace();
+    fireEvent.click(screen.getByRole('button', { name: '功能组菜单：园区服务' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '编辑模块' }));
+    fireEvent.click(screen.getByRole('button', { name: '移除 园区公告' }));
+    expect(screen.queryByRole('button', { name: '打开 园区公告' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '撤销移除' }));
+    expect(screen.getByRole('button', { name: '打开 园区公告' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '移除 园区公告' }));
+    act(() => vi.advanceTimersByTime(5_000));
+    expect(screen.queryByRole('button', { name: '撤销移除' })).toBeNull();
+  });
+
+  it('invalidates stale undo after another layout edit', () => {
+    renderControlledWorkspace();
+    fireEvent.click(screen.getByRole('button', { name: '功能组菜单：园区服务' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '编辑模块' }));
+    fireEvent.click(screen.getByRole('button', { name: '移除 园区公告' }));
+    expect(screen.getByRole('button', { name: '撤销移除' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '功能组菜单：园区服务' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '重命名' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '功能组名称' }), {
+      target: { value: '园区服务中心' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存名称' }));
+    expect(screen.queryByRole('button', { name: '撤销移除' })).toBeNull();
+    expect(screen.getByRole('heading', { name: '园区服务中心' })).toBeTruthy();
+  });
+
+  it('clears transient editing and undo state when the storage scope changes', () => {
+    const view = renderControlledWorkspace('scope-a');
+    fireEvent.click(screen.getByRole('button', { name: '功能组菜单：园区服务' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '编辑模块' }));
+    fireEvent.click(screen.getByRole('button', { name: '移除 园区公告' }));
+    expect(screen.getByRole('button', { name: '撤销移除' })).toBeTruthy();
+
+    view.rerender(<ControlledWorkspace scopeKey="scope-b" />);
+    expect(screen.queryByRole('button', { name: '撤销移除' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '移除 满意度调查' })).toBeNull();
+  });
+
+  it('deletes a non-last group only after confirmation and can undo', () => {
+    renderControlledWorkspace();
+    fireEvent.click(screen.getByRole('button', { name: '功能组菜单：园区服务' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '删除功能组' }));
+    expect(screen.getByRole('dialog', { name: '删除功能组' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '确认删除' }));
+    expect(screen.queryByRole('heading', { name: '园区服务' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '撤销删除' }));
+    expect(screen.getByRole('heading', { name: '园区服务' })).toBeTruthy();
+  });
+
+  it('provides keyboard-friendly group ordering without a reset action', () => {
+    renderControlledWorkspace();
+    fireEvent.click(screen.getByRole('button', { name: '功能组菜单：日常办公' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '上移功能组' }));
+    const headings = screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent);
+    expect(headings.slice(0, 2)).toEqual(['日常办公', '园区服务']);
+
+    expect(screen.queryByRole('button', { name: '恢复默认布局' })).toBeNull();
+  });
+
+  it('supports first/last group moves and arrow-key module ordering', () => {
+    renderControlledWorkspace();
+    fireEvent.click(screen.getByRole('button', { name: '功能组菜单：园区服务' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '移到最后功能组' }));
+    expect(screen.getAllByRole('heading', { level: 2 }).slice(0, 2).map((heading) => heading.textContent))
+      .toEqual(['日常办公', '园区服务']);
+
+    fireEvent.click(screen.getByRole('button', { name: '功能组菜单：园区服务' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '编辑模块' }));
+    const satisfaction = screen.getByRole('button', { name: '打开 满意度调查' });
+    fireEvent.keyDown(satisfaction, { key: 'ArrowLeft' });
+    const grid = document.querySelector('[data-group-id="park-services"] .otto-module-group__grid');
+    expect(grid?.querySelectorAll('.otto-module-tile')[0]?.getAttribute('aria-label'))
+      .toBe('打开 满意度调查');
+
+    fireEvent.keyDown(satisfaction, { key: 'ArrowRight' });
+    expect(grid?.querySelectorAll('.otto-module-tile')[1]?.getAttribute('aria-label'))
+      .toBe('打开 满意度调查');
+  });
+
+  it('dismisses a group menu on outside click and Escape', () => {
+    renderControlledWorkspace();
+    const menuButton = screen.getByRole('button', { name: '功能组菜单：园区服务' });
+    fireEvent.click(menuButton);
+    expect(screen.getByRole('menu', { name: '园区服务设置' })).toBeTruthy();
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole('menu', { name: '园区服务设置' })).toBeNull();
+    expect(document.activeElement).toBe(menuButton);
+    fireEvent.click(menuButton);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('menu', { name: '园区服务设置' })).toBeNull();
+    expect(document.activeElement).toBe(menuButton);
+  });
+
+  it('keeps editing visuals limited to remove controls', () => {
+    renderControlledWorkspace();
+    fireEvent.click(screen.getByRole('button', { name: '功能组菜单：园区服务' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '编辑模块' }));
+
+    expect(screen.getByRole('button', { name: '移除 园区公告' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '拖动模块：园区公告' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '拖动功能组：园区服务' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '模块菜单：园区公告' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '功能组菜单：园区服务' }));
+    expect(screen.getByRole('menu', { name: '园区服务设置' })).toBeTruthy();
+  });
+});

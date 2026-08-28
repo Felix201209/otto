@@ -51,6 +51,8 @@ import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { HealthInfo, ServerEndpoint } from 'otto-server';
+import { WorkspaceDirectoryStore } from './workspace-directory-store.js';
+import { MainWindowPresentationController } from './main-window-presentation.js';
 
 function ignoreBrokenPipe(stream: NodeJS.WriteStream): void {
   stream.on('error', (error: NodeJS.ErrnoException) => {
@@ -443,6 +445,11 @@ const serverManager = new ServerManager({
 const notificationService = new NotificationService();
 /** 原生文件选择授权账本：允许任意磁盘，但拒绝 renderer 凭空传入的路径。 */
 const fileAccessGrants = new FileAccessGrantStore();
+/** 用户明确选择过的真实工作目录；跨重启保留最近列表。 */
+const workspaceDirectories = new WorkspaceDirectoryStore(
+  path.join(app.getPath('userData'), 'workspace-directories.json'),
+  os.homedir(),
+);
 /** 身份提交统一边界：跨账号、跨组织和失效退出时先清旧账号通知与文件授权。 */
 const enterpriseNotificationIdentityBoundary =
   new EnterpriseNotificationIdentityBoundary(
@@ -456,6 +463,15 @@ let endpointRetryTimer: ReturnType<typeof setTimeout> | undefined;
 let endpointRetryAttempt = 0;
 /** 主窗口单例引用。 */
 let mainWindow: BrowserWindow | undefined;
+/** 每个主窗口的展示时序；避免 renderer 就绪前被第二实例强制显示。 */
+const mainWindowPresentations = new WeakMap<
+  BrowserWindow,
+  MainWindowPresentationController
+>();
+/** 应用尚未 ready 时到达的第二实例聚焦请求。 */
+let pendingMainWindowFocusRequest = false;
+/** IPC、菜单和托盘初始化完成后，才允许外部事件创建主窗口。 */
+let mainWindowCreationReady = false;
 /** macOS 后台提醒句柄；窗口重新聚焦时主动取消。 */
 let dockBounceId: number | undefined;
 /** 系统托盘：保持引用，避免被 GC 后托盘图标消失。 */
@@ -479,6 +495,9 @@ const IPC = {
   activateLocalPath: 'otto:activate-local-path',
   selectFiles: 'otto:select-files',
   selectFolders: 'otto:select-folders',
+  selectWorkspaceDirectory: 'otto:select-workspace-directory',
+  getWorkspaceDirectories: 'otto:get-workspace-directories',
+  authorizeWorkspaceDirectory: 'otto:authorize-workspace-directory',
   grantBrowserFile: 'otto:grant-browser-file',
   authorizeMessageFiles: 'otto:authorize-message-files',
   readFilePath: 'otto:read-file-path',
@@ -1841,14 +1860,22 @@ async function toggleEnterpriseTrayPopover(): Promise<void> {
 function showMainWindow(): void {
   hideEnterpriseTrayPopover();
   clearBackgroundAttention();
+  if (!app.isReady() || !mainWindowCreationReady) {
+    pendingMainWindowFocusRequest = true;
+    return;
+  }
   if (!mainWindow || mainWindow.isDestroyed()) {
     mainWindow = createWindow();
     mainWindow.webContents.once('did-finish-load', pushEndpointToRenderer);
-    return;
   }
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
+  const presentation = mainWindowPresentations.get(mainWindow);
+  if (presentation) {
+    presentation.requestShow({ focus: true });
+  } else {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
 }
 
 function createTray(): void {
@@ -1987,10 +2014,17 @@ function createWindow(): BrowserWindow {
     },
   });
 
-  win.once('ready-to-show', () => {
-    win.show();
+  const presentation = new MainWindowPresentationController(win);
+  mainWindowPresentations.set(win, presentation);
+  let initialIndicatorsUpdated = false;
+  const markWindowReady = (): void => {
+    presentation.markReady();
+    if (initialIndicatorsUpdated) return;
+    initialIndicatorsUpdated = true;
     updateUnreadIndicators(notificationService.getUnreadSessions());
-  });
+  };
+
+  win.once('ready-to-show', markWindowReady);
   win.on('focus', clearBackgroundAttention);
   win.on('close', (event) => {
     if (isQuitting || process.platform === 'darwin') return;
@@ -2000,6 +2034,9 @@ function createWindow(): BrowserWindow {
 
   hardenWebContents(win);
   win.webContents.once('did-finish-load', () => {
+    // ready-to-show 在后台/遮挡启动时不保证及时触发。renderer 完成加载后作为
+    // 安全兜底展示；控制器会合并两个信号，避免重复 show 或抢焦点。
+    markWindowReady();
     void incrementalUpdateService
       .applyActiveRendererPatches()
       .catch((error) => {
@@ -4449,6 +4486,31 @@ function registerIpc(): void {
     return fileAccessGrants.grantDirectories(result.filePaths);
   });
 
+  ipcMain.handle(IPC.getWorkspaceDirectories, () => ({
+    defaultPath: workspaceDirectories.defaultPath(),
+    recentPaths: workspaceDirectories.list(),
+  }));
+
+  ipcMain.handle(IPC.selectWorkspaceDirectory, async () => {
+    const win = mainWindow;
+    const result = await (win
+      ? dialog.showOpenDialog(win, {
+          defaultPath: workspaceDirectories.defaultPath(),
+          properties: ['openDirectory', 'createDirectory'],
+        })
+      : dialog.showOpenDialog({
+          defaultPath: workspaceDirectories.defaultPath(),
+          properties: ['openDirectory', 'createDirectory'],
+        }));
+    if (result.canceled || !result.filePaths[0]) return null;
+    return workspaceDirectories.grant(result.filePaths[0]);
+  });
+
+  ipcMain.handle(IPC.authorizeWorkspaceDirectory, (_event, directory: unknown) => {
+    if (typeof directory !== 'string') throw new Error('工作目录格式无效');
+    return workspaceDirectories.authorize(directory);
+  });
+
   // 拖拽/隐藏 input 的 File 路径由可信 preload 通过 webUtils 提取后送到这里。
   // renderer 只能传 File 对象给 contextBridge，没有任意字符串 grant API。
   ipcMain.handle(IPC.grantBrowserFile, (_e, filePath: unknown) => {
@@ -4626,9 +4688,14 @@ if (!gotLock) {
     registerIpc();
     installAppMenu(() => mainWindow);
     createTray();
+    mainWindowCreationReady = true;
 
     // 先建窗（show:false，ready-to-show 再显），同时并发确保 server。
     mainWindow = createWindow();
+    if (pendingMainWindowFocusRequest) {
+      pendingMainWindowFocusRequest = false;
+      mainWindowPresentations.get(mainWindow)?.requestShow({ focus: true });
+    }
     applyCsp();
     await ensureEndpoint();
     startEnterpriseIdentityRefresh();

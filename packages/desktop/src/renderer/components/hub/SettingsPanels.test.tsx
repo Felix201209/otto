@@ -2,7 +2,7 @@
  * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
  */
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UseSettingsData } from '../../state/useSettingsData.js';
 import { PrefsPanel } from './SettingsPanels.js';
@@ -10,20 +10,28 @@ import { PrefsPanel } from './SettingsPanels.js';
 afterEach(cleanup);
 
 beforeEach(() => {
+  window.localStorage.clear();
   (window as unknown as { otto: unknown }).otto = {
     themeGet: async () => 'system',
     themeSet: vi.fn(async () => undefined),
   };
 });
 
-function settingsData(agentStyle = 'default') {
-  const setSetting = vi.fn();
+function settingsData(
+  agentStyle = 'default',
+  overrides: Partial<{
+    healthyUse: boolean;
+    preferredLanguage: string;
+    lastError: string | null;
+  }> = {},
+  setSetting = vi.fn(),
+) {
   const value = {
     state: {
       settings: {
         agentStyle,
-        healthyUse: false,
-        preferredLanguage: '',
+        healthyUse: overrides.healthyUse ?? false,
+        preferredLanguage: overrides.preferredLanguage ?? '',
       },
       mcpServers: [],
       contextBreakdown: null,
@@ -41,7 +49,7 @@ function settingsData(agentStyle = 'default') {
       ideStatus: null,
       statsSnapshot: null,
       knowledgeEntries: [],
-      lastError: null,
+      lastError: overrides.lastError ?? null,
     },
     actions: { setSetting },
   } as unknown as UseSettingsData;
@@ -72,6 +80,8 @@ describe('PrefsPanel 外观与回复', () => {
     expect(
       screen.queryByText(/Claude|Codex|Cursor|Augment|Antigravity|Windsurf/i),
     ).toBeNull();
+    expect(screen.queryByText('推荐设置已生效')).toBeNull();
+    expect(screen.queryByText('不知道怎么选时保持默认就好，所有选项都会立即生效。')).toBeNull();
   });
 
   it('新文案继续写入旧的稳定配置值，已有用户配置无需迁移', () => {
@@ -83,6 +93,152 @@ describe('PrefsPanel 外观与回复', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /企业办公（资料与会议）/ }));
     expect(setSetting).toHaveBeenCalledWith('agentStyle', 'antigravity');
+  });
+
+  it('只把当前页面的真实偏好恢复为默认值', async () => {
+    window.localStorage.setItem('otto.pet-widget.enabled', '1');
+    const themeSet = vi.fn(async () => undefined);
+    (window as unknown as { otto: unknown }).otto = {
+      themeGet: async () => 'dark',
+      themeSet,
+    };
+    const { value, setSetting } = settingsData('cursor', {
+      healthyUse: false,
+      preferredLanguage: '中文',
+    });
+    const onUiModeChange = vi.fn();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    const view = render(
+      <PrefsPanel
+        data={value}
+        uiMode="work"
+        onUiModeChange={onUiModeChange}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '深色' }).className).toContain('is-active');
+    });
+    fireEvent.click(screen.getByRole('button', { name: '恢复默认设置' }));
+
+    expect(confirm).toHaveBeenCalledWith(
+      '恢复外观与回复的默认设置？\n\n这会重置本页面的界面、主题和回复偏好，不会影响账号、工作目录或其他设置。',
+    );
+    await waitFor(() => {
+      expect(onUiModeChange).toHaveBeenCalledWith('conversational');
+      expect(themeSet).toHaveBeenCalledWith('system');
+      expect(setSetting).toHaveBeenCalledWith('agentStyle', 'default');
+      expect(setSetting).toHaveBeenCalledWith('healthyUse', true);
+      expect(setSetting).toHaveBeenCalledWith('preferredLanguage', '');
+      expect(window.localStorage.getItem('otto.pet-widget.enabled')).toBe('0');
+      expect(screen.getByRole('button', { name: '正在恢复…' })).toBeTruthy();
+    });
+
+    const { value: restored } = settingsData('default', {
+      healthyUse: true,
+      preferredLanguage: '',
+    }, setSetting);
+    view.rerender(
+      <PrefsPanel
+        data={restored}
+        uiMode="conversational"
+        onUiModeChange={onUiModeChange}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '已恢复' })).toBeTruthy();
+    });
+  });
+
+  it('取消确认时不修改任何设置', async () => {
+    const { value, setSetting } = settingsData('cursor');
+    const onUiModeChange = vi.fn();
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(
+      <PrefsPanel
+        data={value}
+        uiMode="work"
+        onUiModeChange={onUiModeChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '恢复默认设置' }));
+
+    expect(setSetting).not.toHaveBeenCalled();
+    expect(onUiModeChange).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: '恢复默认设置' })).toBeTruthy();
+  });
+
+  it('主题恢复失败时恢复原状态并允许重试', async () => {
+    const themeSet = vi.fn(async () => Promise.reject(new Error('theme failed')));
+    (window as unknown as { otto: unknown }).otto = {
+      themeGet: async () => 'dark',
+      themeSet,
+    };
+    const { value } = settingsData('default', { healthyUse: true });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<PrefsPanel data={value} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '深色' }).className).toContain('is-active');
+    });
+    fireEvent.click(screen.getByRole('button', { name: '恢复默认设置' }));
+
+    await waitFor(() => {
+      const retry = screen.getByRole('button', { name: '恢复失败，重试' }) as HTMLButtonElement;
+      expect(retry.disabled).toBe(false);
+      expect(screen.getByRole('button', { name: '深色' }).className).toContain('is-active');
+    });
+  });
+
+  it('服务端返回错误时不宣告成功并允许重试', async () => {
+    const setSetting = vi.fn();
+    const { value } = settingsData('cursor', { healthyUse: true }, setSetting);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const view = render(<PrefsPanel data={value} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '恢复默认设置' }));
+    expect(screen.getByRole('button', { name: '正在恢复…' })).toBeTruthy();
+
+    const { value: failed } = settingsData('cursor', {
+      healthyUse: true,
+      lastError: '设置写入失败',
+    }, setSetting);
+    view.rerender(<PrefsPanel data={failed} />);
+
+    await waitFor(() => {
+      const retry = screen.getByRole('button', { name: '恢复失败，重试' }) as HTMLButtonElement;
+      expect(retry.disabled).toBe(false);
+    });
+    expect(screen.queryByRole('button', { name: '已恢复' })).toBeNull();
+  });
+
+  it('把历史空白语言值视为需要恢复的非默认值', async () => {
+    const { value, setSetting } = settingsData('default', {
+      healthyUse: true,
+      preferredLanguage: '   ',
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<PrefsPanel data={value} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '恢复默认设置' }));
+
+    await waitFor(() => {
+      expect(setSetting).toHaveBeenCalledWith('preferredLanguage', '');
+      expect(screen.getByRole('button', { name: '正在恢复…' })).toBeTruthy();
+    });
+  });
+
+  it('所有项目均为默认值时禁用恢复按钮', async () => {
+    const { value } = settingsData('default', { healthyUse: true });
+    render(<PrefsPanel data={value} uiMode="conversational" />);
+
+    await waitFor(() => {
+      expect(
+        (screen.getByRole('button', { name: '恢复默认设置' }) as HTMLButtonElement).disabled,
+      ).toBe(true);
+    });
   });
 });
 
