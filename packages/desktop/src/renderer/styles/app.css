@@ -12048,6 +12048,7 @@ h6.otto-prose__h {
 }
 /* ── 可配置模块工作区 ───────────────────────────────────────────── */
 .otto-module-workspace-shell {
+  container-type: inline-size;
   position: relative;
   min-width: 0;
   height: 100%;
@@ -12123,6 +12124,16 @@ h6.otto-prose__h {
   padding: 12px;
 }
 
+.otto-module-workspace--panel.otto-module-workspace--density-compact {
+  gap: 8px;
+  padding: 10px;
+}
+
+.otto-module-workspace--panel.otto-module-workspace--density-condensed {
+  gap: 6px;
+  padding: 8px 10px;
+}
+
 .otto-module-group {
   min-width: 0;
   border: 1px solid var(--line, #e5e7eb);
@@ -12140,14 +12151,31 @@ h6.otto-prose__h {
 }
 
 .otto-module-group__header h2 {
+  min-width: 0;
+  overflow: hidden;
   margin: 0;
   color: var(--text, #171717);
   font-size: 15px;
   font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .otto-module-workspace--panel .otto-module-group {
   padding: 12px;
+}
+
+.otto-module-workspace--panel.otto-module-workspace--density-compact .otto-module-group {
+  padding: 10px;
+}
+
+.otto-module-workspace--panel.otto-module-workspace--density-condensed .otto-module-group {
+  padding: 8px 10px;
+  border-radius: 12px;
+}
+
+.otto-module-workspace--panel .otto-module-group.is-collapsed {
+  padding-bottom: 8px;
 }
 
 .otto-module-workspace--panel .otto-module-group__header {
@@ -12162,6 +12190,30 @@ h6.otto-prose__h {
 
 .otto-module-group__menu-wrap {
   position: relative;
+}
+
+.otto-module-group__collapse-button {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--otto-text-tertiary);
+  cursor: pointer;
+}
+
+.otto-module-group__collapse-button:hover,
+.otto-module-group__collapse-button:focus-visible {
+  background: var(--otto-surface-hover);
+  color: var(--otto-text);
+}
+
+.otto-module-group__collapse-button:focus-visible {
+  outline: 2px solid var(--otto-accent);
+  outline-offset: 1px;
 }
 
 .otto-module-group__menu-button {
@@ -12275,6 +12327,10 @@ h6.otto-prose__h {
   scrollbar-width: thin;
 }
 
+.otto-module-group__grid[hidden] {
+  display: none;
+}
+
 .otto-module-group__grid--rows-2 {
   max-height: 172px;
 }
@@ -12288,12 +12344,44 @@ h6.otto-prose__h {
   gap: 6px;
 }
 
+.otto-module-workspace--panel.otto-module-workspace--density-compact .otto-module-group__grid,
+.otto-module-workspace--panel.otto-module-workspace--density-condensed .otto-module-group__grid {
+  grid-auto-rows: 64px;
+  gap: 4px;
+}
+
+.otto-module-workspace--panel.otto-module-workspace--density-compact .otto-module-tile,
+.otto-module-workspace--panel.otto-module-workspace--density-condensed .otto-module-tile {
+  min-height: 60px;
+}
+
+.otto-module-workspace--panel.otto-module-workspace--density-compact .otto-module-tile-wrap,
+.otto-module-workspace--panel.otto-module-workspace--density-condensed .otto-module-tile-wrap {
+  min-height: 64px;
+}
+
 .otto-module-workspace--panel .otto-module-group__grid--rows-2 {
   max-height: 150px;
 }
 
 .otto-module-workspace--panel .otto-module-group__grid--rows-3 {
   max-height: 228px;
+}
+
+.otto-module-workspace--panel.otto-module-workspace--density-compact .otto-module-group__grid--rows-2,
+.otto-module-workspace--panel.otto-module-workspace--density-condensed .otto-module-group__grid--rows-2 {
+  max-height: 132px;
+}
+
+.otto-module-workspace--panel.otto-module-workspace--density-compact .otto-module-group__grid--rows-3,
+.otto-module-workspace--panel.otto-module-workspace--density-condensed .otto-module-group__grid--rows-3 {
+  max-height: 200px;
+}
+
+@container (max-width: 250px) {
+  .otto-module-workspace--panel .otto-module-group__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .otto-module-group__grid.is-overflowing {

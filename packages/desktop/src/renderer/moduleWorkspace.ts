@@ -31,6 +31,13 @@ export interface ModuleWorkspaceStorageScope {
   accountId: string;
 }
 
+export function resolveModuleGridColumns(
+  presentation: 'panel' | 'page',
+  containerWidth: number,
+): 2 | 3 {
+  return presentation === 'panel' && containerWidth > 0 && containerWidth <= 250 ? 2 : 3;
+}
+
 const ENTERPRISE_DEFAULT_GROUPS: readonly ModuleGroupLayout[] = [
   {
     id: 'park-services',
@@ -268,10 +275,21 @@ export function deleteModuleGroup(
   layout: ModuleWorkspaceLayout,
   groupId: string,
 ): ModuleWorkspaceLayout {
-  if (layout.groups.length <= 1 || !layout.groups.some((group) => group.id === groupId)) {
+  const deletedIndex = layout.groups.findIndex((group) => group.id === groupId);
+  if (layout.groups.length <= 1 || deletedIndex < 0) {
     return layout;
   }
-  return { ...layout, groups: layout.groups.filter((group) => group.id !== groupId).map(cloneGroup) };
+  const deleted = layout.groups[deletedIndex];
+  const targetIndex = deletedIndex < layout.groups.length - 1 ? deletedIndex + 1 : deletedIndex - 1;
+  const targetId = layout.groups[targetIndex].id;
+  return {
+    ...layout,
+    groups: layout.groups
+      .filter((group) => group.id !== groupId)
+      .map((group) => group.id === targetId
+        ? { ...group, moduleIds: [...group.moduleIds, ...deleted.moduleIds] }
+        : cloneGroup(group)),
+  };
 }
 
 export function renameModuleGroup(

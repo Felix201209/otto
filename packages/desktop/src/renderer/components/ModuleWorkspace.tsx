@@ -22,6 +22,7 @@ import {
   renameModuleGroup,
   reorderModuleGroups,
   reorderModulesInGroup,
+  resolveModuleGridColumns,
   validateModuleGroupName,
   type ModuleWorkspaceLayout,
 } from '../moduleWorkspace.js';
@@ -146,6 +147,9 @@ export function ModuleWorkspace({
 }: ModuleWorkspaceProps): React.JSX.Element {
   const [openPopover, setOpenPopover] = useState<WorkspacePopover>(null);
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [activeCondensedGroupId, setActiveCondensedGroupId] = useState<string | null>(
+    layout.groups[0]?.id ?? null,
+  );
   const [renameDraft, setRenameDraft] = useState<{
     groupId: string;
     value: string;
@@ -165,17 +169,41 @@ export function ModuleWorkspace({
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollbarHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
+  const workspaceShellRef = useRef<HTMLElement>(null);
   const transientLayoutRef = useRef(layout);
   const previousScopeRef = useRef(scopeKey);
+  const pendingGroupRevealRef = useRef<string | null>(null);
   const [scrollbarMetrics, setScrollbarMetrics] = useState<FloatingScrollbarMetrics>(
     EMPTY_SCROLLBAR_METRICS,
   );
   const [scrollbarVisible, setScrollbarVisible] = useState(false);
+  const [gridColumns, setGridColumns] = useState<2 | 3>(3);
   const reducedMotion = Boolean(useReducedMotion());
   const modulesById = useMemo(
     () => new Map(modules.map((module) => [module.id, module])),
     [modules],
   );
+  const density = presentation !== 'panel' || transientLayout.groups.length <= 2
+    ? 'comfortable'
+    : transientLayout.groups.length <= 4 ? 'compact' : 'condensed';
+
+  const measureGridColumns = useCallback((): void => {
+    const width = workspaceShellRef.current?.clientWidth ?? 0;
+    setGridColumns(resolveModuleGridColumns(presentation, width));
+  }, [presentation]);
+
+  useLayoutEffect(() => {
+    const shell = workspaceShellRef.current;
+    if (!shell) return undefined;
+    measureGridColumns();
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(measureGridColumns);
+      observer.observe(shell);
+      return () => observer.disconnect();
+    }
+    window.addEventListener('resize', measureGridColumns);
+    return () => window.removeEventListener('resize', measureGridColumns);
+  }, [measureGridColumns]);
 
   const measureFloatingScrollbar = useCallback((): boolean => {
     const viewport = scrollViewportRef.current;
@@ -278,16 +306,30 @@ export function ModuleWorkspace({
     setRenameDraft(null);
     setConfirmState(null);
     setUndoState(null);
+    setActiveCondensedGroupId(layout.groups[0]?.id ?? null);
     if (undoTimerRef.current) {
       clearTimeout(undoTimerRef.current);
       undoTimerRef.current = null;
     }
-  }, [scopeKey]);
+  }, [layout.groups, scopeKey]);
 
   useEffect(() => {
     transientLayoutRef.current = layout;
     setTransientLayout(layout);
+    setActiveCondensedGroupId((current) => (
+      current && layout.groups.some((group) => group.id === current)
+        ? current
+        : layout.groups[0]?.id ?? null
+    ));
   }, [layout]);
+
+  useLayoutEffect(() => {
+    const groupId = pendingGroupRevealRef.current;
+    if (!groupId || !layout.groups.some((group) => group.id === groupId)) return;
+    const group = scrollViewportRef.current?.querySelector<HTMLElement>(`[data-group-id="${groupId}"]`);
+    group?.scrollIntoView?.({ block: 'nearest', behavior: reducedMotion ? 'auto' : 'smooth' });
+    pendingGroupRevealRef.current = null;
+  }, [layout, reducedMotion]);
 
   useEffect(() => {
     if (!undoState || JSON.stringify(layout) === undoState.appliedSignature) return;
@@ -359,6 +401,7 @@ export function ModuleWorkspace({
 
   return (
     <section
+      ref={workspaceShellRef}
       className={`otto-module-workspace-shell otto-module-workspace-shell--${presentation}`}
       aria-label="功能组"
     >
@@ -378,10 +421,11 @@ export function ModuleWorkspace({
         onReorder={(orderedGroupIds) => updateTransientLayout(
           reorderModuleGroups(transientLayoutRef.current, orderedGroupIds),
         )}
-        className={`otto-module-workspace otto-module-workspace--${presentation}${
+        className={`otto-module-workspace otto-module-workspace--${presentation} otto-module-workspace--density-${density}${
           reducedMotion ? ' is-reduced-motion' : ''
         }`}
         data-presentation={presentation}
+        data-grid-columns={gridColumns}
         data-reorder-group="groups"
         onPointerMove={(event: React.PointerEvent<HTMLDivElement>) => {
           const viewport = scrollViewportRef.current;
@@ -394,10 +438,12 @@ export function ModuleWorkspace({
           .filter((module): module is ModuleDefinition => Boolean(module));
         const displayRows = Math.min(
           3,
-          Math.max(group.rows, Math.ceil((groupModules.length + 1) / 3)),
+          Math.max(group.rows, Math.ceil((groupModules.length + 1) / gridColumns)),
         );
-        const capacity = displayRows * 3;
+        const capacity = displayRows * gridColumns;
         const overflowing = groupModules.length + 1 > capacity;
+        const condensed = presentation === 'panel' && density === 'condensed';
+        const collapsed = condensed && activeCondensedGroupId !== group.id;
         return (
           <DraggableItem
             key={group.id}
@@ -409,7 +455,7 @@ export function ModuleWorkspace({
           >
             {() => (
           <article
-            className={`otto-module-group${editingGroupId === group.id ? ' is-editing' : ''}`}
+            className={`otto-module-group${editingGroupId === group.id ? ' is-editing' : ''}${collapsed ? ' is-collapsed' : ''}`}
             data-group-id={group.id}
           >
             <header className="otto-module-group__header">
@@ -442,8 +488,19 @@ export function ModuleWorkspace({
                   </button>
                   {renameDraft.error ? <span role="alert">{renameDraft.error}</span> : null}
                 </div>
-              ) : <h2>{group.name}</h2>}
+              ) : <h2 title={group.name}>{group.name}</h2>}
               <div className="otto-module-group__header-actions">
+              {condensed ? (
+                <button
+                  type="button"
+                  className="otto-module-group__collapse-button"
+                  aria-label={`${collapsed ? '展开' : '折叠'}${group.name}`}
+                  aria-expanded={!collapsed}
+                  onClick={() => setActiveCondensedGroupId(group.id)}
+                >
+                  <span aria-hidden>{collapsed ? '▼' : '▲'}</span>
+                </button>
+              ) : null}
               <div className="otto-module-group__menu-wrap" ref={openPopover?.kind === 'group' && openPopover.id === group.id ? menuRef : undefined}>
                 <button
                   type="button"
@@ -537,6 +594,7 @@ export function ModuleWorkspace({
               className={`otto-module-group__grid otto-module-group__grid--rows-${displayRows}${
                 overflowing ? ' is-overflowing' : ''
               }`}
+              hidden={collapsed}
               data-reorder-group={`modules:${group.id}`}
               layoutScroll={overflowing}
               tabIndex={overflowing ? 0 : undefined}
@@ -581,9 +639,9 @@ export function ModuleWorkspace({
                           : event.key === 'ArrowRight'
                             ? moduleIndex + 1
                             : event.key === 'ArrowUp'
-                              ? moduleIndex - 3
+                              ? moduleIndex - gridColumns
                               : event.key === 'ArrowDown'
-                                ? moduleIndex + 3
+                                ? moduleIndex + gridColumns
                                 : moduleIndex;
                         if (targetIndex === moduleIndex) return;
                         event.preventDefault();
@@ -636,7 +694,16 @@ export function ModuleWorkspace({
           type="button"
           className="otto-module-workspace__add-group"
           aria-label="添加功能组"
-          onClick={() => commitLayout(createModuleGroup(layout))}
+          onClick={() => {
+            const next = createModuleGroup(layout);
+            const created = next.groups.at(-1);
+            if (created) {
+              pendingGroupRevealRef.current = created.id;
+              setActiveCondensedGroupId(created.id);
+              setRenameDraft({ groupId: created.id, value: created.name, error: null });
+            }
+            commitLayout(next);
+          }}
         >
           <span aria-hidden>＋</span>
           添加功能组
@@ -679,7 +746,7 @@ export function ModuleWorkspace({
       <ConfirmDialog
         open={confirmState?.kind === 'delete-group'}
         title="删除功能组"
-        message="删除后，组内模块会回到模块超市，模块和专家数据不会被删除。"
+        message="删除后，组内模块会自动移到相邻功能组，模块和专家数据不会被删除。"
         confirmText="确认删除"
         onConfirm={() => {
           if (confirmState?.kind !== 'delete-group') return;

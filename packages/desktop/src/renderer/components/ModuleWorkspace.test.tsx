@@ -279,11 +279,9 @@ describe('ModuleWorkspace', () => {
   it('creates a group and supports rename validation', () => {
     renderControlledWorkspace();
     fireEvent.click(screen.getByRole('button', { name: '添加功能组' }));
-    expect(screen.getByRole('heading', { name: '新功能组' })).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: '功能组菜单：新功能组' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: '重命名' }));
     const input = screen.getByRole('textbox', { name: '功能组名称' });
+    expect(document.activeElement).toBe(input);
+    expect((input as HTMLInputElement).value).toBe('新功能组');
     fireEvent.change(input, { target: { value: '日常办公' } });
     fireEvent.click(screen.getByRole('button', { name: '保存名称' }));
     expect(screen.getByRole('alert').textContent).toContain('不能重复');
@@ -293,6 +291,72 @@ describe('ModuleWorkspace', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '功能组菜单：项目协作' }));
     expect(screen.queryByRole('menuitem', { name: /显示[两三]行/ })).toBeNull();
+  });
+
+  it('adjusts panel density from group count and collapses inactive groups in condensed mode', () => {
+    const fiveGroups: ModuleWorkspaceLayout = {
+      version: 1,
+      groups: Array.from({ length: 5 }, (_, index) => ({
+        id: `group-${index + 1}`,
+        name: `分组 ${index + 1}`,
+        rows: 2,
+        moduleIds: index === 0 ? ['agent-ppt'] : [],
+      })),
+    };
+    const { container } = renderWorkspace('panel', fiveGroups);
+    const workspace = container.querySelector('.otto-module-workspace');
+
+    expect(workspace?.classList.contains('otto-module-workspace--density-condensed')).toBe(true);
+    expect(container.querySelector('[data-group-id="group-1"]')?.classList.contains('is-collapsed')).toBe(false);
+    expect(container.querySelector('[data-group-id="group-2"]')?.classList.contains('is-collapsed')).toBe(true);
+    expect(container.querySelector('[data-group-id="group-2"] .otto-module-group__grid')?.hasAttribute('hidden'))
+      .toBe(true);
+    expect(screen.queryByRole('button', { name: '打开 PPT 创作专家' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '展开分组 2' }));
+    expect(container.querySelector('[data-group-id="group-1"]')?.classList.contains('is-collapsed')).toBe(true);
+    expect(container.querySelector('[data-group-id="group-2"]')?.classList.contains('is-collapsed')).toBe(false);
+    expect(container.querySelector('[data-group-id="group-2"] .otto-module-group__grid')?.hasAttribute('hidden'))
+      .toBe(false);
+  });
+
+  it.each([
+    { count: 2, density: 'comfortable' },
+    { count: 3, density: 'compact' },
+    { count: 5, density: 'condensed' },
+  ])('uses $density density for $count groups', ({ count, density }) => {
+    const layout: ModuleWorkspaceLayout = {
+      version: 1,
+      groups: Array.from({ length: count }, (_, index) => ({
+        id: `density-${index}`,
+        name: `密度 ${index + 1}`,
+        rows: 2,
+        moduleIds: [],
+      })),
+    };
+    const { container } = renderWorkspace('panel', layout);
+    expect(container.querySelector('.otto-module-workspace')?.classList.contains(
+      `otto-module-workspace--density-${density}`,
+    )).toBe(true);
+  });
+
+  it('keeps ten named groups usable and exposes full long names without expanding every group', () => {
+    const longName = '跨部门客户交付与数据分析联合工作组';
+    const layout: ModuleWorkspaceLayout = {
+      version: 1,
+      groups: Array.from({ length: 10 }, (_, index) => ({
+        id: `large-${index}`,
+        name: index === 9 ? longName : `业务分组 ${index + 1}`,
+        rows: 2,
+        moduleIds: [],
+      })),
+    };
+    const { container } = renderWorkspace('panel', layout);
+    const groups = container.querySelectorAll('.otto-module-group');
+
+    expect(groups).toHaveLength(10);
+    expect(container.querySelectorAll('.otto-module-group.is-collapsed')).toHaveLength(9);
+    expect(screen.getByRole('heading', { name: longName }).getAttribute('title')).toBe(longName);
   });
 
   it('removes a module in edit mode and can undo for five seconds', () => {

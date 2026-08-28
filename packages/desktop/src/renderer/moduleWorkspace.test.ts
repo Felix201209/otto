@@ -12,6 +12,7 @@ import {
   renameModuleGroup,
   reorderModuleGroups,
   reorderModulesInGroup,
+  resolveModuleGridColumns,
   restoreDefaultModuleWorkspace,
   updateModuleGroupRows,
   validateModuleGroupName,
@@ -168,6 +169,14 @@ describe('module workspace parsing and normalization', () => {
 });
 
 describe('module workspace layout operations', () => {
+  it('resolves two columns only for a genuinely narrow side panel', () => {
+    expect(resolveModuleGridColumns('panel', 240)).toBe(2);
+    expect(resolveModuleGridColumns('panel', 250)).toBe(2);
+    expect(resolveModuleGridColumns('panel', 251)).toBe(3);
+    expect(resolveModuleGridColumns('panel', 0)).toBe(3);
+    expect(resolveModuleGridColumns('page', 220)).toBe(3);
+  });
+
   it('creates groups with stable unique default names and IDs', () => {
     const first = createModuleGroup(sampleLayout());
     const second = createModuleGroup(first);
@@ -204,12 +213,18 @@ describe('module workspace layout operations', () => {
     expect(next.groups[1].moduleIds).toEqual(['agent-word']);
   });
 
-  it('protects the last group but allows deleting another group', () => {
+  it('protects the last group and migrates deleted group modules to the nearest group', () => {
     const oneGroup = { version: 1 as const, groups: [sampleLayout().groups[0]] };
     expect(deleteModuleGroup(oneGroup, 'park-services')).toEqual(oneGroup);
 
     const next = deleteModuleGroup(sampleLayout(), 'park-services');
     expect(next.groups.map((group) => group.id)).toEqual(['daily-office']);
+    expect(next.groups[0].moduleIds).toEqual([
+      'agent-ppt',
+      'agent-word',
+      'park-announcement',
+      'park-satisfaction',
+    ]);
   });
 
   it('renames, updates row count, and reorders groups and modules', () => {
