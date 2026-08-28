@@ -170,6 +170,7 @@ jobs:
           fi
 
       - name: Validate enterprise license trust anchor
+        if: ${{ !(inputs.unsigned_mac_transition == true && inputs.release_channel == 'transition' && inputs.draft == true && inputs.prerelease == true) }}
         shell: bash
         env:
           LICENSE_PUBLIC_KEYS: ${{ secrets.OTTO_LICENSE_PUBLIC_KEYS }}
@@ -178,6 +179,7 @@ jobs:
           test -n "$LICENSE_PUBLIC_KEYS"
 
       - name: Require desktop signing and notarization custody
+        if: ${{ !(inputs.unsigned_mac_transition == true && inputs.release_channel == 'transition' && inputs.draft == true && inputs.prerelease == true) }}
         shell: bash
         env:
           MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
@@ -265,6 +267,7 @@ jobs:
           done
 
       - name: Build enterprise server package
+        if: ${{ !(inputs.unsigned_mac_transition == true && inputs.release_channel == 'transition' && inputs.draft == true && inputs.prerelease == true) }}
         run: npm run bundle:enterprise
         env:
           OTTO_LICENSE_PUBLIC_KEYS: ${{ secrets.OTTO_LICENSE_PUBLIC_KEYS }}
@@ -276,37 +279,40 @@ jobs:
         shell: bash
         env:
           OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY: ${{ secrets.OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY }}
+          DESKTOP_TEST_BUILD: ${{ inputs.unsigned_mac_transition == true && inputs.release_channel == 'transition' && inputs.draft == true && inputs.prerelease == true && '1' || '0' }}
         run: |
           set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
           DESKTOP_RELEASE="packages/desktop/release"
-          ENTERPRISE_ARCHIVE="$(ls deliverables/otto-enterprise-oneclick-v${VERSION}-*.tar.gz | head -n 1)"
-          ENTERPRISE_SHA="${ENTERPRISE_ARCHIVE}.sha256"
-          ENTERPRISE_SIGNATURE="${ENTERPRISE_ARCHIVE}.sig"
-          test -f "$ENTERPRISE_ARCHIVE"
-          test -f "$ENTERPRISE_SHA"
-          test -f "$ENTERPRISE_SIGNATURE"
-          sha256sum -c "$ENTERPRISE_SHA"
-          node scripts/verify-enterprise-package-signature.mjs \
-            "$ENTERPRISE_ARCHIVE" "$ENTERPRISE_SIGNATURE"
           test -f "$DESKTOP_RELEASE/Otto-${VERSION}-arm64.dmg"
           test -f "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg"
           test -f "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe"
           test -f "$DESKTOP_RELEASE/latest.json"
           node packages/desktop/scripts/verify-update-manifest.mjs "$DESKTOP_RELEASE" "$VERSION"
+          FILES=(
+            "$DESKTOP_RELEASE/Otto-${VERSION}-arm64.dmg"
+            "$DESKTOP_RELEASE/Otto-${VERSION}-arm64.dmg.blockmap"
+            "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg"
+            "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg.blockmap"
+            "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe"
+            "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe.blockmap"
+            "$DESKTOP_RELEASE/latest.json"
+          )
+          if [ "$DESKTOP_TEST_BUILD" != "1" ]; then
+            ENTERPRISE_ARCHIVE="$(ls deliverables/otto-enterprise-oneclick-v${VERSION}-*.tar.gz | head -n 1)"
+            ENTERPRISE_SHA="${ENTERPRISE_ARCHIVE}.sha256"
+            ENTERPRISE_SIGNATURE="${ENTERPRISE_ARCHIVE}.sig"
+            test -f "$ENTERPRISE_ARCHIVE"
+            test -f "$ENTERPRISE_SHA"
+            test -f "$ENTERPRISE_SIGNATURE"
+            sha256sum -c "$ENTERPRISE_SHA"
+            node scripts/verify-enterprise-package-signature.mjs \
+              "$ENTERPRISE_ARCHIVE" "$ENTERPRISE_SIGNATURE"
+            FILES+=("$ENTERPRISE_ARCHIVE" "$ENTERPRISE_SHA" "$ENTERPRISE_SIGNATURE")
+          fi
           {
             echo "files<<EOF"
-            printf '%s\n' \
-              "$DESKTOP_RELEASE/Otto-${VERSION}-arm64.dmg" \
-              "$DESKTOP_RELEASE/Otto-${VERSION}-arm64.dmg.blockmap" \
-              "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg" \
-              "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg.blockmap" \
-              "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe" \
-              "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe.blockmap" \
-              "$DESKTOP_RELEASE/latest.json" \
-              "$ENTERPRISE_ARCHIVE" \
-              "$ENTERPRISE_SHA" \
-              "$ENTERPRISE_SIGNATURE"
+            printf '%s\n' "${FILES[@]}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -362,7 +368,7 @@ jobs:
           body_path: ${{ steps.release_notes.outputs.path }}
 
       - name: Create legacy compatibility draft release
-        if: github.repository == 'NSIETeam/otto-new'
+        if: ${{ github.repository == 'NSIETeam/otto-new' && !(inputs.unsigned_mac_transition == true && inputs.release_channel == 'transition' && inputs.draft == true && inputs.prerelease == true) }}
         uses: softprops/action-gh-release@v2
         with:
           repository: ${{ env.LEGACY_RELEASES_REPO }}
@@ -379,6 +385,7 @@ jobs:
     needs: build
     runs-on: windows-2025
     timeout-minutes: 15
+    if: ${{ !(inputs.unsigned_mac_transition == true && inputs.release_channel == 'transition' && inputs.draft == true && inputs.prerelease == true) }}
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
