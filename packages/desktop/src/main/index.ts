@@ -170,15 +170,18 @@ import {
 } from './enterprise-client.js';
 import {
   clearCustomerModuleData,
+  exportCustomerModuleData,
   installCustomerModule,
   listInstalledCustomerModules,
   recoverCustomerModuleInstallReceipts,
   refreshCustomerModuleMarketStatus,
   runInstalledCustomerModule,
   setCustomerModuleEnabled,
+  setCustomerModuleBackgroundEnabled,
   uninstallCustomerModule,
 } from './customerModuleInstaller.js';
 import { createDesktopCustomerModuleHost } from './customerModuleHostAdapter.js';
+import { createCustomerModuleModelInvoke } from './customerModuleModelAdapter.js';
 import {
   EnterpriseE2eeCrypto,
   EnterpriseE2eeKeyVault,
@@ -556,8 +559,10 @@ const IPC = {
   customerModuleInstalledList: 'otto:customer-module-installed-list',
   customerModuleInstall: 'otto:customer-module-install',
   customerModuleSetEnabled: 'otto:customer-module-set-enabled',
+  customerModuleSetBackgroundEnabled: 'otto:customer-module-set-background-enabled',
   customerModuleUninstall: 'otto:customer-module-uninstall',
   customerModuleClearData: 'otto:customer-module-clear-data',
+  customerModuleExportData: 'otto:customer-module-export-data',
   customerModuleRun: 'otto:customer-module-run',
   customerModuleCancel: 'otto:customer-module-cancel',
   setLocalTestUrl: 'otto:set-local-test-url',
@@ -688,6 +693,7 @@ const IPC = {
 } as const;
 
 const customerModuleRunControllers = new Map<string, AbortController>();
+const customerModuleModelInvoke = createCustomerModuleModelInvoke();
 
 const enterpriseFetch = createEnterpriseNetworkFetch(
   fetch,
@@ -4210,6 +4216,16 @@ function registerIpc(): void {
     return { ...safe, inputSchema: manifest.inputSchema };
   });
 
+  ipcMain.handle(IPC.customerModuleSetBackgroundEnabled, async (_event, input: unknown) => {
+    if (!input || typeof input !== 'object') throw new Error('客户模块后台授权参数不正确');
+    const body = input as Record<string, unknown>;
+    if (typeof body.moduleId !== 'string' || typeof body.enabled !== 'boolean') throw new Error('客户模块后台授权参数不正确');
+    const root = path.join(app.getPath('userData'), 'customer-modules');
+    const record = await setCustomerModuleBackgroundEnabled(root, body.moduleId, body.enabled);
+    const { artifactPath: _artifactPath, receiptId: _receiptId, receiptStatus: _receiptStatus, manifest, ...safe } = record;
+    return { ...safe, inputSchema: manifest.inputSchema };
+  });
+
   ipcMain.handle(IPC.customerModuleUninstall, async (_event, moduleId: unknown) => {
     if (typeof moduleId !== 'string') throw new Error('客户模块卸载参数不正确');
     await uninstallCustomerModule(path.join(app.getPath('userData'), 'customer-modules'), moduleId);
@@ -4218,6 +4234,16 @@ function registerIpc(): void {
   ipcMain.handle(IPC.customerModuleClearData, async (_event, moduleId: unknown) => {
     if (typeof moduleId !== 'string') throw new Error('客户模块数据清理参数不正确');
     await clearCustomerModuleData(path.join(app.getPath('userData'), 'customer-modules'), moduleId);
+  });
+
+  ipcMain.handle(IPC.customerModuleExportData, async (_event, moduleId: unknown) => {
+    if (typeof moduleId !== 'string') throw new Error('客户模块数据导出参数不正确');
+    const root = path.join(app.getPath('userData'), 'customer-modules');
+    const exported = await exportCustomerModuleData(root, moduleId);
+    const selected = await dialog.showSaveDialog({ defaultPath: `${moduleId}-data.json` });
+    if (selected.canceled || !selected.filePath) return null;
+    await fs.promises.writeFile(selected.filePath, `${JSON.stringify(exported, null, 2)}\n`, { mode: 0o600 });
+    return selected.filePath;
   });
 
   ipcMain.handle(IPC.customerModuleRun, async (_event, input: unknown) => {
@@ -4237,6 +4263,7 @@ function registerIpc(): void {
     const host = createDesktopCustomerModuleHost({
       record,
       storageRoot: path.join(root, 'data'),
+      modelInvoke: customerModuleModelInvoke,
       selectReadFile: async () => {
         const selected = await dialog.showOpenDialog({ properties: ['openFile'] });
         return selected.canceled ? null : selected.filePaths[0] ?? null;

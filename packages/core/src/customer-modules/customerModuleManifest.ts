@@ -58,6 +58,11 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function onlyKeys(value: Record<string, unknown>, allowed: readonly string[], field: string): void {
+  const allowedSet = new Set(allowed);
+  if (Object.keys(value).some((key) => !allowedSet.has(key))) fail(`${field} contains unknown fields`);
+}
+
 function safePath(value: unknown, field: string): string {
   if (typeof value !== 'string' || !SAFE_PATH.test(value) || value.startsWith('.')) {
     fail(`${field} has unsafe path`);
@@ -70,12 +75,17 @@ export function parseCustomerModuleManifest(
   options: { requireSignature?: boolean } = { requireSignature: true },
 ): CustomerModuleManifestV1 {
   if (!isObject(value)) fail('root must be an object');
+  onlyKeys(value, [
+    'schemaVersion', 'id', 'name', 'version', 'publisher', 'description', 'releaseNotes', 'icon',
+    'entrypoint', 'hostApi', 'minimumOttoVersion', 'inputSchema', 'outputs', 'permissions', 'files', 'signature',
+  ], 'root');
   const manifest = value as unknown as CustomerModuleManifestV1;
   if (manifest.schemaVersion !== 1) fail('schemaVersion must be 1');
   if (!MODULE_ID.test(manifest.id)) fail('id must be a stable reverse-domain identifier');
   if (!manifest.name?.trim() || manifest.name.length > 80) fail('name is required and limited to 80 characters');
   if (!SEMVER.test(manifest.version) || !SEMVER.test(manifest.minimumOttoVersion)) fail('versions must use semver');
   if (!manifest.publisher?.id?.trim() || !manifest.publisher?.name?.trim()) fail('publisher is required');
+  onlyKeys(manifest.publisher as unknown as Record<string, unknown>, ['id', 'name'], 'publisher');
   if (!manifest.description?.trim() || manifest.description.length > 2_000) fail('description is required');
   if (manifest.releaseNotes !== undefined && (typeof manifest.releaseNotes !== 'string' || manifest.releaseNotes.length > 4_000)) fail('release notes are invalid');
   safePath(manifest.icon, 'icon');
@@ -84,6 +94,7 @@ export function parseCustomerModuleManifest(
   if (!isObject(manifest.inputSchema) || manifest.inputSchema.type !== 'object' || !isObject(manifest.inputSchema.properties)) {
     fail('inputSchema must be a declarative object schema');
   }
+  onlyKeys(manifest.inputSchema as unknown as Record<string, unknown>, ['type', 'properties', 'required'], 'inputSchema');
   const inputProperties = Object.entries(manifest.inputSchema.properties);
   if (inputProperties.length > 100) fail('inputSchema has too many fields');
   for (const [name, property] of inputProperties) {
@@ -92,6 +103,7 @@ export function parseCustomerModuleManifest(
       || (property.title !== undefined && (typeof property.title !== 'string' || property.title.length > 120))) {
       fail('inputSchema contains an unsupported field');
     }
+    onlyKeys(property, ['type', 'title', 'description', 'default'], `inputSchema property ${name}`);
   }
   if (manifest.inputSchema.required !== undefined && (
     !Array.isArray(manifest.inputSchema.required)
@@ -106,14 +118,19 @@ export function parseCustomerModuleManifest(
     if (!isObject(permission) || typeof permission.kind !== 'string') fail('permission is invalid');
     if (permissionKinds.has(permission.kind)) fail('permission kinds must not be duplicated');
     permissionKinds.add(permission.kind);
+    const permissionFields: Record<string, string[]> = {
+      background: ['kind', 'defaultEnabled'], http: ['kind', 'hosts', 'writes'], model: ['kind', 'paid'],
+      file: ['kind', 'access'], storage: ['kind', 'access'],
+    };
+    if (permissionFields[permission.kind]) onlyKeys(permission, permissionFields[permission.kind]!, `${permission.kind} permission`);
     if (permission.kind === 'background' && permission.defaultEnabled !== false) fail('background must default off');
     if (permission.kind === 'http') {
       if (!Array.isArray(permission.hosts) || permission.hosts.length === 0 || permission.hosts.some(
         (host) => typeof host !== 'string' || !HOST.test(host),
       )) fail('HTTP hosts must be explicit DNS names');
       if (typeof permission.writes !== 'boolean') fail('HTTP writes declaration is required');
-    } else if (permission.kind === 'model' && typeof permission.paid !== 'boolean') {
-      fail('model paid declaration is required');
+    } else if (permission.kind === 'model' && permission.paid !== true) {
+      fail('model calls must declare that they may incur cost');
     } else if (permission.kind === 'file' && !['user-selected-read', 'user-selected-write'].includes(String(permission.access))) {
       fail('file access must use a user-selected scope');
     } else if (permission.kind === 'storage' && !['read', 'read-write'].includes(String(permission.access))) {
@@ -140,6 +157,7 @@ export function parseCustomerModuleManifest(
     || !manifest.signature.keyId?.trim()
     || !manifest.signature.value?.startsWith('ed25519:')
   )) fail('marketplace signature is invalid');
+  if (manifest.signature) onlyKeys(manifest.signature as unknown as Record<string, unknown>, ['algorithm', 'keyId', 'value'], 'signature');
   return manifest;
 }
 

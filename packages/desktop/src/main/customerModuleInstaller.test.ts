@@ -3,14 +3,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { canonicalCustomerModuleManifest, encodeCustomerModulePackageV1 } from 'otto-core';
+import { canonicalCustomerModuleManifest, encodeCustomerModulePackageV1, type CustomerModulePermission } from 'otto-core';
 import {
   installCustomerModule,
   clearCustomerModuleData,
+  exportCustomerModuleData,
   listInstalledCustomerModules,
   recoverCustomerModuleInstallReceipts,
   refreshCustomerModuleMarketStatus,
   setCustomerModuleEnabled,
+  setCustomerModuleBackgroundEnabled,
   uninstallCustomerModule,
 } from './customerModuleInstaller.js';
 
@@ -20,7 +22,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => fs.promises.rm(root, { recursive: true, force: true })));
 });
 
-function packageFixture() {
+function packageFixture(permissions: CustomerModulePermission[] = [{ kind: 'model', paid: true }]) {
   const wasm = Uint8Array.from([
     0,97,115,109,1,0,0,0, 1,5,1,96,0,1,127, 3,2,1,0,
     7,12,1,8,111,116,116,111,95,114,117,110,0,0, 10,6,1,4,0,65,0,11,
@@ -32,7 +34,7 @@ function packageFixture() {
     publisher: { id: 'publisher', name: 'Publisher' }, description: 'Install module',
     icon: 'icon.svg', entrypoint: 'module.wasm', hostApi: 'otto.customer-module.v1' as const,
     minimumOttoVersion: '1.15.3', inputSchema: { type: 'object' as const, properties: {} },
-    outputs: ['text' as const], permissions: [{ kind: 'model' as const, paid: true }],
+    outputs: ['text' as const], permissions,
     files: { 'module.wasm': digest(wasm), 'icon.svg': digest(icon) },
   };
   const keys = generateKeyPairSync('ed25519');
@@ -123,6 +125,7 @@ describe('customer module installer', () => {
     const dataRoot = path.join(root, 'data', encodeURIComponent(record.id));
     await fs.promises.mkdir(dataRoot, { recursive: true });
     await fs.promises.writeFile(path.join(dataRoot, 'value.json'), '{}');
+    expect(await exportCustomerModuleData(root, record.id)).toMatchObject({ moduleId: record.id, values: { value: {} } });
     expect((await setCustomerModuleEnabled(root, record.id, false)).enabled).toBe(false);
     await uninstallCustomerModule(root, record.id);
     expect(await listInstalledCustomerModules(root)).toEqual([]);
@@ -141,5 +144,26 @@ describe('customer module installer', () => {
     } as never);
     expect(records[0]).toMatchObject({ enabled: false, riskStatus: 'suspended' });
     await expect(setCustomerModuleEnabled(root, bundle.manifest.id, true)).rejects.toThrow(/风险状态/);
+  });
+
+  it('preserves the committed registry when an atomic switch fails with disk full', async () => {
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'otto-module-disk-full-')); roots.push(root);
+    const bundle = packageFixture();
+    const client = { downloadCustomerModulePackage: vi.fn().mockResolvedValue(bundle), recordCustomerModuleInstall: vi.fn() };
+    await installCustomerModule({ root, client: client as never, moduleId: bundle.manifest.id, version: bundle.manifest.version, approvedPermissions: bundle.manifest.permissions, ottoVersion });
+    const rename = vi.spyOn(fs.promises, 'rename').mockRejectedValueOnce(Object.assign(new Error('disk full'), { code: 'ENOSPC' }));
+    await expect(setCustomerModuleEnabled(root, bundle.manifest.id, false)).rejects.toMatchObject({ code: 'ENOSPC' });
+    rename.mockRestore();
+    expect((await listInstalledCustomerModules(root))[0].enabled).toBe(true);
+  });
+
+  it('keeps declared background capability off until a separate explicit authorization', async () => {
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'otto-module-background-')); roots.push(root);
+    const bundle = packageFixture([{ kind: 'background', defaultEnabled: false }]);
+    const client = { downloadCustomerModulePackage: vi.fn().mockResolvedValue(bundle), recordCustomerModuleInstall: vi.fn() };
+    const installed = await installCustomerModule({ root, client: client as never, moduleId: bundle.manifest.id, version: bundle.manifest.version, approvedPermissions: bundle.manifest.permissions, ottoVersion });
+    expect(installed.backgroundEnabled).toBe(false);
+    expect((await setCustomerModuleBackgroundEnabled(root, installed.id, true)).backgroundEnabled).toBe(true);
+    expect((await setCustomerModuleBackgroundEnabled(root, installed.id, false)).backgroundEnabled).toBe(false);
   });
 });

@@ -24,6 +24,13 @@ export function handleCustomerModuleMarketplaceRequest(
   }
   if (!request.actor) return { status: 401, body: { error: 'authentication required' } };
   try {
+    if (request.path === '/enterprise/customer-modules/versions' && request.method === 'GET') {
+      return { status: 200, body: { modules: market.listPublisher(request.actor.accountId) } };
+    }
+    if (request.path === '/enterprise/platform/customer-modules/review-queue' && request.method === 'GET') {
+      if (!request.actor.isPlatformReviewer) return { status: 403, body: { error: 'platform reviewer required' } };
+      return { status: 200, body: { modules: market.listReviewQueue() } };
+    }
     if (request.path === '/enterprise/customer-modules/drafts' && request.method === 'POST') {
       const manifest = request.body.manifest as { publisher?: { id?: string } } | undefined;
       if (manifest?.publisher?.id !== request.actor.accountId) return { status: 403, body: { error: 'publisher identity mismatch' } };
@@ -33,7 +40,7 @@ export function handleCustomerModuleMarketplaceRequest(
     if (statusMatch && request.method === 'GET') {
       const record = market.get(statusMatch[1], statusMatch[2]);
       return record
-        ? { status: 200, body: { moduleId: record.manifest.id, version: record.manifest.version, status: record.status, updatedAt: record.updatedAt } }
+        ? { status: 200, body: { moduleId: record.manifest.id, version: record.manifest.version, status: record.status, scanReport: record.scanReport, reviewerId: record.reviewerId, signed: Boolean(record.manifest.signature), updatedAt: record.updatedAt } }
         : { status: 404, body: { error: 'customer module version not found' } };
     }
     const match = request.path.match(/^\/enterprise\/(?:platform\/)?customer-modules\/([a-z0-9.-]+)\/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\/(submit|review|install|withdraw|suspend)$/u);

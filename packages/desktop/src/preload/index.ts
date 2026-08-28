@@ -585,6 +585,7 @@ export interface InstalledCustomerModuleRecord {
   description: string;
   permissions: Array<Record<string, unknown>>;
   enabled: boolean;
+  backgroundEnabled?: boolean;
   riskStatus?: 'suspended' | 'withdrawn';
   installedAt: string;
   iconDataUrl: string;
@@ -1286,8 +1287,10 @@ const IPC = {
   customerModuleInstalledList: 'otto:customer-module-installed-list',
   customerModuleInstall: 'otto:customer-module-install',
   customerModuleSetEnabled: 'otto:customer-module-set-enabled',
+  customerModuleSetBackgroundEnabled: 'otto:customer-module-set-background-enabled',
   customerModuleUninstall: 'otto:customer-module-uninstall',
   customerModuleClearData: 'otto:customer-module-clear-data',
+  customerModuleExportData: 'otto:customer-module-export-data',
   customerModuleRun: 'otto:customer-module-run',
   customerModuleCancel: 'otto:customer-module-cancel',
   parkNativeNotify: 'otto:park-native-notify',
@@ -1535,8 +1538,10 @@ export interface OttoBridge {
     approvedPermissions: Array<Record<string, unknown>>;
   }): Promise<InstalledCustomerModuleRecord>;
   customerModuleSetEnabled(moduleId: string, enabled: boolean): Promise<InstalledCustomerModuleRecord>;
+  customerModuleSetBackgroundEnabled(moduleId: string, enabled: boolean): Promise<InstalledCustomerModuleRecord>;
   customerModuleUninstall(moduleId: string): Promise<void>;
   customerModuleClearData(moduleId: string): Promise<void>;
+  customerModuleExportData(moduleId: string): Promise<string | null>;
   customerModuleRun(input: {
     runId: string;
     moduleId: string;
@@ -2555,11 +2560,17 @@ const bridge: OttoBridge = {
   customerModuleSetEnabled(moduleId, enabled) {
     return ipcRenderer.invoke(IPC.customerModuleSetEnabled, { moduleId, enabled }) as Promise<InstalledCustomerModuleRecord>;
   },
+  customerModuleSetBackgroundEnabled(moduleId, enabled) {
+    return ipcRenderer.invoke(IPC.customerModuleSetBackgroundEnabled, { moduleId, enabled }) as Promise<InstalledCustomerModuleRecord>;
+  },
   customerModuleUninstall(moduleId) {
     return ipcRenderer.invoke(IPC.customerModuleUninstall, moduleId) as Promise<void>;
   },
   customerModuleClearData(moduleId) {
     return ipcRenderer.invoke(IPC.customerModuleClearData, moduleId) as Promise<void>;
+  },
+  customerModuleExportData(moduleId) {
+    return ipcRenderer.invoke(IPC.customerModuleExportData, moduleId) as Promise<string | null>;
   },
   customerModuleRun(input) {
     return ipcRenderer.invoke(IPC.customerModuleRun, input) as ReturnType<OttoBridge['customerModuleRun']>;

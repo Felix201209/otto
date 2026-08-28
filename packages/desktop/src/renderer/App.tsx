@@ -1538,6 +1538,9 @@ function OttoWorkspaceApp({
         inputSchema={moduleModal?.kind === 'customer-module'
           ? installedCustomerModules.find((module) => module.id === moduleModal.moduleId)?.inputSchema ?? { properties: {} }
           : { properties: {} }}
+        permissions={moduleModal?.kind === 'customer-module'
+          ? installedCustomerModules.find((module) => module.id === moduleModal.moduleId)?.permissions ?? []
+          : []}
         onClose={() => setModuleModal(null)}
       />
       <EnterpriseMemoryDialog

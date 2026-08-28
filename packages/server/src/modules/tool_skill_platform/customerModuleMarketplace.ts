@@ -44,6 +44,14 @@ export class CustomerModuleMarketplace {
     ));
   }
 
+  listPublisher(publisherId: string): CustomerModuleMarketVersion[] {
+    return this.store.list().filter((record) => record.publisherId === publisherId);
+  }
+
+  listReviewQueue(): CustomerModuleMarketVersion[] {
+    return this.store.list().filter((record) => record.status === 'scanning' || record.status === 'review');
+  }
+
   createDraft(publisherId: string, rawManifest: unknown): CustomerModuleMarketVersion {
     const manifest = parseCustomerModuleManifest(rawManifest, { requireSignature: false });
     if (manifest.publisher.id !== publisherId) throw new Error('publisher does not own module manifest');

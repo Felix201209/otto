@@ -20,9 +20,18 @@ describe('customer module marketplace routes', () => {
     expect(handleCustomerModuleMarketplaceRequest(market, {
       method: 'POST', path: '/enterprise/customer-modules/drafts', actor: { accountId: 'publisher', isPlatformReviewer: false }, body: { manifest },
     }).status).toBe(201);
+    expect(handleCustomerModuleMarketplaceRequest(market, {
+      method: 'GET', path: '/enterprise/customer-modules/versions', actor: { accountId: 'publisher', isPlatformReviewer: false }, body: {},
+    })).toMatchObject({ status: 200, body: { modules: [expect.objectContaining({ publisherId: 'publisher' })] } });
     market.beginScan('publisher', manifest.id, manifest.version);
     market.recordScan(manifest.id, manifest.version, { passed: true, findings: [] });
     market.submitForReview('publisher', manifest.id, manifest.version);
+    expect(handleCustomerModuleMarketplaceRequest(market, {
+      method: 'GET', path: '/enterprise/platform/customer-modules/review-queue', actor: { accountId: 'publisher', isPlatformReviewer: false }, body: {},
+    }).status).toBe(403);
+    expect(handleCustomerModuleMarketplaceRequest(market, {
+      method: 'GET', path: '/enterprise/platform/customer-modules/review-queue', actor: { accountId: 'reviewer', isPlatformReviewer: true }, body: {},
+    })).toMatchObject({ status: 200, body: { modules: [expect.objectContaining({ status: 'review' })] } });
     expect(handleCustomerModuleMarketplaceRequest(market, {
       method: 'POST', path: `/enterprise/platform/customer-modules/${manifest.id}/${manifest.version}/review`,
       actor: { accountId: 'publisher', isPlatformReviewer: false }, body: { decision: 'approve' },
@@ -50,5 +59,19 @@ describe('customer module marketplace routes', () => {
       actor: { accountId: 'buyer', isPlatformReviewer: false }, body: {},
     });
     expect(status).toMatchObject({ status: 200, body: { status: 'approved' } });
+  });
+
+  it('fails closed when the platform signing key is unavailable', () => {
+    const market = new CustomerModuleMarketplace();
+    market.createDraft('publisher', manifest);
+    market.beginScan('publisher', manifest.id, manifest.version);
+    market.recordScan(manifest.id, manifest.version, { passed: true, findings: [] });
+    market.submitForReview('publisher', manifest.id, manifest.version);
+    const response = handleCustomerModuleMarketplaceRequest(market, {
+      method: 'POST', path: `/enterprise/platform/customer-modules/${manifest.id}/${manifest.version}/review`,
+      actor: { accountId: 'reviewer', isPlatformReviewer: true }, body: { decision: 'approve' },
+    });
+    expect(response.status).toBe(503);
+    expect(market.get(manifest.id, manifest.version)?.status).toBe('review');
   });
 });

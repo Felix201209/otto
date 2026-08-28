@@ -9,6 +9,7 @@ afterEach(async () => Promise.all(roots.splice(0).map((root) => fs.promises.rm(r
 
 const record = {
   id: 'com.acme.host', version: '1.0.0', name: 'Host', description: 'Host', enabled: true,
+  backgroundEnabled: false,
   installedAt: '', artifactPath: '', iconDataUrl: '', receiptId: 'r', receiptStatus: 'committed' as const,
   permissions: [
     { kind: 'storage' as const, access: 'read-write' as const },

@@ -13,9 +13,11 @@ Customer modules are reviewed WASM/WASI tool packages owned by `tool_skill_platf
 ## Safe defaults
 
 - Installation and every version change require confirmation of the complete permission set; the UI calls out newly added permissions.
-- Background execution has no scheduler in v1 and therefore remains off. The creation UI does not offer it.
+- Background authorization always installs off. A publisher may declare it, but the user must enable it separately; execution still requires Otto's registered background-task scheduler and cannot be started by raw module timers.
 - Model, HTTP, file, and storage calls traverse the Host ABI permission broker and emit origin/provider/token/retry/cost/commit audit fields.
+- Foreground model calls use a tool-free temporary Otto model session with no MCP discovery or ambient environment context. Cancellation propagates to the provider request; unavailable pricing is displayed as unknown rather than zero.
 - HTTP is HTTPS-only, exact-host allow-listed, redirect-disabled, time-bounded, and size-bounded. HTTP and file writes must carry an idempotency key.
+- WASI Preview1 support is intentionally limited to empty args/environment, stdout/stderr, bounded random bytes, fd metadata, and process exit. Sockets, directory preopens, path operations, commands, and environment access are rejected during scanning.
 - Uninstall removes executable artifacts and authorization while preserving scoped data. Data clearing is a separate destructive confirmation.
 
 ## Review pipeline

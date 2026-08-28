@@ -20,6 +20,14 @@ const MODEL_REQUEST_WASM = Uint8Array.from([
   10,10,1,8,0,65,0,65,2,16,0,11,
   11,8,1,0,65,0,11,2,123,125,
 ]);
+const WASI_ARGS_WASM = Uint8Array.from([
+  0,97,115,109,1,0,0,0, 1,11,2,96,2,127,127,1,127,96,0,1,127,
+  2,41,1,22,119,97,115,105,95,115,110,97,112,115,104,111,116,95,112,114,101,118,105,101,119,49,
+  14,97,114,103,115,95,115,105,122,101,115,95,103,101,116,0,0,
+  3,2,1,1, 5,4,1,1,1,16,
+  7,21,2,6,109,101,109,111,114,121,2,0,8,111,116,116,111,95,114,117,110,0,1,
+  10,10,1,8,0,65,0,65,4,16,0,11,
+]);
 
 describe('CustomerModuleRunner', () => {
   it('runs a WASM module in an isolated worker and emits audited lifecycle events', async () => {
@@ -98,5 +106,13 @@ describe('CustomerModuleRunner', () => {
     });
     expect(denied.status).toBe('completed');
     expect(denied.exitCode).toBe(-2);
+  });
+
+  it('runs the bounded WASI preview1 metadata subset without ambient args or environment', async () => {
+    const result = await new CustomerModuleRunner().run({
+      moduleId: 'com.acme.wasi', version: '1.0.0', wasm: WASI_ARGS_WASM,
+      input: {}, approvedCapabilities: [], limits: { timeoutMs: 500, maxOutputBytes: 1024 },
+    });
+    expect(result).toMatchObject({ status: 'completed', exitCode: 0 });
   });
 });

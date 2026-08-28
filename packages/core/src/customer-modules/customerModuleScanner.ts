@@ -13,6 +13,10 @@ const ALLOWED_HOST_IMPORTS = new Set([
   'is_cancelled',
   'read_response',
 ]);
+const ALLOWED_WASI_IMPORTS = new Set([
+  'args_get', 'args_sizes_get', 'environ_get', 'environ_sizes_get',
+  'fd_write', 'fd_fdstat_get', 'random_get', 'proc_exit',
+]);
 
 export interface CustomerModuleWasmScan {
   imports: string[];
@@ -79,7 +83,9 @@ export async function scanCustomerModuleWasm(bytes: Uint8Array): Promise<Custome
   validateMemoryLimits(bytes);
   const imports = WebAssembly.Module.imports(module);
   for (const item of imports) {
-    if (item.module !== 'otto' || item.kind !== 'function' || !ALLOWED_HOST_IMPORTS.has(item.name)) {
+    const allowedOtto = item.module === 'otto' && item.kind === 'function' && ALLOWED_HOST_IMPORTS.has(item.name);
+    const allowedWasi = item.module === 'wasi_snapshot_preview1' && item.kind === 'function' && ALLOWED_WASI_IMPORTS.has(item.name);
+    if (!allowedOtto && !allowedWasi) {
       throw new Error(`customer module uses forbidden WASM import: ${item.module}.${item.name}`);
     }
   }

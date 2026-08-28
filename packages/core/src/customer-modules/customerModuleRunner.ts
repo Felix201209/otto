@@ -33,6 +33,7 @@ export interface CustomerModuleRunResult {
 
 const WORKER_SOURCE = String.raw`
 const { parentPort, workerData } = require('node:worker_threads');
+const { randomFillSync } = require('node:crypto');
 (async () => {
   try {
     const module = await WebAssembly.compile(workerData.wasm);
@@ -67,6 +68,43 @@ const { parentPort, workerData } = require('node:worker_threads');
       lastResponse = Uint8Array.from(bridgeBytes.subarray(0, size));
       return state === 1 ? size : -2;
     };
+    class WasiExit extends Error { constructor(code) { super('WASI exit'); this.code = code; } }
+    const writeU32 = (ptr, value) => {
+      if (!Number.isInteger(ptr) || ptr < 0 || ptr + 4 > memory().length) return false;
+      new DataView(memory().buffer).setUint32(ptr, value, true); return true;
+    };
+    const emptyVector = (countPtr, sizePtr) => writeU32(countPtr, 0) && writeU32(sizePtr, 0) ? 0 : 21;
+    const wasi = {
+      args_sizes_get: emptyVector,
+      environ_sizes_get: emptyVector,
+      args_get: () => 0,
+      environ_get: () => 0,
+      fd_fdstat_get: (fd, ptr) => {
+        if (fd !== 1 && fd !== 2) return 8;
+        if (ptr < 0 || ptr + 24 > memory().length) return 21;
+        memory().fill(0, ptr, ptr + 24); memory()[ptr] = 2; return 0;
+      },
+      fd_write: (fd, iovs, iovsLen, writtenPtr) => {
+        if (fd !== 1 && fd !== 2 || iovsLen < 0 || iovsLen > 128) return 8;
+        let body = ''; let total = 0;
+        const view = new DataView(memory().buffer);
+        for (let index = 0; index < iovsLen; index += 1) {
+          const offset = iovs + index * 8;
+          if (offset < 0 || offset + 8 > memory().length) return 21;
+          const ptr = view.getUint32(offset, true); const len = view.getUint32(offset + 4, true);
+          if (total + len > workerData.maxOutputBytes) return 27;
+          body += read(ptr, len); total += len;
+        }
+        if (!writeU32(writtenPtr, total)) return 21;
+        parentPort.postMessage(fd === 1 ? { type: 'result', output: body } : { type: 'progress', message: body });
+        return 0;
+      },
+      random_get: (ptr, len) => {
+        if (ptr < 0 || len < 0 || ptr + len > memory().length || len > 65536) return 21;
+        randomFillSync(memory().subarray(ptr, ptr + len)); return 0;
+      },
+      proc_exit: (code) => { throw new WasiExit(code); },
+    };
     const imports = { otto: {
       read_input: (ptr, maxLen) => write(ptr, maxLen, JSON.stringify(workerData.input)),
       read_response: (ptr, maxLen) => write(ptr, maxLen, decoder.decode(lastResponse)),
@@ -79,14 +117,15 @@ const { parentPort, workerData } = require('node:worker_threads');
       http_request: (ptr, len) => requestHost('http', ptr, len),
       model_invoke: (ptr, len) => requestHost('model', ptr, len),
       is_cancelled: () => 0,
-    } };
+    }, wasi_snapshot_preview1: wasi };
     instance = await WebAssembly.instantiate(module, imports);
     const run = instance.exports.otto_run;
     if (typeof run !== 'function') throw new Error('customer module must export otto_run');
     const exitCode = Number(run());
     parentPort.postMessage({ type: 'completed', exitCode });
   } catch (error) {
-    parentPort.postMessage({ type: 'crashed', error: error instanceof Error ? error.message : String(error) });
+    if (error && error.constructor?.name === 'WasiExit') parentPort.postMessage({ type: 'completed', exitCode: Number(error.code) });
+    else parentPort.postMessage({ type: 'crashed', error: error instanceof Error ? error.message : String(error) });
   }
 })();`;
 
@@ -118,6 +157,7 @@ export class CustomerModuleRunner {
         eval: true,
         workerData: {
           wasm: Uint8Array.from(request.wasm), input: request.input, bridge,
+          maxOutputBytes: request.limits.maxOutputBytes,
           hostCallTimeoutMs: Math.min(request.limits.timeoutMs, 30_000),
         },
         resourceLimits: { maxOldGenerationSizeMb: 32, maxYoungGenerationSizeMb: 8, stackSizeMb: 2 },
@@ -147,6 +187,7 @@ export class CustomerModuleRunner {
       let emittedOutputBytes = 0;
       let hostCallCount = 0;
       let progressEventCount = 0;
+      const capabilityCalls = { storage: 0, file: 0, http: 0, model: 0 };
       worker.on('message', (message: {
         type: string;
         exitCode?: number;
@@ -159,6 +200,9 @@ export class CustomerModuleRunner {
         if (message.type === 'host_request' && message.capability) {
           hostCallCount += 1;
           if (hostCallCount > 100) { finish({ status: 'crashed', exitCode: null, output: '', error: 'Host ABI call limit exceeded' }); return; }
+          capabilityCalls[message.capability] += 1;
+          const capabilityLimit = { storage: 64, file: 16, http: 32, model: 4 }[message.capability];
+          if (capabilityCalls[message.capability] > capabilityLimit) { finish({ status: 'crashed', exitCode: null, output: '', error: `${message.capability} call limit exceeded` }); return; }
           void this.handleHostRequest(request, bridge, message.capability, message.payload);
           return;
         }
@@ -209,6 +253,7 @@ export class CustomerModuleRunner {
         capability,
         approvedCapabilities: request.approvedCapabilities,
         payload: envelope.data,
+        ...(request.signal ? { signal: request.signal } : {}),
         externalWrite: envelope.externalWrite === true,
         ...(typeof envelope.idempotencyKey === 'string' ? { idempotencyKey: envelope.idempotencyKey } : {}),
       });

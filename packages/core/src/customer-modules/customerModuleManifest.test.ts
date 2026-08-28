@@ -50,6 +50,8 @@ describe('customer module manifest', () => {
     ['wildcard HTTP', { permissions: [{ kind: 'http', hosts: ['*'] }] }],
     ['duplicate permissions', { permissions: [{ kind: 'model', paid: true }, { kind: 'model', paid: false }] }],
     ['implicit model cost', { permissions: [{ kind: 'model' }] }],
+    ['model falsely marked free', { permissions: [{ kind: 'model', paid: false }] }],
+    ['unknown root field', { executableCode: '<script />' }],
     ['arbitrary file access', { permissions: [{ kind: 'file', access: 'filesystem' }] }],
     ['unknown required field', { inputSchema: { type: 'object', properties: {}, required: ['missing'] } }],
     ['executable form field', { inputSchema: { type: 'object', properties: { code: { type: 'html' } } } }],

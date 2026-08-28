@@ -16,6 +16,8 @@ import {
 } from 'otto-core';
 import type { EnterpriseClient } from './enterprise-client.js';
 
+const CUSTOMER_MODULE_DATA_KEY = /^[A-Za-z0-9_.-]{1,120}$/u;
+
 export interface InstalledCustomerModuleRecord {
   id: string;
   version: string;
@@ -23,6 +25,7 @@ export interface InstalledCustomerModuleRecord {
   description: string;
   permissions: CustomerModulePermission[];
   enabled: boolean;
+  backgroundEnabled: boolean;
   installedAt: string;
   artifactPath: string;
   iconDataUrl: string;
@@ -74,8 +77,12 @@ async function readRegistry(root: string): Promise<InstalledCustomerModuleRecord
 async function writeRegistry(root: string, records: InstalledCustomerModuleRecord[]): Promise<void> {
   await fs.promises.mkdir(root, { recursive: true, mode: 0o700 });
   const temporary = path.join(root, `.registry-${randomUUID()}.tmp`);
-  await fs.promises.writeFile(temporary, `${JSON.stringify(records, null, 2)}\n`, { mode: 0o600 });
-  await fs.promises.rename(temporary, path.join(root, 'registry.json'));
+  try {
+    await fs.promises.writeFile(temporary, `${JSON.stringify(records, null, 2)}\n`, { mode: 0o600 });
+    await fs.promises.rename(temporary, path.join(root, 'registry.json'));
+  } finally {
+    await fs.promises.rm(temporary, { force: true }).catch(() => undefined);
+  }
 }
 
 function decodeFiles(encoded: Record<string, string>): Map<string, Uint8Array> {
@@ -95,6 +102,18 @@ export async function setCustomerModuleEnabled(root: string, moduleId: string, e
   if (!record) throw new Error('客户模块未安装');
   if (enabled && record.riskStatus) throw new Error(`客户模块版本处于风险状态：${record.riskStatus}`);
   record.enabled = enabled;
+  if (!enabled) record.backgroundEnabled = false;
+  await writeRegistry(root, records);
+  return record;
+}
+
+export async function setCustomerModuleBackgroundEnabled(root: string, moduleId: string, enabled: boolean): Promise<InstalledCustomerModuleRecord> {
+  const records = await readRegistry(root);
+  const record = records.find((item) => item.id === moduleId);
+  if (!record) throw new Error('客户模块未安装');
+  if (enabled && !record.permissions.some((permission) => permission.kind === 'background')) throw new Error('客户模块未声明后台能力');
+  if (enabled && (!record.enabled || record.riskStatus)) throw new Error('客户模块必须处于安全启用状态才能开启后台授权');
+  record.backgroundEnabled = enabled;
   await writeRegistry(root, records);
   return record;
 }
@@ -112,6 +131,24 @@ export async function uninstallCustomerModule(root: string, moduleId: string): P
 
 export async function clearCustomerModuleData(root: string, moduleId: string): Promise<void> {
   await fs.promises.rm(path.join(root, 'data', encodeURIComponent(moduleId)), { recursive: true, force: true });
+}
+
+export async function exportCustomerModuleData(root: string, moduleId: string): Promise<{
+  format: 'otto.customer-module-data.v1';
+  moduleId: string;
+  exportedAt: string;
+  values: Record<string, unknown>;
+}> {
+  const directory = path.join(root, 'data', encodeURIComponent(moduleId));
+  let entries: string[];
+  try { entries = await fs.promises.readdir(directory); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') entries = []; else throw error; }
+  const values: Record<string, unknown> = {};
+  for (const entry of entries.sort()) {
+    if (!entry.endsWith('.json') || !CUSTOMER_MODULE_DATA_KEY.test(entry.slice(0, -5))) continue;
+    values[entry.slice(0, -5)] = JSON.parse(await fs.promises.readFile(path.join(directory, entry), 'utf8')) as unknown;
+  }
+  return { format: 'otto.customer-module-data.v1', moduleId, exportedAt: new Date().toISOString(), values };
 }
 
 export async function recoverCustomerModuleInstallReceipts(
@@ -139,9 +176,9 @@ export async function refreshCustomerModuleMarketStatus(
   await Promise.all(records.map(async (record) => {
     const remote = await client.getCustomerModuleStatus(record.id, record.version);
     const riskStatus = remote.status === 'suspended' || remote.status === 'withdrawn' ? remote.status : undefined;
-    if (record.riskStatus !== riskStatus || (riskStatus && record.enabled)) changed = true;
+    if (record.riskStatus !== riskStatus || (riskStatus && (record.enabled || record.backgroundEnabled))) changed = true;
     record.riskStatus = riskStatus;
-    if (riskStatus) record.enabled = false;
+    if (riskStatus) { record.enabled = false; record.backgroundEnabled = false; }
   }));
   if (changed) await writeRegistry(root, records);
   return records;
@@ -203,7 +240,7 @@ export async function installCustomerModule(input: {
   const receiptId = randomUUID();
   const record: InstalledCustomerModuleRecord = {
     id: manifest.id, version: manifest.version, name: manifest.name,
-    description: manifest.description, permissions: [...manifest.permissions], enabled: true,
+    description: manifest.description, permissions: [...manifest.permissions], enabled: true, backgroundEnabled: false,
     installedAt: new Date().toISOString(), artifactPath: versionRoot,
     iconDataUrl: `data:image/svg+xml;base64,${Buffer.from(icon).toString('base64')}`,
     receiptId, receiptStatus: 'pending',

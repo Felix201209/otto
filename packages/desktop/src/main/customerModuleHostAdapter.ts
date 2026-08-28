@@ -38,7 +38,7 @@ export function createDesktopCustomerModuleHost(input: {
   httpTimeoutMs?: number;
   selectReadFile?(): Promise<string | null>;
   selectWriteFile?(suggestedName: string): Promise<string | null>;
-  modelInvoke?(payload: unknown): Promise<CustomerModuleHostAdapterResult>;
+  modelInvoke?(payload: unknown, signal?: AbortSignal): Promise<CustomerModuleHostAdapterResult>;
   onAudit?(event: CustomerModuleHostAuditEvent): void;
 }) {
   const permission = (kind: string) => input.record.permissions.find((item) => item.kind === kind);
@@ -85,6 +85,9 @@ export function createDesktopCustomerModuleHost(input: {
         if (previous?.status === 'committed') return { data: previous.response, provider: url.hostname, commitStatus: 'recovered', retryCount: 0 };
         if (ledgerPath) await writeLedger(ledgerPath, { status: 'pending', capability: 'http', fingerprint, updatedAt: new Date().toISOString() });
         const controller = new AbortController();
+        const cancel = (): void => controller.abort();
+        request.signal?.addEventListener('abort', cancel, { once: true });
+        if (request.signal?.aborted) controller.abort();
         const timer = setTimeout(() => controller.abort(), input.httpTimeoutMs ?? 15_000);
         try {
           const response = await (input.fetchImpl ?? fetch)(url, {
@@ -104,7 +107,7 @@ export function createDesktopCustomerModuleHost(input: {
           const data = { status: response.status, body: text };
           if (ledgerPath) await writeLedger(ledgerPath, { status: 'committed', capability: 'http', fingerprint, response: data, updatedAt: new Date().toISOString() });
           return { data, provider: url.hostname, retryCount: previous?.status === 'pending' ? 1 : 0, commitStatus: writes ? previous?.status === 'pending' ? 'recovered' : 'committed' : 'not-applicable' };
-        } finally { clearTimeout(timer); }
+        } finally { clearTimeout(timer); request.signal?.removeEventListener('abort', cancel); }
       }
       if (request.capability === 'file') {
         const filePermission = permission('file');
@@ -138,7 +141,7 @@ export function createDesktopCustomerModuleHost(input: {
         await writeLedger(ledgerPath, { status: 'committed', capability: 'file', fingerprint, response: data, updatedAt: new Date().toISOString() });
         return { data, retryCount: previous?.status === 'pending' ? 1 : 0, commitStatus: previous?.status === 'pending' ? 'recovered' : 'committed' };
       }
-      if (request.capability === 'model' && input.modelInvoke) return input.modelInvoke(request.payload);
+      if (request.capability === 'model' && input.modelInvoke) return input.modelInvoke(request.payload, request.signal);
       throw new Error(`客户模块能力适配器不可用：${request.capability}`);
     },
   });

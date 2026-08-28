@@ -7,6 +7,7 @@ export interface CustomerModuleHostAdapterResult {
   outputTokens?: number;
   retryCount?: number;
   estimatedCostUsd?: number;
+  costEstimateAvailable?: boolean;
   commitStatus?: 'not-applicable' | 'pending' | 'committed' | 'recovered' | 'failed';
 }
 
@@ -18,6 +19,7 @@ export interface CustomerModuleHostRequest {
   payload: unknown;
   externalWrite?: boolean;
   idempotencyKey?: string;
+  signal?: AbortSignal;
 }
 
 export interface CustomerModuleHostAuditEvent {
@@ -29,6 +31,7 @@ export interface CustomerModuleHostAuditEvent {
   outputTokens: number;
   retryCount: number;
   estimatedCostUsd: number;
+  costEstimateAvailable: boolean;
   idempotencyKey?: string;
   commitStatus: NonNullable<CustomerModuleHostAdapterResult['commitStatus']>;
   outcome: 'success' | 'failed';
@@ -74,6 +77,7 @@ export class CustomerModuleHostBroker implements CustomerModuleHostV1 {
       capability: input.capability, provider: result.provider ?? 'local', inputTokens: result.inputTokens ?? 0,
       outputTokens: result.outputTokens ?? 0, retryCount: result.retryCount ?? 0,
       estimatedCostUsd: result.estimatedCostUsd ?? 0, outcome,
+      costEstimateAvailable: result.costEstimateAvailable ?? true,
       ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
       commitStatus: result.commitStatus ?? 'not-applicable', ...(error ? { error: error.slice(0, 500) } : {}),
     });
