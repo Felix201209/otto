@@ -23,6 +23,7 @@ function settingsData(agentStyle = 'default') {
       settings: {
         agentStyle,
         healthyUse: false,
+        backgroundModelTasksEnabled: false,
         preferredLanguage: '',
       },
       mcpServers: [],
@@ -83,6 +84,16 @@ describe('PrefsPanel 外观与回复', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /企业办公（资料与会议）/ }));
     expect(setSetting).toHaveBeenCalledWith('agentStyle', 'antigravity');
+  });
+
+  it('后台付费分析默认关闭，只在用户操作后开启', () => {
+    const { value, setSetting } = settingsData();
+    render(<PrefsPanel data={value} />);
+
+    const toggle = screen.getByRole('button', { name: '后台付费分析' });
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(toggle);
+    expect(setSetting).toHaveBeenCalledWith('backgroundModelTasksEnabled', true);
   });
 });
 

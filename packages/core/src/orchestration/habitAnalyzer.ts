@@ -13,6 +13,9 @@
 import type { Config } from '../config/config.js';
 import { SceneType, SceneManager } from '../core/sceneManager.js';
 import { getResponseText } from '../utils/partUtils.js';
+import {
+  RecurringTaskRegistry,
+} from '../services/recurringTaskRegistry.js';
 
 /** 习惯分析结果 */
 export interface HabitInsight {
@@ -42,14 +45,28 @@ export class HabitAnalyzer {
   private readonly ops: OperationRecord[] = [];
   private readonly maxOps: number;
   private readonly analysisIntervalMs: number;
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private backgroundModelCallsEnabled: boolean;
+  private readonly taskRegistry: RecurringTaskRegistry;
+  private stopScheduledAnalysis: (() => void) | undefined;
   private onInsights?: (insights: HabitInsight[]) => void;
   private analysisInFlight = false;
   private config: Config | null = null;
 
-  constructor(opts: { maxOps?: number; analysisIntervalMs?: number } = {}) {
+  constructor(opts: {
+    maxOps?: number;
+    analysisIntervalMs?: number;
+    /** Explicit user opt-in; false by default, including personal installs. */
+    backgroundModelCallsEnabled?: boolean;
+    taskRegistry?: RecurringTaskRegistry;
+  } = {}) {
     this.maxOps = opts.maxOps ?? 2000;
     this.analysisIntervalMs = opts.analysisIntervalMs ?? 2 * 60 * 60 * 1000;
+    this.backgroundModelCallsEnabled = opts.backgroundModelCallsEnabled === true;
+    // This private registry can schedule paid work, but start() remains behind
+    // the explicit preference gate above. The exported shared registry stays
+    // fail-closed for all other callers.
+    this.taskRegistry = opts.taskRegistry
+      ?? new RecurringTaskRegistry({ allowPaidBackground: true });
   }
 
   setConfig(config: Config): void { this.config = config; }
@@ -62,15 +79,38 @@ export class HabitAnalyzer {
     }
   }
 
-  start(): void {
-    if (this.timer) return;
-    setTimeout(() => { void this.runAnalysis(); }, 10 * 60 * 1000).unref?.();
-    this.timer = setInterval(() => { void this.runAnalysis(); }, this.analysisIntervalMs);
-    this.timer.unref?.();
+  start(): boolean {
+    if (this.stopScheduledAnalysis) return false;
+    if (!this.backgroundModelCallsEnabled) return false;
+    this.stopScheduledAnalysis = this.taskRegistry.register({
+      name: 'habit-analyzer-model-analysis',
+      source: 'packages/core/src/orchestration/habitAnalyzer.ts',
+      intervalMs: this.analysisIntervalMs,
+      initialDelayMs: 10 * 60 * 1000,
+      estimatedCostUsdPerRun: 0.01,
+      getInputVersion: () => {
+        const last = this.ops[this.ops.length - 1];
+        return last ? `${this.ops.length}:${last.timestamp}` : undefined;
+      },
+      run: async () => {
+        await this.runAnalysis();
+      },
+    });
+    return this.stopScheduledAnalysis !== undefined;
   }
 
   stop(): void {
-    if (this.timer) { clearInterval(this.timer); this.timer = null; }
+    this.stopScheduledAnalysis?.();
+    this.stopScheduledAnalysis = undefined;
+  }
+
+  /** Apply an explicit user preference at runtime; omitted/false stays inert. */
+  setBackgroundModelCallsEnabled(enabled: boolean): void {
+    const next = enabled === true;
+    if (next === this.backgroundModelCallsEnabled) return;
+    this.stop();
+    this.backgroundModelCallsEnabled = next;
+    if (next) this.start();
   }
 
   async runAnalysis(): Promise<HabitInsight[]> {

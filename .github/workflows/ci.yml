@@ -115,12 +115,15 @@ jobs:
 
       - name: 🧪 Focused release regressions
         run: |
+          node scripts/check-recurring-task-policy.cjs
           # Each workspace owns its Vitest configuration and mocks. Running all
           # packages through the root runner leaks mocks between suites.
           npm --workspace otto-core run test -- \
             src/config/lazy-heavy-tools.registration.test.ts \
             src/core/customModelAdapter.test.ts
           npm --workspace otto-desktop run test -- \
+            src/main/idle-safety-simulation.test.ts \
+            src/main/window-close-policy.test.ts \
             src/main/enterprise-client.test.ts \
             scripts/packaging-contract.test.mjs \
             src/main/video-editor-resource.test.ts

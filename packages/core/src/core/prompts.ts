@@ -1014,8 +1014,9 @@ than exploring the raw source from scratch.
 - Treat the wiki as a strong hint, not absolute truth: if a page looks stale or
   conflicts with the current code, trust the code and consider updating the wiki.
 
-## Maintain it when asked
-When the user asks you to "save to wiki", "learn into wiki", "update wiki", or similar:
+## Maintain the optional project view naturally
+The personal knowledge base is automatic and requires no command or initialization.
+When this optional project wiki exists and verified work changes its subject matter:
 1. Read \`.llm-wiki/index.md\` to understand the current structure.
 2. Create or update pages in \`.llm-wiki/wiki/\` with YAML frontmatter (\`type\`, \`date\`, \`tags\`).
 3. Use \`[[wikilinks]]\` for cross-references between pages.
@@ -1023,7 +1024,7 @@ When the user asks you to "save to wiki", "learn into wiki", "update wiki", or s
 5. Append an entry to \`.llm-wiki/log.md\`.
 6. Never modify files in \`.llm-wiki/raw/\` — those are immutable sources.
 
-The user can also use \`/wiki\` slash commands for structured operations.
+Do not require the user to understand this directory structure or run wiki commands.
 `;
     }
     return '';

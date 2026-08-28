@@ -4,5 +4,6 @@
 
 export * from './feishuAutoReplyFacade.js';
 export * from './feishuAutoReplyPolicy.js';
+export * from './externalCallBoundary.js';
 export * from './integrationAdaptersComposition.js';
 export * from './repairNotificationSenders.js';

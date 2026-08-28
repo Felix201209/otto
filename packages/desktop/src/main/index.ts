@@ -51,6 +51,7 @@ import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { HealthInfo, ServerEndpoint } from 'otto-server';
+import { askWindowCloseChoice } from './window-close-policy.js';
 
 function ignoreBrokenPipe(stream: NodeJS.WriteStream): void {
   stream.on('error', (error: NodeJS.ErrnoException) => {
@@ -155,6 +156,7 @@ import {
   type EnterpriseModuleUpdateDescriptor,
   type EnterpriseOrganizationFeatures,
   type EnterprisePositionRoleMapping,
+  type PersonalTokenUsageProfile,
 } from './enterprise-client.js';
 import {
   EnterpriseE2eeCrypto,
@@ -546,6 +548,7 @@ const IPC = {
   enterprisePrivacyDelete: 'otto:enterprise-privacy-delete',
   enterprisePair: 'otto:enterprise-pair',
   enterpriseUsageRecord: 'otto:enterprise-usage-record',
+  enterpriseUsageProfile: 'otto:enterprise-usage-profile',
   enterpriseKnowledgeRecord: 'otto:enterprise-knowledge-record',
   enterpriseKnowledgeList: 'otto:enterprise-knowledge-list',
   enterpriseKnowledgeReview: 'otto:enterprise-knowledge-review',
@@ -1959,6 +1962,7 @@ const tracer: {
 
 function createWindow(): BrowserWindow {
   enterpriseIntentRendererReady = false;
+  let closePromptPending = false;
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -1993,9 +1997,24 @@ function createWindow(): BrowserWindow {
   });
   win.on('focus', clearBackgroundAttention);
   win.on('close', (event) => {
-    if (isQuitting || process.platform === 'darwin') return;
+    if (isQuitting) return;
     event.preventDefault();
-    win.hide();
+    if (closePromptPending) return;
+    closePromptPending = true;
+    void askWindowCloseChoice({
+      showMessageBox: (options) => dialog.showMessageBox(options),
+    }).then((choice) => {
+      if (choice === 'continue-background') {
+        win.hide();
+      } else if (choice === 'stop-and-quit') {
+        isQuitting = true;
+        app.quit();
+      }
+    }).catch((error) => {
+      console.error('[otto-desktop] close choice dialog failed:', error);
+    }).finally(() => {
+      closePromptPending = false;
+    });
   });
 
   hardenWebContents(win);
@@ -2678,6 +2697,22 @@ function registerIpc(): void {
       totalTokens: body.totalTokens,
     });
   });
+  ipcMain.handle(
+    IPC.enterpriseUsageProfile,
+    async (_event, periodDays: unknown): Promise<PersonalTokenUsageProfile> => {
+      loadEnterpriseSession();
+      const period = periodDays === undefined ? 30 : periodDays;
+      if (
+        typeof period !== 'number' ||
+        !Number.isInteger(period) ||
+        period < 1 ||
+        period > 365
+      ) {
+        throw new Error('Token 统计周期必须是 1 到 365 天的整数');
+      }
+      return enterpriseClient.getPersonalTokenUsageProfile(period);
+    },
+  );
   ipcMain.handle(IPC.enterpriseKnowledgeRecord, async (_e, input: unknown) => {
     loadEnterpriseSession();
     if (!input || typeof input !== 'object')

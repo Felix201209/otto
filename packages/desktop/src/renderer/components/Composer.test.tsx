@@ -185,11 +185,16 @@ describe('旧企业模型显示迁移', () => {
 });
 
 describe('执行授权菜单', () => {
-  it('默认全局自动，并可降级到当前会话或手动后再恢复', () => {
+  it('新安装默认手动，并可由用户明确开启自动授权', () => {
     const send = vi.spyOn(transport, 'send').mockImplementation(() => {});
     localStorage.clear();
     renderComposer([], null);
-    fireEvent.click(screen.getByRole('button', { name: '执行授权：所有会话自动' }));
+    expect(screen.getByRole('button', { name: '执行授权：手动授权' })).toBeTruthy();
+    expect(send).toHaveBeenCalledWith({
+      type: 'set_authorization_mode',
+      payload: { sessionId: 's1', mode: 'manual', scope: 'all' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '执行授权：手动授权' }));
     expect(document.querySelector('.otto-authorization__option-icon--manual svg')).toBeTruthy();
     expect(document.querySelector('.otto-authorization__option-icon--session svg')).toBeTruthy();
     expect(document.querySelector('.otto-authorization__option-icon--global svg')).toBeTruthy();

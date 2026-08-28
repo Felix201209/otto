@@ -5483,6 +5483,33 @@ h6.otto-prose__h {
   gap: 14px;
 }
 
+/* 个人 Token 画像：只呈现账号级聚合量，不暴露提示词或供应商凭据。 */
+.otto-token-profile__period { display:flex; align-items:center; gap:7px; color:var(--otto-text-secondary); font-size:11px; }
+.otto-token-profile__period select { min-height:30px; padding:0 26px 0 9px; border:1px solid var(--otto-border); border-radius:var(--otto-radius-sm); background:var(--otto-surface); color:var(--otto-text); }
+.otto-token-profile__metrics { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); border:1px solid var(--otto-border); border-radius:var(--otto-radius); background:var(--otto-surface); overflow:hidden; }
+.otto-token-profile__metrics>div { min-width:0; padding:14px; border-right:1px solid var(--otto-border); }
+.otto-token-profile__metrics>div:last-child { border-right:0; }
+.otto-token-profile__metrics span,.otto-token-profile__metrics strong { display:block; }
+.otto-token-profile__metrics span { margin-bottom:5px; color:var(--otto-text-tertiary); font-size:11px; }
+.otto-token-profile__metrics strong { color:var(--otto-text); font-size:18px; font-variant-numeric:tabular-nums; overflow:hidden; text-overflow:ellipsis; }
+.otto-token-profile__models { padding:4px 14px; }
+.otto-token-profile__model { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:9px 14px; padding:12px 0; border-bottom:1px solid var(--otto-border); }
+.otto-token-profile__model:last-child { border-bottom:0; }
+.otto-token-profile__model>div:first-child,.otto-token-profile__model-value { display:flex; flex-direction:column; gap:2px; }
+.otto-token-profile__model strong { color:var(--otto-text); font-size:12.5px; }
+.otto-token-profile__model span { color:var(--otto-text-tertiary); font-size:11px; }
+.otto-token-profile__model-value { text-align:right; }
+.otto-token-profile__bar { grid-column:1/-1; height:5px; overflow:hidden; border-radius:var(--otto-radius-pill); background:var(--otto-border); }
+.otto-token-profile__bar span { display:block; height:100%; border-radius:inherit; background:var(--otto-accent); }
+.otto-token-profile__trend { padding:7px 14px; }
+.otto-token-profile__day { display:grid; grid-template-columns:86px minmax(80px,1fr) 74px; align-items:center; gap:12px; min-height:30px; color:var(--otto-text-secondary); font-size:11px; font-variant-numeric:tabular-nums; }
+.otto-token-profile__day>div { height:6px; border-radius:var(--otto-radius-pill); background:var(--otto-border); overflow:hidden; }
+.otto-token-profile__day i { display:block; height:100%; border-radius:inherit; background:color-mix(in srgb,var(--otto-accent) 72%,var(--otto-accent-soft)); }
+.otto-token-profile__day strong { color:var(--otto-text); text-align:right; }
+.otto-token-profile__source { padding:10px 12px; border:1px solid var(--otto-border); border-radius:var(--otto-radius-sm); color:var(--otto-text-tertiary); font-size:11px; line-height:1.55; background:color-mix(in srgb,var(--otto-surface) 72%,transparent); }
+.otto-token-profile__error { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 12px; border-radius:var(--otto-radius-sm); color:var(--otto-danger); background:color-mix(in srgb,var(--otto-danger) 10%,transparent); font-size:12px; }
+@media(max-width:900px){.otto-token-profile__metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.otto-token-profile__metrics>div{border-bottom:1px solid var(--otto-border)}.otto-token-profile__metrics>div:nth-child(2n){border-right:0}.otto-token-profile__metrics>div:last-child{border-bottom:0}.otto-token-profile__period>span{display:none}}
+
 /* SoftwareUpdatePanel 等沿用的旧节容器（嵌在 panel-body 里时只负责纵向间距）。 */
 .otto-hub__section {
   display: flex;

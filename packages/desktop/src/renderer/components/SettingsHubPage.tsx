@@ -41,12 +41,14 @@ import type { UseProductWorkspace } from '../state/useProductWorkspace.js';
 import { EnterpriseModelsPanel, OrganizationPanel } from './hub/ProductWorkspacePanels.js';
 import { SearchPanel } from './hub/SearchPanel.js';
 import { PrivacyDataPanel } from './hub/PrivacyDataPanel.js';
+import { PersonalTokenUsagePanel } from './hub/PersonalTokenUsagePanel.js';
 import type { EnterpriseAccount } from '../../preload/index.js';
 import type { UiMode } from '../uiModePreference.js';
 
 export type TabId =
   | 'prefs'
   | 'organization'
+  | 'usage'
   | 'privacy'
   | 'models'
   | 'search'
@@ -83,6 +85,7 @@ export function resolveInitialSettingsTab(initialTab?: TabId): TabId {
 const TAB_LABEL: Record<TabId, string> = {
   prefs: '外观与回复',
   organization: '企业与身份',
+  usage: '我的 Token',
   privacy: '隐私与数据',
   models: '企业模型',
   search: '联网搜索',
@@ -108,7 +111,7 @@ const TAB_LABEL: Record<TabId, string> = {
  */
 const SIMPLE_NAV_GROUPS: Array<{ label: string; tabs: TabId[] }> = [
   { label: '常用', tabs: ['prefs', 'search', 'update'] },
-  { label: '账号与连接', tabs: ['organization', 'privacy', 'feishu', 'local-agent'] },
+  { label: '账号与连接', tabs: ['organization', 'usage', 'privacy', 'feishu', 'local-agent'] },
 ];
 
 const ADVANCED_NAV_GROUPS: Array<{ label: string; tabs: TabId[] }> = [
@@ -277,6 +280,7 @@ export function SettingsHubPage({
                 onManageAccounts={onManageAccounts}
               />
             ) : null}
+            {tab === 'usage' ? <PersonalTokenUsagePanel /> : null}
             {tab === 'privacy' ? <PrivacyDataPanel /> : null}
             {tab === 'models' ? <EnterpriseModelsPanel product={product} models={models} /> : null}
             {tab === 'search' ? <SearchPanel data={data} /> : null}

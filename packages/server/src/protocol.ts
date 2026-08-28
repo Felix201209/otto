@@ -451,7 +451,11 @@ export type SaveSearchConfigMsg = Envelope<
 export type SetSettingMsg = Envelope<
   'set_setting',
   {
-    key: 'agentStyle' | 'healthyUse' | 'preferredLanguage';
+    key:
+      | 'agentStyle'
+      | 'healthyUse'
+      | 'preferredLanguage'
+      | 'backgroundModelTasksEnabled';
     value: string | boolean;
   }
 >;
@@ -1055,6 +1059,7 @@ export type FeishuPushResultMsg = Envelope<
 export interface SettingsSnapshot {
   agentStyle: string;
   healthyUse: boolean;
+  backgroundModelTasksEnabled: boolean;
   preferredLanguage?: string;
 }
 
@@ -2001,9 +2006,10 @@ export function validateClientPayload(msg: {
       if (
         key !== 'agentStyle' &&
         key !== 'healthyUse' &&
-        key !== 'preferredLanguage'
+        key !== 'preferredLanguage' &&
+        key !== 'backgroundModelTasksEnabled'
       )
-        return 'key 必须是 agentStyle | healthyUse | preferredLanguage';
+        return 'key 必须是 agentStyle | healthyUse | preferredLanguage | backgroundModelTasksEnabled';
       const value = p['value'];
       if (typeof value !== 'string' && typeof value !== 'boolean')
         return 'value 必须是字符串或布尔';

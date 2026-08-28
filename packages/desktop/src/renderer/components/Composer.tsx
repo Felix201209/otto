@@ -297,7 +297,7 @@ export function Composer({
   const [menuOpen, setMenuOpen] = useState(false);
   const [authorizationOpen, setAuthorizationOpen] = useState(false);
   const [globalAuto, setGlobalAuto] = useState(
-    () => localStorage.getItem('otto.authorization.global-auto') !== '0',
+    () => localStorage.getItem('otto.authorization.global-auto') === '1',
   );
   const [sessionAuthorization, setSessionAuthorization] = useState<Record<string, 'manual' | 'auto'>>({});
   const authorizationStateRef = useRef({ globalAuto, sessionAuthorization });
@@ -419,10 +419,19 @@ export function Composer({
       : '手动授权';
 
   React.useEffect(() => {
-    if (globalAuto && sessionId) {
+    if (!sessionId) return;
+    if (globalAuto) {
       transport.send({
         type: 'set_authorization_mode',
         payload: { sessionId, mode: 'auto', scope: 'all' },
+      });
+    } else {
+      // Missing and invalid preferences are fail-closed. Also clear a stale
+      // server-side auto mode left by an older desktop release.
+      localStorage.setItem('otto.authorization.global-auto', '0');
+      transport.send({
+        type: 'set_authorization_mode',
+        payload: { sessionId, mode: 'manual', scope: 'all' },
       });
     }
   }, [globalAuto, sessionId]);

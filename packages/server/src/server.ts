@@ -540,6 +540,9 @@ export class OttoServer {
 
       // 习惯分析引擎：后台积累操作日志，定期调LLM做深度分析
       const habitAnalyzer = getHabitAnalyzer();
+      habitAnalyzer.setBackgroundModelCallsEnabled(
+        loadUserSettingsSubset().backgroundModelTasksEnabled === true,
+      );
       habitAnalyzer.setConfig(scannerConfig);
       habitAnalyzer.setCallback((insights) => {
         this.broadcastAll({
@@ -1306,6 +1309,8 @@ export class OttoServer {
     return {
       agentStyle: projectMgr.getAgentStyle(),
       healthyUse: userSubset.healthyUse ?? true,
+      backgroundModelTasksEnabled:
+        userSubset.backgroundModelTasksEnabled === true,
       preferredLanguage: userSubset.preferredLanguage,
     };
   }
@@ -1351,6 +1356,12 @@ export class OttoServer {
             // 忽略单个会话失败。
           }
         }
+      } else if (key === 'backgroundModelTasksEnabled') {
+        if (typeof value !== 'boolean') {
+          throw new Error('backgroundModelTasksEnabled 的值必须是布尔');
+        }
+        patchUserSettings({ backgroundModelTasksEnabled: value });
+        getHabitAnalyzer().setBackgroundModelCallsEnabled(value);
       } else if (key === 'preferredLanguage') {
         if (typeof value !== 'string') {
           throw new Error('preferredLanguage 的值必须是字符串');

@@ -130,5 +130,16 @@ export async function handleWorkspaceRoute({
     return true;
   }
 
+  if (path === '/enterprise/usage/profile' && method === 'GET') {
+    const account = db.getAccountBySession(extractToken(req));
+    if (!account) {
+      sendJSON(res, 401, { error: '登录已失效，请重新登录' });
+      return true;
+    }
+    const period = parseInt(url.searchParams.get('period') || '30', 10);
+    sendJSON(res, 200, db.getPersonalTokenUsageProfile(account.id, period));
+    return true;
+  }
+
   return false;
 }

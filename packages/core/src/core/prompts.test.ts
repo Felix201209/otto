@@ -276,10 +276,10 @@ describe('prompts', () => {
     it('should still retain the wiki maintenance instructions', () => {
       mockWikiPresent(true);
       const section = extractWikiSection(getCoreSystemPrompt(undefined, false));
-      // 不能丢失原有的写入/维护指引
-      expect(section).toContain('save to wiki');
+      // 项目 wiki 仍可维护，但用户不需要理解或执行命令
+      expect(section).toContain('requires no command or initialization');
       expect(section).toContain('.llm-wiki/raw/');
-      expect(section).toContain('/wiki');
+      expect(section).toContain('Do not require the user');
     });
 
     it('should place the LLM Wiki section after the dynamic boundary (cache-safe)', () => {
