@@ -59,6 +59,9 @@ import {
   openParkServices,
 } from './components/ParkServicesPlugin.js';
 import { ModuleMarketplaceDialog } from './components/ModuleMarketplaceDialog.js';
+import { CustomerModuleRunDialog } from './components/CustomerModuleRunDialog.js';
+import { CustomerModuleAuthoringDialog } from './components/CustomerModuleAuthoringDialog.js';
+import { CustomerModuleMarketDialog } from './components/CustomerModuleMarketDialog.js';
 import {
   AutoSkillDialog,
   CustomAgentManagerDialog,
@@ -92,6 +95,7 @@ import type {
   EnterpriseFederationAtoaTask,
   EnterpriseFederationContact,
   EnterpriseOrganizationView,
+  InstalledCustomerModuleRecord,
 } from '../preload/index.js';
 import { askLocalPeerOtto } from './peerOttoRunner.js';
 import {
@@ -262,6 +266,14 @@ function OttoWorkspaceApp({
       return [];
     }
   });
+  const [installedCustomerModules, setInstalledCustomerModules] = useState<InstalledCustomerModuleRecord[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void window.otto.customerModuleInstalledList()
+      .then((records) => { if (!cancelled) setInstalledCustomerModules(records); })
+      .catch(() => { if (!cancelled) setInstalledCustomerModules([]); });
+    return () => { cancelled = true; };
+  }, [account.id, account.organizationId]);
   useEffect(() => {
     try {
       setCustomAgents(parseCustomAgents(localStorage.getItem(customAgentsKey)));
@@ -278,6 +290,14 @@ function OttoWorkspaceApp({
     internalAdminPreview,
     profiles: centralIdentity.profiles,
     customAgents,
+    customerModules: installedCustomerModules.map((module) => ({
+      id: module.id,
+      version: module.version,
+      name: module.name,
+      description: module.description,
+      enabled: module.enabled,
+      iconSrc: module.iconDataUrl,
+    })),
   });
   const availableModuleIds = useMemo(
     () => moduleCapabilities.modules.filter((module) => module.availability === 'available').map((module) => module.id),
@@ -1197,6 +1217,15 @@ function OttoWorkspaceApp({
       setMainView('skillzone');
       return;
     }
+    if (activation.kind === 'customer-module') {
+      setMainView('chat');
+      openModuleModal({
+        kind: 'customer-module',
+        moduleId: activation.moduleId,
+        version: activation.version,
+      });
+      return;
+    }
     setMainView('chat');
     setPendingAgent({
       moduleId: module.id,
@@ -1474,6 +1503,42 @@ function OttoWorkspaceApp({
         onConfirm={(next) => { moduleWorkspace.setLayout(next); setModuleModal(null); }}
         onClose={() => setModuleModal(null)}
         onManageExperts={() => openModuleModal({ kind: 'custom-expert' })}
+        onCreateModule={() => openModuleModal({ kind: 'customer-module-authoring' })}
+        onBrowseCustomerModules={() => openModuleModal({ kind: 'customer-module-market' })}
+      />
+      <CustomerModuleMarketDialog
+        open={moduleModal?.kind === 'customer-module-market'}
+        installed={installedCustomerModules}
+        onInstalled={(record) => setInstalledCustomerModules((current) => [
+          ...current.filter((item) => item.id !== record.id),
+          record,
+        ])}
+        onInstalledChanged={setInstalledCustomerModules}
+        onCreate={() => openModuleModal({ kind: 'customer-module-authoring' })}
+        onClose={() => setModuleModal(null)}
+      />
+      <CustomerModuleAuthoringDialog
+        open={moduleModal?.kind === 'customer-module-authoring'}
+        publisher={{ id: account.id, name: account.name }}
+        onSubmit={async (submission) => {
+          await window.otto.customerModuleSubmit(submission);
+        }}
+        onClose={() => setModuleModal(null)}
+      />
+      <CustomerModuleRunDialog
+        open={moduleModal?.kind === 'customer-module'}
+        moduleId={moduleModal?.kind === 'customer-module' ? moduleModal.moduleId : ''}
+        name={moduleModal?.kind === 'customer-module'
+          ? moduleCapabilities.modules.find((module) => (
+            module.activation.kind === 'customer-module'
+            && module.activation.moduleId === moduleModal.moduleId
+          ))?.label ?? moduleModal.moduleId
+          : ''}
+        version={moduleModal?.kind === 'customer-module' ? moduleModal.version : ''}
+        inputSchema={moduleModal?.kind === 'customer-module'
+          ? installedCustomerModules.find((module) => module.id === moduleModal.moduleId)?.inputSchema ?? { properties: {} }
+          : { properties: {} }}
+        onClose={() => setModuleModal(null)}
       />
       <EnterpriseMemoryDialog
         key={`${moduleWorkspaceScopeKey}:enterprise-memory`}

@@ -323,6 +323,17 @@ export interface EnterpriseSkillMarketItem {
   updatedAt: string;
 }
 
+export interface CustomerModuleMarketVersion {
+  manifest: Record<string, unknown> & { id: string; version: string; name: string; permissions: unknown[] };
+  publisherId: string;
+  status: 'draft' | 'scanning' | 'review' | 'approved' | 'rejected' | 'suspended' | 'withdrawn';
+  scanReport: { passed: boolean; findings: string[] } | null;
+  reviewerId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  installCount: number;
+}
+
 export interface EnterpriseSkillLeaderboard {
   skills: Array<
     EnterpriseSkillMarketItem & {
@@ -2722,6 +2733,57 @@ export class EnterpriseClient {
       'enterprise_skill_market_v1',
     ]);
     return this.request('/enterprise/skills/leaderboard');
+  }
+
+  async listCustomerModules(): Promise<CustomerModuleMarketVersion[]> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['customer_module_market_v1']);
+    const response = await this.request<{ modules: CustomerModuleMarketVersion[] }>(
+      '/enterprise/customer-modules',
+    );
+    return response.modules;
+  }
+
+  async submitCustomerModule(input: {
+    manifest: Record<string, unknown>;
+    files: Record<string, string>;
+  }): Promise<CustomerModuleMarketVersion> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['customer_module_market_v1']);
+    const response = await this.request<{ module: CustomerModuleMarketVersion }>(
+      '/enterprise/customer-modules/drafts',
+      { method: 'POST', body: JSON.stringify(input) },
+    );
+    return response.module;
+  }
+
+  async downloadCustomerModulePackage(moduleId: string, version: string): Promise<{
+    archive: string;
+  }> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['customer_module_market_v1']);
+    return this.request(
+      `/enterprise/customer-modules/${encodeURIComponent(moduleId)}/${encodeURIComponent(version)}/package`,
+    );
+  }
+
+  async getCustomerModuleStatus(moduleId: string, version: string): Promise<{
+    moduleId: string;
+    version: string;
+    status: CustomerModuleMarketVersion['status'];
+    updatedAt: string;
+  }> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    return this.request(`/enterprise/customer-modules/${encodeURIComponent(moduleId)}/${encodeURIComponent(version)}/status`);
+  }
+
+  async recordCustomerModuleInstall(moduleId: string, version: string, receiptId: string): Promise<void> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['customer_module_market_v1']);
+    await this.request(
+      `/enterprise/customer-modules/${encodeURIComponent(moduleId)}/${encodeURIComponent(version)}/install`,
+      { method: 'POST', body: JSON.stringify({ receiptId }) },
+    );
   }
 
   async listAccountSyncSnapshots(): Promise<EnterpriseAccountSyncSnapshot[]> {

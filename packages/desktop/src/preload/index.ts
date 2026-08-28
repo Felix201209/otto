@@ -567,6 +567,30 @@ export interface EnterpriseSkillMarketItem {
   updatedAt: string;
 }
 
+export interface CustomerModuleMarketVersion {
+  manifest: Record<string, unknown> & { id: string; version: string; name: string; permissions: unknown[] };
+  publisherId: string;
+  status: 'draft' | 'scanning' | 'review' | 'approved' | 'rejected' | 'suspended' | 'withdrawn';
+  scanReport: { passed: boolean; findings: string[] } | null;
+  reviewerId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  installCount: number;
+}
+
+export interface InstalledCustomerModuleRecord {
+  id: string;
+  version: string;
+  name: string;
+  description: string;
+  permissions: Array<Record<string, unknown>>;
+  enabled: boolean;
+  riskStatus?: 'suspended' | 'withdrawn';
+  installedAt: string;
+  iconDataUrl: string;
+  inputSchema: { type: 'object'; properties: Record<string, unknown>; required?: string[] };
+}
+
 export interface EnterpriseSkillLeaderboard {
   skills: Array<
     EnterpriseSkillMarketItem & {
@@ -1256,6 +1280,16 @@ const IPC = {
   enterpriseSkillInstall: 'otto:enterprise-skill-install',
   enterpriseSkillRate: 'otto:enterprise-skill-rate',
   enterpriseSkillLeaderboard: 'otto:enterprise-skill-leaderboard',
+  customerModuleList: 'otto:customer-module-list',
+  customerModuleSubmit: 'otto:customer-module-submit',
+  customerModuleTest: 'otto:customer-module-test',
+  customerModuleInstalledList: 'otto:customer-module-installed-list',
+  customerModuleInstall: 'otto:customer-module-install',
+  customerModuleSetEnabled: 'otto:customer-module-set-enabled',
+  customerModuleUninstall: 'otto:customer-module-uninstall',
+  customerModuleClearData: 'otto:customer-module-clear-data',
+  customerModuleRun: 'otto:customer-module-run',
+  customerModuleCancel: 'otto:customer-module-cancel',
   parkNativeNotify: 'otto:park-native-notify',
   writeClipboard: 'otto:write-clipboard',
 } as const;
@@ -1481,6 +1515,39 @@ export interface OttoBridge {
     score: number,
   ): Promise<EnterpriseSkillMarketItem>;
   enterpriseSkillLeaderboard(): Promise<EnterpriseSkillLeaderboard>;
+  customerModuleList(): Promise<CustomerModuleMarketVersion[]>;
+  customerModuleSubmit(input: {
+    manifest: Record<string, unknown>;
+    files: Record<string, string>;
+  }): Promise<CustomerModuleMarketVersion>;
+  customerModuleTest(input: {
+    manifest: Record<string, unknown>;
+    files: Record<string, string>;
+  }): Promise<{
+    result: { status: string; exitCode: number | null; output: string; error?: string };
+    audit: Array<Record<string, unknown>>;
+    hostAudit: Array<Record<string, unknown>>;
+  }>;
+  customerModuleInstalledList(): Promise<InstalledCustomerModuleRecord[]>;
+  customerModuleInstall(input: {
+    moduleId: string;
+    version: string;
+    approvedPermissions: Array<Record<string, unknown>>;
+  }): Promise<InstalledCustomerModuleRecord>;
+  customerModuleSetEnabled(moduleId: string, enabled: boolean): Promise<InstalledCustomerModuleRecord>;
+  customerModuleUninstall(moduleId: string): Promise<void>;
+  customerModuleClearData(moduleId: string): Promise<void>;
+  customerModuleRun(input: {
+    runId: string;
+    moduleId: string;
+    version: string;
+    formInput: Record<string, unknown>;
+  }): Promise<{
+    result: { status: 'completed' | 'timed_out' | 'crashed' | 'cancelled'; exitCode: number | null; output: string; error?: string };
+    audit: Array<Record<string, unknown>>;
+    hostAudit: Array<Record<string, unknown>>;
+  }>;
+  customerModuleCancel(runId: string): Promise<boolean>;
   /**
    * 本地测试模式：把 customProxyServerUrl 设为指定地址（不空）或清除（空字符串）。
    * main 进程需要把该 URL 注入到 server manager（如设置 OTTO_SERVER_URL env）。
@@ -2469,6 +2536,36 @@ const bridge: OttoBridge = {
     return ipcRenderer.invoke(
       IPC.enterpriseSkillLeaderboard,
     ) as Promise<EnterpriseSkillLeaderboard>;
+  },
+  customerModuleList() {
+    return ipcRenderer.invoke(IPC.customerModuleList) as Promise<CustomerModuleMarketVersion[]>;
+  },
+  customerModuleSubmit(input) {
+    return ipcRenderer.invoke(IPC.customerModuleSubmit, input) as Promise<CustomerModuleMarketVersion>;
+  },
+  customerModuleTest(input) {
+    return ipcRenderer.invoke(IPC.customerModuleTest, input) as ReturnType<OttoBridge['customerModuleTest']>;
+  },
+  customerModuleInstalledList() {
+    return ipcRenderer.invoke(IPC.customerModuleInstalledList) as Promise<InstalledCustomerModuleRecord[]>;
+  },
+  customerModuleInstall(input) {
+    return ipcRenderer.invoke(IPC.customerModuleInstall, input) as Promise<InstalledCustomerModuleRecord>;
+  },
+  customerModuleSetEnabled(moduleId, enabled) {
+    return ipcRenderer.invoke(IPC.customerModuleSetEnabled, { moduleId, enabled }) as Promise<InstalledCustomerModuleRecord>;
+  },
+  customerModuleUninstall(moduleId) {
+    return ipcRenderer.invoke(IPC.customerModuleUninstall, moduleId) as Promise<void>;
+  },
+  customerModuleClearData(moduleId) {
+    return ipcRenderer.invoke(IPC.customerModuleClearData, moduleId) as Promise<void>;
+  },
+  customerModuleRun(input) {
+    return ipcRenderer.invoke(IPC.customerModuleRun, input) as ReturnType<OttoBridge['customerModuleRun']>;
+  },
+  customerModuleCancel(runId) {
+    return ipcRenderer.invoke(IPC.customerModuleCancel, runId) as Promise<boolean>;
   },
   setLocalTestUrl(url: string): Promise<void> {
     return ipcRenderer.invoke(IPC.setLocalTestUrl, url) as Promise<void>;

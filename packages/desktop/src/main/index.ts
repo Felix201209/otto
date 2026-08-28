@@ -51,6 +51,14 @@ import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { HealthInfo, ServerEndpoint } from 'otto-server';
+import {
+  CustomerModuleHostBroker,
+  CustomerModuleRunner,
+  parseCustomerModuleManifest,
+  scanCustomerModuleWasm,
+  validateCustomerModuleArchiveEntries,
+  verifyCustomerModuleFileHashes,
+} from 'otto-core';
 import { WorkspaceDirectoryStore } from './workspace-directory-store.js';
 import { MainWindowPresentationController } from './main-window-presentation.js';
 import { askWindowCloseChoice } from './window-close-policy.js';
@@ -160,6 +168,17 @@ import {
   type EnterprisePositionRoleMapping,
   type PersonalTokenUsageProfile,
 } from './enterprise-client.js';
+import {
+  clearCustomerModuleData,
+  installCustomerModule,
+  listInstalledCustomerModules,
+  recoverCustomerModuleInstallReceipts,
+  refreshCustomerModuleMarketStatus,
+  runInstalledCustomerModule,
+  setCustomerModuleEnabled,
+  uninstallCustomerModule,
+} from './customerModuleInstaller.js';
+import { createDesktopCustomerModuleHost } from './customerModuleHostAdapter.js';
 import {
   EnterpriseE2eeCrypto,
   EnterpriseE2eeKeyVault,
@@ -531,6 +550,16 @@ const IPC = {
   enterpriseSkillInstall: 'otto:enterprise-skill-install',
   enterpriseSkillRate: 'otto:enterprise-skill-rate',
   enterpriseSkillLeaderboard: 'otto:enterprise-skill-leaderboard',
+  customerModuleList: 'otto:customer-module-list',
+  customerModuleSubmit: 'otto:customer-module-submit',
+  customerModuleTest: 'otto:customer-module-test',
+  customerModuleInstalledList: 'otto:customer-module-installed-list',
+  customerModuleInstall: 'otto:customer-module-install',
+  customerModuleSetEnabled: 'otto:customer-module-set-enabled',
+  customerModuleUninstall: 'otto:customer-module-uninstall',
+  customerModuleClearData: 'otto:customer-module-clear-data',
+  customerModuleRun: 'otto:customer-module-run',
+  customerModuleCancel: 'otto:customer-module-cancel',
   setLocalTestUrl: 'otto:set-local-test-url',
   appVersion: 'otto:app-version',
   updateCheck: 'otto:update-check',
@@ -657,6 +686,8 @@ const IPC = {
   notificationCheckPermission: 'otto:notification-check-permission',
   notificationSessionOpen: 'otto:notification-session-open',
 } as const;
+
+const customerModuleRunControllers = new Map<string, AbortController>();
 
 const enterpriseFetch = createEnterpriseNetworkFetch(
   fetch,
@@ -4081,6 +4112,165 @@ function registerIpc(): void {
       content,
       visibility: body.visibility === 'company' ? 'company' : 'department',
     });
+  });
+
+  ipcMain.handle(IPC.customerModuleList, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.listCustomerModules();
+  });
+
+  ipcMain.handle(IPC.customerModuleSubmit, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('客户模块投稿参数不正确');
+    const body = input as Record<string, unknown>;
+    if (!body.manifest || typeof body.manifest !== 'object' || !body.files || typeof body.files !== 'object') {
+      throw new Error('客户模块清单和文件不能为空');
+    }
+    const files = body.files as Record<string, unknown>;
+    let encodedSize = 0;
+    const normalizedFiles: Record<string, string> = {};
+    for (const [path, encoded] of Object.entries(files)) {
+      if (typeof encoded !== 'string') throw new Error(`客户模块文件格式不正确：${path}`);
+      encodedSize += encoded.length;
+      if (encodedSize > 24_000_000) throw new Error('客户模块包超过上传限制');
+      normalizedFiles[path] = encoded;
+    }
+    return enterpriseClient.submitCustomerModule({
+      manifest: body.manifest as Record<string, unknown>,
+      files: normalizedFiles,
+    });
+  });
+
+  ipcMain.handle(IPC.customerModuleTest, async (_event, input: unknown) => {
+    if (!input || typeof input !== 'object') throw new Error('客户模块测试参数不正确');
+    const body = input as Record<string, unknown>;
+    const manifest = parseCustomerModuleManifest(body.manifest, { requireSignature: false });
+    if (!body.files || typeof body.files !== 'object' || Array.isArray(body.files)) throw new Error('客户模块测试文件不能为空');
+    const files = new Map(Object.entries(body.files as Record<string, unknown>).map(([name, encoded]) => {
+      if (typeof encoded !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/u.test(encoded)) throw new Error(`客户模块文件不是有效 base64：${name}`);
+      return [name, Uint8Array.from(Buffer.from(encoded, 'base64'))];
+    }));
+    validateCustomerModuleArchiveEntries(manifest, [...files].map(([filePath, bytes]) => ({ path: filePath, kind: 'file' as const, size: bytes.byteLength })), { requireSignature: false });
+    await verifyCustomerModuleFileHashes(manifest.files, files);
+    await scanCustomerModuleWasm(files.get(manifest.entrypoint) ?? new Uint8Array());
+    const hostAudit: Array<Record<string, unknown>> = [];
+    const host = new CustomerModuleHostBroker({
+      invoke: async () => { throw new Error('本地沙箱测试禁止真实外部调用'); },
+      onAudit: (event) => hostAudit.push(event as unknown as Record<string, unknown>),
+    });
+    const audit: Array<Record<string, unknown>> = [];
+    const result = await new CustomerModuleRunner({ host, onAudit: (event) => audit.push(event as unknown as Record<string, unknown>) }).run({
+      moduleId: manifest.id, version: manifest.version,
+      wasm: files.get(manifest.entrypoint) ?? new Uint8Array(), input: {},
+      approvedCapabilities: manifest.permissions.map((permission) => permission.kind),
+      limits: { timeoutMs: 2_000, maxOutputBytes: 256 * 1024 },
+    });
+    return { result, audit, hostAudit };
+  });
+
+  ipcMain.handle(IPC.customerModuleInstalledList, async () => {
+    loadEnterpriseSession();
+    const root = path.join(app.getPath('userData'), 'customer-modules');
+    try {
+      await recoverCustomerModuleInstallReceipts(root, enterpriseClient);
+      const records = await refreshCustomerModuleMarketStatus(root, enterpriseClient);
+      return records.map(({ artifactPath: _artifactPath, receiptId: _receiptId, receiptStatus: _receiptStatus, manifest, ...record }) => ({ ...record, inputSchema: manifest.inputSchema }));
+    } catch {
+      const records = await listInstalledCustomerModules(root);
+      return records.map(({ artifactPath: _artifactPath, receiptId: _receiptId, receiptStatus: _receiptStatus, manifest, ...record }) => ({ ...record, inputSchema: manifest.inputSchema }));
+    }
+  });
+
+  ipcMain.handle(IPC.customerModuleInstall, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('客户模块安装参数不正确');
+    const body = input as Record<string, unknown>;
+    if (typeof body.moduleId !== 'string' || typeof body.version !== 'string' || !Array.isArray(body.approvedPermissions)) {
+      throw new Error('客户模块安装参数不正确');
+    }
+    const installed = await installCustomerModule({
+      root: path.join(app.getPath('userData'), 'customer-modules'),
+      client: enterpriseClient,
+      moduleId: body.moduleId,
+      version: body.version,
+      ottoVersion: app.getVersion(),
+      approvedPermissions: body.approvedPermissions as never,
+    });
+    const { artifactPath: _artifactPath, receiptId: _receiptId, receiptStatus: _receiptStatus, manifest, ...record } = installed;
+    return { ...record, inputSchema: manifest.inputSchema };
+  });
+
+  ipcMain.handle(IPC.customerModuleSetEnabled, async (_event, input: unknown) => {
+    if (!input || typeof input !== 'object') throw new Error('客户模块启停参数不正确');
+    const body = input as Record<string, unknown>;
+    if (typeof body.moduleId !== 'string' || typeof body.enabled !== 'boolean') throw new Error('客户模块启停参数不正确');
+    const root = path.join(app.getPath('userData'), 'customer-modules');
+    const record = await setCustomerModuleEnabled(root, body.moduleId, body.enabled);
+    const { artifactPath: _artifactPath, receiptId: _receiptId, receiptStatus: _receiptStatus, manifest, ...safe } = record;
+    return { ...safe, inputSchema: manifest.inputSchema };
+  });
+
+  ipcMain.handle(IPC.customerModuleUninstall, async (_event, moduleId: unknown) => {
+    if (typeof moduleId !== 'string') throw new Error('客户模块卸载参数不正确');
+    await uninstallCustomerModule(path.join(app.getPath('userData'), 'customer-modules'), moduleId);
+  });
+
+  ipcMain.handle(IPC.customerModuleClearData, async (_event, moduleId: unknown) => {
+    if (typeof moduleId !== 'string') throw new Error('客户模块数据清理参数不正确');
+    await clearCustomerModuleData(path.join(app.getPath('userData'), 'customer-modules'), moduleId);
+  });
+
+  ipcMain.handle(IPC.customerModuleRun, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('客户模块运行参数不正确');
+    const body = input as Record<string, unknown>;
+    if (typeof body.runId !== 'string' || typeof body.moduleId !== 'string' || typeof body.version !== 'string' || !body.formInput || typeof body.formInput !== 'object' || Array.isArray(body.formInput)) {
+      throw new Error('客户模块运行参数不正确');
+    }
+    if (customerModuleRunControllers.has(body.runId)) throw new Error('客户模块运行 ID 已被占用');
+    const controller = new AbortController();
+    customerModuleRunControllers.set(body.runId, controller);
+    const root = path.join(app.getPath('userData'), 'customer-modules');
+    const record = (await listInstalledCustomerModules(root)).find((item) => item.id === body.moduleId && item.version === body.version);
+    if (!record) throw new Error('客户模块未安装');
+    const hostAudit: Array<Record<string, unknown>> = [];
+    const host = createDesktopCustomerModuleHost({
+      record,
+      storageRoot: path.join(root, 'data'),
+      selectReadFile: async () => {
+        const selected = await dialog.showOpenDialog({ properties: ['openFile'] });
+        return selected.canceled ? null : selected.filePaths[0] ?? null;
+      },
+      selectWriteFile: async (suggestedName) => {
+        const selected = await dialog.showSaveDialog({ defaultPath: suggestedName });
+        return selected.canceled ? null : selected.filePath ?? null;
+      },
+      onAudit: (event) => {
+        hostAudit.push(event as unknown as Record<string, unknown>);
+        console.info('[customer-module-audit]', event);
+      },
+    });
+    try {
+      const execution = await runInstalledCustomerModule({
+        root,
+        moduleId: body.moduleId,
+        version: body.version,
+        formInput: body.formInput as Record<string, unknown>,
+        host,
+        signal: controller.signal,
+      });
+      return { ...execution, hostAudit };
+    } finally {
+      customerModuleRunControllers.delete(body.runId);
+    }
+  });
+
+  ipcMain.handle(IPC.customerModuleCancel, (_event, runId: unknown) => {
+    if (typeof runId !== 'string') throw new Error('客户模块取消参数不正确');
+    const controller = customerModuleRunControllers.get(runId);
+    if (!controller) return false;
+    controller.abort();
+    return true;
   });
 
   ipcMain.handle(IPC.enterpriseSkillReview, async (_event, input: unknown) => {

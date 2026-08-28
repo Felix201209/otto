@@ -338,6 +338,7 @@ export * from './utils/browser.js';
 
 // Export skills system (consolidated from cli package)
 export * from './skills/index.js';
+export * from './customer-modules/index.js';
 
 // Export ACP-facing command helpers
 export * as AcpCommands from './commands/index.js';

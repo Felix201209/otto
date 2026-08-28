@@ -157,3 +157,19 @@ describe('custom expert modules', () => {
     expect(customAgent).toEqual(before);
   });
 });
+
+describe('installed customer modules', () => {
+  it('derives catalog entries from the installed registry and fails closed when disabled', () => {
+    const catalog = buildModuleCatalog(enterpriseContext({
+      customerModules: [{
+        id: 'com.acme.report', version: '1.2.0', name: '月报模块',
+        description: '生成月报', enabled: false, suspendedReason: '市场已暂停此版本',
+      }],
+    }));
+    expect(catalog.find((module) => module.id === 'customer-module:com.acme.report')).toMatchObject({
+      category: 'customer-module', availability: 'disabled',
+      disabledReason: '市场已暂停此版本',
+      activation: { kind: 'customer-module', moduleId: 'com.acme.report', version: '1.2.0' },
+    });
+  });
+});

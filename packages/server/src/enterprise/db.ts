@@ -72,6 +72,7 @@ import {
   PARK_CORE_SCHEMA_CONTRIBUTOR,
   PARK_STATISTICS_SCHEMA_CONTRIBUTOR,
 } from '../modules/park_services/index.js';
+import { CUSTOMER_MODULE_SCHEMA_CONTRIBUTOR } from '../modules/tool_skill_platform/index.js';
 import path from 'path';
 import os from 'os';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -248,7 +249,7 @@ const PRIVACY_DELETION_LEDGER_KEY_PATH = path.join(
 );
 
 export const DEFAULT_ORGANIZATION_ID = 'org_default';
-export const ENTERPRISE_SCHEMA_VERSION = 22;
+export const ENTERPRISE_SCHEMA_VERSION = 23;
 export const ORGANIZATION_INVITE_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 const ORGANIZATION_INVITE_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
@@ -284,6 +285,7 @@ function initSchema(d: Database): void {
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,
     }),
     ENTERPRISE_SKILL_MARKET_SCHEMA_CONTRIBUTOR,
+    CUSTOMER_MODULE_SCHEMA_CONTRIBUTOR,
     IDENTITY_ORGANIZATION_STRUCTURE_SCHEMA_CONTRIBUTOR,
     createMemberSchemaContributor({
       defaultOrganizationId: DEFAULT_ORGANIZATION_ID,

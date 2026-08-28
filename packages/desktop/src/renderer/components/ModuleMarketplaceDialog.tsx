@@ -14,6 +14,7 @@ const CATEGORY_LABELS: Readonly<Record<ModuleCategory, string>> = {
   park: '园区服务',
   capability: '企业能力',
   'custom-agent': '我的专家',
+  'customer-module': '客户模块',
 };
 
 const CATEGORY_ORDER: readonly ModuleCategory[] = [
@@ -21,6 +22,7 @@ const CATEGORY_ORDER: readonly ModuleCategory[] = [
   'park',
   'capability',
   'custom-agent',
+  'customer-module',
 ];
 
 export interface ModuleMarketplaceDialogProps {
@@ -31,6 +33,8 @@ export interface ModuleMarketplaceDialogProps {
   onConfirm(next: ModuleWorkspaceLayout): void;
   onClose(): void;
   onManageExperts(): void;
+  onCreateModule?(): void;
+  onBrowseCustomerModules?(): void;
 }
 
 function focusableElements(container: HTMLElement): HTMLElement[] {
@@ -47,6 +51,8 @@ export function ModuleMarketplaceDialog({
   onConfirm,
   onClose,
   onManageExperts,
+  onCreateModule,
+  onBrowseCustomerModules,
 }: ModuleMarketplaceDialogProps): React.JSX.Element | null {
   const [query, setQuery] = useState('');
   const [selection, setSelection] = useState<Set<string>>(() => new Set());
@@ -209,6 +215,12 @@ export function ModuleMarketplaceDialog({
           <button type="button" className="otto-module-marketplace__manage" onClick={onManageExperts}>
             创建专家模块
           </button>
+          {onCreateModule ? <button type="button" className="otto-module-marketplace__manage" onClick={onCreateModule}>
+            包装客户模块
+          </button> : null}
+          {onBrowseCustomerModules ? <button type="button" className="otto-module-marketplace__manage" onClick={onBrowseCustomerModules}>
+            客户模块市场
+          </button> : null}
           <button
             type="button"
             className="otto-module-marketplace__confirm"

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AgentProfile } from '../agents/departmentAgents.js';
 import type { CustomAgentDefinition } from '../customAgents.js';
-import { buildModuleCatalog, type ModuleDefinition, type ParkModuleAuthorization } from '../moduleCatalog.js';
+import { buildModuleCatalog, type InstalledCustomerModuleSummary, type ModuleDefinition, type ParkModuleAuthorization } from '../moduleCatalog.js';
 import { normalizeServerUrlForStorage } from '../moduleWorkspace.js';
 import { getEnterpriseOrganizationFeatures } from './enterpriseOrganizationFeatures.js';
 import type { EnterpriseOrganizationFeatures } from '../../preload/index.js';
@@ -46,6 +46,7 @@ export function useModuleWorkspaceCapabilities(input: {
   internalAdminPreview?: boolean;
   profiles: readonly AgentProfile[];
   customAgents: readonly CustomAgentDefinition[];
+  customerModules?: readonly InstalledCustomerModuleSummary[];
 }): {
   status: CapabilityState['status'];
   ready: boolean;
@@ -135,7 +136,8 @@ export function useModuleWorkspaceCapabilities(input: {
     organizationFeatures: current.features,
     parkAuthorization: current.park,
     customAgents: input.customAgents,
-  }), [current.features, current.park, input.customAgents, input.edition, input.profiles]);
+    customerModules: input.customerModules,
+  }), [current.features, current.park, input.customAgents, input.customerModules, input.edition, input.profiles]);
   const retry = useCallback(() => setRetryRevision((value) => value + 1), []);
   return { status: current.status, ready: current.status === 'ready', modules, retry };
 }

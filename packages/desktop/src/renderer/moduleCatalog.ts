@@ -9,7 +9,17 @@ import { customAgentIconToModuleIcon } from './customAgentIcons.js';
 import type { ModuleIconKey, ModuleIconSource } from './components/ModuleIcon.js';
 
 export type ModuleAvailability = 'available' | 'disabled' | 'hidden';
-export type ModuleCategory = 'common' | 'park' | 'capability' | 'custom-agent';
+export type ModuleCategory = 'common' | 'park' | 'capability' | 'custom-agent' | 'customer-module';
+
+export interface InstalledCustomerModuleSummary {
+  id: string;
+  version: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  suspendedReason?: string;
+  iconSrc?: string;
+}
 
 export type ParkModuleTarget =
   | 'overview'
@@ -29,7 +39,8 @@ export type ModuleActivation =
   | { kind: 'dialog'; dialog: 'park'; target: ParkModuleTarget }
   | { kind: 'dialog'; dialog: 'enterprise-memory' | 'auto-skill' }
   | { kind: 'route'; route: 'skill-zone' }
-  | { kind: 'agent'; profileId: string; customAgentId?: string };
+  | { kind: 'agent'; profileId: string; customAgentId?: string }
+  | { kind: 'customer-module'; moduleId: string; version: string };
 
 export interface ParkModuleAuthorization {
   hasParkContext: boolean;
@@ -43,6 +54,7 @@ export interface ModuleCatalogContext {
   organizationFeatures: EnterpriseOrganizationFeatures | null;
   parkAuthorization: ParkModuleAuthorization;
   customAgents: readonly CustomAgentDefinition[];
+  customerModules?: readonly InstalledCustomerModuleSummary[];
 }
 
 export interface ModuleDefinition {
@@ -234,12 +246,25 @@ function customAgentModules(context: ModuleCatalogContext): ModuleDefinition[] {
   }));
 }
 
+function customerModules(context: ModuleCatalogContext): ModuleDefinition[] {
+  return (context.customerModules ?? []).map((module) => ({
+    id: `customer-module:${module.id}`,
+    label: module.name,
+    description: module.description,
+    category: 'customer-module',
+    icon: module.iconSrc ? { kind: 'image', src: module.iconSrc } : 'custom-agent',
+    activation: { kind: 'customer-module', moduleId: module.id, version: module.version },
+    availability: module.enabled ? 'available' : 'disabled',
+    ...(module.suspendedReason ? { disabledReason: module.suspendedReason } : {}),
+  }));
+}
+
 export function buildModuleCatalog(context: ModuleCatalogContext): ModuleDefinition[] {
   const staticModules = STATIC_MODULE_SPECS.map(({ availabilityRule, ...module }) => ({
     ...module,
     availability: staticAvailability(availabilityRule, context),
   }));
-  const result = [...staticModules, ...agentModules(context), ...customAgentModules(context)];
+  const result = [...staticModules, ...agentModules(context), ...customAgentModules(context), ...customerModules(context)];
   const seen = new Set<string>();
   return result.filter((module) => {
     if (seen.has(module.id)) return false;
