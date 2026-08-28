@@ -417,7 +417,7 @@ export class OttoServerAdapter implements ContentGenerator {
   private authHandler: (() => Promise<void>) | null = null;
   private config?: Config;
 
-  constructor(region: string, projectId: string, proxyServerUrl?: string, config?: Config) {
+  constructor(_region: string, _projectId: string, proxyServerUrl?: string, config?: Config) {
     // 保存 Config 引用用于模型回退
     this.config = config;
 
@@ -2072,42 +2072,6 @@ export class OttoServerAdapter implements ContentGenerator {
     }
 
     return accumulated;
-  }
-
-  /**
-   * 🆕 构建统一请求格式（用于流式）
-   */
-  private buildUnifiedRequest(request: GenerateContentParameters, scene: SceneType): ProxyRequestBody {
-    const sceneModel = SceneManager.getModelForScene(scene);
-    const userModel = this.config?.getModel();
-
-    // 🆕 如果用户使用自定义模型，忽略场景固定模型
-    let modelToUse: string;
-    if (userModel && isCustomModel(userModel)) {
-      if (request.model && isCustomModel(request.model)) {
-        modelToUse = request.model;
-      } else {
-        modelToUse = userModel;
-      }
-    } else {
-      modelToUse = request.model || sceneModel || 'auto';
-    }
-
-    return {
-      model: modelToUse,
-      contents: request.contents,
-      config: {
-        ...request.config,
-        httpOptions: {
-          ...request.config?.httpOptions,
-          headers: {
-            ...request.config?.httpOptions?.headers,
-            'X-Scene-Type': scene,
-            'X-Scene-Display': SceneManager.getSceneDisplayName(scene),
-          }
-        }
-      }
-    };
   }
 
   /**

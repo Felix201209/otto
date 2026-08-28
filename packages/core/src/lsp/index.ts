@@ -134,7 +134,7 @@ export class LSPManager {
    */
   private getUri(file: string): string {
     const uri = pathToFileURL(path.resolve(file)).href;
-    return uri.replace(/^file:\/\/\/([A-Z])[:%3A]+\//i, (match, drive) =>
+    return uri.replace(/^file:\/\/\/([A-Z])[:%3A]+\//i, (_match, drive) =>
       `file:///${drive.toLowerCase()}%3A/`,
     );
   }

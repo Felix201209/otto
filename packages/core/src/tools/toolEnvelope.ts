@@ -153,7 +153,7 @@ export interface ToolExecutionEnvelope {
  * ```
  */
 export function createToolExecutionEnvelope(
-  config: Config,
+  _config: Config,
   entries: Map<string, ToolEnvelopeEntry>,
   envConfig: Partial<EnvelopeConfig> = {},
 ): ToolExecutionEnvelope {

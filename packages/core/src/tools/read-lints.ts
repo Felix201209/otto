@@ -40,7 +40,7 @@ export class ReadLintsTool extends BaseTool<ReadLintsParams, ToolResult> {
   // 静态回调函数，由VSCode扩展初始化时设置
   private static callback: ReadLintsCallback | null = null;
 
-  constructor(private readonly config: Config) {
+  constructor(_config: Config) {
     super(
       ReadLintsTool.Name,
       'ReadLints',

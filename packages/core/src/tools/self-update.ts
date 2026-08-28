@@ -328,7 +328,7 @@ export class SelfUpdateTool extends BaseTool<SelfUpdateParams, ToolResult> {
   static onBeforeRestart: (() => Promise<void>) | null = null;
 
 
-  constructor(private readonly config: Config) {
+  constructor(_config: Config) {
     super(
       SelfUpdateTool.Name,
       'SelfUpdate',

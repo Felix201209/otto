@@ -1231,7 +1231,7 @@ DEPENDENCIES: PPTX needs a local Chrome/Edge/Chromium browser and never runs Pyt
 
   /** Render a text slide with native pptxgenjs objects (editable, design-rich). */
   private renderNativeSlide(
-    pres: NativePptxPresentation, sec: ParsedSlideSection, index: number, total: number,
+    pres: NativePptxPresentation, sec: ParsedSlideSection, _index: number, total: number,
     theme: SlideTheme, pgNum: string,
   ): void {
     const slide = pres.addSlide();

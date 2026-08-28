@@ -67,7 +67,7 @@ export class SkillLoader {
 
   constructor(
     private settingsManager: SettingsManager,
-    private marketplaceManager: MarketplaceManager,
+    _marketplaceManager: MarketplaceManager,
     cacheTTL = 3600000, // 默认 1 小时
     projectRoot?: string,
   ) {

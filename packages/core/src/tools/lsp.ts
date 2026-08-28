@@ -166,7 +166,7 @@ export class LspTool extends BaseTool<LspToolParams, ToolResult> {
         }
     }
 
-    private formatLspResult(result: unknown, operation: string, cwd: string): string {
+    private formatLspResult(result: unknown, _operation: string, cwd: string): string {
         if (!result) return 'No result found.';
 
         // Helper to format a single location

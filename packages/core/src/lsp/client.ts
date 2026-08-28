@@ -25,7 +25,7 @@ export async function createLSPClient(input: {
   // 🎯 Windows 兼容性：确保驱动器盘符为小写，并统一使用 %3A
   // 这是 Pyright 等基于 vscode-uri 的服务器在 Windows 上的标准预期
   const normalizeUri = (uri: string) =>
-    uri.replace(/^file:\/\/\/([A-Z])[:%3A]+\//i, (match, drive) =>
+    uri.replace(/^file:\/\/\/([A-Z])[:%3A]+\//i, (_match, drive) =>
       `file:///${drive.toLowerCase()}%3A/`,
     );
   const rootUri = normalizeUri(pathToFileURL(input.root).href);

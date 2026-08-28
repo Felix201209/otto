@@ -100,7 +100,7 @@ export class VoiceBridgeTool extends BaseTool<VoiceBridgeToolParams, ToolResult>
   static readonly Name: string = 'voice_bridge';
 
   constructor(
-    private readonly config: Config,
+    _config: Config,
     private readonly doctor: DoctorService = new DoctorService(),
     private readonly dependencyChecker: VoiceBridgeDependencyChecker = runVoiceBridgeDependencyCheck,
   ) {

@@ -31,7 +31,7 @@ export class LocalTimeTool extends BaseTool<LocalTimeParams, ToolResult> {
   // Config is accepted for parity with other core tools, even though this
   // tool does not need any configuration at runtime.
 
-  constructor(private readonly config: Config) {
+  constructor(_config: Config) {
     super(
       LocalTimeTool.Name,
       'LocalTime',

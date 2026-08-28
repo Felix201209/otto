@@ -84,7 +84,7 @@ type LoopDetectionResponse = { confidence?: number; reasoning?: string };
  */
 async function callGeminiLoopDetectionAPI(
   contents: unknown[],
-  schema: SchemaUnion,
+  _schema: SchemaUnion,
   abortSignal: AbortSignal,
   config: Config,
 ): Promise<LoopDetectionResponse> {

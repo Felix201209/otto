@@ -25,7 +25,6 @@ export interface LogConfig {
 
 export class EnhancedLogger {
   private config: LogConfig;
-  private logBuffer: string[] = [];
 
   constructor(config: Partial<LogConfig> = {}) {
     this.config = {

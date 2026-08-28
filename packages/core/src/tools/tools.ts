@@ -159,7 +159,7 @@ export abstract class BaseTool<
    * @returns An error message string if invalid, null otherwise
    */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  validateToolParams(params: TParams): string | null {
+  validateToolParams(_params: TParams): string | null {
     // Implementation would typically use a JSON Schema validator
     // This is a placeholder that should be implemented by derived classes
     return null;
@@ -182,9 +182,9 @@ export abstract class BaseTool<
    */
   shouldConfirmExecute(
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    params: TParams,
+    _params: TParams,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    abortSignal: AbortSignal,
+    _abortSignal: AbortSignal,
   ): Promise<ToolCallConfirmationDetails | false> {
     return Promise.resolve(false);
   }
@@ -196,7 +196,7 @@ export abstract class BaseTool<
    */
   toolLocations(
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    params: TParams,
+    _params: TParams,
   ): ToolLocation[] {
     return [];
   }

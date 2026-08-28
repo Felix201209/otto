@@ -49,7 +49,7 @@ interface ContextInjectionOptions {
 export class SkillContextInjector {
   constructor(
     private skillLoader: SkillLoader,
-    private settingsManager: SettingsManager,
+    _settingsManager: SettingsManager,
   ) {}
 
   // ============================================================================
@@ -477,33 +477,6 @@ export class SkillContextInjector {
   // ============================================================================
   // 工具方法
   // ============================================================================
-
-  /**
-   * 按 Marketplace 和 Plugin 分组 Skills
-   */
-  private groupSkillsByMarketplaceAndPlugin(
-    skills: Skill[],
-  ): Map<string, Map<string, Skill[]>> {
-    const grouped = new Map<string, Map<string, Skill[]>>();
-
-    for (const skill of skills) {
-      let marketplaceGroup = grouped.get(skill.marketplaceId);
-      if (!marketplaceGroup) {
-        marketplaceGroup = new Map<string, Skill[]>();
-        grouped.set(skill.marketplaceId, marketplaceGroup);
-      }
-
-      let pluginGroup = marketplaceGroup.get(skill.pluginId);
-      if (!pluginGroup) {
-        pluginGroup = [];
-        marketplaceGroup.set(skill.pluginId, pluginGroup);
-      }
-
-      pluginGroup.push(skill);
-    }
-
-    return grouped;
-  }
 
   /**
    * 估算文本的 token 数

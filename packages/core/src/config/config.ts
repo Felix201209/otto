@@ -354,7 +354,6 @@ export class Config {
   private readonly showMemoryUsage: boolean;
   private readonly accessibility: AccessibilitySettings;
   private readonly telemetrySettings: TelemetrySettings;
-  private readonly usageStatisticsEnabled: boolean;
   private geminiClient!: OttoClient;
   private hookSystem!: HookSystem;
   private readonly fileFiltering: {
@@ -473,9 +472,6 @@ export class Config {
       logPrompts: false,
       outfile: params.telemetry?.outfile,
     };
-    // 硬编码禁用使用统计收集
-    this.usageStatisticsEnabled = false;
-
     this.fileFiltering = {
       respectGitIgnore: params.fileFiltering?.respectGitIgnore ?? true,
       respectGeminiIgnore: params.fileFiltering?.respectGeminiIgnore ?? true,

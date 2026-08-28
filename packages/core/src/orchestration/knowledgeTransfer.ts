@@ -66,7 +66,7 @@ export interface MemoryPackage {
  * 5. 打包为 JSON 文件
  */
 export async function exportMemoryPackage(
-  config: Config,
+  _config: Config,
   mem0Adapter: Mem0Adapter | null,
   userInfo: {
     userId: string;
@@ -136,7 +136,7 @@ export async function exportMemoryPackage(
  * 4. 新员工的 Otto 第一天就"懂这个岗位"
  */
 export async function importMemoryPackage(
-  config: Config,
+  _config: Config,
   mem0Adapter: Mem0Adapter | null,
   packagePath: string,
   newUserInfo: {
@@ -194,7 +194,7 @@ async function readFileMemory(type: 'employee' | 'department' | 'role'): Promise
 function buildProfile(
   employeeMem: string,
   deptMem: string,
-  roleMem: string,
+  _roleMem: string,
   role: string,
 ): MemoryPackage['profile'] {
   // 从记忆文本中提取岗位画像信息
