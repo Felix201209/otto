@@ -4,7 +4,7 @@
   "description": "Otto Core - Core functionality for AI-powered coding assistant",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/google-gemini/gemini-cli.git"
+    "url": "git+https://github.com/NSIETeam/otto-new.git"
   },
   "type": "module",
   "main": "dist/index.js",

@@ -194,7 +194,10 @@ function reducer(state: SettingsDataState, action: Action): SettingsDataState {
 
 export interface SettingsDataActions {
   refreshSettings(): void;
-  setSetting(key: 'agentStyle' | 'healthyUse' | 'preferredLanguage', value: string | boolean): void;
+  setSetting(
+    key: 'agentStyle' | 'healthyUse' | 'backgroundModelTasksEnabled' | 'preferredLanguage',
+    value: string | boolean,
+  ): void;
   refreshSearchConfig(): void;
   saveSearchConfig(payload: {
     provider: SearchProvider;
@@ -287,7 +290,10 @@ export function useSettingsData(activeSessionId?: string | null): UseSettingsDat
   }, []);
 
   const setSetting = useCallback(
-    (key: 'agentStyle' | 'healthyUse' | 'preferredLanguage', value: string | boolean) => {
+    (
+      key: 'agentStyle' | 'healthyUse' | 'backgroundModelTasksEnabled' | 'preferredLanguage',
+      value: string | boolean,
+    ) => {
       transport.send({ type: 'set_setting', payload: { key, value } });
     },
     [],

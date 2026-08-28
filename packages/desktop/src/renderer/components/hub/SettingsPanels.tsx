@@ -363,6 +363,28 @@ export function PrefsPanel({
               </button>
             </div>
           </div>
+
+          <div className="otto-hub__setting">
+            <div className="otto-hub__setting-text">
+              <div className="otto-hub__field-label">后台付费分析</div>
+              <div className="otto-hub__field-hint">
+                允许 Otto 在后台使用当前模型分析工作内容，可能产生 API 费用。新安装默认关闭，只有用户明确开启后才允许运行。
+              </div>
+            </div>
+            <button
+              type="button"
+              aria-label="后台付费分析"
+              className={'otto-hub__toggle' + (s.backgroundModelTasksEnabled ? ' is-on' : '')}
+              onClick={() => actions.setSetting(
+                'backgroundModelTasksEnabled',
+                !s.backgroundModelTasksEnabled,
+              )}
+              aria-pressed={s.backgroundModelTasksEnabled}
+            >
+              <span className="otto-hub__toggle-knob" />
+              {s.backgroundModelTasksEnabled ? '已开启' : '已关闭'}
+            </button>
+          </div>
           </Card>
         </details>
         </>

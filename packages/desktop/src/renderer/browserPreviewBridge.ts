@@ -806,6 +806,25 @@ if (!previewWindow.otto) {
         : Promise.reject(new Error('申请单不存在'));
     },
     enterpriseUsageRecord: () => Promise.resolve({ recorded: false }),
+    enterpriseUsageProfile: (periodDays = 30) => Promise.resolve({
+      accountId: previewAccount.id,
+      periodDays,
+      source: 'client_reported',
+      inputTokens: 18_400,
+      outputTokens: 9_600,
+      totalTokens: 28_000,
+      requestCount: 42,
+      averageTokensPerRequest: 667,
+      lastUsedAt: new Date().toISOString(),
+      byModel: [{
+        model: 'preview-model', inputTokens: 18_400, outputTokens: 9_600,
+        totalTokens: 28_000, requestCount: 42,
+      }],
+      daily: [{
+        date: parkISODate(new Date()), inputTokens: 18_400, outputTokens: 9_600,
+        totalTokens: 28_000, requestCount: 42,
+      }],
+    }),
     enterpriseKnowledgeRecord: () =>
       Promise.resolve({ status: 'exists', added: false }),
     enterpriseKnowledgeList: () => Promise.resolve([]),

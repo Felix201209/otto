@@ -8,6 +8,7 @@ import type {
   ModelUsageAccount,
   ModelUsageOrganization,
   OrganizationUsageSummary,
+  PersonalTokenUsageProfile,
   RecordModelUsageInput,
 } from './modelUsageTypes.js';
 
@@ -32,6 +33,19 @@ export interface ModelUsageRepositoryStore<
     outputTokens: number;
     totalTokens: number;
   }): void;
+}
+
+interface ProfileAggregateRow {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  request_count: number;
+  last_used_at: string | null;
+}
+
+interface ProfileBreakdownRow extends Omit<ProfileAggregateRow, 'last_used_at'> {
+  model?: string | null;
+  date?: string;
 }
 
 interface UsageAggregateRow {
@@ -267,5 +281,81 @@ export function getOrganizationUsageSummaryFromRepository<
     totalTokens: byAccount.reduce((sum, row) => sum + row.totalTokens, 0),
     requestCount: byAccount.reduce((sum, row) => sum + row.requestCount, 0),
     byAccount,
+  };
+}
+
+export function getPersonalTokenUsageProfileFromRepository<
+  TAccount extends ModelUsageAccount,
+  TOrganization extends ModelUsageOrganization,
+>(
+  store: ModelUsageRepositoryStore<TAccount, TOrganization>,
+  accountId: string,
+  periodDays = 30,
+): PersonalTokenUsageProfile {
+  const account = store.getAccount(accountId);
+  if (!account) throw new Error('Account not found');
+  if (account.status !== 'active') throw new Error('Account is disabled');
+  const organization = store.getOrganization(account.organizationId);
+  if (!organization) throw new Error('Organization not found');
+  if (organization.status !== 'active') throw new Error('Organization is disabled');
+
+  const safePeriodDays = Math.min(365, Math.max(1, Math.floor(periodDays) || 30));
+  const since = new Date(Date.now() - safePeriodDays * 86_400_000).toISOString();
+  const database = store.db();
+  const aggregate = database.prepare(
+    `SELECT COALESCE(SUM(input_tokens), 0) AS input_tokens,
+            COALESCE(SUM(output_tokens), 0) AS output_tokens,
+            COALESCE(SUM(total_tokens), 0) AS total_tokens,
+            COUNT(id) AS request_count,
+            MAX(created_at) AS last_used_at
+     FROM account_token_usage
+     WHERE organization_id = ? AND account_id = ?
+       AND datetime(created_at) >= datetime(?)`,
+  ).get(account.organizationId, account.id, since) as ProfileAggregateRow;
+  const byModelRows = database.prepare(
+    `SELECT model,
+            COALESCE(SUM(input_tokens), 0) AS input_tokens,
+            COALESCE(SUM(output_tokens), 0) AS output_tokens,
+            COALESCE(SUM(total_tokens), 0) AS total_tokens,
+            COUNT(id) AS request_count
+     FROM account_token_usage
+     WHERE organization_id = ? AND account_id = ?
+       AND datetime(created_at) >= datetime(?)
+     GROUP BY model
+     ORDER BY total_tokens DESC, model ASC`,
+  ).all(account.organizationId, account.id, since) as ProfileBreakdownRow[];
+  const dailyRows = database.prepare(
+    `SELECT date(created_at) AS date,
+            COALESCE(SUM(input_tokens), 0) AS input_tokens,
+            COALESCE(SUM(output_tokens), 0) AS output_tokens,
+            COALESCE(SUM(total_tokens), 0) AS total_tokens,
+            COUNT(id) AS request_count
+     FROM account_token_usage
+     WHERE organization_id = ? AND account_id = ?
+       AND datetime(created_at) >= datetime(?)
+     GROUP BY date(created_at)
+     ORDER BY date ASC`,
+  ).all(account.organizationId, account.id, since) as ProfileBreakdownRow[];
+
+  const requestCount = Number(aggregate.request_count ?? 0);
+  const totalTokens = Number(aggregate.total_tokens ?? 0);
+  const mapBreakdown = (row: ProfileBreakdownRow) => ({
+    inputTokens: Number(row.input_tokens ?? 0),
+    outputTokens: Number(row.output_tokens ?? 0),
+    totalTokens: Number(row.total_tokens ?? 0),
+    requestCount: Number(row.request_count ?? 0),
+  });
+  return {
+    accountId: account.id,
+    periodDays: safePeriodDays,
+    source: 'client_reported',
+    inputTokens: Number(aggregate.input_tokens ?? 0),
+    outputTokens: Number(aggregate.output_tokens ?? 0),
+    totalTokens,
+    requestCount,
+    averageTokensPerRequest: requestCount === 0 ? 0 : Math.round(totalTokens / requestCount),
+    lastUsedAt: sqliteUtcToIso(aggregate.last_used_at),
+    byModel: byModelRows.map((row) => ({ model: row.model ?? null, ...mapBreakdown(row) })),
+    daily: dailyRows.map((row) => ({ date: row.date || '', ...mapBreakdown(row) })),
   };
 }

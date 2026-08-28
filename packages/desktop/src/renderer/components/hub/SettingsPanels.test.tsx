@@ -31,6 +31,7 @@ function settingsData(
       settings: {
         agentStyle,
         healthyUse: overrides.healthyUse ?? false,
+        backgroundModelTasksEnabled: false,
         preferredLanguage: overrides.preferredLanguage ?? '',
       },
       mcpServers: [],
@@ -239,6 +240,16 @@ describe('PrefsPanel 外观与回复', () => {
         (screen.getByRole('button', { name: '恢复默认设置' }) as HTMLButtonElement).disabled,
       ).toBe(true);
     });
+  });
+
+  it('后台付费分析默认关闭，只在用户操作后开启', () => {
+    const { value, setSetting } = settingsData();
+    render(<PrefsPanel data={value} />);
+
+    const toggle = screen.getByRole('button', { name: '后台付费分析' });
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(toggle);
+    expect(setSetting).toHaveBeenCalledWith('backgroundModelTasksEnabled', true);
   });
 });
 

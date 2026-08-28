@@ -176,6 +176,32 @@ export interface TokenUsageRecordInput {
   totalTokens: number;
 }
 
+export interface PersonalTokenUsageProfile {
+  accountId: string;
+  periodDays: number;
+  source: 'client_reported';
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  requestCount: number;
+  averageTokensPerRequest: number;
+  lastUsedAt: string | null;
+  byModel: Array<{
+    model: string | null;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    requestCount: number;
+  }>;
+  daily: Array<{
+    date: string;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    requestCount: number;
+  }>;
+}
+
 export interface EnterpriseKnowledgeRecordInput {
   sourceId: string;
   title?: string;
@@ -2478,6 +2504,23 @@ export class EnterpriseClient {
       method: 'POST',
       body: JSON.stringify(input),
     });
+  }
+
+  async getPersonalTokenUsageProfile(
+    periodDays = 30,
+  ): Promise<PersonalTokenUsageProfile> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    if (
+      !Number.isInteger(periodDays) ||
+      periodDays < 1 ||
+      periodDays > 365
+    ) {
+      throw new Error('统计周期必须是 1 到 365 天的整数');
+    }
+    return this.request(
+      `/enterprise/usage/profile?period=${periodDays}`,
+      { method: 'GET' },
+    );
   }
 
   async recordKnowledge(

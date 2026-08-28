@@ -414,6 +414,32 @@ export interface EnterpriseTokenUsageInput {
   totalTokens: number;
 }
 
+export interface PersonalTokenUsageProfile {
+  accountId: string;
+  periodDays: number;
+  source: 'client_reported';
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  requestCount: number;
+  averageTokensPerRequest: number;
+  lastUsedAt: string | null;
+  byModel: Array<{
+    model: string | null;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    requestCount: number;
+  }>;
+  daily: Array<{
+    date: string;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    requestCount: number;
+  }>;
+}
+
 export interface EnterpriseKnowledgeRecordInput {
   sourceId: string;
   title?: string;
@@ -1127,6 +1153,7 @@ const IPC = {
   enterprisePrivacyDelete: 'otto:enterprise-privacy-delete',
   enterprisePair: 'otto:enterprise-pair',
   enterpriseUsageRecord: 'otto:enterprise-usage-record',
+  enterpriseUsageProfile: 'otto:enterprise-usage-profile',
   enterpriseKnowledgeRecord: 'otto:enterprise-knowledge-record',
   enterpriseKnowledgeList: 'otto:enterprise-knowledge-list',
   enterpriseKnowledgeReview: 'otto:enterprise-knowledge-review',
@@ -1592,6 +1619,7 @@ export interface OttoBridge {
     recorded: boolean;
     source: 'client_reported';
   }>;
+  enterpriseUsageProfile(periodDays?: number): Promise<PersonalTokenUsageProfile>;
   enterpriseKnowledgeRecord(
     input: EnterpriseKnowledgeRecordInput,
   ): Promise<EnterpriseKnowledgeRecordResult>;
@@ -2749,6 +2777,12 @@ const bridge: OttoBridge = {
       recorded: boolean;
       source: 'client_reported';
     }>;
+  },
+  enterpriseUsageProfile(periodDays = 30): Promise<PersonalTokenUsageProfile> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseUsageProfile,
+      periodDays,
+    ) as Promise<PersonalTokenUsageProfile>;
   },
   enterpriseKnowledgeRecord(
     input: EnterpriseKnowledgeRecordInput,

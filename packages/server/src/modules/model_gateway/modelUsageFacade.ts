@@ -4,6 +4,7 @@
 
 import {
   getOrganizationUsageSummaryFromRepository,
+  getPersonalTokenUsageProfileFromRepository,
   recordModelUsageInRepository,
   type ModelUsageRepositoryStore,
 } from './modelUsageRepository.js';
@@ -27,6 +28,9 @@ export function createModelUsageFacade<
         organizationId,
         periodDays,
       );
+    },
+    getPersonalTokenUsageProfile(accountId: string, periodDays = 30) {
+      return getPersonalTokenUsageProfileFromRepository(store, accountId, periodDays);
     },
   };
 }

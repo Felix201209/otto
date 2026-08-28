@@ -1148,10 +1148,15 @@ const modelGateway = createModelGatewayComposition({
   },
 });
 
-export const { getOrganizationUsageSummary, recordTokenUsage } = modelGateway;
+export const {
+  getOrganizationUsageSummary,
+  getPersonalTokenUsageProfile,
+  recordTokenUsage,
+} = modelGateway;
 export type {
   AccountTokenUsageView,
   OrganizationUsageSummary,
+  PersonalTokenUsageProfile,
 } from '../modules/model_gateway/index.js';
 
 export { ESTIMATE, normalizeCostCNY, normalizeTokens };

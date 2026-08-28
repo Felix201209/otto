@@ -5748,6 +5748,28 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     });
     expect(JSON.stringify(summary)).not.toContain(betaStaff.id);
 
+    const profileResponse = await fetch(
+      `${base}/enterprise/usage/profile?period=999&accountId=${betaStaff.id}`,
+      { headers: { authorization: `Bearer ${alphaToken}` } },
+    );
+    expect(profileResponse.status).toBe(200);
+    const profile = await profileResponse.json();
+    expect(profile).toMatchObject({
+      accountId: alphaStaff.id,
+      periodDays: 365,
+      totalTokens: 150,
+      requestCount: 1,
+      averageTokensPerRequest: 150,
+      byModel: [{ model: 'gpt-5.5', totalTokens: 150 }],
+    });
+    expect(JSON.stringify(profile)).not.toMatch(
+      /chat-alpha|message-alpha-1|chat-beta|message-beta-1/,
+    );
+    const anonymousProfile = await fetch(
+      `${base}/enterprise/usage/profile?period=30`,
+    );
+    expect(anonymousProfile.status).toBe(401);
+
     const accountsResponse = await fetch(`${base}/enterprise/accounts`, {
       headers: { authorization: `Bearer ${adminToken}` },
     });

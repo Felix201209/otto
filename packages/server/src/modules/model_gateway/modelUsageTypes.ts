@@ -46,3 +46,29 @@ export interface OrganizationUsageSummary {
   requestCount: number;
   byAccount: AccountTokenUsageView[];
 }
+
+export interface PersonalTokenUsageProfile {
+  accountId: string;
+  periodDays: number;
+  source: 'client_reported';
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  requestCount: number;
+  averageTokensPerRequest: number;
+  lastUsedAt: string | null;
+  byModel: Array<{
+    model: string | null;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    requestCount: number;
+  }>;
+  daily: Array<{
+    date: string;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    requestCount: number;
+  }>;
+}
