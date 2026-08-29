@@ -214,6 +214,17 @@ describe('desktop packaging contract', () => {
     );
   });
 
+  it('runs packaged Electron smoke tests only for the runner native architecture', async () => {
+    const script = await readFile(
+      path.join(packageRoot, 'scripts', 'make-delivery-zip.mjs'),
+      'utf8',
+    );
+    expect(script).toContain("smokeNativeMacArtifact('arm64')");
+    expect(script).toContain("smokeNativeMacArtifact('x64')");
+    expect(script).toContain('process.arch !== artifactArch');
+    expect(script).toContain('跳过 Mac ${artifactArch} 跨架构动态验收');
+  });
+
   it('publishes releases only after the update mirror and enterprise deploy pass', async () => {
     const workflow = await readFile(
       path.join(repoRoot, '.github', 'workflows', 'release.yml'),
