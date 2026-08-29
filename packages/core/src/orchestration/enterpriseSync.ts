@@ -140,8 +140,8 @@ export class EnterpriseSync {
     return this.enterpriseConfig?.apiDomain || 'https://open.feishu.cn';
   }
 
-  constructor(private readonly projectRoot: string) {
-    this.store = new OrgMemoryStore(projectRoot);
+  constructor(_projectRoot: string) {
+    this.store = new OrgMemoryStore(_projectRoot);
     this.configPath = path.join(homedir(), '.otto-user', 'enterprise.json');
     this.keyPath = path.join(homedir(), '.otto-user', 'enterprise.key');
   }

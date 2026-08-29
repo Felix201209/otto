@@ -263,7 +263,6 @@ export class ToolExecutionEngine {
 
   private toolRegistry: Promise<ToolRegistry>;
   private adapter: ToolSchedulerAdapter;
-  private approvalMode: ApprovalMode;
   private config: Config;
   private getPreferredEditor: () => EditorType | undefined;
   private hookEventHandler?: HookEventHandler;
@@ -285,7 +284,6 @@ export class ToolExecutionEngine {
     this.toolRegistry = options.toolRegistry;
     this.adapter = options.adapter;
     this.hookEventHandler = options.hookEventHandler;
-    this.approvalMode = options.approvalMode ?? ApprovalMode.DEFAULT;
     this.getPreferredEditor = options.getPreferredEditor;
     // 🛡️ 初始化MCP响应保护器
     this.mcpResponseGuard = new MCPResponseGuard({

@@ -31,7 +31,7 @@ export class CheckDelegateStatusTool extends BaseTool<
 > {
   static readonly Name: string = 'check_delegate_status';
 
-  constructor(private readonly config: Config) {
+  constructor(_config: Config) {
     super(
       CheckDelegateStatusTool.Name,
       'CheckDelegateStatus',

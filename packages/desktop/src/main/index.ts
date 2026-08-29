@@ -51,6 +51,17 @@ import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { HealthInfo, ServerEndpoint } from 'otto-server';
+import {
+  CustomerModuleHostBroker,
+  CustomerModuleRunner,
+  parseCustomerModuleManifest,
+  scanCustomerModuleWasm,
+  validateCustomerModuleArchiveEntries,
+  verifyCustomerModuleFileHashes,
+} from 'otto-core';
+import { WorkspaceDirectoryStore } from './workspace-directory-store.js';
+import { MainWindowPresentationController } from './main-window-presentation.js';
+import { askWindowCloseChoice } from './window-close-policy.js';
 
 function ignoreBrokenPipe(stream: NodeJS.WriteStream): void {
   stream.on('error', (error: NodeJS.ErrnoException) => {
@@ -138,6 +149,10 @@ import {
 } from './voiceConfig.js';
 import { transcribeAudio } from './voiceService.js';
 import {
+  EnterpriseSkillLibrary,
+  type EnterpriseSkillScope,
+} from './enterpriseSkillLibrary.js';
+import {
   EnterpriseClient,
   EnterpriseJoinStateUncertainError,
   type AccountCreateInput,
@@ -151,7 +166,22 @@ import {
   type EnterpriseModuleUpdateDescriptor,
   type EnterpriseOrganizationFeatures,
   type EnterprisePositionRoleMapping,
+  type PersonalTokenUsageProfile,
 } from './enterprise-client.js';
+import {
+  clearCustomerModuleData,
+  exportCustomerModuleData,
+  installCustomerModule,
+  listInstalledCustomerModules,
+  recoverCustomerModuleInstallReceipts,
+  refreshCustomerModuleMarketStatus,
+  runInstalledCustomerModule,
+  setCustomerModuleEnabled,
+  setCustomerModuleBackgroundEnabled,
+  uninstallCustomerModule,
+} from './customerModuleInstaller.js';
+import { createDesktopCustomerModuleHost } from './customerModuleHostAdapter.js';
+import { createCustomerModuleModelInvoke } from './customerModuleModelAdapter.js';
 import {
   EnterpriseE2eeCrypto,
   EnterpriseE2eeKeyVault,
@@ -419,25 +449,6 @@ async function localMarketplaceInstallVersions(): Promise<Map<string, number>> {
   return versions;
 }
 
-/** 部门 Skill 共享记录（.otto/org/skill-shares.json 条目；krx 企业面板数据）。 */
-interface SkillShareRecord {
-  skillName?: string;
-  version?: number;
-  featureDescription?: string;
-  sharedBy?: string;
-  sharedByName?: string;
-  teamId?: string;
-  teamName?: string;
-  status?: string;
-  note?: string;
-  rating?: number;
-  ratingCount?: number;
-  installCount?: number;
-  usageCount?: number;
-  successCount?: number;
-  publishedToMarketplace?: boolean;
-}
-
 /** 渲染进程崩溃自动重载的退避：窗口期内超过上限就不再 reload，防白屏无限闪烁。 */
 const CRASH_RELOAD_WINDOW_MS = 60_000;
 const CRASH_RELOAD_MAX = 3;
@@ -458,6 +469,11 @@ const serverManager = new ServerManager({
 const notificationService = new NotificationService();
 /** 原生文件选择授权账本：允许任意磁盘，但拒绝 renderer 凭空传入的路径。 */
 const fileAccessGrants = new FileAccessGrantStore();
+/** 用户明确选择过的真实工作目录；跨重启保留最近列表。 */
+const workspaceDirectories = new WorkspaceDirectoryStore(
+  path.join(app.getPath('userData'), 'workspace-directories.json'),
+  os.homedir(),
+);
 /** 身份提交统一边界：跨账号、跨组织和失效退出时先清旧账号通知与文件授权。 */
 const enterpriseNotificationIdentityBoundary =
   new EnterpriseNotificationIdentityBoundary(
@@ -471,6 +487,15 @@ let endpointRetryTimer: ReturnType<typeof setTimeout> | undefined;
 let endpointRetryAttempt = 0;
 /** 主窗口单例引用。 */
 let mainWindow: BrowserWindow | undefined;
+/** 每个主窗口的展示时序；避免 renderer 就绪前被第二实例强制显示。 */
+const mainWindowPresentations = new WeakMap<
+  BrowserWindow,
+  MainWindowPresentationController
+>();
+/** 应用尚未 ready 时到达的第二实例聚焦请求。 */
+let pendingMainWindowFocusRequest = false;
+/** IPC、菜单和托盘初始化完成后，才允许外部事件创建主窗口。 */
+let mainWindowCreationReady = false;
 /** macOS 后台提醒句柄；窗口重新聚焦时主动取消。 */
 let dockBounceId: number | undefined;
 /** 系统托盘：保持引用，避免被 GC 后托盘图标消失。 */
@@ -494,6 +519,9 @@ const IPC = {
   activateLocalPath: 'otto:activate-local-path',
   selectFiles: 'otto:select-files',
   selectFolders: 'otto:select-folders',
+  selectWorkspaceDirectory: 'otto:select-workspace-directory',
+  getWorkspaceDirectories: 'otto:get-workspace-directories',
+  authorizeWorkspaceDirectory: 'otto:authorize-workspace-directory',
   grantBrowserFile: 'otto:grant-browser-file',
   authorizeMessageFiles: 'otto:authorize-message-files',
   readFilePath: 'otto:read-file-path',
@@ -525,6 +553,18 @@ const IPC = {
   enterpriseSkillInstall: 'otto:enterprise-skill-install',
   enterpriseSkillRate: 'otto:enterprise-skill-rate',
   enterpriseSkillLeaderboard: 'otto:enterprise-skill-leaderboard',
+  customerModuleList: 'otto:customer-module-list',
+  customerModuleSubmit: 'otto:customer-module-submit',
+  customerModuleTest: 'otto:customer-module-test',
+  customerModuleInstalledList: 'otto:customer-module-installed-list',
+  customerModuleInstall: 'otto:customer-module-install',
+  customerModuleSetEnabled: 'otto:customer-module-set-enabled',
+  customerModuleSetBackgroundEnabled: 'otto:customer-module-set-background-enabled',
+  customerModuleUninstall: 'otto:customer-module-uninstall',
+  customerModuleClearData: 'otto:customer-module-clear-data',
+  customerModuleExportData: 'otto:customer-module-export-data',
+  customerModuleRun: 'otto:customer-module-run',
+  customerModuleCancel: 'otto:customer-module-cancel',
   setLocalTestUrl: 'otto:set-local-test-url',
   appVersion: 'otto:app-version',
   updateCheck: 'otto:update-check',
@@ -561,6 +601,7 @@ const IPC = {
   enterprisePrivacyDelete: 'otto:enterprise-privacy-delete',
   enterprisePair: 'otto:enterprise-pair',
   enterpriseUsageRecord: 'otto:enterprise-usage-record',
+  enterpriseUsageProfile: 'otto:enterprise-usage-profile',
   enterpriseKnowledgeRecord: 'otto:enterprise-knowledge-record',
   enterpriseKnowledgeList: 'otto:enterprise-knowledge-list',
   enterpriseKnowledgeReview: 'otto:enterprise-knowledge-review',
@@ -650,6 +691,9 @@ const IPC = {
   notificationCheckPermission: 'otto:notification-check-permission',
   notificationSessionOpen: 'otto:notification-session-open',
 } as const;
+
+const customerModuleRunControllers = new Map<string, AbortController>();
+const customerModuleModelInvoke = createCustomerModuleModelInvoke();
 
 const enterpriseFetch = createEnterpriseNetworkFetch(
   fetch,
@@ -1856,14 +1900,22 @@ async function toggleEnterpriseTrayPopover(): Promise<void> {
 function showMainWindow(): void {
   hideEnterpriseTrayPopover();
   clearBackgroundAttention();
+  if (!app.isReady() || !mainWindowCreationReady) {
+    pendingMainWindowFocusRequest = true;
+    return;
+  }
   if (!mainWindow || mainWindow.isDestroyed()) {
     mainWindow = createWindow();
     mainWindow.webContents.once('did-finish-load', pushEndpointToRenderer);
-    return;
   }
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
+  const presentation = mainWindowPresentations.get(mainWindow);
+  if (presentation) {
+    presentation.requestShow({ focus: true });
+  } else {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
 }
 
 function createTray(): void {
@@ -1974,6 +2026,7 @@ const tracer: {
 
 function createWindow(): BrowserWindow {
   enterpriseIntentRendererReady = false;
+  let closePromptPending = false;
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -2002,19 +2055,44 @@ function createWindow(): BrowserWindow {
     },
   });
 
-  win.once('ready-to-show', () => {
-    win.show();
+  const presentation = new MainWindowPresentationController(win);
+  mainWindowPresentations.set(win, presentation);
+  let initialIndicatorsUpdated = false;
+  const markWindowReady = (): void => {
+    presentation.markReady();
+    if (initialIndicatorsUpdated) return;
+    initialIndicatorsUpdated = true;
     updateUnreadIndicators(notificationService.getUnreadSessions());
-  });
+  };
+
+  win.once('ready-to-show', markWindowReady);
   win.on('focus', clearBackgroundAttention);
   win.on('close', (event) => {
-    if (isQuitting || process.platform === 'darwin') return;
+    if (isQuitting) return;
     event.preventDefault();
-    win.hide();
+    if (closePromptPending) return;
+    closePromptPending = true;
+    void askWindowCloseChoice({
+      showMessageBox: (options) => dialog.showMessageBox(options),
+    }).then((choice) => {
+      if (choice === 'continue-background') {
+        win.hide();
+      } else if (choice === 'stop-and-quit') {
+        isQuitting = true;
+        app.quit();
+      }
+    }).catch((error) => {
+      console.error('[otto-desktop] close choice dialog failed:', error);
+    }).finally(() => {
+      closePromptPending = false;
+    });
   });
 
   hardenWebContents(win);
   win.webContents.once('did-finish-load', () => {
+    // ready-to-show 在后台/遮挡启动时不保证及时触发。renderer 完成加载后作为
+    // 安全兜底展示；控制器会合并两个信号，避免重复 show 或抢焦点。
+    markWindowReady();
     void incrementalUpdateService
       .applyActiveRendererPatches()
       .catch((error) => {
@@ -2296,7 +2374,20 @@ function parseLegalDocumentReferences(
   return references;
 }
 
+async function authenticatedSkillScope(): Promise<EnterpriseSkillScope | null> {
+  loadEnterpriseSession();
+  let account = enterpriseClient.authenticatedAccountSnapshot();
+  if (!account && enterpriseClient.snapshot().token) {
+    account = (await enterpriseClient.getSession()).account;
+  }
+  const teamId = account?.departmentId?.trim();
+  return teamId ? { teamId } : null;
+}
+
 function registerIpc(): void {
+  const enterpriseSkillLibrary = new EnterpriseSkillLibrary(
+    path.join(process.cwd(), '.otto', 'org', 'skill-shares.json'),
+  );
   ipcMain.handle(IPC.writeClipboard, (_e, text: unknown) => {
     if (typeof text !== 'string') return false;
     clipboard.writeText(text);
@@ -2680,6 +2771,22 @@ function registerIpc(): void {
       totalTokens: body.totalTokens,
     });
   });
+  ipcMain.handle(
+    IPC.enterpriseUsageProfile,
+    async (_event, periodDays: unknown): Promise<PersonalTokenUsageProfile> => {
+      loadEnterpriseSession();
+      const period = periodDays === undefined ? 30 : periodDays;
+      if (
+        typeof period !== 'number' ||
+        !Number.isInteger(period) ||
+        period < 1 ||
+        period > 365
+      ) {
+        throw new Error('Token 统计周期必须是 1 到 365 天的整数');
+      }
+      return enterpriseClient.getPersonalTokenUsageProfile(period);
+    },
+  );
   ipcMain.handle(IPC.enterpriseKnowledgeRecord, async (_e, input: unknown) => {
     loadEnterpriseSession();
     if (!input || typeof input !== 'object')
@@ -2691,18 +2798,20 @@ function registerIpc(): void {
       typeof body.category !== 'string' ||
       !body.category ||
       typeof body.content !== 'string' ||
-      !body.content ||
-      typeof body.confidence !== 'number' ||
-      !Number.isFinite(body.confidence)
+      !body.content
     ) {
       throw new Error('知识条目字段不完整');
     }
+    const confidence =
+      typeof body.confidence === 'number' && Number.isFinite(body.confidence)
+        ? Math.min(1, Math.max(0, body.confidence))
+        : 0.5;
     const record: EnterpriseKnowledgeRecordInput = {
       sourceId: body.sourceId,
       title: typeof body.title === 'string' ? body.title : undefined,
       category: body.category,
       content: body.content,
-      confidence: Math.min(1, Math.max(0, body.confidence)),
+      confidence,
       sourceType:
         body.sourceType === 'manual' ||
         body.sourceType === 'auto_capture' ||
@@ -3874,125 +3983,11 @@ function registerIpc(): void {
     return nativeTheme.themeSource;
   });
 
-  // ── krx 的企业面板 IPC（排行榜/工作日志/Skill 共享与市场）──
-  // 这批 handler 在 a01198db 的 merge 解冲突时被误删（renderer 调用还在、
-  // 通路没了，面板按钮全哑）。从 8a22244e 原样移植回来，仅做类型化（去 any）。
-  ipcMain.handle(IPC.skillLeaderboard, async (_e, teamId?: string) => {
-    const emptyTabs = [
-      { id: 'leaderboard', label: '排行榜', icon: '' },
-      { id: 'stars', label: '明星榜', icon: '' },
-    ];
-    try {
-      const sharesPath = path.join(
-        process.cwd(),
-        '.otto',
-        'org',
-        'skill-shares.json',
-      );
-      let shares: SkillShareRecord[] = [];
-      try {
-        shares = JSON.parse(
-          await fs.promises.readFile(sharesPath, 'utf-8'),
-        ) as SkillShareRecord[];
-      } catch {
-        /* 文件不存在，返回空 */
-      }
-
-      const activeShares = shares.filter(
-        (s) => (!teamId || s.teamId === teamId) && s.status === 'active',
-      );
-      const teamName = activeShares[0]?.teamName || '本小组';
-
-      const medals = ['1.', '2.', '3.'];
-      const maxInstalls = Math.max(
-        ...activeShares.map((s) => s.installCount || 0),
-        1,
-      );
-      const maxUsage = Math.max(
-        ...activeShares.map((s) => s.usageCount || 0),
-        1,
-      );
-
-      const lbLines: string[] = [`${teamName} Skill 排行榜`, ''];
-      const scored = activeShares
-        .map((s) => {
-          const ratingScore = ((s.rating || 0) / 5) * 100;
-          const installScore = ((s.installCount || 0) / maxInstalls) * 100;
-          const successRate =
-            (s.usageCount || 0) > 0
-              ? ((s.successCount || 0) / (s.usageCount || 1)) * 100
-              : 50;
-          const usageScore = ((s.usageCount || 0) / maxUsage) * 100;
-          return {
-            s,
-            score:
-              ratingScore * 0.35 +
-              installScore * 0.25 +
-              successRate * 0.25 +
-              usageScore * 0.15,
-          };
-        })
-        .sort((a, b) => b.score - a.score);
-
-      scored.forEach((item, i) => {
-        const rank = i < 3 ? medals[i] : `${i + 1}.`;
-        const rating = item.s.rating ? `${item.s.rating.toFixed(1)}/5` : '暂无';
-        lbLines.push(`${rank} ${item.s.skillName} (v${item.s.version || 1})`);
-        lbLines.push(`   ${item.s.featureDescription || ''}`);
-        lbLines.push(
-          `   ${item.s.sharedByName} | ${rating} (${item.s.ratingCount || 0}人) | 装${item.s.installCount || 0} | 用${item.s.usageCount || 0} | ${item.score.toFixed(0)}分`,
-        );
-        lbLines.push('');
-      });
-
-      const contributorMap: Record<
-        string,
-        {
-          name?: string;
-          count: number;
-          installs: number;
-          skills: Array<string | undefined>;
-        }
-      > = {};
-      for (const s of activeShares) {
-        const key = s.sharedBy || 'unknown';
-        if (!contributorMap[key]) {
-          contributorMap[key] = {
-            name: s.sharedByName,
-            count: 0,
-            installs: 0,
-            skills: [],
-          };
-        }
-        contributorMap[key].count++;
-        contributorMap[key].installs += s.installCount || 0;
-        contributorMap[key].skills.push(s.skillName);
-      }
-      const sbLines: string[] = [`${teamName} 贡献明星榜`, ''];
-      Object.values(contributorMap)
-        .sort((a, b) => b.installs - a.installs)
-        .forEach((c, i) => {
-          const rank = i < 3 ? medals[i] : `${i + 1}.`;
-          sbLines.push(`${rank} ${c.name}`);
-          sbLines.push(
-            `   分享${c.count}个 | 安装${c.installs}次 | ${c.skills.join('、')}`,
-          );
-          sbLines.push('');
-        });
-
-      return {
-        leaderboard: lbLines.join('\n'),
-        starBoard: sbLines.join('\n'),
-        tabs: emptyTabs,
-      };
-    } catch {
-      return {
-        leaderboard: '暂无排行榜数据',
-        starBoard: '暂无明星榜数据',
-        tabs: emptyTabs,
-      };
-    }
-  });
+  ipcMain.handle(
+    IPC.skillLeaderboard,
+    async () =>
+      enterpriseSkillLibrary.leaderboard(await authenticatedSkillScope()),
+  );
 
   // 工作日志：读取本地日历的今天，展示业务成果 + 支撑操作。
   ipcMain.handle(IPC.workLogToday, async () => {
@@ -4027,96 +4022,14 @@ function registerIpc(): void {
     return result;
   });
 
-  // 部门共享 Skill 列表
-  ipcMain.handle(IPC.skillShareList, async (_e, teamId?: string) => {
-    try {
-      const sharesPath = path.join(
-        process.cwd(),
-        '.otto',
-        'org',
-        'skill-shares.json',
-      );
-      let shares: SkillShareRecord[] = [];
-      try {
-        shares = JSON.parse(
-          await fs.promises.readFile(sharesPath, 'utf-8'),
-        ) as SkillShareRecord[];
-      } catch {
-        /* 无文件 */
-      }
-
-      const active = shares.filter(
-        (s) => s.status === 'active' && (!teamId || s.teamId === teamId),
-      );
-
-      if (active.length === 0) {
-        return { text: '本部门暂无共享 Skill。' };
-      }
-
-      const lines: string[] = ['部门共享 Skill 列表', ''];
-      for (const s of active) {
-        const rating = s.rating ? `${s.rating.toFixed(1)}/5` : '暂无';
-        lines.push(`${s.skillName} (v${s.version || 1})`);
-        lines.push(`  功能：${s.featureDescription || '暂无描述'}`);
-        lines.push(`  分享者：${s.sharedByName}`);
-        lines.push(
-          `  评分：${rating} (${s.ratingCount || 0}人) | 安装：${s.installCount || 0}次 | 使用：${s.usageCount || 0}次`,
-        );
-        if (s.note) lines.push(`  备注：${s.note}`);
-        lines.push('');
-      }
-      return { text: lines.join('\n') };
-    } catch {
-      return { text: '读取 Skill 列表失败。' };
-    }
-  });
-
-  // 公司 Skill 市场
-  ipcMain.handle(IPC.skillMarketplace, async () => {
-    try {
-      const sharesPath = path.join(
-        process.cwd(),
-        '.otto',
-        'org',
-        'skill-shares.json',
-      );
-      let shares: SkillShareRecord[] = [];
-      try {
-        shares = JSON.parse(
-          await fs.promises.readFile(sharesPath, 'utf-8'),
-        ) as SkillShareRecord[];
-      } catch {
-        /* 无文件 */
-      }
-
-      const market = shares.filter(
-        (s) => s.publishedToMarketplace === true && s.status === 'active',
-      );
-
-      if (market.length === 0) {
-        return {
-          text: '公司 Skill 市场暂无已发布的 Skill。\n\n部门共享的 Skill 需要分享者「发布到市场」后才会在此显示。',
-        };
-      }
-
-      market.sort((a, b) => (b.rating || 0) - (a.rating || 0));
-
-      const lines: string[] = ['公司 Skill 市场', ''];
-      for (const s of market) {
-        const rating = s.rating ? `${s.rating.toFixed(1)}/5` : '暂无';
-        lines.push(`${s.skillName} (v${s.version || 1})`);
-        lines.push(`  功能：${s.featureDescription || '暂无描述'}`);
-        lines.push(`  分享者：${s.sharedByName} (${s.teamName})`);
-        lines.push(
-          `  评分：${rating} (${s.ratingCount || 0}人) | 安装：${s.installCount || 0}次 | 使用：${s.usageCount || 0}次`,
-        );
-        lines.push('');
-      }
-      return { text: lines.join('\n') };
-    } catch {
-      return { text: '读取 Skill 市场失败。' };
-    }
-  });
+  ipcMain.handle(
+    IPC.skillShareList,
+    async () =>
+      enterpriseSkillLibrary.listDepartment(await authenticatedSkillScope()),
+  );
+  ipcMain.handle(IPC.skillMarketplace, () =>
+    enterpriseSkillLibrary.listMarketplace(),
+  );
 
   ipcMain.handle(IPC.enterpriseSkillLocalList, async () => {
     const root = userSkillsRootDir();
@@ -4205,6 +4118,186 @@ function registerIpc(): void {
       content,
       visibility: body.visibility === 'company' ? 'company' : 'department',
     });
+  });
+
+  ipcMain.handle(IPC.customerModuleList, async () => {
+    loadEnterpriseSession();
+    return enterpriseClient.listCustomerModules();
+  });
+
+  ipcMain.handle(IPC.customerModuleSubmit, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('客户模块投稿参数不正确');
+    const body = input as Record<string, unknown>;
+    if (!body.manifest || typeof body.manifest !== 'object' || !body.files || typeof body.files !== 'object') {
+      throw new Error('客户模块清单和文件不能为空');
+    }
+    const files = body.files as Record<string, unknown>;
+    let encodedSize = 0;
+    const normalizedFiles: Record<string, string> = {};
+    for (const [path, encoded] of Object.entries(files)) {
+      if (typeof encoded !== 'string') throw new Error(`客户模块文件格式不正确：${path}`);
+      encodedSize += encoded.length;
+      if (encodedSize > 24_000_000) throw new Error('客户模块包超过上传限制');
+      normalizedFiles[path] = encoded;
+    }
+    return enterpriseClient.submitCustomerModule({
+      manifest: body.manifest as Record<string, unknown>,
+      files: normalizedFiles,
+    });
+  });
+
+  ipcMain.handle(IPC.customerModuleTest, async (_event, input: unknown) => {
+    if (!input || typeof input !== 'object') throw new Error('客户模块测试参数不正确');
+    const body = input as Record<string, unknown>;
+    const manifest = parseCustomerModuleManifest(body.manifest, { requireSignature: false });
+    if (!body.files || typeof body.files !== 'object' || Array.isArray(body.files)) throw new Error('客户模块测试文件不能为空');
+    const files = new Map(Object.entries(body.files as Record<string, unknown>).map(([name, encoded]) => {
+      if (typeof encoded !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/u.test(encoded)) throw new Error(`客户模块文件不是有效 base64：${name}`);
+      return [name, Uint8Array.from(Buffer.from(encoded, 'base64'))];
+    }));
+    validateCustomerModuleArchiveEntries(manifest, [...files].map(([filePath, bytes]) => ({ path: filePath, kind: 'file' as const, size: bytes.byteLength })), { requireSignature: false });
+    await verifyCustomerModuleFileHashes(manifest.files, files);
+    await scanCustomerModuleWasm(files.get(manifest.entrypoint) ?? new Uint8Array());
+    const hostAudit: Array<Record<string, unknown>> = [];
+    const host = new CustomerModuleHostBroker({
+      invoke: async () => { throw new Error('本地沙箱测试禁止真实外部调用'); },
+      onAudit: (event) => hostAudit.push(event as unknown as Record<string, unknown>),
+    });
+    const audit: Array<Record<string, unknown>> = [];
+    const result = await new CustomerModuleRunner({ host, onAudit: (event) => audit.push(event as unknown as Record<string, unknown>) }).run({
+      moduleId: manifest.id, version: manifest.version,
+      wasm: files.get(manifest.entrypoint) ?? new Uint8Array(), input: {},
+      approvedCapabilities: manifest.permissions.map((permission) => permission.kind),
+      limits: { timeoutMs: 2_000, maxOutputBytes: 256 * 1024 },
+    });
+    return { result, audit, hostAudit };
+  });
+
+  ipcMain.handle(IPC.customerModuleInstalledList, async () => {
+    loadEnterpriseSession();
+    const root = path.join(app.getPath('userData'), 'customer-modules');
+    try {
+      await recoverCustomerModuleInstallReceipts(root, enterpriseClient);
+      const records = await refreshCustomerModuleMarketStatus(root, enterpriseClient);
+      return records.map(({ artifactPath: _artifactPath, receiptId: _receiptId, receiptStatus: _receiptStatus, manifest, ...record }) => ({ ...record, inputSchema: manifest.inputSchema }));
+    } catch {
+      const records = await listInstalledCustomerModules(root);
+      return records.map(({ artifactPath: _artifactPath, receiptId: _receiptId, receiptStatus: _receiptStatus, manifest, ...record }) => ({ ...record, inputSchema: manifest.inputSchema }));
+    }
+  });
+
+  ipcMain.handle(IPC.customerModuleInstall, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('客户模块安装参数不正确');
+    const body = input as Record<string, unknown>;
+    if (typeof body.moduleId !== 'string' || typeof body.version !== 'string' || !Array.isArray(body.approvedPermissions)) {
+      throw new Error('客户模块安装参数不正确');
+    }
+    const installed = await installCustomerModule({
+      root: path.join(app.getPath('userData'), 'customer-modules'),
+      client: enterpriseClient,
+      moduleId: body.moduleId,
+      version: body.version,
+      ottoVersion: app.getVersion(),
+      approvedPermissions: body.approvedPermissions as never,
+    });
+    const { artifactPath: _artifactPath, receiptId: _receiptId, receiptStatus: _receiptStatus, manifest, ...record } = installed;
+    return { ...record, inputSchema: manifest.inputSchema };
+  });
+
+  ipcMain.handle(IPC.customerModuleSetEnabled, async (_event, input: unknown) => {
+    if (!input || typeof input !== 'object') throw new Error('客户模块启停参数不正确');
+    const body = input as Record<string, unknown>;
+    if (typeof body.moduleId !== 'string' || typeof body.enabled !== 'boolean') throw new Error('客户模块启停参数不正确');
+    const root = path.join(app.getPath('userData'), 'customer-modules');
+    const record = await setCustomerModuleEnabled(root, body.moduleId, body.enabled);
+    const { artifactPath: _artifactPath, receiptId: _receiptId, receiptStatus: _receiptStatus, manifest, ...safe } = record;
+    return { ...safe, inputSchema: manifest.inputSchema };
+  });
+
+  ipcMain.handle(IPC.customerModuleSetBackgroundEnabled, async (_event, input: unknown) => {
+    if (!input || typeof input !== 'object') throw new Error('客户模块后台授权参数不正确');
+    const body = input as Record<string, unknown>;
+    if (typeof body.moduleId !== 'string' || typeof body.enabled !== 'boolean') throw new Error('客户模块后台授权参数不正确');
+    const root = path.join(app.getPath('userData'), 'customer-modules');
+    const record = await setCustomerModuleBackgroundEnabled(root, body.moduleId, body.enabled);
+    const { artifactPath: _artifactPath, receiptId: _receiptId, receiptStatus: _receiptStatus, manifest, ...safe } = record;
+    return { ...safe, inputSchema: manifest.inputSchema };
+  });
+
+  ipcMain.handle(IPC.customerModuleUninstall, async (_event, moduleId: unknown) => {
+    if (typeof moduleId !== 'string') throw new Error('客户模块卸载参数不正确');
+    await uninstallCustomerModule(path.join(app.getPath('userData'), 'customer-modules'), moduleId);
+  });
+
+  ipcMain.handle(IPC.customerModuleClearData, async (_event, moduleId: unknown) => {
+    if (typeof moduleId !== 'string') throw new Error('客户模块数据清理参数不正确');
+    await clearCustomerModuleData(path.join(app.getPath('userData'), 'customer-modules'), moduleId);
+  });
+
+  ipcMain.handle(IPC.customerModuleExportData, async (_event, moduleId: unknown) => {
+    if (typeof moduleId !== 'string') throw new Error('客户模块数据导出参数不正确');
+    const root = path.join(app.getPath('userData'), 'customer-modules');
+    const exported = await exportCustomerModuleData(root, moduleId);
+    const selected = await dialog.showSaveDialog({ defaultPath: `${moduleId}-data.json` });
+    if (selected.canceled || !selected.filePath) return null;
+    await fs.promises.writeFile(selected.filePath, `${JSON.stringify(exported, null, 2)}\n`, { mode: 0o600 });
+    return selected.filePath;
+  });
+
+  ipcMain.handle(IPC.customerModuleRun, async (_event, input: unknown) => {
+    loadEnterpriseSession();
+    if (!input || typeof input !== 'object') throw new Error('客户模块运行参数不正确');
+    const body = input as Record<string, unknown>;
+    if (typeof body.runId !== 'string' || typeof body.moduleId !== 'string' || typeof body.version !== 'string' || !body.formInput || typeof body.formInput !== 'object' || Array.isArray(body.formInput)) {
+      throw new Error('客户模块运行参数不正确');
+    }
+    if (customerModuleRunControllers.has(body.runId)) throw new Error('客户模块运行 ID 已被占用');
+    const controller = new AbortController();
+    customerModuleRunControllers.set(body.runId, controller);
+    const root = path.join(app.getPath('userData'), 'customer-modules');
+    const record = (await listInstalledCustomerModules(root)).find((item) => item.id === body.moduleId && item.version === body.version);
+    if (!record) throw new Error('客户模块未安装');
+    const hostAudit: Array<Record<string, unknown>> = [];
+    const host = createDesktopCustomerModuleHost({
+      record,
+      storageRoot: path.join(root, 'data'),
+      modelInvoke: customerModuleModelInvoke,
+      selectReadFile: async () => {
+        const selected = await dialog.showOpenDialog({ properties: ['openFile'] });
+        return selected.canceled ? null : selected.filePaths[0] ?? null;
+      },
+      selectWriteFile: async (suggestedName) => {
+        const selected = await dialog.showSaveDialog({ defaultPath: suggestedName });
+        return selected.canceled ? null : selected.filePath ?? null;
+      },
+      onAudit: (event) => {
+        hostAudit.push(event as unknown as Record<string, unknown>);
+        console.info('[customer-module-audit]', event);
+      },
+    });
+    try {
+      const execution = await runInstalledCustomerModule({
+        root,
+        moduleId: body.moduleId,
+        version: body.version,
+        formInput: body.formInput as Record<string, unknown>,
+        host,
+        signal: controller.signal,
+      });
+      return { ...execution, hostAudit };
+    } finally {
+      customerModuleRunControllers.delete(body.runId);
+    }
+  });
+
+  ipcMain.handle(IPC.customerModuleCancel, (_event, runId: unknown) => {
+    if (typeof runId !== 'string') throw new Error('客户模块取消参数不正确');
+    const controller = customerModuleRunControllers.get(runId);
+    if (!controller) return false;
+    controller.abort();
+    return true;
   });
 
   ipcMain.handle(IPC.enterpriseSkillReview, async (_event, input: unknown) => {
@@ -4645,6 +4738,31 @@ function registerIpc(): void {
     return fileAccessGrants.grantDirectories(result.filePaths);
   });
 
+  ipcMain.handle(IPC.getWorkspaceDirectories, () => ({
+    defaultPath: workspaceDirectories.defaultPath(),
+    recentPaths: workspaceDirectories.list(),
+  }));
+
+  ipcMain.handle(IPC.selectWorkspaceDirectory, async () => {
+    const win = mainWindow;
+    const result = await (win
+      ? dialog.showOpenDialog(win, {
+          defaultPath: workspaceDirectories.defaultPath(),
+          properties: ['openDirectory', 'createDirectory'],
+        })
+      : dialog.showOpenDialog({
+          defaultPath: workspaceDirectories.defaultPath(),
+          properties: ['openDirectory', 'createDirectory'],
+        }));
+    if (result.canceled || !result.filePaths[0]) return null;
+    return workspaceDirectories.grant(result.filePaths[0]);
+  });
+
+  ipcMain.handle(IPC.authorizeWorkspaceDirectory, (_event, directory: unknown) => {
+    if (typeof directory !== 'string') throw new Error('工作目录格式无效');
+    return workspaceDirectories.authorize(directory);
+  });
+
   // 拖拽/隐藏 input 的 File 路径由可信 preload 通过 webUtils 提取后送到这里。
   // renderer 只能传 File 对象给 contextBridge，没有任意字符串 grant API。
   ipcMain.handle(IPC.grantBrowserFile, (_e, filePath: unknown) => {
@@ -4822,9 +4940,14 @@ if (!gotLock) {
     registerIpc();
     installAppMenu(() => mainWindow);
     createTray();
+    mainWindowCreationReady = true;
 
     // 先建窗（show:false，ready-to-show 再显），同时并发确保 server。
     mainWindow = createWindow();
+    if (pendingMainWindowFocusRequest) {
+      pendingMainWindowFocusRequest = false;
+      mainWindowPresentations.get(mainWindow)?.requestShow({ focus: true });
+    }
     applyCsp();
     await ensureEndpoint();
     startEnterpriseIdentityRefresh();

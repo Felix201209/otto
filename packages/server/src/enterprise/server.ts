@@ -201,6 +201,7 @@ const ENTERPRISE_CAPABILITIES = [
   'control_command_queue_v1',
   'account_data_sync_v1',
   'enterprise_skill_market_v1',
+  'customer_module_market_v1',
   'federation_gateway_v1',
 ] as const;
 

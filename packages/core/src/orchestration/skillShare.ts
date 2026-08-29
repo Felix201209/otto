@@ -200,25 +200,6 @@ export class SkillShareManager {
     }
   }
 
-  /** 检查用户是否为部门负责人或管理员（可管理部门 Skill） */
-  private async requireManagerPermission(userId: string): Promise<void> {
-    try {
-      const sync = getEnterpriseSync(this.config.getProjectRoot());
-      const roleInfo = await sync.getUserRoleAndPermissions(userId);
-      if (roleInfo) {
-        const allowed = roleInfo.permissions.includes('skill:team:approve' as Permission);
-        if (!allowed) {
-          throw new Error('权限不足：仅部门负责人或管理员可执行此操作');
-        }
-      }
-      // roleInfo 为 null（企业未绑定）时降级放行
-    } catch (err) {
-      if (err instanceof Error && err.message.startsWith('权限不足')) {
-        throw err;
-      }
-    }
-  }
-
   private async notifyTeamMembers(
     teamId: string,
     teamName: string,
@@ -1415,12 +1396,6 @@ function extractFeature(content: string): string {
   if (firstLine) return firstLine.trim();
 
   return '暂无功能描述';
-}
-
-/** 从 SKILL.md 内容提取 name */
-function _extractName(content: string): string | null {
-  const match = content.match(/^---[\s\S]*?name:\s*(.+?)$/m);
-  return match ? match[1].trim().replace(/^["']|["']$/g, '') : null;
 }
 
 /** 从 SKILL.md 内容提取触发模式（从 description 中） */

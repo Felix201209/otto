@@ -45,7 +45,7 @@ export interface TodoWriteParams {
 export class TodoWriteTool extends BaseTool<TodoWriteParams, ToolResult> {
   static readonly Name = 'todo_write';
 
-  constructor(private readonly config: Config) {
+  constructor(_config: Config) {
     super(
       TodoWriteTool.Name,
       'TodoWrite',
@@ -229,43 +229,6 @@ Each todo object must have:
       };
     }
   }
-
-  /**
-   * 获取状态图标
-   */
-  private getStatusIcon(status: TodoStatus): string {
-    switch (status) {
-        case 'completed': return '☒';    // 方框+X
-        case 'in_progress': return '□';  // 空方块
-        case 'pending': return '□';      // 空方块
-        default: return '□';
-    }
-  }
-
-  /**
-   * 格式化单个todo项的显示
-   */
-  private formatTodoItem(todo: TodoItem, isLast: boolean = false): string {
-    const statusIcon = this.getStatusIcon(todo.status);
-    const connector = isLast ? '└─' : '├─';
-
-    // 根据状态应用不同的格式
-    switch (todo.status) {
-      case 'completed':
-        // 已完成：绿色文字 + 删除线
-        return `  ${connector} ~~\x1b[32m${statusIcon} ${todo.content}\x1b[0m~~`;
-      case 'in_progress':
-        // 进行中：紫色文字
-        return `  ${connector} \x1b[35m${statusIcon} ${todo.content}\x1b[0m`;
-      case 'pending':
-        // 待办：白色文字
-        return `  ${connector} \x1b[37m${statusIcon} ${todo.content}\x1b[0m`;
-      default:
-        return `  ${connector} ${statusIcon} ${todo.content}`;
-    }
-  }
-
-
 
   /**
    * 获取操作描述

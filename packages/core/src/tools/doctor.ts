@@ -24,7 +24,7 @@ export interface DoctorToolParams {
 export class DoctorTool extends BaseTool<DoctorToolParams, ToolResult> {
   static readonly Name: string = 'doctor';
 
-  constructor(private readonly config: Config) {
+  constructor(_config: Config) {
     const desc = `Health-check all external dependencies that Otto's capabilities rely on.
 
 EXAMPLES:

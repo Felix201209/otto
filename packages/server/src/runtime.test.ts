@@ -18,6 +18,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { Config, CustomModelConfig } from 'otto-core';
 import {
   AskUserQuestionTool,
+  SceneType,
   ToolConfirmationOutcome,
   generateCustomModelId,
 } from 'otto-core';
@@ -26,6 +27,47 @@ import { InMemorySessionStore } from './sessions.js';
 import { ToolCallStatus, type ServerToClient } from './protocol.js';
 
 const noOpWorkLogger = { log: async () => undefined };
+
+describe('CoreSessionRuntime 会话标题生成', () => {
+  it('使用独立临时 Chat 和 4～8 字提示词，不污染主会话', async () => {
+    const sendMessage = vi.fn(async () => chunk('登录故障排查'));
+    const createTemporaryChat = vi.fn(async () => ({ sendMessage }));
+    const getChat = vi.fn();
+    const config = {
+      getModel: () => 'custom:test-model',
+      getOttoClient: () => ({ createTemporaryChat, getChat }),
+    } as unknown as Config;
+    const store = new InMemorySessionStore();
+    const session = store.createSession();
+    const runtime = new CoreSessionRuntime(
+      store,
+      session.sessionId,
+      config,
+      noOpWorkLogger,
+    );
+
+    await expect(runtime.generateTitle('帮我分析登录接口为什么报错'))
+      .resolves.toBe('登录故障排查');
+    expect(createTemporaryChat).toHaveBeenCalledWith(
+      SceneType.CONTENT_SUMMARY,
+      undefined,
+      { type: 'sub', agentId: 'SessionTitle' },
+      { emptySystemPrompt: true },
+    );
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('标题必须为 4～8 个汉字'),
+        config: expect.objectContaining({ maxOutputTokens: 32, temperature: 0.2 }),
+      }),
+      expect.stringContaining(`session-title-${session.sessionId}-`),
+      SceneType.CONTENT_SUMMARY,
+    );
+    expect(sendMessage.mock.calls[0]?.[0].message).toContain(
+      '帮我分析登录接口为什么报错',
+    );
+    expect(getChat).not.toHaveBeenCalled();
+  });
+});
 
 describe('PPT 内置 Skill 自动路由', () => {
   it('普通会话中的自然语言 PPT 任务也会命中，普通文档任务不会误触发', () => {

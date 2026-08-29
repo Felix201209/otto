@@ -118,6 +118,7 @@ export class MCPResponseGuard {
   private readonly enableTempFileStorage: boolean;
   private readonly tempFileTTL: number;
   private tempFiles: Map<string, number> = new Map(); // 文件路径 -> 创建时间
+  private cleanupTimer?: ReturnType<typeof setTimeout>;
 
   constructor(config: MCPResponseGuardConfig = {}) {
     this.maxResponseSize = config.maxResponseSize ?? 100 * 1024; // 100KB - 激进限制
@@ -137,8 +138,6 @@ export class MCPResponseGuard {
       }
     }
 
-    // 启动清理任务
-    this.startCleanupTask();
   }
 
   /**
@@ -418,6 +417,7 @@ export class MCPResponseGuard {
       }
 
       this.tempFiles.set(filePath, timestamp);
+      this.scheduleCleanupTask();
 
       // 构建指导消息（会根据文件类型调整说明）
       const guidanceMessage = this.buildFileGuidanceMessage(
@@ -832,10 +832,7 @@ read_file(
     // 2. 在某些自闭合标签后添加换行
     const selfClosingTags = ['br', 'hr', 'img', 'input', 'meta', 'link'];
     for (const tag of selfClosingTags) {
-      formatted = formatted.replace(new RegExp(`<${tag}[^>]*>`, 'gi'), `/**
-   * 从Part数组中提取纯文本内容
-   */
-  private extractPlainText(parts: Part[]): string {\n`);
+      formatted = formatted.replace(new RegExp(`<${tag}[^>]*>`, 'gi'), '$&\n');
     }
 
     // 3. 清理多余的空行
@@ -978,14 +975,17 @@ read_file(
     return Math.ceil(contentSize / 4);
   }
 
-  /**
-   * 启动定期清理任务
-   */
-  private startCleanupTask(): void {
-    // 每5分钟检查一次并清理过期的临时文件
-    setInterval(() => {
+  /** 仅在存在临时文件时安排一次到期清理，空闲实例不持有计时器。 */
+  private scheduleCleanupTask(): void {
+    if (this.cleanupTimer || this.tempFiles.size === 0) return;
+    const oldestCreatedAt = Math.min(...this.tempFiles.values());
+    const delayMs = Math.max(1, oldestCreatedAt + this.tempFileTTL - Date.now());
+    this.cleanupTimer = setTimeout(() => {
+      this.cleanupTimer = undefined;
       this.cleanupExpiredTempFiles();
-    }, 5 * 60 * 1000);
+      this.scheduleCleanupTask();
+    }, delayMs);
+    this.cleanupTimer.unref?.();
   }
 
   /**
@@ -1018,6 +1018,10 @@ read_file(
    * 手动清理所有临时文件
    */
   async cleanup(): Promise<void> {
+    if (this.cleanupTimer) {
+      clearTimeout(this.cleanupTimer);
+      this.cleanupTimer = undefined;
+    }
     for (const filePath of this.tempFiles.keys()) {
       try {
         if (fs.existsSync(filePath)) {

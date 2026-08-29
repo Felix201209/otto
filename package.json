@@ -1,6 +1,6 @@
 {
   "name": "otto-ai",
-  "version": "1.10.1",
+  "version": "1.9.14",
   "engines": {
     "node": ">=22.16.0"
   },
@@ -16,7 +16,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Felix201209/otto.git"
+    "url": "git+https://github.com/NSIETeam/otto-new.git"
   },
   "keywords": [
     "ai",
@@ -29,9 +29,9 @@
   ],
   "author": "Otto",
   "license": "Apache-2.0",
-  "homepage": "https://github.com/Felix201209/otto#readme",
+  "homepage": "https://github.com/NSIETeam/otto-new#readme",
   "bugs": {
-    "url": "https://github.com/Felix201209/otto/issues"
+    "url": "https://github.com/NSIETeam/otto-new/issues"
   },
   "scripts": {
     "start": "npm run start --workspace=packages/desktop",
@@ -114,7 +114,7 @@
     "cli-progress": "^3.12.0",
     "concurrently": "^9.2.0",
     "cross-env": "^7.0.3",
-    "electron": "^43.1.0",
+    "electron": "43.2.0",
     "esbuild": "^0.25.0",
     "eslint": "^9.24.0",
     "eslint-config-prettier": "^10.1.2",

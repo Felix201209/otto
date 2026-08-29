@@ -10,17 +10,9 @@ import {
   Type,
 } from '@google/genai';
 import { OttoClient } from '../core/client.js';
-import { EditToolParams, EditTool } from '../tools/edit.js';
-import { WriteFileTool } from '../tools/write-file.js';
-import { ReadFileTool } from '../tools/read-file.js';
-import { ReadManyFilesTool } from '../tools/read-many-files.js';
-import { GrepTool } from '../tools/grep.js';
+import { EditToolParams } from '../tools/edit.js';
 import { LruCache } from './LruCache.js';
 import { MESSAGE_ROLES } from '../config/messageRoles.js';
-import {
-  isFunctionResponse,
-  isFunctionCall,
-} from '../utils/messageInspectors.js';
 import { isCustomModel } from '../types/customModel.js';
 import { callCustomModel } from '../core/customModelAdapter.js';
 
@@ -57,7 +49,7 @@ const fileContentCorrectionCache = new LruCache<string, string>(MAX_CACHE_SIZE);
  */
 async function callEditCorrectionAPI(
   contents: Content[],
-  schema: SchemaUnion,
+  _schema: SchemaUnion,
   geminiClient: OttoClient,
   requestId: string,
   abortSignal?: AbortSignal,
@@ -155,96 +147,6 @@ export interface CorrectedEditResult {
 }
 
 /**
- * Extracts the timestamp from the .id value, which is in format
- * <tool.name>-<timestamp>-<uuid>
- * @param fcnId the ID value of a functionCall or functionResponse object
- * @returns -1 if the timestamp could not be extracted, else the timestamp (as a number)
- */
-function getTimestampFromFunctionId(fcnId: string): number {
-  const idParts = fcnId.split('-');
-  if (idParts.length > 2) {
-    const timestamp = parseInt(idParts[1], 10);
-    if (!isNaN(timestamp)) {
-      return timestamp;
-    }
-  }
-  return -1;
-}
-
-/**
- * Will look through the gemini client history and determine when the most recent
- * edit to a target file occurred. If no edit happened, it will return -1
- * @param filePath the path to the file
- * @param client the geminiClient, so that we can get the history
- * @returns a DateTime (as a number) of when the last edit occurred, or -1 if no edit was found.
- */
-async function _findLastEditTimestamp(
-  filePath: string,
-  _client: OttoClient,
-): Promise<number> {
-  const history = (await _client.getHistory()) ?? [];
-
-  // Tools that may reference the file path in their FunctionResponse `output`.
-  const toolsInResp = new Set([
-    WriteFileTool.Name,
-    EditTool.Name,
-    ReadManyFilesTool.Name,
-    GrepTool.Name,
-  ]);
-  // Tools that may reference the file path in their FunctionCall `args`.
-  const toolsInCall = new Set([...toolsInResp, ReadFileTool.Name]);
-
-  // Iterate backwards to find the most recent relevant action.
-  for (const entry of history.slice().reverse()) {
-    if (!entry.parts) continue;
-
-    for (const part of entry.parts) {
-      let id: string | undefined;
-      let content: unknown;
-
-      // Check for a relevant FunctionCall with the file path in its arguments.
-      if (
-        isFunctionCall(entry) &&
-        part.functionCall?.name &&
-        toolsInCall.has(part.functionCall.name)
-      ) {
-        id = part.functionCall.id;
-        content = part.functionCall.args;
-      }
-      // Check for a relevant FunctionResponse with the file path in its output.
-      else if (
-        isFunctionResponse(entry) &&
-        part.functionResponse?.name &&
-        toolsInResp.has(part.functionResponse.name)
-      ) {
-        const { response } = part.functionResponse;
-        if (response && !('error' in response) && 'output' in response) {
-          id = part.functionResponse.id;
-          content = response.output;
-        }
-      }
-
-      if (!id || content === undefined) continue;
-
-      // Use the "blunt hammer" approach to find the file path in the content.
-      // Note that the tool response data is inconsistent in their formatting
-      // with successes and errors - so, we just check for the existence
-      // as the best guess to if error/failed occurred with the response.
-      const stringified = JSON.stringify(content);
-      if (
-        !stringified.includes('Error') && // only applicable for functionResponse
-        !stringified.includes('Failed') && // only applicable for functionResponse
-        stringified.includes(filePath)
-      ) {
-        return getTimestampFromFunctionId(id);
-      }
-    }
-  }
-
-  return -1;
-}
-
-/**
  * Attempts to correct edit parameters if the original old_string is not found.
  *
  * 🔧 2026-01: 全局禁用修正逻辑
@@ -259,7 +161,7 @@ async function _findLastEditTimestamp(
  *          EditToolParams (as CorrectedEditParams) and the occurrences count.
  */
 export async function ensureCorrectEdit(
-  filePath: string,
+  _filePath: string,
   currentContent: string,
   originalParams: EditToolParams, // This is the EditToolParams from edit.ts, without \'corrected\'
   _client: OttoClient,
@@ -607,34 +509,6 @@ Return ONLY the corrected string in the specified JSON format with the key 'corr
     );
     return potentiallyProblematicString;
   }
-}
-
-function _trimPairIfPossible(
-  target: string,
-  trimIfTargetTrims: string,
-  currentContent: string,
-  expectedReplacements: number,
-) {
-  const trimmedTargetString = target.trim();
-  if (target.length !== trimmedTargetString.length) {
-    const trimmedTargetOccurrences = countOccurrences(
-      currentContent,
-      trimmedTargetString,
-    );
-
-    if (trimmedTargetOccurrences === expectedReplacements) {
-      const trimmedReactiveString = trimIfTargetTrims.trim();
-      return {
-        targetString: trimmedTargetString,
-        pair: trimmedReactiveString,
-      };
-    }
-  }
-
-  return {
-    targetString: target,
-    pair: trimIfTargetTrims,
-  };
 }
 
 /**

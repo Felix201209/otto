@@ -40,6 +40,7 @@ const ADMIN_ROUTES = new Set([
   '/enterprise/deployment/diagnostics',
   '/enterprise/modules/updates',
   '/enterprise/organizations',
+  '/enterprise/platform/customer-modules',
 ]);
 
 /** 会读取或写入企业内部数据的成员路由，必须使用账号会话。 */
@@ -49,6 +50,7 @@ const MEMBER_ROUTES = new Set([
   '/enterprise/recall',
   '/enterprise/knowledge',
   '/enterprise/skills',
+  '/enterprise/customer-modules',
   '/enterprise/credits/balance',
   '/enterprise/credits/redeem',
   '/enterprise/credits/redeem-codes',
@@ -72,6 +74,7 @@ const MEMBER_ROUTES = new Set([
   '/enterprise/privacy/accept',
   '/enterprise/privacy/export',
   '/enterprise/privacy/account',
+  '/enterprise/usage/profile',
 ]);
 
 export const FEATURE_ADMIN_PREFIX = '/admin/features';
@@ -84,6 +87,7 @@ export function isAdminRoute(path: string): boolean {
     path.startsWith('/enterprise/organization/positions') ||
     path.startsWith('/enterprise/park-meeting-rooms/') ||
     path.startsWith('/enterprise/platform/organizations/') ||
+    path.startsWith('/enterprise/platform/customer-modules/') ||
     path.startsWith('/enterprise/federation/admin/')
   );
 }
@@ -92,6 +96,7 @@ export function isMemberRoute(path: string): boolean {
   return (
     MEMBER_ROUTES.has(path) ||
     path.startsWith('/enterprise/skills/') ||
+    path.startsWith('/enterprise/customer-modules/') ||
     path.startsWith('/enterprise/knowledge/') ||
     path === '/enterprise/atoa/inbox' ||
     path.startsWith('/enterprise/e2ee/') ||

@@ -16,6 +16,34 @@ export type AuthorizePathReferences = (
   references: OutboundPathReference[],
 ) => Promise<string[]>;
 export type SendAuthorizedFrame = (frame: ClientToServer) => void;
+export type AuthorizeWorkspaceDirectory = (directory: string) => Promise<string>;
+
+/** 工作目录与附件一样必须跨过 main 进程的持久授权账本。 */
+export async function authorizeOutboundWorkspaceFrame(
+  frame: Extract<ClientToServer, { type: 'set_session_workspace' }>,
+  authorize: AuthorizeWorkspaceDirectory,
+): Promise<Extract<ClientToServer, { type: 'set_session_workspace' }>> {
+  const workspacePath = await authorize(frame.payload.workspacePath);
+  if (!workspacePath) throw new Error('工作目录授权回包无效');
+  return {
+    ...frame,
+    payload: { ...frame.payload, workspacePath },
+  };
+}
+
+/** 把工作目录授权的成功、排队和拒绝路径收口到一个可聚焦测试的边界。 */
+export async function sendAuthorizedWorkspaceFrame(
+  frame: Extract<ClientToServer, { type: 'set_session_workspace' }>,
+  authorize: AuthorizeWorkspaceDirectory,
+  sendOrQueue: SendAuthorizedFrame,
+  onDenied: (error: unknown) => void,
+): Promise<void> {
+  try {
+    sendOrQueue(await authorizeOutboundWorkspaceFrame(frame, authorize));
+  } catch (error) {
+    onDenied(error);
+  }
+}
 
 /** renderer 可构造任意帧；所有会让 server 读取本机路径的内容都算路径引用。 */
 export function hasOutboundPathReference(frame: ClientToServer): boolean {

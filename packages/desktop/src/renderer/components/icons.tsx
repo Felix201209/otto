@@ -37,6 +37,70 @@ export function IconPlus({ size, className }: IconProps): React.JSX.Element {
   );
 }
 
+/** Lucide SquarePen：新建并编辑一段内容。 */
+export function IconSquarePen({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+      <path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z" />
+    </svg>
+  );
+}
+
+/** Lucide LayoutDashboard：综合工作台入口。 */
+export function IconLayoutDashboard({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <rect width="7" height="9" x="3" y="3" rx="1" />
+      <rect width="7" height="5" x="14" y="3" rx="1" />
+      <rect width="7" height="9" x="14" y="12" rx="1" />
+      <rect width="7" height="5" x="3" y="16" rx="1" />
+    </svg>
+  );
+}
+
+/** Lucide Network：组织层级与节点关系。 */
+export function IconNetwork({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <rect x="16" y="16" width="6" height="6" rx="1" />
+      <rect x="2" y="16" width="6" height="6" rx="1" />
+      <rect x="9" y="2" width="6" height="6" rx="1" />
+      <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3M12 12V8" />
+    </svg>
+  );
+}
+
+/** Lucide MessageCircle：消息与沟通入口。 */
+export function IconMessageCircle({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719" />
+    </svg>
+  );
+}
+
+/** Lucide BriefcaseBusiness：个人工作与业务事项。 */
+export function IconBriefcaseBusiness({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M12 12h.01M16 6V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2M22 13a18.15 18.15 0 0 1-20 0" />
+      <rect width="20" height="14" x="2" y="6" rx="2" />
+    </svg>
+  );
+}
+
+/** Lucide Building2：企业与组织管理。 */
+export function IconBuilding2({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M10 12h4M10 8h4M14 21v-3a2 2 0 0 0-4 0v3" />
+      <path d="M6 10H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2" />
+      <path d="M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16" />
+    </svg>
+  );
+}
+
 export function IconMicrophone({ size, className }: IconProps): React.JSX.Element {
   return (
     <svg {...base(size)} className={className}>
@@ -86,6 +150,36 @@ export function IconList({ size, className }: IconProps): React.JSX.Element {
   return (
     <svg {...base(size)} className={className}>
       <path d="M4 6h16M4 12h16M4 18h16" />
+    </svg>
+  );
+}
+
+/** DSH `ic_ds_personalization_outline_16`：任务视图选项。 */
+export function IconPersonalization({ size = 16, className }: IconProps): React.JSX.Element {
+  return (
+    <svg
+      width={size}
+      height={size}
+      className={className}
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden
+    >
+      <path
+        transform="translate(1.292 1.3)"
+        d="M10.3232 9.18164C11.2868 9.18164 12.0985 9.82833 12.3506 10.7109H13.415V11.8711H12.3496C12.0971 12.7532 11.2864 13.3994 10.3232 13.3994C9.36031 13.3992 8.55012 12.7531 8.29785 11.8711H0V10.7109H8.29688C8.54876 9.82845 9.35988 9.18186 10.3232 9.18164ZM10.3232 10.3418C9.7999 10.3421 9.37534 10.7667 9.375 11.29C9.375 11.8137 9.79969 12.239 10.3232 12.2393C10.847 12.2393 11.2725 11.8138 11.2725 11.29C11.2721 10.7666 10.8468 10.3418 10.3232 10.3418ZM3.08301 4.59082C4.04605 4.59095 4.85696 5.23717 5.10938 6.11914H13.415V7.2793H5.11035C4.85833 8.16202 4.04648 8.80846 3.08301 8.80859C2.11972 8.80843 1.30963 8.16179 1.05762 7.2793H0V6.11914H1.05762C1.30994 5.23728 2.12006 4.59098 3.08301 4.59082ZM3.08301 5.75098C2.55962 5.75117 2.13512 6.17587 2.13477 6.69922C2.13477 7.22287 2.5594 7.64824 3.08301 7.64844C3.60665 7.64828 4.03223 7.2229 4.03223 6.69922C4.03187 6.17585 3.60643 5.75113 3.08301 5.75098ZM10.3232 0C11.2869 0 12.0986 0.646596 12.3506 1.5293H13.415V2.68945H12.3496C12.0971 3.5716 11.2864 4.21777 10.3232 4.21777C9.36037 4.21756 8.55018 3.57139 8.29785 2.68945H0V1.5293H8.29688C8.5487 0.646717 9.35981 0.00021854 10.3232 0ZM10.3232 1.16016C9.79984 1.16042 9.37524 1.58499 9.375 2.1084C9.375 2.63201 9.79969 3.05735 10.3232 3.05762C10.847 3.05762 11.2725 2.63217 11.2725 2.1084C11.2722 1.58483 10.8469 1.16016 10.3232 1.16016Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+/** Lucide panel-right：聊天顶栏中的右侧栏显隐入口。 */
+export function IconPanelRight({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path d="M15 3v18" />
     </svg>
   );
 }
@@ -144,6 +238,15 @@ export function IconFolder({ size, className }: IconProps): React.JSX.Element {
   );
 }
 
+/** 打开的文件夹：用于表示侧栏中的工作目录。 */
+export function IconFolderOpen({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className} strokeWidth={2}>
+      <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6A2 2 0 0 1 18.45 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
+    </svg>
+  );
+}
+
 /** 终端运行卡。 */
 export function IconTerminal({ size, className }: IconProps): React.JSX.Element {
   return (
@@ -168,6 +271,38 @@ export function IconCheckCheck({ size, className }: IconProps): React.JSX.Elemen
     <svg {...base(size)} className={className}>
       <path d="m2 12 5 5L18 6" />
       <path d="m12 13 1.5 1.5L22 6" />
+    </svg>
+  );
+}
+
+/** Lucide Hand：手动确认、暂停并等待用户操作。 */
+export function IconHand({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M18 11V6a2 2 0 0 0-2-2 2 2 0 0 0-2 2" />
+      <path d="M14 10V4a2 2 0 0 0-2-2 2 2 0 0 0-2 2v2" />
+      <path d="M10 10.5V6a2 2 0 0 0-2-2 2 2 0 0 0-2 2v8" />
+      <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
+    </svg>
+  );
+}
+
+/** Lucide ShieldEllipsis：受保护范围内的临时自动授权。 */
+export function IconShieldEllipsis({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+      <path d="M8 12h.01M12 12h.01M16 12h.01" />
+    </svg>
+  );
+}
+
+/** Lucide ShieldCheck：持续生效且仍受安全边界保护的授权。 */
+export function IconShieldCheck({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+      <path d="m9 12 2 2 4-4" />
     </svg>
   );
 }
@@ -283,6 +418,17 @@ export function IconSettings({ size, className }: IconProps): React.JSX.Element 
     <svg {...base(size)} className={className}>
       <circle cx="12" cy="12" r="3" />
       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+    </svg>
+  );
+}
+
+/** 退出登录（Lucide LogOut 线性路径）。 */
+export function IconLogOut({ size, className }: IconProps): React.JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="m16 17 5-5-5-5" />
+      <path d="M21 12H9" />
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
     </svg>
   );
 }
@@ -481,4 +627,65 @@ export function IconMoon({ size, className }: IconProps): React.JSX.Element {
       <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" />
     </svg>
   );
+}
+
+/** Module workspace icons. Each business module has a distinct local glyph. */
+export function IconDashboard({ size, className }: IconProps): React.JSX.Element {
+  return <svg {...base(size)} className={className}><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="4" rx="1" /><rect x="14" y="11" width="7" height="10" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /></svg>;
+}
+
+export function IconMegaphone({ size, className }: IconProps): React.JSX.Element {
+  return <svg {...base(size)} className={className}><path d="m3 11 15-6v14L3 13z" /><path d="M11 16v4a2 2 0 0 1-4 0v-5" /><path d="M21 9v6" /></svg>;
+}
+
+export function IconClipboardCheck({ size, className }: IconProps): React.JSX.Element {
+  return <svg {...base(size)} className={className}><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4V2h6v2M8 12l2.5 2.5L16 9" /></svg>;
+}
+
+export function IconHammer({ size, className }: IconProps): React.JSX.Element {
+  return <svg {...base(size)} className={className}><path d="m14 4 6 6-3 3-6-6zM12 9 4 17l3 3 8-8" /><path d="m12 3 2-2 7 7-2 2" /></svg>;
+}
+
+export function IconParking({ size, className }: IconProps): React.JSX.Element {
+  return <svg {...base(size)} className={className}><circle cx="12" cy="12" r="9" /><path d="M9 17V7h4a3 3 0 0 1 0 6H9" /></svg>;
+}
+
+export function IconPhone({ size, className }: IconProps): React.JSX.Element {
+  return <svg {...base(size)} className={className}><path d="M5 3h4l2 5-3 2a15 15 0 0 0 6 6l2-3 5 2v4c0 1-1 2-2 2C10 21 3 14 3 5c0-1 1-2 2-2Z" /><path d="M15 5a5 5 0 0 1 4 4" /></svg>;
+}
+
+export function IconDoorOpen({ size, className }: IconProps): React.JSX.Element {
+  return <svg {...base(size)} className={className}><path d="M4 21h16M6 21V4l10-2v19M16 5h3v16" /><circle cx="13" cy="12" r=".7" fill="currentColor" stroke="none" /></svg>;
+}
+
+export function IconCreditCard({ size, className }: IconProps): React.JSX.Element {
+  return <svg {...base(size)} className={className}><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 10h18M7 15h3" /></svg>;
+}
+
+export function IconRepair({ size, className }: IconProps): React.JSX.Element {
+  return <svg {...base(size)} className={className}><path d="M14 6a4 4 0 0 0-5 5L3 17l4 4 6-6a4 4 0 0 0 5-5l-3 3-4-4z" /><path d="m16 4 1-2M20 6l2-1" /></svg>;
+}
+
+export function IconCar({ size, className }: IconProps): React.JSX.Element {
+  return <svg {...base(size)} className={className}><path d="m5 16-2-2 2-6h14l2 6-2 2zM7 8l2-4h6l2 4" /><circle cx="7" cy="16" r="2" /><circle cx="17" cy="16" r="2" /></svg>;
+}
+
+export function IconClipboardList({ size, className }: IconProps): React.JSX.Element {
+  return <svg {...base(size)} className={className}><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4V2h6v2M9 10h6M9 14h6M9 18h4" /></svg>;
+}
+
+export function IconHistory({ size, className }: IconProps): React.JSX.Element {
+  return <svg {...base(size)} className={className}><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5M12 7v5l3 2" /></svg>;
+}
+
+export function IconBrain({ size, className }: IconProps): React.JSX.Element {
+  return <svg {...base(size)} className={className}><path d="M9 4a3 3 0 0 0-5 2 3 3 0 0 0 0 5 3 3 0 0 0 2 5 3 3 0 0 0 6 1V6a3 3 0 0 0-3-2ZM15 4a3 3 0 0 1 5 2 3 3 0 0 1 0 5 3 3 0 0 1-2 5 3 3 0 0 1-6 1V6a3 3 0 0 1 3-2Z" /><path d="M8 9h4M12 13h4" /></svg>;
+}
+
+export function IconWand({ size, className }: IconProps): React.JSX.Element {
+  return <svg {...base(size)} className={className}><path d="m4 20 11-11 4 4L8 24zM13 5l1-3M18 7l3-1M17 2l1 2M5 8l3 1" /><path d="m14 10 4 4" /></svg>;
+}
+
+export function IconStore({ size, className }: IconProps): React.JSX.Element {
+  return <svg {...base(size)} className={className}><path d="M4 10v10h16V10M3 10l2-6h14l2 6" /><path d="M3 10a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0M9 20v-6h6v6" /></svg>;
 }

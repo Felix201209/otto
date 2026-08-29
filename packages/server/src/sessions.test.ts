@@ -257,6 +257,22 @@ describe('InMemorySessionStore', () => {
       expect(frames[0].type).toBe('session_upsert');
     });
 
+    it('patchSessionWorkspace 改真实目录并广播 session_upsert', () => {
+      const s = store.createSession();
+      const frames: ServerToClient[] = [];
+      store.subscribe(s.sessionId, (f) => frames.push(f));
+      store.patchSessionWorkspace(s.sessionId, '/Users/test/project');
+      expect(store.getSession(s.sessionId)!.workspacePath).toBe('/Users/test/project');
+      expect(frames[0].type).toBe('session_upsert');
+    });
+
+    it('通用 server 保留启动目录，桌面端可显式注入用户级默认目录', () => {
+      expect(new InMemorySessionStore().createSession().workspacePath).toBe(process.cwd());
+      expect(new InMemorySessionStore({
+        defaultWorkspacePath: '/Users/tester',
+      }).createSession().workspacePath).toBe('/Users/tester');
+    });
+
     it('对不存在 session 调 setStatus 不抛、不广播', () => {
       expect(() => store.setStatus('no', 'error')).not.toThrow();
     });

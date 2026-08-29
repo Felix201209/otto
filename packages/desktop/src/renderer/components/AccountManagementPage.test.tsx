@@ -144,6 +144,51 @@ async function readyCreateButton(): Promise<HTMLButtonElement> {
   return button;
 }
 
+function openManagementSection(label: '组织结构' | '成员目录' | '产业园端' | '企业能力'): void {
+  fireEvent.click(screen.getByRole('tab', { name: new RegExp(label) }));
+}
+
+describe('企业管理分区导航', () => {
+  it('使用四个清晰分区并默认进入成员目录', async () => {
+    render(<AccountManagementPage currentAccount={ADMIN} onBack={() => undefined} />);
+
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.map((tab) => tab.querySelector('strong')?.textContent)).toEqual([
+      '组织结构', '成员目录', '产业园端', '企业能力',
+    ]);
+    const membersTab = screen.getByRole('tab', { name: /成员目录/ });
+    const secondaryNavigation = screen.getByRole('complementary', { name: '企业管理导航' });
+    expect(secondaryNavigation.contains(screen.getByRole('tablist', { name: '企业管理分类' }))).toBe(true);
+    expect(secondaryNavigation.contains(screen.getByRole('tabpanel'))).toBe(false);
+    expect(membersTab.getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('heading', { name: '企业管理' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '返回工作台' })).toBeNull();
+    expect(screen.queryByText('ENTERPRISE MANAGEMENT')).toBeNull();
+    expect(screen.queryByText('CEO 企业管理中心')).toBeNull();
+    await waitFor(() => expect(screen.getByRole('tab', { name: /成员目录/ }).textContent)
+      .toContain('1 名成员'));
+
+    fireEvent.keyDown(membersTab, { key: 'ArrowRight' });
+    expect(screen.getByRole('tab', { name: /产业园端/ }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.keyDown(screen.getByRole('tab', { name: /产业园端/ }), { key: 'Home' });
+    expect(screen.getByRole('tab', { name: /组织结构/ }).getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('切换分区时只暴露当前管理内容，并保留成员搜索条件', async () => {
+    render(<AccountManagementPage currentAccount={ADMIN} onBack={() => undefined} />);
+    const search = screen.getByRole('textbox', { name: '搜索账号' }) as HTMLInputElement;
+    fireEvent.change(search, { target: { value: '管理员' } });
+
+    openManagementSection('组织结构');
+    expect(screen.getByRole('tab', { name: /组织结构/ }).getAttribute('aria-selected')).toBe('true');
+    expect(await screen.findByRole('region', { name: '企业组织与园区配置' })).toBeTruthy();
+    expect(screen.queryByRole('textbox', { name: '搜索账号' })).toBeNull();
+
+    openManagementSection('成员目录');
+    expect((screen.getByRole('textbox', { name: '搜索账号' }) as HTMLInputElement).value).toBe('管理员');
+  });
+});
+
 describe('企业账号模板与标签预设', () => {
   it('套用 IT 支持模板时一次填好角色、部门与职责标签', () => {
     expect(applyAccountTemplate({
@@ -224,6 +269,7 @@ describe('企业引入链接', () => {
 describe('园区内容发布', () => {
   it('未认证为产业园端的企业管理员不能看到园区公告发布和回收面板', async () => {
     render(<AccountManagementPage currentAccount={ADMIN} onBack={() => undefined} />);
+    openManagementSection('产业园端');
 
     await waitFor(() => expect(window.otto.enterpriseParkView).toHaveBeenCalled());
     expect(screen.queryByRole('region', { name: '园区公告与调查发布' })).toBeNull();
@@ -244,6 +290,7 @@ describe('园区内容发布', () => {
       updatedAt: '2026-07-21T00:00:00.000Z',
     });
     render(<AccountManagementPage currentAccount={ADMIN} onBack={() => undefined} />);
+    openManagementSection('产业园端');
     const panel = await screen.findByRole('region', { name: '园区公告与调查发布' });
     const type = within(panel).getByLabelText('选择园区服务类型') as HTMLSelectElement;
     expect(Array.from(type.options).map((option) => option.textContent)).toEqual(['园区公告', '满意度调查']);
@@ -276,6 +323,7 @@ describe('园区内容发布', () => {
     });
 
     render(<AccountManagementPage currentAccount={ADMIN} onBack={() => undefined} />);
+    openManagementSection('产业园端');
     const panel = await screen.findByRole('region', { name: '园区公告与调查发布' });
     expect(await within(panel).findByLabelText('选择星火智慧园区服务类型')).toBeTruthy();
     expect(within(panel).getByLabelText('星火智慧园区服务推送备注')).toBeTruthy();
@@ -291,6 +339,7 @@ describe('企业账号目录', () => {
       enterpriseOrganizationDepartmentCreate: createDepartment,
     });
     render(<AccountManagementPage currentAccount={ADMIN} onBack={() => undefined} />);
+    openManagementSection('组织结构');
 
     const panel = await screen.findByRole('region', { name: '企业组织与园区配置' });
     const input = within(panel).getByLabelText('新部门') as HTMLInputElement;

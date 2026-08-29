@@ -21,12 +21,10 @@ export class SkillsCompatAdapter {
   private settings: SettingsManager;
   private marketplace: MarketplaceManager;
   private initialized = false;
-  private projectRoot?: string;
 
   constructor(projectRoot?: string) {
     // Store projectRoot and pass it to SkillLoader for accurate project skills discovery
     // Falls back to process.cwd() if not provided (same behavior as SkillsContextBuilder)
-    this.projectRoot = projectRoot;
     this.settings = new SettingsManager();
     this.marketplace = new MarketplaceManager(this.settings);
     this.loader = new SkillLoader(this.settings, this.marketplace, undefined, projectRoot);

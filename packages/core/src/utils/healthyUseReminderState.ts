@@ -21,11 +21,9 @@ interface ReminderState {
  * 文件路径：~/.otto/tmp/<project-hash>/healthy-use-reminder.json
  */
 export class HealthyUseReminderState {
-  private projectRoot: string;
   private stateFilePath: string;
 
   constructor(projectRoot: string) {
-    this.projectRoot = projectRoot;
     const tempDir = getProjectTempDir(projectRoot);
     this.stateFilePath = path.join(tempDir, REMINDER_STATE_FILE);
   }

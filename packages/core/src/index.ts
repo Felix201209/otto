@@ -137,6 +137,7 @@ export * from './services/mcpResponseGuard.js';
 export * from './services/fileOperationQueue.js';
 export * from './services/backgroundTaskManager.js';
 export * from './services/backgroundModeSignal.js';
+export * from './services/recurringTaskRegistry.js';
 export * from './services/doctor.js';
 export * from './services/diagnosticBundle.js';
 export * from './services/bundledRuntime.js';
@@ -337,6 +338,7 @@ export * from './utils/browser.js';
 
 // Export skills system (consolidated from cli package)
 export * from './skills/index.js';
+export * from './customer-modules/index.js';
 
 // Export ACP-facing command helpers
 export * as AcpCommands from './commands/index.js';

@@ -73,9 +73,6 @@ export interface ResumeResult {
 
 export class SessionCheckpointService {
   private readonly checkpointsDir: string;
-  /** 每会话最多保留 5 个历史检查点（当前实现只保留最新 1 个） */
-  private readonly maxCheckpointsPerSession = 5;
-
   constructor(baseDir?: string) {
     const dir = baseDir || process.env.OTTO_USER_DIR || path.join(homedir(), '.otto-user');
     this.checkpointsDir = path.join(dir, 'checkpoints');

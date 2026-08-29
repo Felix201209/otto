@@ -176,6 +176,32 @@ export interface TokenUsageRecordInput {
   totalTokens: number;
 }
 
+export interface PersonalTokenUsageProfile {
+  accountId: string;
+  periodDays: number;
+  source: 'client_reported';
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  requestCount: number;
+  averageTokensPerRequest: number;
+  lastUsedAt: string | null;
+  byModel: Array<{
+    model: string | null;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    requestCount: number;
+  }>;
+  daily: Array<{
+    date: string;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    requestCount: number;
+  }>;
+}
+
 export interface EnterpriseKnowledgeRecordInput {
   sourceId: string;
   title?: string;
@@ -297,6 +323,17 @@ export interface EnterpriseSkillMarketItem {
   updatedAt: string;
 }
 
+export interface CustomerModuleMarketVersion {
+  manifest: Record<string, unknown> & { id: string; version: string; name: string; permissions: unknown[] };
+  publisherId: string;
+  status: 'draft' | 'scanning' | 'review' | 'approved' | 'rejected' | 'suspended' | 'withdrawn';
+  scanReport: { passed: boolean; findings: string[] } | null;
+  reviewerId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  installCount: number;
+}
+
 export interface EnterpriseSkillLeaderboard {
   skills: Array<
     EnterpriseSkillMarketItem & {
@@ -384,7 +421,10 @@ function mapEnterpriseKnowledgeItem(
     category: item.category,
     content: item.content,
     contributor: item.contributor ?? null,
-    confidence: typeof item.confidence === 'number' ? item.confidence : 0.5,
+    confidence:
+      typeof item.confidence === 'number' && Number.isFinite(item.confidence)
+        ? Math.min(1, Math.max(0, item.confidence))
+        : 0.5,
     sourceType: item.sourceType || item.source_type || 'manual',
     sourceLabel: item.sourceLabel ?? item.source_label ?? null,
     status: item.status || 'active',
@@ -2477,6 +2517,23 @@ export class EnterpriseClient {
     });
   }
 
+  async getPersonalTokenUsageProfile(
+    periodDays = 30,
+  ): Promise<PersonalTokenUsageProfile> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    if (
+      !Number.isInteger(periodDays) ||
+      periodDays < 1 ||
+      periodDays > 365
+    ) {
+      throw new Error('统计周期必须是 1 到 365 天的整数');
+    }
+    return this.request(
+      `/enterprise/usage/profile?period=${periodDays}`,
+      { method: 'GET' },
+    );
+  }
+
   async recordKnowledge(
     input: EnterpriseKnowledgeRecordInput,
   ): Promise<EnterpriseKnowledgeRecordResult> {
@@ -2676,6 +2733,57 @@ export class EnterpriseClient {
       'enterprise_skill_market_v1',
     ]);
     return this.request('/enterprise/skills/leaderboard');
+  }
+
+  async listCustomerModules(): Promise<CustomerModuleMarketVersion[]> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['customer_module_market_v1']);
+    const response = await this.request<{ modules: CustomerModuleMarketVersion[] }>(
+      '/enterprise/customer-modules',
+    );
+    return response.modules;
+  }
+
+  async submitCustomerModule(input: {
+    manifest: Record<string, unknown>;
+    files: Record<string, string>;
+  }): Promise<CustomerModuleMarketVersion> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['customer_module_market_v1']);
+    const response = await this.request<{ module: CustomerModuleMarketVersion }>(
+      '/enterprise/customer-modules/drafts',
+      { method: 'POST', body: JSON.stringify(input) },
+    );
+    return response.module;
+  }
+
+  async downloadCustomerModulePackage(moduleId: string, version: string): Promise<{
+    archive: string;
+  }> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['customer_module_market_v1']);
+    return this.request(
+      `/enterprise/customer-modules/${encodeURIComponent(moduleId)}/${encodeURIComponent(version)}/package`,
+    );
+  }
+
+  async getCustomerModuleStatus(moduleId: string, version: string): Promise<{
+    moduleId: string;
+    version: string;
+    status: CustomerModuleMarketVersion['status'];
+    updatedAt: string;
+  }> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    return this.request(`/enterprise/customer-modules/${encodeURIComponent(moduleId)}/${encodeURIComponent(version)}/status`);
+  }
+
+  async recordCustomerModuleInstall(moduleId: string, version: string, receiptId: string): Promise<void> {
+    if (!this.token) throw new Error('登录已失效，请重新登录');
+    await this.assertCompatibleServer(this.serverUrl, ['customer_module_market_v1']);
+    await this.request(
+      `/enterprise/customer-modules/${encodeURIComponent(moduleId)}/${encodeURIComponent(version)}/install`,
+      { method: 'POST', body: JSON.stringify({ receiptId }) },
+    );
   }
 
   async listAccountSyncSnapshots(): Promise<EnterpriseAccountSyncSnapshot[]> {

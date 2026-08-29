@@ -45,6 +45,9 @@ vi.mock('./hub/SearchPanel.js', () => ({ SearchPanel: () => 'search-panel' }));
 vi.mock('./hub/PrivacyDataPanel.js', () => ({
   PrivacyDataPanel: () => 'privacy-panel',
 }));
+vi.mock('./hub/PersonalTokenUsagePanel.js', () => ({
+  PersonalTokenUsagePanel: () => 'usage-panel',
+}));
 
 afterEach(cleanup);
 
@@ -169,13 +172,14 @@ describe('SettingsHubPage internal-test navigation', () => {
         'button.otto-hub__nav-item',
       ),
     );
-    expect(navButtons).toHaveLength(17);
+    expect(navButtons).toHaveLength(18);
 
     const expectedPanels = [
       'prefs-panel',
       'search-panel',
       'update-panel',
       'organization-panel',
+      'usage-panel',
       'privacy-panel',
       'feishu-panel',
       'models-panel',

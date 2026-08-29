@@ -18,7 +18,14 @@
  * 待办：附件入站；slash 命令面板；「查看全部对话」检索视图（onViewAll 仍为空 TODO）。
  */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import './styles/tokens.css';
 import './styles/app.css';
 import type {
@@ -28,20 +35,38 @@ import type {
 } from 'otto-server';
 import {
   useOttoStore,
-  groupSessions,
   selectSortedSessions,
 } from './state/useOttoStore.js';
 import type { Attachment } from './state/useOttoStore.js';
 import { Sidebar } from './components/Sidebar.js';
 import { ChatView } from './components/ChatView.js';
-import { SLASH_COMMANDS } from './components/Composer.js';
+import {
+  SLASH_COMMANDS,
+  type ComposerAuthorizationContext,
+  type PendingAgentSelection,
+} from './components/Composer.js';
 import {
   mergeServerCommands,
   buildHelpMarkdown,
 } from './components/SlashCommands.js';
 import { RightPanel } from './components/RightPanel.js';
 import { UiModeGuide } from './components/UiModeGuide.js';
-import { ParkServicesPlugin } from './components/ParkServicesPlugin.js';
+import {
+  ParkServicesPlugin,
+  PARK_STATE_EVENT,
+  closeParkServices,
+  hideParkServices,
+  openParkServices,
+} from './components/ParkServicesPlugin.js';
+import { ModuleMarketplaceDialog } from './components/ModuleMarketplaceDialog.js';
+import { CustomerModuleRunDialog } from './components/CustomerModuleRunDialog.js';
+import { CustomerModuleAuthoringDialog } from './components/CustomerModuleAuthoringDialog.js';
+import { CustomerModuleMarketDialog } from './components/CustomerModuleMarketDialog.js';
+import {
+  AutoSkillDialog,
+  CustomAgentManagerDialog,
+  EnterpriseMemoryDialog,
+} from './components/WorkspaceDialogs.js';
 import { AllConversations } from './components/AllConversations.js';
 import { AgentGallery } from './components/AgentGallery.js';
 import { SetupPanel } from './setup/SetupPanel.js';
@@ -62,6 +87,7 @@ import { OrganizationPage } from './components/OrganizationPage.js';
 import { InboxPage } from './components/InboxPage.js';
 import { WorkPage } from './components/WorkPage.js';
 import { useEnterpriseAuth } from './state/useEnterpriseAuth.js';
+import { localDateKey } from './localDateKey.js';
 import type {
   EnterpriseAccount,
   EnterpriseAtoaInboxMessage,
@@ -69,6 +95,7 @@ import type {
   EnterpriseFederationAtoaTask,
   EnterpriseFederationContact,
   EnterpriseOrganizationView,
+  InstalledCustomerModuleRecord,
 } from '../preload/index.js';
 import { askLocalPeerOtto } from './peerOttoRunner.js';
 import {
@@ -92,6 +119,8 @@ import { resolveCentralEnterpriseIdentity } from './state/centralEnterpriseIdent
 import {
   INTERNAL_TEST_ACCESS_ENABLED,
   INTERNAL_TEST_ACCOUNT,
+  INTERNAL_TEST_ADMIN_ACCOUNT,
+  INTERNAL_TEST_ADMIN_ENABLED,
   resolveEnterpriseAccessMode,
 } from './internal-test-access.js';
 import {
@@ -105,6 +134,11 @@ import {
   type UiMode,
 } from './uiModePreference.js';
 import {
+  readRightPanelCollapsed,
+  rightPanelStorageKey,
+  writeRightPanelCollapsed,
+} from './rightPanelPreference.js';
+import {
   buildCustomAgentKickoff,
   createCustomAgent,
   customAgentStorageKey,
@@ -112,6 +146,18 @@ import {
   type CustomAgentDefinition,
   type CustomAgentDraft,
 } from './customAgents.js';
+import {
+  customAgentIconToModuleIcon,
+  type CustomAgentIcon,
+} from './customAgentIcons.js';
+import { useModuleWorkspaceCapabilities } from './state/useModuleWorkspaceCapabilities.js';
+import { useModuleWorkspace } from './state/useModuleWorkspace.js';
+import {
+  getModuleWorkspaceStorageKey,
+  type ModuleWorkspaceLayout,
+} from './moduleWorkspace.js';
+import type { ModuleDefinition } from './moduleCatalog.js';
+import type { ModuleModalState } from './moduleModal.js';
 
 /** 启动后静默检查更新的延迟：让 server 连接 / 首屏渲染先跑完，不抢启动窗口。 */
 const SILENT_UPDATE_CHECK_DELAY_MS = 15_000;
@@ -138,7 +184,14 @@ export function App(): React.JSX.Element {
   });
 
   if (accessMode === 'internal-workspace') {
-    return <OttoWorkspaceApp account={INTERNAL_TEST_ACCOUNT} serverUrl="internal://test" />;
+    return (
+      <OttoWorkspaceApp
+        account={INTERNAL_TEST_ADMIN_ENABLED ? INTERNAL_TEST_ADMIN_ACCOUNT : INTERNAL_TEST_ACCOUNT}
+        serverUrl={INTERNAL_TEST_ADMIN_ENABLED ? 'internal://admin-preview' : 'internal://test'}
+        onLogout={auth.actions.logout}
+        internalAdminPreview={INTERNAL_TEST_ADMIN_ENABLED}
+      />
+    );
   }
   if (accessMode === 'booting') {
     return (
@@ -180,20 +233,22 @@ function OttoWorkspaceApp({
   serverUrl,
   onJoinEnterprise,
   onLogout,
+  internalAdminPreview = false,
 }: {
   account: EnterpriseAccount;
   serverUrl?: string;
   onJoinEnterprise?: (input: { inviteCode: string }) => Promise<void>;
   onLogout?: () => Promise<void>;
+  internalAdminPreview?: boolean;
 }): React.JSX.Element {
   const { state, actions } = useOttoStore({
     enterpriseOrganizationId: account.accountType === 'personal'
       ? null
       : account.organizationId,
   });
-  const settingsData = useSettingsData();
+  const settingsData = useSettingsData(state.activeSessionId);
   const softwareUpdate = useSoftwareUpdate();
-  const product = useProductWorkspace();
+  const product = useProductWorkspace(state.activeSessionId);
   const [enterpriseUnreadCounts, setEnterpriseUnreadCounts] = useState<EnterpriseUnreadCounts>({});
   const centralIdentity = useMemo(
     () => resolveCentralEnterpriseIdentity(account),
@@ -211,6 +266,14 @@ function OttoWorkspaceApp({
       return [];
     }
   });
+  const [installedCustomerModules, setInstalledCustomerModules] = useState<InstalledCustomerModuleRecord[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void window.otto.customerModuleInstalledList()
+      .then((records) => { if (!cancelled) setInstalledCustomerModules(records); })
+      .catch(() => { if (!cancelled) setInstalledCustomerModules([]); });
+    return () => { cancelled = true; };
+  }, [account.id, account.organizationId]);
   useEffect(() => {
     try {
       setCustomAgents(parseCustomAgents(localStorage.getItem(customAgentsKey)));
@@ -218,6 +281,73 @@ function OttoWorkspaceApp({
       setCustomAgents([]);
     }
   }, [customAgentsKey]);
+  const moduleCapabilities = useModuleWorkspaceCapabilities({
+    edition,
+    serverUrl: serverUrl || 'local',
+    organizationId: account.organizationId,
+    accountId: account.id,
+    accountIsAdmin: account.isAdmin,
+    internalAdminPreview,
+    profiles: centralIdentity.profiles,
+    customAgents,
+    customerModules: installedCustomerModules.map((module) => ({
+      id: module.id,
+      version: module.version,
+      name: module.name,
+      description: module.description,
+      enabled: module.enabled,
+      iconSrc: module.iconDataUrl,
+    })),
+  });
+  const availableModuleIds = useMemo(
+    () => moduleCapabilities.modules.filter((module) => module.availability === 'available').map((module) => module.id),
+    [moduleCapabilities.modules],
+  );
+  const visibleModuleIds = useMemo(
+    () => moduleCapabilities.modules.filter((module) => module.availability !== 'hidden').map((module) => module.id),
+    [moduleCapabilities.modules],
+  );
+  const moduleWorkspaceScope = useMemo(() => ({
+    serverUrl: serverUrl || 'local',
+    edition,
+    organizationId: edition === 'enterprise' ? account.organizationId : undefined,
+    accountId: account.id,
+  }), [account.id, account.organizationId, edition, serverUrl]);
+  const moduleWorkspaceScopeKey = useMemo(
+    () => getModuleWorkspaceStorageKey(moduleWorkspaceScope),
+    [moduleWorkspaceScope],
+  );
+  const moduleWorkspace = useModuleWorkspace({
+    scope: moduleWorkspaceScope,
+    capabilities: { edition, availableModuleIds },
+    visibleModuleIds,
+    ready: moduleCapabilities.ready,
+  });
+  const [moduleModal, setModuleModal] = useState<ModuleModalState>(null);
+  const [pendingAgent, setPendingAgent] = useState<PendingAgentSelection | null>(null);
+  const { cancelPendingAgentLaunches } = actions;
+  const openModuleModal = useCallback((next: Exclude<ModuleModalState, null>): void => {
+    if (next.kind !== 'park') hideParkServices();
+    setModuleModal(next);
+  }, []);
+  useEffect(() => {
+    const onParkState = (event: Event): void => {
+      const isOpen = event instanceof CustomEvent && event.detail?.open === true;
+      setModuleModal((current) => {
+        if (isOpen) return current?.kind === 'park' ? current : { kind: 'park', target: 'overview' };
+        return current?.kind === 'park' ? null : current;
+      });
+    };
+    window.addEventListener(PARK_STATE_EVENT, onParkState);
+    return () => window.removeEventListener(PARK_STATE_EVENT, onParkState);
+  }, []);
+  useEffect(() => {
+    closeParkServices();
+    cancelPendingAgentLaunches();
+    setModuleModal(null);
+    setPendingAgent(null);
+  }, [cancelPendingAgentLaunches, moduleWorkspaceScopeKey]);
+  useEffect(() => setPendingAgent(null), [state.activeSessionId]);
   const permissionResolver = useRef<((decision: AtoaPermissionDecision) => void) | null>(null);
   const [pendingAtoaPermission, setPendingAtoaPermission] = useState<AtoaPermissionRequest | null>(null);
   const federationAtoaContextCache = useRef(new Map<string, Awaited<
@@ -287,7 +417,7 @@ function OttoWorkspaceApp({
   );
 
   useEffect(() => {
-    if (account.accountType === 'personal') return undefined;
+    if (internalAdminPreview || account.accountType === 'personal') return undefined;
     let cancelled = false;
     let polling = false;
     let localUnreadCounts: EnterpriseUnreadCounts = {};
@@ -354,10 +484,10 @@ function OttoWorkspaceApp({
       federationMarkers.clear();
       void tracker.clear();
     };
-  }, [account.accountType, account.id, account.organizationId]);
+  }, [account.accountType, account.id, account.organizationId, internalAdminPreview]);
 
   useEffect(() => {
-    if (account.accountType === 'personal') return undefined;
+    if (internalAdminPreview || account.accountType === 'personal') return undefined;
     let cancelled = false;
     const beat = async (): Promise<void> => {
       try {
@@ -374,7 +504,7 @@ function OttoWorkspaceApp({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [account.accountType, account.id, account.organizationId]);
+  }, [account.accountType, account.id, account.organizationId, internalAdminPreview]);
 
   const markEnterpriseDirectMessageRead = useCallback((peerAccountId: string): void => {
     const sessionId = `enterprise:message:${peerAccountId}`;
@@ -399,7 +529,7 @@ function OttoWorkspaceApp({
   }, []);
 
   useEffect(() => {
-    if (account.accountType === 'personal') return undefined;
+    if (internalAdminPreview || account.accountType === 'personal') return undefined;
     const processing = new Set<string>();
     const abortController = new AbortController();
     let polling = false;
@@ -482,12 +612,13 @@ function OttoWorkspaceApp({
     account.accountType,
     account.id,
     account.name,
+    internalAdminPreview,
     product.state.schedules,
     requestAtoaPermission,
   ]);
 
   useEffect(() => {
-    if (account.accountType === 'personal') return undefined;
+    if (internalAdminPreview || account.accountType === 'personal') return undefined;
     const processing = new Set<string>();
     const abortController = new AbortController();
     const contextCache = federationAtoaContextCache.current;
@@ -679,6 +810,7 @@ function OttoWorkspaceApp({
     account.accountType,
     account.id,
     account.name,
+    internalAdminPreview,
     product.state.schedules,
     requestAtoaPermission,
   ]);
@@ -720,6 +852,35 @@ function OttoWorkspaceApp({
     writeUiModePreference(uiModeScope, nextMode);
     setSavedUiMode(nextMode);
   }, [uiModeScope]);
+  const rightPanelPreferenceKey = useMemo(
+    () => rightPanelStorageKey(uiModeScope),
+    [uiModeScope],
+  );
+  const [rightPanelPreference, setRightPanelPreference] = useState(() => ({
+    key: rightPanelPreferenceKey,
+    collapsed: readRightPanelCollapsed(uiModeScope),
+  }));
+  const rightPanelCollapsed = rightPanelPreference.key === rightPanelPreferenceKey
+    ? rightPanelPreference.collapsed
+    : readRightPanelCollapsed(uiModeScope);
+  useLayoutEffect(() => {
+    if (rightPanelPreference.key !== rightPanelPreferenceKey) {
+      setRightPanelPreference({
+        key: rightPanelPreferenceKey,
+        collapsed: rightPanelCollapsed,
+      });
+    }
+  }, [rightPanelCollapsed, rightPanelPreference.key, rightPanelPreferenceKey]);
+  const toggleRightPanel = useCallback((): void => {
+    setRightPanelPreference((current) => {
+      const currentCollapsed = current.key === rightPanelPreferenceKey
+        ? current.collapsed
+        : readRightPanelCollapsed(uiModeScope);
+      const next = !currentCollapsed;
+      writeRightPanelCollapsed(uiModeScope, next);
+      return { key: rightPanelPreferenceKey, collapsed: next };
+    });
+  }, [rightPanelPreferenceKey, uiModeScope]);
   const [organizationRefreshRevision, setOrganizationRefreshRevision] = useState(0);
   const [enterpriseDirectChatOpenRequest, setEnterpriseDirectChatOpenRequest] = useState<{
     peerAccountId: string;
@@ -758,6 +919,8 @@ function OttoWorkspaceApp({
   // 打开「设置与诊断中心」时默认停在哪个 tab（斜杠命令 /doctor /memory /skills 直达用）。
   const [hubInitialTab, setHubInitialTab] = useState<HubTabId>('prefs');
   const openHub = (tab: HubTabId = 'prefs'): void => {
+    hideParkServices();
+    setModuleModal(null);
     setHubInitialTab(tab);
     setMainView('hub');
   };
@@ -866,13 +1029,15 @@ function OttoWorkspaceApp({
         setMainView('chat');
         actions.createSession();
       } else if (action === 'open-settings') {
+        closeParkServices();
+        setModuleModal(null);
         setMainView('settings');
       }
     });
     return off;
   }, [actions, edition]);
 
-  const groups = useMemo(() => groupSessions(state), [state]);
+  const sessions = useMemo(() => selectSortedSessions(state), [state]);
 
   const activeSession = state.activeSessionId
     ? state.sessions[state.activeSessionId] ?? null
@@ -907,12 +1072,12 @@ function OttoWorkspaceApp({
     if (text) actions.sendMessage(text, target.source);
   };
 
-  const handleSend = (
+  const handleSend = async (
     text: string,
     source: MessageSource,
     attachments?: Attachment[],
-  ): void => {
-    const sendWithEnterpriseKnowledge = async (): Promise<void> => {
+    authorization?: ComposerAuthorizationContext,
+  ): Promise<boolean> => {
       let authorizedContext = '';
       if (edition === 'enterprise' && text.trim()) {
         try {
@@ -927,9 +1092,33 @@ function OttoWorkspaceApp({
           actions.postSystemNote('企业知识检索暂不可用；本轮将继续回答，但未附加企业知识上下文。');
         }
       }
+      if (pendingAgent) {
+        const customAgent = pendingAgent.customAgentId
+          ? customAgents.find((agent) => agent.id === pendingAgent.customAgentId)
+          : undefined;
+        const task = customAgent
+          ? `${buildCustomAgentKickoff(customAgent, {
+              edition,
+              organizationName: account.organizationName,
+              department: account.department,
+              positionTitle: account.positionTitle,
+            })}\n\n用户当前任务：${text.trim() || '请处理附件中的任务。'}`
+          : text;
+        const result = actions.launchAgentProfileWithPrompt(
+          pendingAgent.title,
+          pendingAgent.profileId,
+          task,
+          source,
+          attachments,
+          authorizedContext,
+          activeSession?.workspacePath,
+          authorization,
+        );
+        if (result.accepted) setPendingAgent(null);
+        return result.accepted;
+      }
       actions.sendMessage(text, source, attachments, undefined, authorizedContext);
-    };
-    void sendWithEnterpriseKnowledge();
+      return true;
   };
 
   const handleNewChat = (): void => {
@@ -968,20 +1157,6 @@ function OttoWorkspaceApp({
     setCustomAgents(nextAgents);
   };
 
-  const handleLaunchCustomAgent = (agent: CustomAgentDefinition): void => {
-    setMainView('chat');
-    actions.launchAgentProfileWithPrompt(
-      agent.name,
-      edition === 'enterprise' ? 'otto-enterprise-work' : 'otto-personal',
-      buildCustomAgentKickoff(agent, {
-        edition,
-        organizationName: account.organizationName,
-        department: account.department,
-        positionTitle: account.positionTitle,
-      }),
-    );
-  };
-
   const handleCreateCustomAgent = (draft: CustomAgentDraft): void => {
     if (customAgents.length >= 12) {
       throw new Error('最多保存 12 个自定义专家，请先删除一个');
@@ -996,12 +1171,70 @@ function OttoWorkspaceApp({
       throw new Error('已有同名专家，请换一个名称');
     }
     persistCustomAgents([agent, ...customAgents]);
-    handleLaunchCustomAgent(agent);
   };
 
   const handleDeleteCustomAgent = (agentId: string): void => {
     persistCustomAgents(customAgents.filter((agent) => agent.id !== agentId));
+    const moduleId = `agent-${agentId}`;
+    const nextLayout: ModuleWorkspaceLayout = {
+      ...moduleWorkspace.layout,
+      groups: moduleWorkspace.layout.groups.map((group) => ({
+        ...group,
+        moduleIds: group.moduleIds.filter((id) => id !== moduleId),
+      })),
+    };
+    moduleWorkspace.setLayout(nextLayout);
+    if (pendingAgent?.customAgentId === agentId) setPendingAgent(null);
   };
+
+  const handleUpdateCustomAgentIcon = (agentId: string, icon: CustomAgentIcon): void => {
+    persistCustomAgents(customAgents.map((agent) => (
+      agent.id === agentId ? { ...agent, icon } : agent
+    )));
+    setPendingAgent((current) => (
+      current?.customAgentId === agentId
+        ? { ...current, icon: customAgentIconToModuleIcon(icon) }
+        : current
+    ));
+  };
+
+  const activateModule = useCallback((module: ModuleDefinition): void => {
+    if (module.availability !== 'available') return;
+    const activation = module.activation;
+    if (activation.kind === 'dialog') {
+      setMainView('chat');
+      if (activation.dialog === 'park') {
+        setModuleModal({ kind: 'park', target: activation.target });
+        openParkServices(activation.target);
+      } else {
+        openModuleModal({ kind: activation.dialog });
+      }
+      return;
+    }
+    hideParkServices();
+    setModuleModal(null);
+    if (activation.kind === 'route') {
+      setMainView('skillzone');
+      return;
+    }
+    if (activation.kind === 'customer-module') {
+      setMainView('chat');
+      openModuleModal({
+        kind: 'customer-module',
+        moduleId: activation.moduleId,
+        version: activation.version,
+      });
+      return;
+    }
+    setMainView('chat');
+    setPendingAgent({
+      moduleId: module.id,
+      title: module.label,
+      profileId: activation.profileId,
+      customAgentId: activation.customAgentId,
+      icon: module.icon,
+    });
+  }, [openModuleModal]);
 
   const handleToolConfirmation = useCallback(
     (
@@ -1040,15 +1273,17 @@ function OttoWorkspaceApp({
   );
 
   const openModelSettings = (): void => {
+    closeParkServices();
+    setModuleModal(null);
     setMainView('settings');
   };
 
-  const selectedDate = product.state.selectedDate ?? new Date().toISOString().slice(0, 10);
+  const selectedDate = product.state.selectedDate ?? localDateKey();
   const selectedSchedules = useMemo(
     () => product.state.schedules.filter((item) => {
       const date = new Date(item.startAt);
       if (Number.isNaN(date.getTime())) return false;
-      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      const key = localDateKey(date);
       return key === selectedDate;
     }),
     [product.state.schedules, selectedDate],
@@ -1066,7 +1301,8 @@ function OttoWorkspaceApp({
   return (
     <div className="otto-app" data-connection={state.connection} data-ui-mode={uiMode}>
       <Sidebar
-        groups={groups}
+        sessions={sessions}
+        preferenceScope={uiModeScope}
         activeSessionId={state.activeSessionId}
         hubActive={mainView === 'hub'}
         activeView={mainView}
@@ -1092,7 +1328,7 @@ function OttoWorkspaceApp({
         onLogout={onLogout}
         unreadSessions={state.unreadSessions}
       />
-      <ParkServicesPlugin />
+      <ParkServicesPlugin internalAdminPreview={internalAdminPreview} />
 
       {mainView === 'organization' ? (
         <OrganizationPage
@@ -1102,6 +1338,8 @@ function OttoWorkspaceApp({
           enterpriseUnreadCounts={enterpriseUnreadCounts}
           enterpriseDirectChatOpenRequest={enterpriseDirectChatOpenRequest}
           onMessageRead={markEnterpriseDirectMessageRead}
+          friends={product.state.workspace?.friends}
+          onAddFriend={product.actions.addFriend}
           onBack={() => setMainView('chat')}
         />
       ) : mainView === 'inbox' ? (
@@ -1156,7 +1394,7 @@ function OttoWorkspaceApp({
           <header className="otto-workspace-page__head">
             <div>
               <div className="otto-workspace-page__title">专家与工作区</div>
-              <div className="otto-workspace-page__subtitle">专家、常用命令、文档、企业记忆与工作日志</div>
+              <div className="otto-workspace-page__subtitle">专家与企业记忆</div>
             </div>
             <button type="button" className="otto-workspace-page__back" onClick={() => setMainView('chat')}>
               返回对话
@@ -1165,31 +1403,15 @@ function OttoWorkspaceApp({
           <RightPanel
             presentation="page"
             busy={busy}
-            mode={edition}
-            enterpriseRole={centralIdentity.role}
-            enterpriseOrganizationId={account.organizationId}
-            workspace={product.state.workspace}
-            profiles={centralIdentity.profiles}
-            customAgents={customAgents}
-            onLaunchAgentProfile={handleLaunchProfile}
-            onCreateCustomAgent={handleCreateCustomAgent}
-            onLaunchCustomAgent={handleLaunchCustomAgent}
-            onDeleteCustomAgent={handleDeleteCustomAgent}
-            onOpenAgents={() => setMainView('agents')}
-            onOpenSkillZone={() => setMainView('skillzone')}
-            onSelectDate={(date) => {
-              product.actions.selectDate(date);
-              setMainView('agenda');
-            }}
-            onOpenOrganization={() => {
-              setMainView('organization');
-            }}
-            onAddFriend={product.actions.addFriend}
-            autoSkillCandidates={product.state.pendingAutoSkills}
-            autoSkillLastAction={product.state.lastAutoSkillAction}
-            onRefreshAutoSkills={product.actions.refreshPendingAutoSkills}
-            onConfirmAutoSkill={product.actions.confirmPendingAutoSkill}
-            onRejectAutoSkill={product.actions.rejectPendingAutoSkill}
+            ready={moduleWorkspace.ready}
+            readiness={moduleCapabilities.status}
+            onRetryCapabilities={moduleCapabilities.retry}
+            scopeKey={moduleWorkspaceScopeKey}
+            layout={moduleWorkspace.visibleLayout}
+            modules={moduleCapabilities.modules}
+            onActivate={activateModule}
+            onOpenMarketplace={(groupId) => openModuleModal({ kind: 'marketplace', groupId })}
+            onLayoutChange={moduleWorkspace.setVisibleLayout}
           />
         </section>
       ) : (
@@ -1214,17 +1436,14 @@ function OttoWorkspaceApp({
               messages={activeMessages}
               models={state.models}
               currentModel={state.currentModel}
-              userInitial={account.name.slice(0, 1).toUpperCase() || 'O'}
-              identityLabel={centralIdentity.identityLabel}
-              modelManagementLabel="模型与个人 API 设置"
               busy={busy}
               onSend={handleSend}
               onCancel={actions.cancel}
               onSetModel={actions.setModel}
+              onSetWorkspace={actions.setWorkspace}
               onRegenerate={handleRegenerate}
               onRespondQuestion={handleToolConfirmation}
               onOpenSetup={openModelSettings}
-              onToggleAgents={() => setMainView('workspace')}
               onNewChat={handleNewChat}
               onClearContext={handleClearContext}
               onExport={
@@ -1243,6 +1462,10 @@ function OttoWorkspaceApp({
                 setMainView('chat');
                 actions.launchAgentProfile(title, profileId);
               }}
+              rightPanelCollapsed={rightPanelCollapsed}
+              onToggleRightPanel={uiMode === 'work' ? toggleRightPanel : undefined}
+              pendingAgent={pendingAgent}
+              onClearPendingAgent={() => setPendingAgent(null)}
               commands={slashCommands}
               onRunServerCommand={(name, args) => {
                 if (!activeSession) return;
@@ -1253,36 +1476,98 @@ function OttoWorkspaceApp({
               }}
             />
           )}
-          {mainView === 'chat' && uiMode === 'work' ? (
+          {(mainView === 'chat' || mainView === 'hub') && uiMode === 'work' ? (
             <RightPanel
               busy={busy}
-              mode={edition}
-              enterpriseRole={centralIdentity.role}
-              enterpriseOrganizationId={account.organizationId}
-              workspace={product.state.workspace}
-              profiles={centralIdentity.profiles}
-              customAgents={customAgents}
-              onLaunchAgentProfile={handleLaunchProfile}
-              onCreateCustomAgent={handleCreateCustomAgent}
-              onLaunchCustomAgent={handleLaunchCustomAgent}
-              onDeleteCustomAgent={handleDeleteCustomAgent}
-              onOpenAgents={() => setMainView('agents')}
-              onOpenSkillZone={() => setMainView('skillzone')}
-              onSelectDate={(date) => {
-                product.actions.selectDate(date);
-                setMainView('agenda');
-              }}
-              onOpenOrganization={() => setMainView('organization')}
-              onAddFriend={product.actions.addFriend}
-              autoSkillCandidates={product.state.pendingAutoSkills}
-              autoSkillLastAction={product.state.lastAutoSkillAction}
-              onRefreshAutoSkills={product.actions.refreshPendingAutoSkills}
-              onConfirmAutoSkill={product.actions.confirmPendingAutoSkill}
-              onRejectAutoSkill={product.actions.rejectPendingAutoSkill}
+              collapsed={rightPanelCollapsed}
+              ready={moduleWorkspace.ready}
+              readiness={moduleCapabilities.status}
+              onRetryCapabilities={moduleCapabilities.retry}
+              scopeKey={moduleWorkspaceScopeKey}
+              layout={moduleWorkspace.visibleLayout}
+              modules={moduleCapabilities.modules}
+              onActivate={activateModule}
+              onOpenMarketplace={(groupId) => openModuleModal({ kind: 'marketplace', groupId })}
+              onLayoutChange={moduleWorkspace.setVisibleLayout}
             />
           ) : null}
         </div>
       )}
+
+      <ModuleMarketplaceDialog
+        key={`${moduleWorkspaceScopeKey}:marketplace`}
+        open={moduleModal?.kind === 'marketplace'}
+        targetGroupId={moduleModal?.kind === 'marketplace' ? moduleModal.groupId : ''}
+        layout={moduleWorkspace.layout}
+        modules={moduleCapabilities.modules}
+        onConfirm={(next) => { moduleWorkspace.setLayout(next); setModuleModal(null); }}
+        onClose={() => setModuleModal(null)}
+        onManageExperts={() => openModuleModal({ kind: 'custom-expert' })}
+        onCreateModule={() => openModuleModal({ kind: 'customer-module-authoring' })}
+        onBrowseCustomerModules={() => openModuleModal({ kind: 'customer-module-market' })}
+      />
+      <CustomerModuleMarketDialog
+        open={moduleModal?.kind === 'customer-module-market'}
+        installed={installedCustomerModules}
+        onInstalled={(record) => setInstalledCustomerModules((current) => [
+          ...current.filter((item) => item.id !== record.id),
+          record,
+        ])}
+        onInstalledChanged={setInstalledCustomerModules}
+        onCreate={() => openModuleModal({ kind: 'customer-module-authoring' })}
+        onClose={() => setModuleModal(null)}
+      />
+      <CustomerModuleAuthoringDialog
+        open={moduleModal?.kind === 'customer-module-authoring'}
+        publisher={{ id: account.id, name: account.name }}
+        onSubmit={async (submission) => {
+          await window.otto.customerModuleSubmit(submission);
+        }}
+        onClose={() => setModuleModal(null)}
+      />
+      <CustomerModuleRunDialog
+        open={moduleModal?.kind === 'customer-module'}
+        moduleId={moduleModal?.kind === 'customer-module' ? moduleModal.moduleId : ''}
+        name={moduleModal?.kind === 'customer-module'
+          ? moduleCapabilities.modules.find((module) => (
+            module.activation.kind === 'customer-module'
+            && module.activation.moduleId === moduleModal.moduleId
+          ))?.label ?? moduleModal.moduleId
+          : ''}
+        version={moduleModal?.kind === 'customer-module' ? moduleModal.version : ''}
+        inputSchema={moduleModal?.kind === 'customer-module'
+          ? installedCustomerModules.find((module) => module.id === moduleModal.moduleId)?.inputSchema ?? { properties: {} }
+          : { properties: {} }}
+        permissions={moduleModal?.kind === 'customer-module'
+          ? installedCustomerModules.find((module) => module.id === moduleModal.moduleId)?.permissions ?? []
+          : []}
+        onClose={() => setModuleModal(null)}
+      />
+      <EnterpriseMemoryDialog
+        key={`${moduleWorkspaceScopeKey}:enterprise-memory`}
+        open={moduleModal?.kind === 'enterprise-memory'}
+        role={centralIdentity.role}
+        onClose={() => setModuleModal(null)}
+      />
+      <AutoSkillDialog
+        key={`${moduleWorkspaceScopeKey}:auto-skill`}
+        open={moduleModal?.kind === 'auto-skill'}
+        candidates={product.state.pendingAutoSkills}
+        lastAction={product.state.lastAutoSkillAction}
+        onRefresh={product.actions.refreshPendingAutoSkills}
+        onConfirm={product.actions.confirmPendingAutoSkill}
+        onReject={product.actions.rejectPendingAutoSkill}
+        onClose={() => setModuleModal(null)}
+      />
+      <CustomAgentManagerDialog
+        key={`${moduleWorkspaceScopeKey}:custom-expert`}
+        open={moduleModal?.kind === 'custom-expert'}
+        agents={customAgents}
+        onCreate={handleCreateCustomAgent}
+        onDelete={handleDeleteCustomAgent}
+        onUpdateIcon={handleUpdateCustomAgentIcon}
+        onClose={() => setModuleModal(null)}
+      />
 
       {state.connection !== 'connected' ? (
         <div className="otto-conn-banner" role="status" aria-live="polite">

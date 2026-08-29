@@ -177,9 +177,6 @@ export class AutoMemoryEngine {
   private config: AutoMemoryEngineConfig;
   private tokenEstimator: TokenEstimator;
   private initialized = false;
-  /** 上次扫描时源文件的快照指纹（用于检测增量变更） */
-  private lastSourceFingerprints: Map<string, string> = new Map();
-
   constructor(
     config?: Partial<AutoMemoryEngineConfig>,
     tokenEstimator?: TokenEstimator,

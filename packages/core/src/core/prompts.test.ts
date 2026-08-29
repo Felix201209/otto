@@ -6,7 +6,14 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import fs from 'node:fs';
-import { getCoreSystemPrompt, isGemini3Model, formatCompactSummary } from './prompts.js';
+import os from 'node:os';
+import path from 'node:path';
+import {
+  getCoreSystemPrompt,
+  getDynamicSystemPrompt,
+  isGemini3Model,
+  formatCompactSummary,
+} from './prompts.js';
 
 describe('prompts', () => {
   describe('isGemini3Model', () => {
@@ -19,6 +26,26 @@ describe('prompts', () => {
   });
 
   describe('getCoreSystemPrompt - Environment Differences', () => {
+    it('按会话工作目录判断 Git 上下文，不使用进程启动目录', () => {
+      const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-prompt-non-git-'));
+      const prompt = getDynamicSystemPrompt(undefined, workspace);
+      expect(prompt).not.toContain('# Git Repository');
+      fs.rmSync(workspace, { recursive: true, force: true });
+    });
+
+    it('按会话工作目录发现 LLM Wiki，不使用进程启动目录', () => {
+      const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-prompt-wiki-'));
+      fs.mkdirSync(path.join(workspace, '.llm-wiki'));
+      fs.writeFileSync(path.join(workspace, '.llm-wiki', 'index.md'), '# Wiki');
+      const withoutWiki = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-prompt-no-wiki-'));
+
+      expect(getDynamicSystemPrompt(undefined, workspace)).toContain('# LLM Wiki');
+      expect(getDynamicSystemPrompt(undefined, withoutWiki)).not.toContain('# LLM Wiki');
+
+      fs.rmSync(workspace, { recursive: true, force: true });
+      fs.rmSync(withoutWiki, { recursive: true, force: true });
+    });
+
     it('requires a user-facing outcome summary after tool work', () => {
       const prompt = getCoreSystemPrompt(undefined, false);
       expect(prompt).toContain('Task completion feedback');
@@ -276,10 +303,10 @@ describe('prompts', () => {
     it('should still retain the wiki maintenance instructions', () => {
       mockWikiPresent(true);
       const section = extractWikiSection(getCoreSystemPrompt(undefined, false));
-      // 不能丢失原有的写入/维护指引
-      expect(section).toContain('save to wiki');
+      // 项目 wiki 仍可维护，但用户不需要理解或执行命令
+      expect(section).toContain('requires no command or initialization');
       expect(section).toContain('.llm-wiki/raw/');
-      expect(section).toContain('/wiki');
+      expect(section).toContain('Do not require the user');
     });
 
     it('should place the LLM Wiki section after the dynamic boundary (cache-safe)', () => {

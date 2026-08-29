@@ -18,6 +18,40 @@ const require = createRequire(import.meta.url);
 const afterPack = require('./after-pack.cjs');
 
 describe('desktop packaging contract', () => {
+  it('pins one Electron version across packaging and native build workflows', async () => {
+    const [
+      rootPackageJson,
+      desktopPackageJson,
+      packageLock,
+      releaseWorkflow,
+      nativeWorkflow,
+    ] = await Promise.all([
+      readFile(path.join(repoRoot, 'package.json'), 'utf8').then(JSON.parse),
+      readFile(path.join(packageRoot, 'package.json'), 'utf8').then(JSON.parse),
+      readFile(path.join(repoRoot, 'package-lock.json'), 'utf8').then(
+        JSON.parse,
+      ),
+      readFile(
+        path.join(repoRoot, '.github', 'workflows', 'release.yml'),
+        'utf8',
+      ),
+      readFile(
+        path.join(repoRoot, '.github', 'workflows', 'sqlcipher-native.yml'),
+        'utf8',
+      ),
+    ]);
+    const electronVersion = rootPackageJson.devDependencies.electron;
+
+    expect(electronVersion).toMatch(/^\d+\.\d+\.\d+$/u);
+    expect(desktopPackageJson.devDependencies.electron).toBe(electronVersion);
+    expect(desktopPackageJson.build.electronVersion).toBe(electronVersion);
+    expect(packageLock.packages['node_modules/electron'].version).toBe(
+      electronVersion,
+    );
+    expect(releaseWorkflow).toContain(`ELECTRON_VERSION: '${electronVersion}'`);
+    expect(nativeWorkflow).toContain(`ELECTRON_VERSION: ${electronVersion}`);
+  });
+
   it('declares every root-only release script dependency explicitly', async () => {
     const rootPackageJson = JSON.parse(
       await readFile(path.join(repoRoot, 'package.json'), 'utf8'),
@@ -180,6 +214,17 @@ describe('desktop packaging contract', () => {
     );
   });
 
+  it('runs packaged Electron smoke tests only for the runner native architecture', async () => {
+    const script = await readFile(
+      path.join(packageRoot, 'scripts', 'make-delivery-zip.mjs'),
+      'utf8',
+    );
+    expect(script).toContain("smokeNativeMacArtifact('arm64')");
+    expect(script).toContain("smokeNativeMacArtifact('x64')");
+    expect(script).toContain('process.arch !== artifactArch');
+    expect(script).toContain('跳过 Mac ${artifactArch} 跨架构动态验收');
+  });
+
   it('publishes releases only after the update mirror and enterprise deploy pass', async () => {
     const workflow = await readFile(
       path.join(repoRoot, '.github', 'workflows', 'release.yml'),
@@ -219,8 +264,20 @@ describe('desktop packaging contract', () => {
     expect(workflow.indexOf('name: Upload workflow artifacts')).toBeLessThan(
       workflow.indexOf('name: Create draft GitHub release'),
     );
-    expect(workflow).toContain("if: github.repository == 'Felix201209/otto'");
-    expect(workflow).toContain('token: ${{ secrets.OTTO_RELEASES_TOKEN }}');
+    expect(workflow).toContain("if: github.repository == 'NSIETeam/otto-new'");
+    expect(workflow).toContain('RELEASES_REPO: NSIETeam/otto-new');
+    expect(workflow).toContain(
+      'LEGACY_RELEASES_REPO: Felix201209/otto-releases',
+    );
+    expect(workflow).toContain('token: ${{ github.token }}');
+    expect(workflow).toContain(
+      'token: ${{ secrets.OTTO_LEGACY_RELEASES_TOKEN }}',
+    );
+    expect(workflow).toContain(
+      'name: Create legacy compatibility draft release',
+    );
+    expect(workflow).toContain('name: Publish legacy compatibility release');
+    expect(workflow).toContain('name: Publish canonical release');
     expect(workflow).not.toContain(
       'secrets.OTTO_RELEASES_TOKEN || secrets.GITHUB_TOKEN',
     );

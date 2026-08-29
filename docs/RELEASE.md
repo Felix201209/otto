@@ -55,25 +55,29 @@ node scripts/make-delivery-zip.mjs   # → 桌面 Otto-Desktop-X.Y.Z-mac-arm64.z
 node scripts/make-latest-json.mjs X.Y.Z notes-X.Y.Z.md   # → release/latest.json（真算 sha256，无签名包的唯一完整性防线）
 ```
 
-### 7. 发布到两个仓库
+### 7. 发布到正式仓与旧客户端兼容仓
 
 ```bash
-# 产物仓（app 内更新只认这里）：四资产 = dmg + exe + zip + latest.json
-gh release create vX.Y.Z --repo Felix201209/otto-releases --title "Otto vX.Y.Z" \
+# 正式源码与 Release 仓
+gh release create vX.Y.Z --repo NSIETeam/otto-new --target internal --title "Otto vX.Y.Z" \
   --notes-file notes-X.Y.Z.md release/Otto-X.Y.Z-arm64.dmg \
   release/Otto-Setup-X.Y.Z-win-x64.exe release/latest.json ~/Desktop/Otto-Desktop-X.Y.Z-mac-arm64.zip
 
-# 代码仓 tag（只放说明，链接指向产物仓）
-gh release create vX.Y.Z --repo Felix201209/otto --target internal --title "Otto vX.Y.Z" --notes "…"
+# V1.9.13 及更早客户端兼容仓：必须上传完全相同的资产与 latest.json
+gh release create vX.Y.Z --repo Felix201209/otto-releases --title "Otto vX.Y.Z" \
+  --notes-file notes-X.Y.Z.md release/Otto-X.Y.Z-arm64.dmg \
+  release/Otto-Setup-X.Y.Z-win-x64.exe release/latest.json ~/Desktop/Otto-Desktop-X.Y.Z-mac-arm64.zip
 ```
 
 ### 8. 验证更新通道（发版的验收线，不跑=没发）
 
 ```bash
+curl -sL https://59.110.154.44:7777/otto-releases/latest.json | grep '"version"'
+curl -sL https://github.com/NSIETeam/otto-new/releases/latest/download/latest.json | grep '"version"'
 curl -sL https://github.com/Felix201209/otto-releases/releases/latest/download/latest.json | grep '"version"'
 ```
 
-必须返回新版本号。app 启动 15s 后静默检查这个地址，有新版 → 左下角「设置与诊断」亮红点 → 软件更新面板应用内下载（自动校验 sha256）→ 打开安装包完成替换。
+三个入口必须返回同一新版本号。已安装旧版先检查固定服务器镜像，再检查旧兼容仓；桥接版及后续版本还会检查新仓。任一入口的 `latest.json` 与资产不一致都不得公开 Release。
 
 ### 9. 本机与通知
 

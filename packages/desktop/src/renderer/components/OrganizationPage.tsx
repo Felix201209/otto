@@ -20,7 +20,7 @@ import type {
   EnterpriseOrganizationView,
   EnterpriseParkTenantOrganization,
 } from '../../preload/index.js';
-import type { ScheduleItemInfo } from 'otto-server';
+import type { ProductWorkspaceSnapshot, ScheduleItemInfo } from 'otto-server';
 import { isAuthenticatedEnterpriseAccount } from '../internal-test-access.js';
 import { DirectMessagePanel } from './OrganizationTree.js';
 import { IconBuilding, IconChevronDown, IconFolder, IconSearch } from './icons.js';
@@ -65,6 +65,8 @@ export interface OrganizationPageProps {
   enterpriseUnreadCounts?: EnterpriseUnreadCounts;
   enterpriseDirectChatOpenRequest?: { peerAccountId: string; requestId: number };
   onMessageRead?: (peerAccountId: string) => void;
+  friends?: ReadonlyArray<ProductWorkspaceSnapshot['friends'][number]>;
+  onAddFriend?: (name: string, note?: string) => void;
   onBack: () => void;
 }
 
@@ -241,6 +243,8 @@ export function OrganizationPage({
   enterpriseUnreadCounts = {},
   enterpriseDirectChatOpenRequest,
   onMessageRead,
+  friends = [],
+  onAddFriend,
   onBack,
 }: OrganizationPageProps): React.JSX.Element {
   const [orgView, setOrgView] = useState<EnterpriseOrganizationView | null>(null);
@@ -254,6 +258,8 @@ export function OrganizationPage({
   const [parkTenantsLoading, setParkTenantsLoading] = useState(false);
   const [parkTenantsError, setParkTenantsError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [friendName, setFriendName] = useState('');
+  const [friendNote, setFriendNote] = useState('');
   const handledChatRequest = useRef(0);
   const hasAuth = isAuthenticatedEnterpriseAccount(enterpriseAccount);
 
@@ -470,6 +476,24 @@ export function OrganizationPage({
               <ParkOrganizationOverview tenants={parkTenants} loading={parkTenantsLoading} error={parkTenantsError} onSelect={(id) => setSelectedOrganizationId(id)} />
             ) : (
               <div className="otto-org-page__body">
+                <section className="otto-org-page__contacts" aria-label="常用联系人">
+                  <header><div><h2>常用联系人</h2><p>个人常用联系人，与企业成员目录分开管理。</p></div></header>
+                  <div className="otto-org-page__contact-list">
+                    {friends.map((friend) => <div key={friend.id}><strong>{friend.displayName}</strong>{friend.note ? <span>{friend.note}</span> : null}</div>)}
+                    {!friends.length ? <p>暂未添加常用联系人。</p> : null}
+                  </div>
+                  {onAddFriend ? <form onSubmit={(event) => {
+                    event.preventDefault();
+                    const name = friendName.trim();
+                    if (!name) return;
+                    onAddFriend(name, friendNote.trim() || undefined);
+                    setFriendName(''); setFriendNote('');
+                  }}>
+                    <input aria-label="联系人姓名" value={friendName} onChange={(event) => setFriendName(event.target.value)} placeholder="联系人姓名"/>
+                    <input aria-label="联系人备注" value={friendNote} onChange={(event) => setFriendNote(event.target.value)} placeholder="备注（可选）"/>
+                    <button type="submit" disabled={!friendName.trim()}>添加联系人</button>
+                  </form> : null}
+                </section>
                 <div className="otto-org-page__toolbar">
                   <label className="otto-org-page__search">
                     <IconSearch size={16} />

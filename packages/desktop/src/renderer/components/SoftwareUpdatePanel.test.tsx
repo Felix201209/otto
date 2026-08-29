@@ -166,7 +166,7 @@ describe('SoftwareUpdatePanel：检查失败 ≠ 已是最新（诚实契约）'
     fireEvent.click(screen.getByText('前往发布页'));
     expect(
       (window.otto.openExternal as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0],
-    ).toContain('otto-releases/releases/latest');
+    ).toContain('NSIETeam/otto-new/releases/latest');
   });
 
   it('已是最新：明确显示最新版本号，绝不出现失败文案', async () => {

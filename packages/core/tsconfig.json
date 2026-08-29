@@ -5,7 +5,9 @@
     "lib": ["DOM", "DOM.Iterable", "ES2022"],
     "composite": true,
     "types": ["node", "vitest/globals"],
-    "sourceMap": true
+    "sourceMap": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
   },
   "include": ["index.ts", "src/**/*.ts", "src/**/*.json"],
   "exclude": ["node_modules", "dist", "src/**/*.test.ts"]

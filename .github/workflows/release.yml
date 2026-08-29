@@ -45,9 +45,10 @@ concurrency:
 
 env:
   NODE_VERSION: '22.23.1'
-  ELECTRON_VERSION: '43.1.0'
+  ELECTRON_VERSION: '43.2.0'
   SQLCIPHER_SOURCE_REVISION: e2a6040f2ae5cfff2b3e08eb3320007d93cdf3fc
-  RELEASES_REPO: Felix201209/otto-releases
+  RELEASES_REPO: NSIETeam/otto-new
+  LEGACY_RELEASES_REPO: Felix201209/otto-releases
   UPDATE_MIRROR_ASSET_BASE_URL: 'https://59.110.154.44:7777/downloads'
   UPDATE_MIRROR_MANIFEST_URL: 'https://59.110.154.44:7777/otto-releases/latest.json'
   UPDATE_MIRROR_ROOT: '/opt/otto-website'
@@ -169,6 +170,7 @@ jobs:
           fi
 
       - name: Validate enterprise license trust anchor
+        if: ${{ !(inputs.unsigned_mac_transition == true && inputs.release_channel == 'transition' && inputs.draft == true && inputs.prerelease == true) }}
         shell: bash
         env:
           LICENSE_PUBLIC_KEYS: ${{ secrets.OTTO_LICENSE_PUBLIC_KEYS }}
@@ -177,6 +179,7 @@ jobs:
           test -n "$LICENSE_PUBLIC_KEYS"
 
       - name: Require desktop signing and notarization custody
+        if: ${{ !(inputs.unsigned_mac_transition == true && inputs.release_channel == 'transition' && inputs.draft == true && inputs.prerelease == true) }}
         shell: bash
         env:
           MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
@@ -188,6 +191,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           ENTERPRISE_SIGNING_PRIVATE_KEY: ${{ secrets.OTTO_ENTERPRISE_SIGNING_PRIVATE_KEY }}
           ENTERPRISE_SIGNING_PUBLIC_KEY: ${{ secrets.OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY }}
+          LEGACY_RELEASES_TOKEN: ${{ secrets.OTTO_LEGACY_RELEASES_TOKEN }}
         run: |
           set -euo pipefail
           test -n "$MAC_CSC_LINK"
@@ -199,6 +203,7 @@ jobs:
           test -n "$APPLE_TEAM_ID"
           test -n "$ENTERPRISE_SIGNING_PRIVATE_KEY"
           test -n "$ENTERPRISE_SIGNING_PUBLIC_KEY"
+          test -n "$LEGACY_RELEASES_TOKEN"
 
       - name: Repository anomaly checks
         run: |
@@ -262,6 +267,7 @@ jobs:
           done
 
       - name: Build enterprise server package
+        if: ${{ !(inputs.unsigned_mac_transition == true && inputs.release_channel == 'transition' && inputs.draft == true && inputs.prerelease == true) }}
         run: npm run bundle:enterprise
         env:
           OTTO_LICENSE_PUBLIC_KEYS: ${{ secrets.OTTO_LICENSE_PUBLIC_KEYS }}
@@ -273,37 +279,40 @@ jobs:
         shell: bash
         env:
           OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY: ${{ secrets.OTTO_ENTERPRISE_SIGNING_PUBLIC_KEY }}
+          DESKTOP_TEST_BUILD: ${{ inputs.unsigned_mac_transition == true && inputs.release_channel == 'transition' && inputs.draft == true && inputs.prerelease == true && '1' || '0' }}
         run: |
           set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
           DESKTOP_RELEASE="packages/desktop/release"
-          ENTERPRISE_ARCHIVE="$(ls deliverables/otto-enterprise-oneclick-v${VERSION}-*.tar.gz | head -n 1)"
-          ENTERPRISE_SHA="${ENTERPRISE_ARCHIVE}.sha256"
-          ENTERPRISE_SIGNATURE="${ENTERPRISE_ARCHIVE}.sig"
-          test -f "$ENTERPRISE_ARCHIVE"
-          test -f "$ENTERPRISE_SHA"
-          test -f "$ENTERPRISE_SIGNATURE"
-          sha256sum -c "$ENTERPRISE_SHA"
-          node scripts/verify-enterprise-package-signature.mjs \
-            "$ENTERPRISE_ARCHIVE" "$ENTERPRISE_SIGNATURE"
           test -f "$DESKTOP_RELEASE/Otto-${VERSION}-arm64.dmg"
           test -f "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg"
           test -f "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe"
           test -f "$DESKTOP_RELEASE/latest.json"
           node packages/desktop/scripts/verify-update-manifest.mjs "$DESKTOP_RELEASE" "$VERSION"
+          FILES=(
+            "$DESKTOP_RELEASE/Otto-${VERSION}-arm64.dmg"
+            "$DESKTOP_RELEASE/Otto-${VERSION}-arm64.dmg.blockmap"
+            "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg"
+            "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg.blockmap"
+            "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe"
+            "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe.blockmap"
+            "$DESKTOP_RELEASE/latest.json"
+          )
+          if [ "$DESKTOP_TEST_BUILD" != "1" ]; then
+            ENTERPRISE_ARCHIVE="$(ls deliverables/otto-enterprise-oneclick-v${VERSION}-*.tar.gz | head -n 1)"
+            ENTERPRISE_SHA="${ENTERPRISE_ARCHIVE}.sha256"
+            ENTERPRISE_SIGNATURE="${ENTERPRISE_ARCHIVE}.sig"
+            test -f "$ENTERPRISE_ARCHIVE"
+            test -f "$ENTERPRISE_SHA"
+            test -f "$ENTERPRISE_SIGNATURE"
+            sha256sum -c "$ENTERPRISE_SHA"
+            node scripts/verify-enterprise-package-signature.mjs \
+              "$ENTERPRISE_ARCHIVE" "$ENTERPRISE_SIGNATURE"
+            FILES+=("$ENTERPRISE_ARCHIVE" "$ENTERPRISE_SHA" "$ENTERPRISE_SIGNATURE")
+          fi
           {
             echo "files<<EOF"
-            printf '%s\n' \
-              "$DESKTOP_RELEASE/Otto-${VERSION}-arm64.dmg" \
-              "$DESKTOP_RELEASE/Otto-${VERSION}-arm64.dmg.blockmap" \
-              "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg" \
-              "$DESKTOP_RELEASE/Otto-${VERSION}-x64.dmg.blockmap" \
-              "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe" \
-              "$DESKTOP_RELEASE/Otto-Setup-${VERSION}-win-x64.exe.blockmap" \
-              "$DESKTOP_RELEASE/latest.json" \
-              "$ENTERPRISE_ARCHIVE" \
-              "$ENTERPRISE_SHA" \
-              "$ENTERPRISE_SIGNATURE"
+            printf '%s\n' "${FILES[@]}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -346,11 +355,24 @@ jobs:
           retention-days: 30
 
       - name: Create draft GitHub release
-        if: github.repository == 'Felix201209/otto'
+        if: github.repository == 'NSIETeam/otto-new'
         uses: softprops/action-gh-release@v2
         with:
           repository: ${{ env.RELEASES_REPO }}
-          token: ${{ secrets.OTTO_RELEASES_TOKEN }}
+          token: ${{ github.token }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Otto v${{ steps.version.outputs.version }}
+          draft: true
+          prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease }}
+          files: ${{ steps.artifacts.outputs.files }}
+          body_path: ${{ steps.release_notes.outputs.path }}
+
+      - name: Create legacy compatibility draft release
+        if: ${{ github.repository == 'NSIETeam/otto-new' && !(inputs.unsigned_mac_transition == true && inputs.release_channel == 'transition' && inputs.draft == true && inputs.prerelease == true) }}
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: ${{ env.LEGACY_RELEASES_REPO }}
+          token: ${{ secrets.OTTO_LEGACY_RELEASES_TOKEN }}
           tag_name: ${{ steps.version.outputs.tag }}
           name: Otto v${{ steps.version.outputs.version }}
           draft: true
@@ -363,6 +385,7 @@ jobs:
     needs: build
     runs-on: windows-2025
     timeout-minutes: 15
+    if: ${{ !(inputs.unsigned_mac_transition == true && inputs.release_channel == 'transition' && inputs.draft == true && inputs.prerelease == true) }}
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -537,6 +560,9 @@ jobs:
       DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
 
     steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
       - name: Validate deployment secrets
         shell: bash
         run: |
@@ -646,12 +672,27 @@ jobs:
           || (github.event_name == 'workflow_dispatch' && !inputs.draft)
         )
       }}
-    env:
-      GH_TOKEN: ${{ secrets.OTTO_RELEASES_TOKEN }}
-
     steps:
-      - name: Publish release after deployments pass
+      - name: Publish legacy compatibility release
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.OTTO_LEGACY_RELEASES_TOKEN }}
+        run: |
+          set -euo pipefail
+          EXTRA_ARGS=(--draft=false)
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.prerelease }}" = "true" ]; then
+            EXTRA_ARGS+=(--prerelease)
+          else
+            EXTRA_ARGS+=(--prerelease=false --latest)
+          fi
+          gh release edit "${{ needs.build.outputs.tag }}" \
+            --repo "${LEGACY_RELEASES_REPO}" \
+            "${EXTRA_ARGS[@]}"
+
+      - name: Publish canonical release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           EXTRA_ARGS=(--draft=false)

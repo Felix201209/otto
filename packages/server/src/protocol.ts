@@ -239,6 +239,8 @@ export interface SessionSummary {
   feishuChatId?: string;
   status: SessionStatus;
   model?: string;
+  /** 此会话工具、命令与文件操作使用的真实工作目录。旧会话缺失时回退用户主目录。 */
+  workspacePath?: string;
   /** 受服务端白名单验证的会话 Agent profile；不携带可注入 prompt。 */
   agentProfileId?: string;
   agentProfileName?: string;
@@ -348,6 +350,12 @@ export type SetModelMsg = Envelope<
   { sessionId: string; model: string }
 >;
 
+/** 切换当前会话的真实工作目录。路径须由 desktop 主进程授权，server 仍会复核。 */
+export type SetSessionWorkspaceMsg = Envelope<
+  'set_session_workspace',
+  { sessionId: string; workspacePath: string }
+>;
+
 /** 设置执行授权。session 仅当前会话；all 同步所有会话并作为后续会话默认值。 */
 export type SetAuthorizationModeMsg = Envelope<
   'set_authorization_mode',
@@ -451,7 +459,11 @@ export type SaveSearchConfigMsg = Envelope<
 export type SetSettingMsg = Envelope<
   'set_setting',
   {
-    key: 'agentStyle' | 'healthyUse' | 'preferredLanguage';
+    key:
+      | 'agentStyle'
+      | 'healthyUse'
+      | 'preferredLanguage'
+      | 'backgroundModelTasksEnabled';
     value: string | boolean;
   }
 >;
@@ -491,13 +503,13 @@ export type GetTodosMsg = Envelope<'get_todos', Record<string, never>>;
 // ── P1：记忆文件 / 技能库 / 工具清单 / 压缩上下文 / 导出会话 ──────────────
 
 /** 拉取层级记忆文件内容（对齐 CLI /memory show：项目 OTTO.md + 全局 ~/.otto/OTTO.md）。 */
-export type GetMemoryMsg = Envelope<'get_memory', Record<string, never>>;
+export type GetMemoryMsg = Envelope<'get_memory', { sessionId?: string }>;
 
 /** 追加一条记忆事实（对齐 save_memory 工具 / CLI /memory add），写入项目级 OTTO.md。 */
-export type AddMemoryMsg = Envelope<'add_memory', { fact: string }>;
+export type AddMemoryMsg = Envelope<'add_memory', { sessionId?: string; fact: string }>;
 
 /** 拉取已装技能列表（对齐 CLI /skill list）。 */
-export type GetSkillsMsg = Envelope<'get_skills', Record<string, never>>;
+export type GetSkillsMsg = Envelope<'get_skills', { sessionId?: string }>;
 
 /** 拉取当前会话可用工具清单（内置 + MCP，对齐 CLI /tools）。 */
 export type GetToolsMsg = Envelope<'get_tools', { sessionId: string }>;
@@ -522,7 +534,7 @@ export type GetWorkflowsMsg = Envelope<'get_workflows', Record<string, never>>;
 /** 拉取已安装扩展列表（对齐 CLI /extensions list）。 */
 export type GetExtensionsMsg = Envelope<
   'get_extensions',
-  Record<string, never>
+  { sessionId?: string }
 >;
 
 // ── P3：斜杠命令（桌面端命令面板 ↔ server 命令执行层）────────────────────
@@ -636,7 +648,7 @@ export type ScanPendingAutoSkillsMsg = Envelope<
 >;
 export type ConfirmPendingAutoSkillMsg = Envelope<
   'confirm_pending_auto_skill',
-  { candidateId: string }
+  { candidateId: string; sessionId?: string }
 >;
 export type RejectPendingAutoSkillMsg = Envelope<
   'reject_pending_auto_skill',
@@ -692,6 +704,7 @@ export type ClientToServer =
   | ToolConfirmationResponseMsg
   | CancelMsg
   | SetModelMsg
+  | SetSessionWorkspaceMsg
   | SetAuthorizationModeMsg
   | GetModelsMsg
   | SaveCustomModelMsg
@@ -1055,6 +1068,7 @@ export type FeishuPushResultMsg = Envelope<
 export interface SettingsSnapshot {
   agentStyle: string;
   healthyUse: boolean;
+  backgroundModelTasksEnabled: boolean;
   preferredLanguage?: string;
 }
 
@@ -1805,6 +1819,14 @@ export function validateClientPayload(msg: {
       if (!isNonEmptyString(p['model'])) return 'model 必须是非空字符串';
       return null;
     }
+    case 'set_session_workspace': {
+      if (!isPlainObject(p)) return 'set_session_workspace payload 必须是对象';
+      if (!isNonEmptyString(p['sessionId']))
+        return 'sessionId 必须是非空字符串';
+      if (!isNonEmptyString(p['workspacePath']) || !p['workspacePath'].trim())
+        return 'workspacePath 必须是非空字符串';
+      return null;
+    }
     case 'set_authorization_mode': {
       if (!isPlainObject(p)) return 'set_authorization_mode payload 必须是对象';
       if (!isNonEmptyString(p['sessionId']))
@@ -1855,10 +1877,7 @@ export function validateClientPayload(msg: {
     case 'get_stats':
     case 'run_doctor':
     case 'get_todos':
-    case 'get_memory':
-    case 'get_skills':
     case 'get_workflows':
-    case 'get_extensions':
     case 'get_ide_status':
     case 'get_knowledge':
     case 'search_knowledge':
@@ -1870,6 +1889,13 @@ export function validateClientPayload(msg: {
     case 'get_pending_auto_skills':
     case 'scan_pending_auto_skills':
       return isPlainObject(p) ? null : `${msg.type} payload 必须是对象`;
+    case 'get_memory':
+    case 'get_skills':
+    case 'get_extensions':
+      if (!isPlainObject(p)) return `${msg.type} payload 必须是对象`;
+      return p['sessionId'] === undefined || isNonEmptyString(p['sessionId'])
+        ? null
+        : 'sessionId 必须是非空字符串';
     case 'configure_enterprise': {
       if (!isPlainObject(p)) return 'configure_enterprise payload 必须是对象';
       if (!isNonEmptyString(p['managerName']))
@@ -1941,6 +1967,9 @@ export function validateClientPayload(msg: {
     case 'confirm_pending_auto_skill':
     case 'reject_pending_auto_skill': {
       if (!isPlainObject(p)) return `${msg.type} payload 必须是对象`;
+      if (p['sessionId'] !== undefined && !isNonEmptyString(p['sessionId'])) {
+        return 'sessionId 必须是非空字符串';
+      }
       return isNonEmptyString(p['candidateId'])
         ? null
         : 'candidateId 必须是非空字符串';
@@ -2001,9 +2030,10 @@ export function validateClientPayload(msg: {
       if (
         key !== 'agentStyle' &&
         key !== 'healthyUse' &&
-        key !== 'preferredLanguage'
+        key !== 'preferredLanguage' &&
+        key !== 'backgroundModelTasksEnabled'
       )
-        return 'key 必须是 agentStyle | healthyUse | preferredLanguage';
+        return 'key 必须是 agentStyle | healthyUse | preferredLanguage | backgroundModelTasksEnabled';
       const value = p['value'];
       if (typeof value !== 'string' && typeof value !== 'boolean')
         return 'value 必须是字符串或布尔';
@@ -2092,6 +2122,9 @@ export function validateClientPayload(msg: {
     }
     case 'add_memory': {
       if (!isPlainObject(p)) return 'add_memory payload 必须是对象';
+      if (p['sessionId'] !== undefined && !isNonEmptyString(p['sessionId'])) {
+        return 'sessionId 必须是非空字符串';
+      }
       return isNonEmptyString(p['fact']) ? null : 'fact 必须是非空字符串';
     }
     default:

@@ -6,7 +6,7 @@
 
 /**
  * 主聊天区。spec §主聊天区 + §底部输入区。
- * 顶栏（标题 + 同步状态 + 用户头像 F）/ 消息列表 / 输入区。
+ * 顶栏（标题 + 身份/同步状态）/ 消息列表 / 输入区。
  *
  * 飞书会话与本地会话共用这同一条聊天面（Issue #6 双向）：
  * 顶栏显示来源同步状态；输入区发言时按会话来源决定 source，
@@ -23,52 +23,19 @@ import type {
 import type { Attachment } from '../state/useOttoStore.js';
 import { Message } from './Message.js';
 import type { RespondQuestionFn } from './ToolCalls.js';
-import { Composer } from './Composer.js';
+import {
+  Composer,
+  type ComposerAuthorizationContext,
+  type PendingAgentSelection,
+} from './Composer.js';
 import type { SlashCommand } from './SlashCommands.js';
-import { IconArrowDown, IconMoon, IconSun, OttoAvatar } from './icons.js';
+import { IconArrowDown, IconPanelRight, OttoAvatar } from './icons.js';
 
 import { OttoPetStage } from './OttoPetStage.js';
 import {
   PET_WIDGET_PREFERENCE_EVENT,
   readPetWidgetEnabled,
 } from '../petWidgetPreference.js';
-
-/**
- * 顶栏黑/白底色一键切换（Jeremy）。点击在浅色/深色间切换（nativeTheme IPC，
- * 立即生效并持久化）；初始若是「跟随系统」，按系统当前实际深浅决定切换方向。
- * 图标显示「点击后会变成的模式」：浅色时显示月亮（点了变深色），反之太阳。
- */
-function ThemeToggle(): React.JSX.Element {
-  // matchMedia 防御可选：jsdom（单测环境）没有该 API。
-  const [dark, setDark] = useState(
-    () => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false,
-  );
-
-  // 跟随实际渲染态（含在偏好面板里改主题、或跟随系统时 OS 切换的情况）。
-  useEffect(() => {
-    const mq = window.matchMedia?.('(prefers-color-scheme: dark)');
-    if (!mq) return;
-    const onChange = (e: MediaQueryListEvent): void => setDark(e.matches);
-    mq.addEventListener('change', onChange);
-    return () => mq.removeEventListener('change', onChange);
-  }, []);
-
-  const toggle = (): void => {
-    void window.otto?.themeSet?.(dark ? 'light' : 'dark');
-  };
-
-  return (
-    <button
-      type="button"
-      className="otto-topbar-theme"
-      onClick={toggle}
-      title={dark ? '切换到浅色' : '切换到深色'}
-      aria-label={dark ? '切换到浅色' : '切换到深色'}
-    >
-      {dark ? <IconSun size={15} /> : <IconMoon size={15} />}
-    </button>
-  );
-}
 
 /** 视口距底多近算「贴底」（px），贴底才自动跟随流式增量。 */
 const NEAR_BOTTOM = 80;
@@ -84,19 +51,17 @@ interface ChatViewProps {
   messages: OttoMessage[];
   models: ModelInfo[];
   currentModel: string | null;
-  userInitial: string;
-  /** 服务端权威企业、账号与角色身份，不从本地昵称推断。 */
-  identityLabel?: string;
   busy: boolean;
-  modelManagementLabel?: string;
   onSend: (
     text: string,
     source: MessageSource,
     attachments?: Attachment[],
-  ) => void;
+    authorization?: ComposerAuthorizationContext,
+  ) => void | boolean | Promise<void | boolean>;
   /** 中止当前流式生成（busy 时停止按钮）。 */
   onCancel: () => void;
   onSetModel: (model: string) => void;
+  onSetWorkspace?: (workspacePath: string) => void;
   /**
    * 重新生成某条 bot 回复：携带被点消息 id，App 据此定位「该条之前最近的
    * 一条用户消息」重发，而非永远重发全会话最后一轮。
@@ -106,8 +71,6 @@ interface ChatViewProps {
   onRespondQuestion?: RespondQuestionFn;
   /** 打开「模型与 BYO-key 设置」面板（接到 Composer 模型菜单的「管理模型」入口）。 */
   onOpenSetup: () => void;
-  /** 切换右侧专家面板显示/隐藏。 */
-  onToggleAgents: () => void;
   /** 斜杠命令 `/new`：新建会话（App handleNewChat）。 */
   onNewChat: () => void;
   /** 斜杠命令 `/clear`：清空当前会话上下文。 */
@@ -134,6 +97,11 @@ interface ChatViewProps {
   onShowHelp?: () => void;
   /** 斜杠专家入口：创建绑定服务端 profile 的新会话。 */
   onLaunchAgentProfile?: (profileId: string, title: string) => void;
+  /** 工作式 UI 的右侧栏状态；仅传入切换动作时显示顶栏入口。 */
+  rightPanelCollapsed?: boolean;
+  onToggleRightPanel?: () => void;
+  pendingAgent?: PendingAgentSelection | null;
+  onClearPendingAgent?: () => void;
 }
 
 export function ChatView({
@@ -141,16 +109,14 @@ export function ChatView({
   messages,
   models,
   currentModel,
-  identityLabel,
   busy,
-  modelManagementLabel = '模型与个人 API 设置',
   onSend,
   onCancel,
   onSetModel,
+  onSetWorkspace,
   onRegenerate,
   onRespondQuestion,
   onOpenSetup,
-  onToggleAgents,
   onNewChat,
   onClearContext,
   onExport,
@@ -164,6 +130,10 @@ export function ChatView({
   onOpenSessions,
   onShowHelp,
   onLaunchAgentProfile,
+  rightPanelCollapsed = false,
+  onToggleRightPanel,
+  pendingAgent,
+  onClearPendingAgent,
 }: ChatViewProps): React.JSX.Element {
   const threadRef = useRef<HTMLDivElement>(null);
   // 用户是否贴在底部（决定流式增量是否自动跟随）。
@@ -276,45 +246,22 @@ export function ChatView({
           {session?.title ?? 'Otto'}
         </span>
 
-        {identityLabel ? (
-          <span className="otto-main__identity">{identityLabel}</span>
-        ) : null}
-
         {session?.source === 'feishu' ? (
           <span className="otto-main__sync">飞书 · 实时同步</span>
         ) : null}
-        <div className="otto-topbar__actions">
-          <ThemeToggle />
-          {session && onExport ? (
-            <button
-              type="button"
-              className="otto-topbar-export"
-              onClick={onExport}
-              title="导出会话为 Markdown"
-              aria-label="导出会话为 Markdown"
-            >
-              导出
-            </button>
-          ) : null}
+
+        {onToggleRightPanel ? (
           <button
             type="button"
-            className="otto-topbar-setup"
-            onClick={onOpenSetup}
-            title={modelManagementLabel}
-            aria-label={modelManagementLabel}
+            className="otto-main__panel-toggle"
+            aria-label={rightPanelCollapsed ? '展开右侧栏' : '折叠右侧栏'}
+            aria-pressed={!rightPanelCollapsed}
+            title={rightPanelCollapsed ? '展开右侧栏' : '折叠右侧栏'}
+            onClick={onToggleRightPanel}
           >
-            设置
+            <IconPanelRight size={18} />
           </button>
-          <button
-            type="button"
-            className="otto-topbar-setup"
-            onClick={onToggleAgents}
-            title="专家面板"
-            aria-label="专家面板"
-          >
-            专家
-          </button>
-        </div>
+        ) : null}
       </header>
 
       <div className="otto-thread" ref={threadRef} onScroll={onThreadScroll}>
@@ -371,9 +318,13 @@ export function ChatView({
         busy={busy}
         draft={draft.text}
         draftNonce={draft.n}
-        onSend={(text, attachments) => onSend(text, sendSource, attachments)}
+        onSend={(text, attachments, authorization) => (
+          onSend(text, sendSource, attachments, authorization)
+        )}
         onCancel={onCancel}
         onSetModel={onSetModel}
+        workspacePath={session?.workspacePath}
+        onSetWorkspace={onSetWorkspace}
         onManageModels={onOpenSetup}
         // 斜杠命令接线：/new /clear 走 App 回调，/settings 复用打开设置。
         onNewChat={onNewChat}
@@ -391,6 +342,8 @@ export function ChatView({
         onCopyLast={copyLastReply}
         onShowHelp={onShowHelp}
         onLaunchAgentProfile={onLaunchAgentProfile}
+        pendingAgent={pendingAgent}
+        onClearPendingAgent={onClearPendingAgent}
       />
     </section>
   );

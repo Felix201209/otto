@@ -13,12 +13,16 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ScheduleItemInfo } from 'otto-server';
 import { DayAgenda } from './DayAgenda.js';
+import { WorkLogCalendar } from './WorkLogCalendar.js';
+import { localDateKey } from '../localDateKey.js';
 
 interface WorkLogEntry {
   time: string;
   action: string;
   taskTitle?: string;
   entryType: string;
+  category?: string;
+  success?: boolean;
   details?: string;
 }
 
@@ -46,7 +50,7 @@ export interface WorkPageProps {
 export function WorkPage({
   schedules,
   selectedDate,
-  onSelectDate: _onSelectDate,
+  onSelectDate,
   onCreateSchedule,
   onDeleteSchedule,
   onBack,
@@ -63,7 +67,7 @@ export function WorkPage({
     try {
       const [today, days] = await Promise.all([
         window.otto.workLogToday(),
-        window.otto.workLogRecent(30),
+        window.otto.workLogRecent(92),
       ]);
       setWorkSummary(today);
       setWorklogDays(days);
@@ -74,12 +78,12 @@ export function WorkPage({
 
   useEffect(() => { void refreshWorkLog(); }, [refreshWorkLog]);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateKey();
   const todaySchedules = useMemo(
     () => schedules.filter((item) => {
       const d = new Date(item.startAt);
       if (Number.isNaN(d.getTime())) return false;
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const key = localDateKey(d);
       return key === today;
     }),
     [schedules, today],
@@ -92,6 +96,8 @@ export function WorkPage({
   const todayEntries = workSummary ? worklogByDate[workSummary.date] ?? [] : [];
   const todayResults = todayEntries.filter((e) => e.entryType === 'work_result');
   const todayActions = todayEntries.filter((e) => e.entryType !== 'work_result');
+  const selectedDayResults = (worklogByDate[selectedDate] ?? [])
+    .filter((entry) => entry.entryType === 'work_result');
 
   return (
     <div className="otto-work-page" role="region" aria-label="我的工作">
@@ -130,17 +136,35 @@ export function WorkPage({
 
       {activeSection === 'agenda' ? (
         <div className="otto-work-page__agenda">
+          <section className="otto-work-page__calendar" aria-label="工作月历">
+            <div className="otto-work-page__calendar-head">
+              <div>
+                <h2>工作月历</h2>
+                <p>悬浮日期查看当天成果，点击日期查看日程与工作详情。</p>
+              </div>
+              <button type="button" disabled={worklogLoading} onClick={() => void refreshWorkLog()}>
+                {worklogLoading ? '更新中…' : '刷新'}
+              </button>
+            </div>
+            <WorkLogCalendar
+              selectedDate={selectedDate}
+              onSelectDate={onSelectDate}
+              byDate={worklogByDate}
+            />
+          </section>
           <DayAgenda
             date={selectedDate}
             schedules={schedules.filter((item) => {
               const d = new Date(item.startAt);
               if (Number.isNaN(d.getTime())) return false;
-              const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+              const key = localDateKey(d);
               return key === selectedDate;
             })}
+            workResults={selectedDayResults}
             onCreate={onCreateSchedule}
             onDelete={onDeleteSchedule}
             onBack={() => setActiveSection('overview')}
+            backLabel="返回总览"
           />
         </div>
       ) : (
@@ -264,11 +288,19 @@ export function WorkPage({
               <h2>近期工作</h2>
               <div className="otto-work-page__history">
                 {worklogDays.slice(0, 7).map((day) => (
-                  <div key={day.date} className="otto-work-page__history-day">
+                  <button
+                    type="button"
+                    key={day.date}
+                    className="otto-work-page__history-day"
+                    onClick={() => {
+                      onSelectDate(day.date);
+                      setActiveSection('agenda');
+                    }}
+                  >
                     <time>{day.date}</time>
                     <span>{day.entries.length} 条记录</span>
                     <span>{day.entries.filter((e) => e.entryType === 'work_result').length} 项成果</span>
-                  </div>
+                  </button>
                 ))}
               </div>
             </section>

@@ -20,8 +20,6 @@ describe('FirstRunGuide', () => {
     fireEvent.click(screen.getByRole('button', { name: '下一步' }));
     expect(screen.getByText('从这里发起任务')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '下一步' }));
-    expect(screen.getByText('需要专门能力时选择专家')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
     expect(screen.getByText('历史与企业入口都在左侧')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '开始使用' }));
 
@@ -57,7 +55,7 @@ describe('FirstRunGuide', () => {
 
   it('supports direct step navigation from the progress controls', () => {
     render(<FirstRunGuide mode="conversational" />);
-    fireEvent.click(screen.getByRole('button', { name: /前往第 4 步/ }));
+    fireEvent.click(screen.getByRole('button', { name: /前往第 3 步/ }));
     expect(screen.getByText('历史与企业入口都在左侧')).toBeTruthy();
   });
 

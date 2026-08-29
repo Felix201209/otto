@@ -235,7 +235,7 @@ export class LocalScheduleTool extends BaseTool<LocalScheduleToolParams, ToolRes
   static readonly Name = 'local_schedule';
 
   // Config 保留为构造契约，以便统一注册；存储本身不依赖它。
-  constructor(private readonly config: Config) {
+  constructor(_config: Config) {
     super(
       LocalScheduleTool.Name,
       'LocalSchedule',

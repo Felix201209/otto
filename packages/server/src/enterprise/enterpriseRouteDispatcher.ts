@@ -30,6 +30,7 @@ import { handleHealthRoute } from './healthRoutes.js';
 import { handleLocalAgentRoute } from './localAgentRoutes.js';
 import { handleMemberWorkflowRoute } from './memberWorkflowRoutes.js';
 import { handleSkillMarketplaceRoute } from './skillMarketplaceRoutes.js';
+import { handleCustomerModuleMarketplaceRoute } from './customerModuleMarketplaceRoutes.js';
 import { handleParkResourceRoute } from './parkResourceRoutes.js';
 import { handleParkServicePublicationRoute } from './parkServicePublicationRoutes.js';
 import { handleParkStatisticsRoute } from './parkStatisticsRoutes.js';
@@ -380,6 +381,21 @@ export async function dispatchEnterpriseRoute({
       res,
       url,
       memberAccount,
+      readBody,
+      sendJSON,
+    })
+  ) {
+    return true;
+  }
+
+  if (
+    await handleCustomerModuleMarketplaceRoute({
+      path,
+      method,
+      req,
+      res,
+      memberAccount,
+      adminPrincipal,
       readBody,
       sendJSON,
     })

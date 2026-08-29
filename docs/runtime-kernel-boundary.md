@@ -223,6 +223,13 @@ The kernel owns these lifecycle-critical concerns:
 
 These concerns belong outside the kernel boundary. Kernel files **must not import** from them.
 
+### Customer module platform
+
+- `packages/core/src/customer-modules/` contains only the public manifest, signature, registry, Host ABI broker, static scanner, and bounded execution contracts used at the tool boundary.
+- Marketplace persistence, publisher rollout, scanning workflow, review decisions, signing, suspension, and install statistics belong to `packages/server/src/modules/tool_skill_platform/`.
+- Electron installation directories, trusted-key configuration, user file selection, declarative forms, permission-diff confirmation, and lifecycle UI belong to `packages/desktop/`.
+- Customer WASM is surfaced to the kernel only as a controlled tool execution. Customer modules cannot import UI, provider adapters, arbitrary files, sockets, environment variables, system commands, or HTML/CSS/JS injection APIs.
+
 ### Optional External Components
 
 - Desktop-only optional tools such as the OpenReel video editor remain outside the kernel.

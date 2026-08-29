@@ -1248,6 +1248,56 @@ describe('EnterpriseClient', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('登录后读取当前账号的 Token 使用画像', async () => {
+    const profile = {
+      accountId: ACCOUNT.id,
+      periodDays: 7,
+      source: 'client_reported' as const,
+      inputTokens: 120,
+      outputTokens: 80,
+      totalTokens: 200,
+      requestCount: 4,
+      averageTokensPerRequest: 50,
+      lastUsedAt: '2026-08-28T01:00:00.000Z',
+      byModel: [{
+        model: 'deepseek-v4-pro', inputTokens: 120, outputTokens: 80,
+        totalTokens: 200, requestCount: 4,
+      }],
+      daily: [{
+        date: '2026-08-28', inputTokens: 120, outputTokens: 80,
+        totalTokens: 200, requestCount: 4,
+      }],
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        account: ACCOUNT, token: 'session-token', expiresAt: '2099-01-01',
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, profile));
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    await client.loginWithPassword('https://enterprise.otto.test', 'staff01', 'password');
+
+    await expect(client.getPersonalTokenUsageProfile(7)).resolves.toEqual(profile);
+    expect(fetchMock.mock.calls[2]?.[0]).toBe(
+      'https://enterprise.otto.test/enterprise/usage/profile?period=7',
+    );
+    expect(fetchMock.mock.calls[2]?.[1]).toMatchObject({ method: 'GET' });
+  });
+
+  it('读取 Token 画像时在客户端收敛统计周期', async () => {
+    const fetchMock = vi.fn();
+    const client = new EnterpriseClient(fetchMock as typeof fetch);
+    client.restore({ serverUrl: 'https://enterprise.otto.test', token: 'token' });
+
+    await expect(client.getPersonalTokenUsageProfile(0)).rejects.toThrow(
+      '统计周期必须是 1 到 365 天',
+    );
+    await expect(client.getPersonalTokenUsageProfile(366)).rejects.toThrow(
+      '统计周期必须是 1 到 365 天',
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('登录后把自动提炼的知识条目写入组织知识库', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(200, API_V2_HEALTH))

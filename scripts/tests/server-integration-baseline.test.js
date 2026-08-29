@@ -26,9 +26,9 @@ const remoteBranchTips = new Map([['origin/internal', fetchedInternalTip]]);
 describe('server integration baseline', () => {
   it('keeps the ledger aligned with versions, schema, capabilities and release policy', () => {
     expect(validateServerIntegrationBaseline({ rootDir })).toEqual([]);
-    expect(supportedEnterpriseSchemaVersions(22)).toEqual([
+    expect(supportedEnterpriseSchemaVersions(23)).toEqual([
       2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
-      22,
+      22, 23,
     ]);
   });
 
@@ -39,7 +39,7 @@ describe('server integration baseline', () => {
     expect(
       validateServerIntegrationBaseline({ rootDir, ledger: changed }),
     ).toContain(
-      'release.clientVersion=99.0.0 does not match packages/desktop/package.json=1.10.1',
+      'release.clientVersion=99.0.0 does not match packages/desktop/package.json=1.9.14',
     );
   });
 
@@ -67,7 +67,7 @@ describe('server integration baseline', () => {
     expect(
       validateServerIntegrationBaseline({ rootDir, ledger: changed }),
     ).toContain(
-      'release.databaseMigration.schemaTo=21 does not match enterprise schema=22',
+      'release.databaseMigration.schemaTo=21 does not match enterprise schema=23',
     );
   });
 

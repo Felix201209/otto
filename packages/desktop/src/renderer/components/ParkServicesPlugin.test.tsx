@@ -18,6 +18,9 @@ import {
   isActionableStaffTicket,
   isMeetingSlotPast,
   isStaffHistoryTicket,
+  PARK_STATE_EVENT,
+  closeParkServices,
+  hideParkServices,
   openParkServices,
   serviceFormFields,
 } from './ParkServicesPlugin.js';
@@ -40,9 +43,9 @@ afterEach(() => {
 });
 
 /** 经右侧面板同款事件通路打开弹窗。 */
-function openDialog(): void {
+function openDialog(target?: Parameters<typeof openParkServices>[0]): void {
   act(() => {
-    openParkServices();
+    openParkServices(target);
   });
 }
 
@@ -255,6 +258,125 @@ describe('ParkServicesPlugin', () => {
     expect(screen.queryByText('餐饮服务')).toBeNull();
     expect(document.querySelectorAll('.otto-park-service')).toHaveLength(9);
     expect(Array.from(document.querySelectorAll('.otto-park-service__name')).slice(0, 2).map((node) => node.textContent)).toEqual(['园区公告', '满意度调查']);
+  });
+
+  it('可直达指定园区服务，不改变原有业务窗口', () => {
+    render(<ParkServicesPlugin />);
+    openDialog('repair');
+
+    expect(screen.getByRole('dialog', { name: '物业报修' })).toBeTruthy();
+    expect(screen.queryByLabelText('园区服务列表')).toBeNull();
+  });
+
+  it.each([
+    ['announcement', '园区公告'],
+    ['satisfaction', '满意度调查'],
+    ['renovation', '装修管理'],
+    ['parking', '停车办理'],
+    ['network-phone', '网络与固话'],
+    ['meeting-room', '会议室预约'],
+    ['electric-card', '电卡服务'],
+    ['repair', '物业报修'],
+    ['vehicle-visit', '车辆与访客'],
+  ] as const)('模块目标 %s 与既有“%s”业务窗口保持连接', (target, name) => {
+    render(<ParkServicesPlugin />);
+    openDialog(target);
+
+    expect(screen.getByRole('dialog', { name })).toBeTruthy();
+  });
+
+  it('本地管理员预览在真实登录失效时仍复用园区业务窗口', async () => {
+    const enterpriseParkView = vi.fn(async () => {
+      throw new Error('登录已失效，请重新登录');
+    });
+    const enterpriseSession = vi.fn(async () => ({ serverUrl: '', account: null }));
+    const enterpriseTicketList = vi.fn(async () => []);
+    const enterpriseParkPublications = vi.fn(async () => []);
+    Object.assign(window.otto, {
+      enterpriseParkView,
+      enterpriseSession,
+      enterpriseTicketList,
+      enterpriseParkPublications,
+    });
+
+    render(<ParkServicesPlugin internalAdminPreview />);
+    openDialog('repair');
+
+    expect(screen.getByRole('dialog', { name: '物业报修' })).toBeTruthy();
+    await waitFor(() => expect(enterpriseParkView).toHaveBeenCalled());
+    expect(screen.getByRole('dialog', { name: '物业报修' })).toBeTruthy();
+  });
+
+  it('本地管理员预览的园区统计入口落到只读统计面板', () => {
+    const enterpriseParkStatistics = vi.fn(async () => {
+      throw new Error('登录已失效，请重新登录');
+    });
+    Object.assign(window.otto, { enterpriseParkStatistics });
+
+    render(<ParkServicesPlugin internalAdminPreview />);
+    openDialog('overview');
+
+    const statistics = screen.getByLabelText('产业园服务统计');
+    expect(statistics.textContent).toContain('入驻企业0');
+    expect(statistics.textContent).toContain('服务使用0');
+    expect(enterpriseParkStatistics).not.toHaveBeenCalled();
+  });
+
+  it('协调桥可关闭顶层及服务窗口，同时发布开关状态', async () => {
+    const states: boolean[] = [];
+    const onState = (event: Event): void => {
+      states.push(event instanceof CustomEvent && event.detail?.open === true);
+    };
+    window.addEventListener(PARK_STATE_EVENT, onState);
+    render(<ParkServicesPlugin />);
+    openDialog('repair');
+    expect(screen.getByRole('dialog', { name: '物业报修' })).toBeTruthy();
+
+    act(() => closeParkServices());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '物业报修' })).toBeNull());
+    expect(states).toContain(true);
+    expect(states.at(-1)).toBe(false);
+    window.removeEventListener(PARK_STATE_EVENT, onState);
+  });
+
+  it('切换到其他模块时只隐藏园区窗口，重新打开后保留未提交表单', async () => {
+    installRepairBridge('reporter');
+    render(<ParkServicesPlugin />);
+    openDialog('repair');
+    await screen.findByLabelText('物业报修申请表');
+    fireEvent.change(screen.getByLabelText('故障描述'), { target: { value: '保留这段未提交内容' } });
+
+    act(() => hideParkServices());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '物业报修' })).toBeNull());
+    openDialog('repair');
+
+    expect(await screen.findByDisplayValue('保留这段未提交内容')).toBeTruthy();
+  });
+
+  it('可直达我的申请区域，而不是只打开园区服务首页', async () => {
+    render(<ParkServicesPlugin />);
+    openDialog('my-applications');
+
+    const applications = screen.getByLabelText('我的园区申请历史记录');
+    await waitFor(() => expect(document.activeElement).toBe(applications));
+  });
+
+  it('有工作人员权限时可直达园区待办区域', async () => {
+    installRepairBridge('worker');
+    render(<ParkServicesPlugin />);
+    openDialog('staff-tasks');
+
+    const tasks = await screen.findByLabelText('我的园区待办');
+    await waitFor(() => expect(document.activeElement).toBe(tasks));
+  });
+
+  it('工作人员没有待办时仍可直达空状态区域', async () => {
+    installRepairBridge('worker', 0);
+    render(<ParkServicesPlugin />);
+    openDialog('staff-tasks');
+
+    const tasks = await screen.findByLabelText('我的园区待办');
+    expect(within(tasks).getByText('当前没有待处理的园区任务。')).toBeTruthy();
   });
 
   it('园区窗口支持最小化、最大化还原和拖动', async () => {

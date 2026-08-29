@@ -9,8 +9,8 @@
  * update-verify.ts；本文件负责网络、文件、进度推送与安装器拉起。
  *
  * 更新源：可选 OTTO_UPDATE_MANIFEST_URL 企业 HTTPS 镜像，其后是公开仓
- * Felix201209/otto-releases（只放安装包 + 清单）：
- *   主：GET releases/latest/download/latest.json（匿名、跟随重定向、免 API 限流）；
+ * NSIETeam/otto-new（正式发布）与 Felix201209/otto-releases（旧客户端兼容）：
+ *   优先 GET releases/latest/download/latest.json（匿名、跟随重定向、免 API 限流）；
  *   兜底：GET api.github.com/.../releases/latest（主 URL 404/超时时），并优先从
  *   release 资产里再取 latest.json 拿完整清单——API 的 assets 不带 sha256，
  *   而 sha256 校验不可绕过，拿不到清单就只报版本、引导去发布页手动下载。
@@ -53,6 +53,7 @@ import { parseVerifiedManifestJson } from './update-manifest-integrity.js';
 import {
   FALLBACK_RELEASE_API_URL,
   GITHUB_MANIFEST_URL,
+  LEGACY_GITHUB_MANIFEST_URL,
   PRIMARY_MANIFEST_URL,
   RELEASE_PAGE_URL,
   resolveManifestUrls,
@@ -220,7 +221,10 @@ export class UpdateService {
         manifestErrors.push(`${sourceName}：${result.error}`);
         continue;
       }
-      const sourceAllowedOrigins = !source && manifestUrl === GITHUB_MANIFEST_URL
+      const sourceAllowedOrigins = !source && (
+        manifestUrl === GITHUB_MANIFEST_URL ||
+        manifestUrl === LEGACY_GITHUB_MANIFEST_URL
+      )
         ? []
         : [new URL(manifestUrl).origin];
       const parsed = parseManifest(result.json, sourceAllowedOrigins);

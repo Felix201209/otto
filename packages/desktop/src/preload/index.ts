@@ -38,6 +38,7 @@ import {
 import {
   authorizeOutboundFileReferences,
   hasOutboundPathReference,
+  sendAuthorizedWorkspaceFrame,
   sendAuthorizedFileFrame,
 } from './outbound-file-authorization.js';
 
@@ -413,6 +414,32 @@ export interface EnterpriseTokenUsageInput {
   totalTokens: number;
 }
 
+export interface PersonalTokenUsageProfile {
+  accountId: string;
+  periodDays: number;
+  source: 'client_reported';
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  requestCount: number;
+  averageTokensPerRequest: number;
+  lastUsedAt: string | null;
+  byModel: Array<{
+    model: string | null;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    requestCount: number;
+  }>;
+  daily: Array<{
+    date: string;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    requestCount: number;
+  }>;
+}
+
 export interface EnterpriseKnowledgeRecordInput {
   sourceId: string;
   title?: string;
@@ -538,6 +565,31 @@ export interface EnterpriseSkillMarketItem {
   reviewedAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface CustomerModuleMarketVersion {
+  manifest: Record<string, unknown> & { id: string; version: string; name: string; permissions: unknown[] };
+  publisherId: string;
+  status: 'draft' | 'scanning' | 'review' | 'approved' | 'rejected' | 'suspended' | 'withdrawn';
+  scanReport: { passed: boolean; findings: string[] } | null;
+  reviewerId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  installCount: number;
+}
+
+export interface InstalledCustomerModuleRecord {
+  id: string;
+  version: string;
+  name: string;
+  description: string;
+  permissions: Array<Record<string, unknown>>;
+  enabled: boolean;
+  backgroundEnabled?: boolean;
+  riskStatus?: 'suspended' | 'withdrawn';
+  installedAt: string;
+  iconDataUrl: string;
+  inputSchema: { type: 'object'; properties: Record<string, unknown>; required?: string[] };
 }
 
 export interface EnterpriseSkillLeaderboard {
@@ -1073,6 +1125,9 @@ const IPC = {
   activateLocalPath: 'otto:activate-local-path',
   selectFiles: 'otto:select-files',
   selectFolders: 'otto:select-folders',
+  selectWorkspaceDirectory: 'otto:select-workspace-directory',
+  getWorkspaceDirectories: 'otto:get-workspace-directories',
+  authorizeWorkspaceDirectory: 'otto:authorize-workspace-directory',
   grantBrowserFile: 'otto:grant-browser-file',
   authorizeMessageFiles: 'otto:authorize-message-files',
   readFilePath: 'otto:read-file-path',
@@ -1123,6 +1178,7 @@ const IPC = {
   enterprisePrivacyDelete: 'otto:enterprise-privacy-delete',
   enterprisePair: 'otto:enterprise-pair',
   enterpriseUsageRecord: 'otto:enterprise-usage-record',
+  enterpriseUsageProfile: 'otto:enterprise-usage-profile',
   enterpriseKnowledgeRecord: 'otto:enterprise-knowledge-record',
   enterpriseKnowledgeList: 'otto:enterprise-knowledge-list',
   enterpriseKnowledgeReview: 'otto:enterprise-knowledge-review',
@@ -1225,6 +1281,18 @@ const IPC = {
   enterpriseSkillInstall: 'otto:enterprise-skill-install',
   enterpriseSkillRate: 'otto:enterprise-skill-rate',
   enterpriseSkillLeaderboard: 'otto:enterprise-skill-leaderboard',
+  customerModuleList: 'otto:customer-module-list',
+  customerModuleSubmit: 'otto:customer-module-submit',
+  customerModuleTest: 'otto:customer-module-test',
+  customerModuleInstalledList: 'otto:customer-module-installed-list',
+  customerModuleInstall: 'otto:customer-module-install',
+  customerModuleSetEnabled: 'otto:customer-module-set-enabled',
+  customerModuleSetBackgroundEnabled: 'otto:customer-module-set-background-enabled',
+  customerModuleUninstall: 'otto:customer-module-uninstall',
+  customerModuleClearData: 'otto:customer-module-clear-data',
+  customerModuleExportData: 'otto:customer-module-export-data',
+  customerModuleRun: 'otto:customer-module-run',
+  customerModuleCancel: 'otto:customer-module-cancel',
   parkNativeNotify: 'otto:park-native-notify',
   writeClipboard: 'otto:write-clipboard',
 } as const;
@@ -1287,6 +1355,10 @@ export interface OttoBridge {
   selectFiles(): Promise<string[]>;
   /** 原生目录选择器：仅返回本次由用户明确选择并登记到授权账本的真实目录。 */
   selectFolders(): Promise<string[]>;
+  /** 读取用户主目录与最近明确选择过的工作目录。 */
+  getWorkspaceDirectories(): Promise<{ defaultPath: string; recentPaths: string[] }>;
+  /** 用原生目录选择器添加一个真实工作目录。 */
+  selectWorkspaceDirectory(): Promise<string | null>;
   /**
    * Electron 32+ 不再提供 File.path；通过 webUtils 恢复用户拖入/浏览器选择文件的
    * 真实本地路径。只接受浏览器 File 对象，不能用任意字符串伪造路径。
@@ -1446,6 +1518,41 @@ export interface OttoBridge {
     score: number,
   ): Promise<EnterpriseSkillMarketItem>;
   enterpriseSkillLeaderboard(): Promise<EnterpriseSkillLeaderboard>;
+  customerModuleList(): Promise<CustomerModuleMarketVersion[]>;
+  customerModuleSubmit(input: {
+    manifest: Record<string, unknown>;
+    files: Record<string, string>;
+  }): Promise<CustomerModuleMarketVersion>;
+  customerModuleTest(input: {
+    manifest: Record<string, unknown>;
+    files: Record<string, string>;
+  }): Promise<{
+    result: { status: string; exitCode: number | null; output: string; error?: string };
+    audit: Array<Record<string, unknown>>;
+    hostAudit: Array<Record<string, unknown>>;
+  }>;
+  customerModuleInstalledList(): Promise<InstalledCustomerModuleRecord[]>;
+  customerModuleInstall(input: {
+    moduleId: string;
+    version: string;
+    approvedPermissions: Array<Record<string, unknown>>;
+  }): Promise<InstalledCustomerModuleRecord>;
+  customerModuleSetEnabled(moduleId: string, enabled: boolean): Promise<InstalledCustomerModuleRecord>;
+  customerModuleSetBackgroundEnabled(moduleId: string, enabled: boolean): Promise<InstalledCustomerModuleRecord>;
+  customerModuleUninstall(moduleId: string): Promise<void>;
+  customerModuleClearData(moduleId: string): Promise<void>;
+  customerModuleExportData(moduleId: string): Promise<string | null>;
+  customerModuleRun(input: {
+    runId: string;
+    moduleId: string;
+    version: string;
+    formInput: Record<string, unknown>;
+  }): Promise<{
+    result: { status: 'completed' | 'timed_out' | 'crashed' | 'cancelled'; exitCode: number | null; output: string; error?: string };
+    audit: Array<Record<string, unknown>>;
+    hostAudit: Array<Record<string, unknown>>;
+  }>;
+  customerModuleCancel(runId: string): Promise<boolean>;
   /**
    * 本地测试模式：把 customProxyServerUrl 设为指定地址（不空）或清除（空字符串）。
    * main 进程需要把该 URL 注入到 server manager（如设置 OTTO_SERVER_URL env）。
@@ -1584,6 +1691,7 @@ export interface OttoBridge {
     recorded: boolean;
     source: 'client_reported';
   }>;
+  enterpriseUsageProfile(periodDays?: number): Promise<PersonalTokenUsageProfile>;
   enterpriseKnowledgeRecord(
     input: EnterpriseKnowledgeRecordInput,
   ): Promise<EnterpriseKnowledgeRecordResult>;
@@ -2006,6 +2114,25 @@ const bridge: OttoBridge = {
         sendQueue.push(authorized);
       }
     };
+    if (frame.type === 'set_session_workspace') {
+      void sendAuthorizedWorkspaceFrame(
+        frame,
+        (workspacePath) => ipcRenderer.invoke(
+          IPC.authorizeWorkspaceDirectory,
+          workspacePath,
+        ) as Promise<string>,
+        sendOrQueue,
+        (error) => dispatchFrame({
+          type: 'error',
+          payload: {
+            sessionId: frame.payload.sessionId,
+            code: 'workspace_access_denied',
+            message: error instanceof Error ? error.message : '工作目录未获得授权',
+          },
+        }),
+      );
+      return;
+    }
     if (frame.type !== 'send_user_message') {
       sendOrQueue(frame);
       return;
@@ -2109,6 +2236,17 @@ const bridge: OttoBridge = {
 
   selectFolders(): Promise<string[]> {
     return ipcRenderer.invoke(IPC.selectFolders) as Promise<string[]>;
+  },
+
+  getWorkspaceDirectories(): Promise<{ defaultPath: string; recentPaths: string[] }> {
+    return ipcRenderer.invoke(IPC.getWorkspaceDirectories) as Promise<{
+      defaultPath: string;
+      recentPaths: string[];
+    }>;
+  },
+
+  selectWorkspaceDirectory(): Promise<string | null> {
+    return ipcRenderer.invoke(IPC.selectWorkspaceDirectory) as Promise<string | null>;
   },
 
   getPathForFile(file: File): string {
@@ -2403,6 +2541,42 @@ const bridge: OttoBridge = {
     return ipcRenderer.invoke(
       IPC.enterpriseSkillLeaderboard,
     ) as Promise<EnterpriseSkillLeaderboard>;
+  },
+  customerModuleList() {
+    return ipcRenderer.invoke(IPC.customerModuleList) as Promise<CustomerModuleMarketVersion[]>;
+  },
+  customerModuleSubmit(input) {
+    return ipcRenderer.invoke(IPC.customerModuleSubmit, input) as Promise<CustomerModuleMarketVersion>;
+  },
+  customerModuleTest(input) {
+    return ipcRenderer.invoke(IPC.customerModuleTest, input) as ReturnType<OttoBridge['customerModuleTest']>;
+  },
+  customerModuleInstalledList() {
+    return ipcRenderer.invoke(IPC.customerModuleInstalledList) as Promise<InstalledCustomerModuleRecord[]>;
+  },
+  customerModuleInstall(input) {
+    return ipcRenderer.invoke(IPC.customerModuleInstall, input) as Promise<InstalledCustomerModuleRecord>;
+  },
+  customerModuleSetEnabled(moduleId, enabled) {
+    return ipcRenderer.invoke(IPC.customerModuleSetEnabled, { moduleId, enabled }) as Promise<InstalledCustomerModuleRecord>;
+  },
+  customerModuleSetBackgroundEnabled(moduleId, enabled) {
+    return ipcRenderer.invoke(IPC.customerModuleSetBackgroundEnabled, { moduleId, enabled }) as Promise<InstalledCustomerModuleRecord>;
+  },
+  customerModuleUninstall(moduleId) {
+    return ipcRenderer.invoke(IPC.customerModuleUninstall, moduleId) as Promise<void>;
+  },
+  customerModuleClearData(moduleId) {
+    return ipcRenderer.invoke(IPC.customerModuleClearData, moduleId) as Promise<void>;
+  },
+  customerModuleExportData(moduleId) {
+    return ipcRenderer.invoke(IPC.customerModuleExportData, moduleId) as Promise<string | null>;
+  },
+  customerModuleRun(input) {
+    return ipcRenderer.invoke(IPC.customerModuleRun, input) as ReturnType<OttoBridge['customerModuleRun']>;
+  },
+  customerModuleCancel(runId) {
+    return ipcRenderer.invoke(IPC.customerModuleCancel, runId) as Promise<boolean>;
   },
   setLocalTestUrl(url: string): Promise<void> {
     return ipcRenderer.invoke(IPC.setLocalTestUrl, url) as Promise<void>;
@@ -2711,6 +2885,12 @@ const bridge: OttoBridge = {
       recorded: boolean;
       source: 'client_reported';
     }>;
+  },
+  enterpriseUsageProfile(periodDays = 30): Promise<PersonalTokenUsageProfile> {
+    return ipcRenderer.invoke(
+      IPC.enterpriseUsageProfile,
+      periodDays,
+    ) as Promise<PersonalTokenUsageProfile>;
   },
   enterpriseKnowledgeRecord(
     input: EnterpriseKnowledgeRecordInput,

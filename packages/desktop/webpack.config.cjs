@@ -15,6 +15,7 @@
  */
 
 const path = require('path');
+const webpack = require('webpack');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 
 module.exports = (_env, argv) => {
@@ -33,6 +34,15 @@ module.exports = (_env, argv) => {
     devtool: isProd ? false : 'source-map',
     resolve: {
       extensions: ['.tsx', '.ts', '.jsx', '.js'],
+      // motion 等提升到根 node_modules 的依赖也必须复用 desktop 的 React 18。
+      // 否则根 React 19 与本包 ReactDOM 18 会形成两套 Hook dispatcher，
+      // ModuleWorkspace 首次挂载时直接触发 invalid hook call 白屏。
+      alias: {
+        'react$': require.resolve('react', { paths: [__dirname] }),
+        'react-dom$': require.resolve('react-dom', { paths: [__dirname] }),
+        'react/jsx-runtime$': require.resolve('react/jsx-runtime', { paths: [__dirname] }),
+        'react/jsx-dev-runtime$': require.resolve('react/jsx-dev-runtime', { paths: [__dirname] }),
+      },
       // 源码用 NodeNext 风格的 .js 后缀 import（与全仓一致）；
       // 让 webpack 把 './App.js' 解析到 './App.tsx'。
       extensionAlias: {
@@ -63,6 +73,16 @@ module.exports = (_env, argv) => {
       ],
     },
     plugins: [
+      // Renderer 在 sandbox 中不能读取任意运行时环境变量。只在构建命令明确
+      // 设置 OTTO_INTERNAL_TEST_ACCESS=1 时烘焙本地免登录入口；普通构建恒为关闭。
+      new webpack.DefinePlugin({
+        __OTTO_INTERNAL_TEST_ACCESS__: JSON.stringify(
+          process.env.OTTO_INTERNAL_TEST_ACCESS === '1',
+        ),
+        __OTTO_INTERNAL_TEST_ADMIN__: JSON.stringify(
+          process.env.OTTO_INTERNAL_TEST_ADMIN === '1',
+        ),
+      }),
       new HtmlWebpackPlugin({
         template: path.resolve(__dirname, 'src/renderer/index.html'),
         filename: 'index.html',

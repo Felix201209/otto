@@ -109,7 +109,7 @@ export class AskUserQuestionTool extends BaseTool<
     }
   >();
 
-  constructor(private readonly config: Config) {
+  constructor(_config: Config) {
     super(
       AskUserQuestionTool.Name,
       'AskUserQuestion',

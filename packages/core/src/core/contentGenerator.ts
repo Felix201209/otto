@@ -57,8 +57,6 @@ export function createContentGeneratorConfig(
   // BUG修复: 系统默认使用Claude模型，无需特殊处理
   // 修复策略: 直接使用配置的模型或默认模型（现在默认就是Claude）
   // ✅ 移除默认模型依赖 - 服务端内部决定模型
-  const _effectiveModel = config.getModel() || 'auto'; // 使用auto让服务端决定
-
   const contentGeneratorConfig: ContentGeneratorConfig = {
     //model: effectiveModel,
     authType,

@@ -264,7 +264,7 @@ export function useSoftwareUpdate(): UseSoftwareUpdate {
       openReleasePage: (url?: string) => {
         // releasePageUrl 由 main 下发（面板传入），这里兜底官方发布页地址。
         void window.otto.openExternal(
-          url ?? 'https://github.com/Felix201209/otto-releases/releases/latest',
+          url ?? 'https://github.com/NSIETeam/otto-new/releases/latest',
         );
       },
       markBadgeSeen: () => dispatch({ kind: 'badge_seen' }),

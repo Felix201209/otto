@@ -1,45 +1,37 @@
 # Agent Runtime Engineering Wiki
 
-> Internal engineering reference for Otto's agent runtime: architecture decisions, component contracts, and integration patterns.
+Otto Agent Runtime 的工程导航页。具体规则只在对应权威契约中维护，本文不复制规则正文。
 
-This document captures engineering-level knowledge for developers working on or integrating with Otto's agent runtime.
+## 边界与生命周期
 
----
+- [运行时内核边界](./runtime-kernel-boundary.md)
+- [项目架构](./architecture.md)
+- [产品模块边界](./product-modules.md)
+- [Checkpointing](./checkpointing.md)
+- [后台任务与成本安全](./background-task-cost-safety.md)
 
-## Runtime architecture
+## 模型、工具与扩展
 
-See [architecture.md](./architecture.md) for the high-level system design.
+- [自定义模型架构](./custom-models-architecture.md)
+- [自定义模型指南](./custom-models-guide.md)
+- [MCP 响应防护](./mcp-response-guard.md)
+- [MCP 顺序启动](./mcp-sequential-startup.md)
+- [Skills 使用](./skills-usage.md)
+- [Hooks 架构](./HOOKS_ARCHITECTURE.md)
 
-- [DSH full-feature runtime integration plan](./dsh-full-feature-runtime-integration-plan.md)
+## 验证与交付
 
-## Building & testing
+- [贡献与验证](./CONTRIBUTING.md)
+- [构建工作流](./build-workflow.md)
+- [测试矩阵](./test-matrix.md)
+- [集成测试](./integration-tests.md)
+- [发布前检查](./release-preflight.md)
 
-- [Build workflow](./build-workflow.md) — build scripts and pipeline
-- [Integration tests](./integration-tests.md) — E2E testing approach
+## 成熟度基线
 
-## Contributing
+- [成熟 Agent 收口标准](./mature-agent-closure.md)
+- [服务器集成基线](./server-integration-baseline.md)
+- [遥测](./telemetry.md)
+- [沙箱](./sandbox.md)
 
-For issue filing, PR checklists, local verification, and CI gates — follow the
-[Contributing Guide](./CONTRIBUTING.md). Every change must pass the mechanical
-checks described there before merge.
-
-## Model integration
-
-- [Custom models guide](./custom-models-guide.md)
-- [Custom models architecture](./custom-models-architecture.md)
-
-## Hooks & extensibility
-
-- [Hooks architecture](./HOOKS_ARCHITECTURE.md)
-- [Hooks user guide](./hooks-user-guide.md)
-
-## MCP (Model Context Protocol)
-
-- [MCP async loading](./mcp-async-loading.md)
-- [MCP sequential startup](./mcp-sequential-startup.md)
-- [MCP improvements summary](./mcp-improvements-summary.md)
-
-## Skills system
-
-- [Skills usage guide](./skills-usage.md)
-- [Skills context injection](./skills-context-injection.md)
+若文档与代码不一致，应先用测试确认当前行为，再更新对应权威契约和本导航；不要创建另一份平行总结。

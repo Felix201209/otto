@@ -32,6 +32,8 @@ export function userSettingsFilePath(homeDir = os.homedir()): string {
 /** 本文件关心的字段子集（其余字段读时原样保留在 raw 里，写回不丢）。 */
 export interface UserSettingsSubset {
   healthyUse?: boolean;
+  /** 后台模型任务必须由用户显式开启；新安装和旧配置缺省均关闭。 */
+  backgroundModelTasksEnabled?: boolean;
   preferredLanguage?: string;
   mcpServers?: Record<string, MCPServerConfig>;
   /** 桌面端全局自动授权；仅放行非高危操作。 */
@@ -100,6 +102,7 @@ export function loadUserSettingsSubset(
       typeof raw['healthyUse'] === 'boolean'
         ? (raw['healthyUse'] as boolean)
         : true,
+    backgroundModelTasksEnabled: raw['backgroundModelTasksEnabled'] === true,
     preferredLanguage:
       typeof raw['preferredLanguage'] === 'string'
         ? (raw['preferredLanguage'] as string)

@@ -48,7 +48,7 @@ interface McpCodeResponse {
 export class CodeSearchTool extends BaseTool<CodeSearchToolParams, ToolResult> {
   static readonly Name = 'codesearch';
 
-  constructor(private readonly config: Config) {
+  constructor(_config: Config) {
     super(
       CodeSearchTool.Name,
       'Code Search',

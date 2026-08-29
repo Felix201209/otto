@@ -405,6 +405,39 @@ export class CoreSessionRuntime implements SessionRuntime {
     }
   }
 
+  async generateTitle(firstUserMessage: string): Promise<string> {
+    const temporaryChat = await this.config.getOttoClient().createTemporaryChat(
+      SceneType.CONTENT_SUMMARY,
+      undefined,
+      { type: 'sub', agentId: 'SessionTitle' },
+      { emptySystemPrompt: true },
+    );
+    const response = await temporaryChat.sendMessage(
+      {
+        message: [
+          '请根据用户的第一条消息，为这段对话生成一个简洁、准确的中文标题。',
+          '',
+          '要求：',
+          '1. 标题必须为 4～8 个汉字。',
+          '2. 直接概括用户的核心意图或任务。',
+          '3. 不使用任何标点、引号、数字、英文或 Markdown。',
+          '4. 不使用“关于”“咨询”“问题”“新会话”等空泛表达。',
+          '5. 只输出标题，不要解释。',
+          '',
+          '用户消息：',
+          firstUserMessage,
+        ].join('\n'),
+        config: {
+          maxOutputTokens: 32,
+          temperature: 0.2,
+        },
+      },
+      `session-title-${this.sessionId}-${Date.now()}`,
+      SceneType.CONTENT_SUMMARY,
+    );
+    return extractStreamText(response)?.trim() ?? '';
+  }
+
   /**
    * 首 token 前遇到连接故障时，按“不同 API 地址优先”尝试其他已启用自定义模型。
    * API Key 不参与日志或排序；切换成功后同步会话模型，保证 UI 下拉框与真实出网一致。

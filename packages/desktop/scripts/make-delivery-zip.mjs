@@ -60,9 +60,9 @@ const ROOT_PKG = JSON.parse(
   readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf-8'),
 );
 const VERSION = PKG.version;
-const SOURCE_REPO = 'Felix201209/otto';
+const SOURCE_REPO = 'NSIETeam/otto-new';
 const SOURCE_UPSTREAM = 'origin/internal';
-const RELEASES_REPO = process.env.OTTO_RELEASES_REPO || 'Felix201209/otto';
+const RELEASES_REPO = process.env.OTTO_RELEASES_REPO || 'NSIETeam/otto-new';
 const UPDATE_ASSET_BASE_URL = resolveUpdateAssetBaseUrl();
 const RELEASE_TAG = `v${VERSION}`;
 const BUILD_ASSET_NAMES = [
@@ -383,18 +383,7 @@ async function build(sourceCommit) {
       ? undefined
       : () => verifySignedMacApplication('mac-arm64'),
   );
-  execFileSync(
-    process.execPath,
-    [
-      path.join(__dirname, 'smoke-packaged-electron.mjs'),
-      path.join(RELEASE_DIR, `Otto-${VERSION}-arm64.dmg`),
-    ],
-    {
-      cwd: DESKTOP_DIR,
-      stdio: 'inherit',
-    },
-  );
-  log('BUILD', 'Mac arm64 最终 DMG 的 preload、IPC 与 WS 动态验收通过');
+  smokeNativeMacArtifact('arm64');
 
   log('BUILD', '构建 Mac x64...');
   runBuildStep(
@@ -414,18 +403,7 @@ async function build(sourceCommit) {
       ? undefined
       : () => verifySignedMacApplication('mac'),
   );
-  execFileSync(
-    process.execPath,
-    [
-      path.join(__dirname, 'smoke-packaged-electron.mjs'),
-      path.join(RELEASE_DIR, `Otto-${VERSION}-x64.dmg`),
-    ],
-    {
-      cwd: DESKTOP_DIR,
-      stdio: 'inherit',
-    },
-  );
-  log('BUILD', 'Mac x64 最终 DMG 的 preload、IPC 与 WS 动态验收通过');
+  smokeNativeMacArtifact('x64');
 
   log('BUILD', '构建 Windows x64...');
   const windowsSigningEnv = {
@@ -439,6 +417,31 @@ async function build(sourceCommit) {
   assertSourceStateUnchanged(sourceCommit, { phase: '安装包构建' });
   await writeBuildProvenance(sourceCommit);
   log('BUILD', '全部平台构建完成');
+}
+
+function smokeNativeMacArtifact(artifactArch) {
+  if (process.arch !== artifactArch) {
+    log(
+      'BUILD',
+      `跳过 Mac ${artifactArch} 跨架构动态验收；已保留打包、原生依赖与签名静态校验`,
+    );
+    return;
+  }
+  execFileSync(
+    process.execPath,
+    [
+      path.join(__dirname, 'smoke-packaged-electron.mjs'),
+      path.join(RELEASE_DIR, `Otto-${VERSION}-${artifactArch}.dmg`),
+    ],
+    {
+      cwd: DESKTOP_DIR,
+      stdio: 'inherit',
+    },
+  );
+  log(
+    'BUILD',
+    `Mac ${artifactArch} 最终 DMG 的 preload、IPC 与 WS 动态验收通过`,
+  );
 }
 
 // ── Step 2: 检查产物 ──────────────────────────────────────────────────────

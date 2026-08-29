@@ -30,8 +30,8 @@
 
 | 资产编号 | 软件/组件 | 版本 | 来源 | 部署位置 | 许可证 | 更新责任人 | 支持状态 | SBOM/哈希证据 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SW-OTTO-DESKTOP | Otto Desktop | 待填写 | Felix201209/otto 指定提交 | 用户终端 | Apache-2.0 及三方许可 | 待填写 | 在用 | 待填写 |
-| SW-OTTO-SERVER | Otto Server | 待填写 | Felix201209/otto 指定提交 | 应用服务区 | Apache-2.0 及三方许可 | 待填写 | 在用 | 待填写 |
+| SW-OTTO-DESKTOP | Otto Desktop | 待填写 | NSIETeam/otto-new 指定提交 | 用户终端 | Apache-2.0 及三方许可 | 待填写 | 在用 | 待填写 |
+| SW-OTTO-SERVER | Otto Server | 待填写 | NSIETeam/otto-new 指定提交 | 应用服务区 | Apache-2.0 及三方许可 | 待填写 | 在用 | 待填写 |
 | SW-OTTO-CONTROL | Otto Control | 待填写 | krx521920/otto-control 指定提交 | 控制面 | 待填写 | 待填写 | 按部署情况 | 待填写 |
 | SW-FEDERATION | Federation Gateway | 待填写 | otto-control 指定提交 | 联邦服务区 | 待填写 | 待填写 | 按部署情况 | 待填写 |
 

@@ -21,7 +21,7 @@ type DiagFn = () => Promise<string>;
 export class DiagnoseSystemTool extends BaseTool<DiagnoseSystemToolParams, ToolResult> {
   static readonly Name: string = 'diagnose_system';
 
-  constructor(private readonly config: Config) {
+  constructor(_config: Config) {
     const desc = `Cross-platform system diagnosis (macOS + Windows).
 
 EXAMPLES:

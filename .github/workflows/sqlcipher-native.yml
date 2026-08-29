@@ -37,7 +37,7 @@ permissions:
 
 env:
   SQLCIPHER_SOURCE_REVISION: e2a6040f2ae5cfff2b3e08eb3320007d93cdf3fc
-  ELECTRON_VERSION: 43.1.0
+  ELECTRON_VERSION: 43.2.0
 
 jobs:
   build:

@@ -15,7 +15,19 @@ import type {
   EnterpriseParkSurveyResult,
   EnterpriseParkTenantOrganization,
 } from '../../preload/index.js';
-import { EnterpriseAdministrationPanel } from './EnterpriseAdministrationPanel.js';
+import {
+  EnterpriseAdministrationPanel,
+  type EnterpriseAdministrationSection,
+} from './EnterpriseAdministrationPanel.js';
+import {
+  IconBuilding,
+  IconDashboard,
+  IconIdBadge,
+  IconNetwork,
+  IconPlus,
+} from './icons.js';
+
+type EnterpriseManagementSection = 'members' | EnterpriseAdministrationSection;
 
 export interface AccountDraft {
   username: string;
@@ -174,7 +186,6 @@ export function formatInviteRemaining(expiresAt: string, now = Date.now()): stri
 
 export function AccountManagementPage({
   currentAccount,
-  onBack,
   onOrganizationChanged,
 }: {
   currentAccount: EnterpriseAccount;
@@ -182,6 +193,7 @@ export function AccountManagementPage({
   onOrganizationChanged?: () => void;
 }): React.JSX.Element {
   const [accounts, setAccounts] = useState<EnterpriseAccount[]>([]);
+  const [activeSection, setActiveSection] = useState<EnterpriseManagementSection>('members');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -216,6 +228,8 @@ export function AccountManagementPage({
   const [copied, setCopied] = useState<'link' | 'code' | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const dialogRef = useRef<HTMLElement>(null);
+  const pageRef = useRef<HTMLElement>(null);
+  const sectionScrollPositionsRef = useRef<Partial<Record<EnterpriseManagementSection, number>>>({});
   const initialFocusRef = useRef<HTMLInputElement>(null);
   const assignmentFocusRef = useRef<HTMLInputElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
@@ -654,26 +668,154 @@ export function AccountManagementPage({
   const serviceWorkerCount = accounts.filter((item) => item.tags.includes('客服人员')).length;
   const inviteIsActive = inviteContext?.invite?.status === 'active'
     && Date.parse(inviteContext.invite.expiresAt) > now;
+  const enabledFeatureCount = configurationFeatures
+    ? Object.values(configurationFeatures).filter(Boolean).length
+    : 0;
+  const managementSections: Array<{
+    id: EnterpriseManagementSection;
+    label: string;
+    description: string;
+    meta: string;
+    icon: React.ComponentType<{ size?: number; className?: string }>;
+  }> = [
+    {
+      id: 'organization',
+      label: '组织结构',
+      description: '管理部门、职位和权限映射',
+      meta: `${organizationDepartments.length} 个部门`,
+      icon: IconNetwork,
+    },
+    {
+      id: 'members',
+      label: '成员目录',
+      description: '管理成员身份、邀请和访问状态',
+      meta: `${accounts.length} 名成员`,
+      icon: IconIdBadge,
+    },
+    {
+      id: 'park',
+      label: '产业园端',
+      description: '管理入驻、园区服务和内容发布',
+      meta: currentPark?.brandName || '园区服务',
+      icon: IconBuilding,
+    },
+    {
+      id: 'capabilities',
+      label: '企业能力',
+      description: '控制企业级功能的启用范围',
+      meta: configurationFeatures ? `${enabledFeatureCount} 项已开启` : '正在读取',
+      icon: IconDashboard,
+    },
+  ];
+  const activeSectionCopy = managementSections.find((section) => section.id === activeSection)
+    ?? managementSections[1];
+  const selectManagementSection = (nextSection: EnterpriseManagementSection): void => {
+    if (nextSection === activeSection) return;
+    if (pageRef.current) {
+      sectionScrollPositionsRef.current[activeSection] = pageRef.current.scrollTop;
+    }
+    setActiveSection(nextSection);
+    window.requestAnimationFrame(() => {
+      if (pageRef.current) {
+        pageRef.current.scrollTop = sectionScrollPositionsRef.current[nextSection] ?? 0;
+      }
+    });
+  };
+  const handleSectionKeyDown = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    sectionIndex: number,
+  ): void => {
+    const lastIndex = managementSections.length - 1;
+    let nextIndex: number | null = null;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
+      nextIndex = sectionIndex === lastIndex ? 0 : sectionIndex + 1;
+    } else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
+      nextIndex = sectionIndex === 0 ? lastIndex : sectionIndex - 1;
+    } else if (event.key === 'Home') {
+      nextIndex = 0;
+    } else if (event.key === 'End') {
+      nextIndex = lastIndex;
+    }
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const nextSection = managementSections[nextIndex];
+    selectManagementSection(nextSection.id);
+    window.requestAnimationFrame(() => {
+      document.getElementById(`otto-enterprise-tab-${nextSection.id}`)?.focus();
+    });
+  };
 
   return (
-    <main className="otto-account-page">
+    <main ref={pageRef} className="otto-account-page">
       <div
         ref={contentRef}
         className="otto-account-page__content"
         aria-hidden={editing ? true : undefined}
       >
-      <header className="otto-account-hero">
-        <div>
-          <button type="button" className="otto-account-page__back" onClick={onBack}>← 返回工作台</button>
-          <div className="otto-account-page__eyebrow">CEO ORGANIZATION CONTROL</div>
-          <h1>CEO 企业管理中心</h1>
-          <p>集中管理成员、企业邀请、组织角色与职责标签。成员可用账号密码或手机号验证码登录；邀请码只用于加入本企业。Token 用量由客户端回传，仅用于内部观察，不等同于模型供应商账单。</p>
-        </div>
-        <button type="button" className="otto-account-page__create" onClick={openCreate} disabled={loading} aria-label="新增账号"><span>＋</span> 新增成员</button>
-      </header>
+      <aside className="otto-account-workspace__rail" aria-label="企业管理导航">
+        <header className="otto-account-hero">
+          <h1>企业管理</h1>
+          <p>管理组织结构、成员身份、企业能力和产业园服务。</p>
+        </header>
+        <nav className="otto-account-workspace__tabs" aria-label="企业管理分类" role="tablist">
+          {managementSections.map((section, sectionIndex) => {
+            const SectionIcon = section.icon;
+            return (
+              <button
+                key={section.id}
+                id={`otto-enterprise-tab-${section.id}`}
+                type="button"
+                role="tab"
+                aria-selected={activeSection === section.id}
+                aria-controls="otto-enterprise-management-panel"
+                tabIndex={activeSection === section.id ? 0 : -1}
+                className={activeSection === section.id ? 'is-active' : ''}
+                onClick={() => selectManagementSection(section.id)}
+                onKeyDown={(event) => handleSectionKeyDown(event, sectionIndex)}
+              >
+                <SectionIcon size={17} />
+                <span>
+                  <strong>{section.label}</strong>
+                  <small>{section.meta}</small>
+                </span>
+              </button>
+            );
+          })}
+        </nav>
+      </aside>
+
+      <div className="otto-account-workspace">
+        <section
+          id="otto-enterprise-management-panel"
+          className="otto-account-workspace__panel"
+          role="tabpanel"
+          aria-labelledby={`otto-enterprise-tab-${activeSection}`}
+        >
+          <header className="otto-account-workspace__head">
+            <div>
+              <h2>{activeSectionCopy.label}</h2>
+              <p>{activeSectionCopy.description}</p>
+            </div>
+            {activeSection === 'members' ? (
+              <button
+                type="button"
+                className="otto-account-page__create"
+                onClick={openCreate}
+                disabled={loading}
+                aria-label="新增账号"
+              >
+                <IconPlus size={15} />
+                新增成员
+              </button>
+            ) : null}
+          </header>
 
       {currentAccount.isAdmin ? (
-        <section className="otto-account-invite" aria-label="7 天企业引入链接">
+        <section
+          className="otto-account-invite"
+          aria-label="7 天企业引入链接"
+          hidden={activeSection !== 'members'}
+        >
           <header>
             <div>
               <span>SECURE ONBOARDING</span>
@@ -781,6 +923,7 @@ export function AccountManagementPage({
       {currentAccount.isAdmin ? (
         <EnterpriseAdministrationPanel
           accounts={accounts}
+          activeSection={activeSection === 'members' ? null : activeSection}
           onChanged={() => {
             void window.otto.enterpriseAccounts().then(setAccounts).catch((cause: unknown) => {
               setError(errorMessage(cause));
@@ -793,7 +936,11 @@ export function AccountManagementPage({
       ) : null}
 
       {currentAccount.isAdmin && configurationFeatures?.park_service === true && isParkAdminOrganization ? (
-        <section className="otto-account-invite otto-account-park-push" aria-label="园区公告与调查发布">
+        <section
+          className="otto-account-invite otto-account-park-push"
+          aria-label="园区公告与调查发布"
+          hidden={activeSection !== 'park'}
+        >
           <header>
             <div>
               <span>PARK SERVICE PUSH</span>
@@ -844,7 +991,7 @@ export function AccountManagementPage({
           {parkPushMessage ? <div className="otto-account-invite__loading" role="status">{parkPushMessage}</div> : null}
           {parkPushError ? <div className="otto-account-invite__error" role="alert">{parkPushError}</div> : null}
           <div className="otto-account-survey-results" aria-label="产业园入驻企业">
-            <div className="otto-account-survey-results__head"><strong>已入驻企业</strong><span>企业 CEO 填写产业园邀请码后加入</span></div>
+            <div className="otto-account-survey-results__head"><strong>已入驻企业</strong><span>企业管理员填写产业园邀请码后加入</span></div>
             {parkTenantError ? <div className="otto-account-invite__error" role="alert">{parkTenantError}</div> : null}
             {!parkTenantError && parkTenantOrganizations.length === 0 ? <div className="otto-account-invite__loading">暂无企业加入当前产业园</div> : null}
             {parkTenantOrganizations.length ? <div className="otto-account-park-tenants">{parkTenantOrganizations.map((organization) => <article key={organization.id}><strong>{organization.name}</strong><span>{organization.slug}</span></article>)}</div> : null}
@@ -869,7 +1016,11 @@ export function AccountManagementPage({
         </section>
       ) : null}
 
-      <section className="otto-account-metrics" aria-label="账号概览">
+      <section
+        className="otto-account-metrics"
+        aria-label="账号概览"
+        hidden={activeSection !== 'members'}
+      >
         <article><span>成员总数</span><strong>{accounts.length}</strong><small>组织身份目录</small></article>
         <article><span>可登录</span><strong>{activeCount}</strong><small>{accounts.length - activeCount} 个已停用</small></article>
         <article><span>手机已登记</span><strong>{smsCount}<i>/{accounts.length || 0}</i></strong><small>{smsCount === accounts.length && accounts.length > 0 ? '已全部登记' : '仍有账号未登记手机'}</small></article>
@@ -877,9 +1028,12 @@ export function AccountManagementPage({
         <article><span>园区客服人员</span><strong>{serviceWorkerCount}</strong><small>六类申请自动投递</small></article>
       </section>
 
-      <section className="otto-account-directory">
+      <section className="otto-account-directory" hidden={activeSection !== 'members'}>
         <header>
-          <div><h2>成员目录</h2><p>账号状态与权限变更实时同步到登录网关。</p></div>
+          <div>
+            <h2>成员目录</h2>
+            <p>账号状态与权限变更实时同步到登录网关。Token 用量由客户端回传，仅用于内部观察，不等同于模型供应商账单。</p>
+          </div>
           <label className="otto-account-search"><span aria-hidden>⌕</span><input aria-label="搜索账号" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索姓名、手机、职位、部门或标签" /></label>
         </header>
 
@@ -930,6 +1084,8 @@ export function AccountManagementPage({
           </table>
         </div>
       </section>
+        </section>
+      </div>
       </div>
 
       {editing ? (

@@ -55,7 +55,7 @@ export class LintFixTool extends BaseTool<LintFixParams, ToolResult> {
   // 静态回调函数，由 VSCode 扩展设置
   private static callback: LintFixCallback | null = null;
 
-  constructor(private readonly config: Config) {
+  constructor(_config: Config) {
     super(
       LintFixTool.Name,
       'LintFix',

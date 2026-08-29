@@ -24,7 +24,7 @@ const json = (value: unknown) => JSON.stringify(value ?? [], null, 2);
 export class FeishuProjectCollabTool extends BaseTool<FeishuProjectCollabParams, ToolResult> {
   static readonly Name = 'feishu_project_collab';
 
-  constructor(private readonly config: Config) {
+  constructor(_config: Config) {
     super(
       FeishuProjectCollabTool.Name,
       'FeishuProjectCollab',

@@ -55,54 +55,55 @@ function twoRounds(): OttoMessage[] {
   ];
 }
 
-function renderChat(onRegenerate = vi.fn()) {
+function renderChat(
+  onRegenerate = vi.fn(),
+  rightPanel?: { collapsed: boolean; onToggle: () => void },
+) {
   render(
     <ChatView
       session={SESSION}
       messages={twoRounds()}
       models={MODELS}
       currentModel="m1"
-      userInitial="F"
-      identityLabel="北辰科技 · 产品部 · 产品经理 · 企业成员"
       busy={false}
       onSend={vi.fn()}
       onCancel={vi.fn()}
       onSetModel={vi.fn()}
       onRegenerate={onRegenerate}
       onOpenSetup={vi.fn()}
-      onToggleAgents={vi.fn()}
       onNewChat={vi.fn()}
       onClearContext={vi.fn()}
       onExport={vi.fn()}
+      rightPanelCollapsed={rightPanel?.collapsed}
+      onToggleRightPanel={rightPanel?.onToggle}
     />,
   );
   return { onRegenerate };
 }
 
 describe('ChatView 重新生成携带消息 id', () => {
-  it('在聊天顶栏显示服务端权威身份并使用一致的中文操作文案', () => {
+  it('顶栏只显示会话标题，不显示身份说明和旧版快捷操作', () => {
     renderChat();
 
-    expect(
-      screen.getByText('北辰科技 · 产品部 · 产品经理 · 企业成员'),
-    ).toBeTruthy();
-    expect(screen.getByRole('button', { name: '导出会话为 Markdown' }).textContent).toBe('导出');
-    expect(screen.getByRole('button', { name: '模型与个人 API 设置' }).textContent).toBe('设置');
-    expect(screen.getByRole('button', { name: '专家面板' }).textContent).toBe('专家');
+    expect(screen.getByText('测试会话')).toBeTruthy();
+    expect(document.querySelector('.otto-main__identity')).toBeNull();
+    expect(screen.queryByRole('button', { name: '切换到深色' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '切换到浅色' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '导出会话为 Markdown' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '模型与个人 API 设置' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '专家面板' })).toBeNull();
   });
 
   it('空会话与未选择会话时恢复 v1.6 的 Otto 形象', () => {
     const props = {
       models: MODELS,
       currentModel: 'm1',
-      userInitial: 'F',
       busy: false,
       onSend: vi.fn(),
       onCancel: vi.fn(),
       onSetModel: vi.fn(),
       onRegenerate: vi.fn(),
       onOpenSetup: vi.fn(),
-      onToggleAgents: vi.fn(),
       onNewChat: vi.fn(),
       onClearContext: vi.fn(),
     };
@@ -129,5 +130,15 @@ describe('ChatView 重新生成携带消息 id', () => {
     const buttons = screen.getAllByLabelText('重新生成');
     fireEvent.click(buttons[1]);
     expect(onRegenerate).toHaveBeenCalledWith('bot-B');
+  });
+
+  it('在聊天顶栏使用 PanelRight 按钮切换右侧栏', () => {
+    const onToggle = vi.fn();
+    renderChat(vi.fn(), { collapsed: false, onToggle });
+
+    const toggle = screen.getByRole('button', { name: '折叠右侧栏' });
+    expect(toggle.querySelector('svg')).toBeTruthy();
+    fireEvent.click(toggle);
+    expect(onToggle).toHaveBeenCalledTimes(1);
   });
 });

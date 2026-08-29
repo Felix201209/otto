@@ -52,7 +52,7 @@ export class ImageGeneratorTool extends BaseTool<ImageGeneratorToolParams, ToolR
   private readonly baseUrl: string;
   private readonly enabled: boolean;
 
-  constructor(private readonly config: Config) {
+  constructor(_config: Config) {
     super(
       ImageGeneratorTool.Name,
       'Image Generator',

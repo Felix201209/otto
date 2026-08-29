@@ -1,0 +1,74 @@
+/**
+ * @license Copyright 2026 Otto SPDX-License-Identifier: Apache-2.0
+ */
+
+/* Motion reorder affordances are isolated from the shared application stylesheet. */
+.otto-module-group-reorder-item,
+.otto-module-reorder-item {
+  min-width: 0;
+  list-style: none;
+}
+
+.otto-module-group-reorder-item {
+  border-radius: 16px;
+}
+
+.otto-module-group__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.otto-module-group.is-editing .otto-module-reorder-item,
+.otto-module-group.is-editing .otto-module-tile {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.otto-module-group.is-editing .otto-module-reorder-item:active,
+.otto-module-group.is-editing .otto-module-tile:active {
+  cursor: grabbing;
+}
+
+.otto-module-group.is-editing .otto-module-tile-wrap {
+  animation: none;
+  outline: none;
+}
+
+.otto-module-group.is-editing .otto-module-tile {
+  opacity: 1;
+}
+
+.otto-module-group.is-editing .otto-module-tile__remove {
+  top: 5px;
+  left: calc(50% - 23px);
+  z-index: 4;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--otto-surface);
+  background: #ff3b30;
+  box-shadow: 0 1px 3px rgba(107, 19, 15, 0.22);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 12px;
+}
+
+.otto-module-workspace--panel .otto-module-group.is-editing .otto-module-tile__remove {
+  top: 2px;
+  left: calc(50% - 22px);
+}
+
+.otto-module-group.is-editing .otto-module-tile__remove:hover,
+.otto-module-group.is-editing .otto-module-tile__remove:focus-visible {
+  background: #e9342b;
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #ff3b30 24%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .otto-module-group-reorder-item,
+  .otto-module-reorder-item {
+    transform: none !important;
+  }
+}

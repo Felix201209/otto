@@ -12,8 +12,14 @@ on:
         required: false
         type: boolean
         default: false
-  release:
-    types: [published]
+      release_repository:
+        description: 'Repository containing the release assets.'
+        required: false
+        type: choice
+        options:
+          - NSIETeam/otto-new
+          - Felix201209/otto-releases
+        default: NSIETeam/otto-new
 
 permissions:
   contents: read
@@ -23,7 +29,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  RELEASES_REPO: Felix201209/otto-releases
+  RELEASES_REPO: ${{ inputs.release_repository || 'NSIETeam/otto-new' }}
   DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
   DEPLOY_CONFIG_PATH: ${{ secrets.DEPLOY_CONFIG_PATH || '/etc/otto-enterprise/enterprise.env' }}
 
@@ -42,11 +48,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "release" ]; then
-            TAG="${{ github.event.release.tag_name }}"
-          else
-            TAG="${{ inputs.version }}"
-          fi
+          TAG="${{ inputs.version }}"
           TAG="${TAG#v}"
           echo "version=$TAG" >> "$GITHUB_OUTPUT"
           echo "tag=v$TAG" >> "$GITHUB_OUTPUT"

@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import {
   FALLBACK_RELEASE_API_URL,
   GITHUB_MANIFEST_URL,
+  LEGACY_GITHUB_MANIFEST_URL,
   PRIMARY_MANIFEST_URL,
   RELEASE_PAGE_URL,
   resolveManifestUrls,
@@ -19,15 +20,21 @@ describe('桌面应用更新源', () => {
     expect(url.pathname).toBe('/otto-releases/latest.json');
   });
 
-  it('GitHub 清单、兜底 API 与手动发布页仍指向同一个公开仓库', () => {
+  it('GitHub 清单、兜底 API 与手动发布页指向新的源码与发布仓库', () => {
     expect(GITHUB_MANIFEST_URL).toBe(
-      'https://github.com/Felix201209/otto-releases/releases/latest/download/latest.json',
+      'https://github.com/NSIETeam/otto-new/releases/latest/download/latest.json',
     );
     expect(FALLBACK_RELEASE_API_URL).toBe(
-      'https://api.github.com/repos/Felix201209/otto-releases/releases/latest',
+      'https://api.github.com/repos/NSIETeam/otto-new/releases/latest',
     );
     expect(RELEASE_PAGE_URL).toBe(
-      'https://github.com/Felix201209/otto-releases/releases/latest',
+      'https://github.com/NSIETeam/otto-new/releases/latest',
+    );
+  });
+
+  it('保留旧发布仓清单作为已安装旧版本的兼容入口', () => {
+    expect(LEGACY_GITHUB_MANIFEST_URL).toBe(
+      'https://github.com/Felix201209/otto-releases/releases/latest/download/latest.json',
     );
   });
 
@@ -36,10 +43,12 @@ describe('桌面应用更新源', () => {
       'https://updates.example.com/otto/latest.json',
       PRIMARY_MANIFEST_URL,
       GITHUB_MANIFEST_URL,
+      LEGACY_GITHUB_MANIFEST_URL,
     ]);
     expect(resolveManifestUrls(PRIMARY_MANIFEST_URL)).toEqual([
       PRIMARY_MANIFEST_URL,
       GITHUB_MANIFEST_URL,
+      LEGACY_GITHUB_MANIFEST_URL,
     ]);
   });
 
@@ -49,6 +58,10 @@ describe('桌面应用更新源', () => {
     'https://user:password@updates.example.com/latest.json',
     'not-a-url',
   ])('忽略不安全或非法的镜像地址：%s', (candidate) => {
-    expect(resolveManifestUrls(candidate)).toEqual([PRIMARY_MANIFEST_URL, GITHUB_MANIFEST_URL]);
+    expect(resolveManifestUrls(candidate)).toEqual([
+      PRIMARY_MANIFEST_URL,
+      GITHUB_MANIFEST_URL,
+      LEGACY_GITHUB_MANIFEST_URL,
+    ]);
   });
 });

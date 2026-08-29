@@ -30,7 +30,7 @@ export interface PptOutlineToolParams {
 export class PptOutlineTool extends BaseTool<PptOutlineToolParams, ToolResult> {
   static readonly Name = 'ppt_outline';
 
-  constructor(private readonly config: Config) {
+  constructor(_config: Config) {
     super(
       PptOutlineTool.Name,
       'PPT大纲管理',

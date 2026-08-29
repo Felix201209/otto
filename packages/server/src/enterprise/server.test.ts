@@ -781,7 +781,7 @@ describe('受保护 vs 公开路由边界', () => {
     await expect(backup.json()).resolves.toMatchObject({
       lastError: null,
       backupCount: 1,
-      latestSchemaVersion: 22,
+      latestSchemaVersion: 23,
     });
 
     const telemetry = await fetch(`${base}/enterprise/deployment/telemetry`, {
@@ -1001,6 +1001,7 @@ describe('受保护 vs 公开路由边界', () => {
       username: 'billing-e2e-member',
       password: 'billing-e2e-password',
       name: 'Billing E2E Member',
+      department: 'Operations',
     });
     const token = db.createAuthSession(member.id).token;
     const request = (idempotencyKey?: string) => fetch(`${base}/enterprise/knowledge`, {
@@ -1038,7 +1039,7 @@ describe('受保护 vs 公开路由边界', () => {
 
     availableCredits = true;
     const accepted = await request('knowledge:e2e:2');
-    expect(accepted.status).toBe(200);
+    expect(accepted.status, await accepted.clone().text()).toBe(200);
     expect(accepted.headers.get('x-otto-billing-admission')).toBe(
       'hold_servere2e123456',
     );
@@ -5747,6 +5748,28 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     });
     expect(JSON.stringify(summary)).not.toContain(betaStaff.id);
 
+    const profileResponse = await fetch(
+      `${base}/enterprise/usage/profile?period=999&accountId=${betaStaff.id}`,
+      { headers: { authorization: `Bearer ${alphaToken}` } },
+    );
+    expect(profileResponse.status).toBe(200);
+    const profile = await profileResponse.json();
+    expect(profile).toMatchObject({
+      accountId: alphaStaff.id,
+      periodDays: 365,
+      totalTokens: 150,
+      requestCount: 1,
+      averageTokensPerRequest: 150,
+      byModel: [{ model: 'gpt-5.5', totalTokens: 150 }],
+    });
+    expect(JSON.stringify(profile)).not.toMatch(
+      /chat-alpha|message-alpha-1|chat-beta|message-beta-1/,
+    );
+    const anonymousProfile = await fetch(
+      `${base}/enterprise/usage/profile?period=30`,
+    );
+    expect(anonymousProfile.status).toBe(401);
+
     const accountsResponse = await fetch(`${base}/enterprise/accounts`, {
       headers: { authorization: `Bearer ${adminToken}` },
     });
@@ -5989,6 +6012,12 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       department: '管理层',
       isAdmin: true,
     });
+    const unassigned = db.createAccount({
+      organizationId: organization.id,
+      username: 'knowledge.unassigned',
+      password: 'knowledge-unassigned-password',
+      name: '未分配部门成员',
+    });
     db.addKnowledge({
       organizationId: organization.id,
       category: 'policy',
@@ -6016,6 +6045,24 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       admin.username,
       'knowledge-admin-password',
     );
+    const unassignedToken = await login(
+      base,
+      unassigned.username,
+      'knowledge-unassigned-password',
+    );
+
+    const globalWrite = await fetch(`${base}/enterprise/knowledge`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${unassignedToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ content: '不应成为全局知识' }),
+    });
+    expect(globalWrite.status).toBe(403);
+    expect(await globalWrite.json()).toEqual({
+      error: '无部门成员不能写入全局知识',
+    });
 
     const memberList = await fetch(`${base}/enterprise/knowledge`, {
       headers: { authorization: `Bearer ${legalToken}` },
@@ -6155,6 +6202,13 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
       name: '知识关闭成员',
       department: '研发部',
     });
+    const admin = db.createAccount({
+      organizationId: organization.id,
+      username: 'knowledge.disabled.admin',
+      password: 'knowledge-disabled-admin-password',
+      name: '知识关闭管理员',
+      isAdmin: true,
+    });
     db.addKnowledge({
       organizationId: organization.id,
       department: '研发部',
@@ -6170,6 +6224,7 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     db.updateOrganizationFeatures(organization.id, { knowledge: false });
     const token = db.createAuthSession(member.id).token;
     const headers = { authorization: `Bearer ${token}` };
+    const adminToken = db.createAuthSession(admin.id).token;
 
     const featureSnapshot = await fetch(
       `${base}/enterprise/organization/features`,
@@ -6235,6 +6290,24 @@ describe('B2B 企业隔离、邀请码与 Token 用量 API', () => {
     expect(recallPayload.knowledge).toEqual([]);
     expect(JSON.stringify(recallPayload.history)).toContain('任务历史仍应保留');
     expect(JSON.stringify(recallPayload)).not.toContain('关闭后不得泄露的知识');
+
+    const offboard = await fetch(`${base}/enterprise/offboard`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ employee_id: member.employeeId }),
+    });
+    expect(offboard.status).toBe(200);
+    expect(db.getEmployee(member.employeeId!, organization.id)?.status).toBe(
+      'offboarded',
+    );
+    expect(
+      db
+        .getKnowledge(undefined, undefined, organization.id)
+        .map((item) => item.content),
+    ).toEqual(['关闭后不得泄露的知识']);
   }, 30_000);
 
   it('A2A 选择企业知识作为上下文时，接收方仍只能取得全局和本人部门知识', async () => {

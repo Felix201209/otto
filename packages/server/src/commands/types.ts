@@ -37,8 +37,8 @@ export interface CommandHost {
   protocolVersion: string;
   /** server 已运行时长（ms）。 */
   uptimeMs(): number;
-  /** server 的工作目录（项目级 OTTO.md / wiki 等文件的落点）。 */
-  cwd(): string;
+  /** 指定会话的真实工作目录（项目级 OTTO.md / wiki 等文件的落点）。 */
+  cwd(sessionId: string): string;
   /** 取某会话已构建的 core Config；懒构建尚未发生时返回 undefined（不强制初始化）。 */
   getConfig(sessionId: string): CoreConfig | undefined;
   /** 当前生效模型 id（preferredModel → 首个 enabled），无模型时 undefined。 */
@@ -48,7 +48,7 @@ export interface CommandHost {
   /** MCP 服务器配置 + 实时连接状态（与 mcp_list 帧同源）。 */
   mcpServerInfos(): McpServerInfo[];
   /** 已安装扩展（项目级 + 全局，与 get_extensions 帧同源）。 */
-  extensionSummaries(): Promise<ExtensionSummary[]>;
+  extensionSummaries(sessionId: string): Promise<ExtensionSummary[]>;
 }
 
 /** 命令执行上下文。 */

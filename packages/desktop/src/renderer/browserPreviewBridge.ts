@@ -201,6 +201,24 @@ if (!previewWindow.otto) {
     createdAt: new Date(Date.now() - 12 * 60_000).toISOString(),
   });
 
+  const previewDepartments = [{
+    id: 'preview-park-dept',
+    organizationId: previewAccount.organizationId,
+    name: '园区管理部',
+    parentDepartmentId: null,
+    memberCount: 1,
+    positions: [{
+      id: 'preview-park-admin-position',
+      organizationId: previewAccount.organizationId,
+      departmentId: 'preview-park-dept',
+      title: '园区管理员',
+      roleMapping: 'enterprise_admin',
+      createdAt: previewAccount.createdAt,
+      updatedAt: previewAccount.updatedAt,
+    }],
+    createdAt: previewAccount.createdAt,
+    updatedAt: previewAccount.updatedAt,
+  }];
   const bridge: Record<string, unknown> = {
     connect: () => {
       connected = true;
@@ -331,7 +349,11 @@ if (!previewWindow.otto) {
     notificationShow: () => Promise.resolve(),
     notificationMarkRead: () => Promise.resolve(),
     notificationGetUnread: () => Promise.resolve([]),
-    appVersion: () => Promise.resolve('1.10.1-browser-preview'),
+    appVersion: () => Promise.resolve('1.9.14-browser-preview'),
+    getWorkspaceDirectories: () => Promise.resolve({
+      defaultPath: '/Users/demo',
+      recentPaths: ['/Users/demo'],
+    }),
     openExternal: () => Promise.resolve(),
     openPath: () => Promise.resolve(),
     inspectLocalPath: () =>
@@ -350,7 +372,7 @@ if (!previewWindow.otto) {
     updateCheck: () =>
       Promise.resolve({
         status: 'up-to-date',
-        currentVersion: '1.10.1',
+        currentVersion: '1.9.14',
         latestVersion: null,
       }),
     updateDownload: () =>
@@ -464,6 +486,15 @@ if (!previewWindow.otto) {
     enterpriseE2eeRecoveryExport: () =>
       Promise.resolve('{"v":1,"preview":true}'),
     enterpriseE2eeRecoveryImport: () => Promise.resolve(),
+    enterpriseAccounts: () => Promise.resolve([previewAccount]),
+    enterpriseOrganizationInviteGet: () => Promise.resolve({
+      organization: {
+        id: previewAccount.organizationId,
+        name: previewAccount.organizationName,
+      },
+      invite: null,
+    }),
+    enterpriseOrganizationDepartments: () => Promise.resolve(previewDepartments),
     enterpriseOrganizationFeaturesGet: () => Promise.resolve({
       enterprise_tree: true,
       park_service: true,
@@ -473,6 +504,10 @@ if (!previewWindow.otto) {
       knowledge: true,
       skill_market: true,
     }),
+    enterpriseParkServices: () => Promise.resolve([]),
+    enterpriseParkSpecialists: () => Promise.resolve([]),
+    enterpriseParkAnnouncementResults: () => Promise.resolve([]),
+    enterpriseParkSurveyResults: () => Promise.resolve([]),
     enterpriseOrganizationView: (organizationId?: string) => {
       const features = {
         enterprise_tree: true,
@@ -771,6 +806,25 @@ if (!previewWindow.otto) {
         : Promise.reject(new Error('申请单不存在'));
     },
     enterpriseUsageRecord: () => Promise.resolve({ recorded: false }),
+    enterpriseUsageProfile: (periodDays = 30) => Promise.resolve({
+      accountId: previewAccount.id,
+      periodDays,
+      source: 'client_reported',
+      inputTokens: 18_400,
+      outputTokens: 9_600,
+      totalTokens: 28_000,
+      requestCount: 42,
+      averageTokensPerRequest: 667,
+      lastUsedAt: new Date().toISOString(),
+      byModel: [{
+        model: 'preview-model', inputTokens: 18_400, outputTokens: 9_600,
+        totalTokens: 28_000, requestCount: 42,
+      }],
+      daily: [{
+        date: parkISODate(new Date()), inputTokens: 18_400, outputTokens: 9_600,
+        totalTokens: 28_000, requestCount: 42,
+      }],
+    }),
     enterpriseKnowledgeRecord: () =>
       Promise.resolve({ status: 'exists', added: false }),
     enterpriseKnowledgeList: () => Promise.resolve([]),
